@@ -1,0 +1,45 @@
+# ========================================
+# Trading Bot Requirements
+# Python 3.14
+# ========================================
+
+# Exchange
+ccxt>=4,<5
+ccxtpro>=1,<2
+
+# Data Processing
+pandas>=2.3,<3
+numpy>=2.3,<3
+pyarrow>=21,<22
+
+# Technical Analysis
+TA-Lib>=0.6,<0.7
+
+# Logging
+loguru>=0.7,<1
+
+# Telegram
+aiogram>=3.22,<4
+
+# Configuration
+pydantic>=2.11,<3
+python-dotenv>=1.1,<2
+
+# JSON
+orjson>=3.11,<4
+
+# Visualization
+matplotlib>=3.10,<4
+mplfinance>=0.12,<1
+
+# Testing
+pytest>=8.4,<9
+pytest-asyncio>=1.1,<2
+
+# Development
+ruff>=0.12,<1
+black>=25,<26
+isort>=6,<7
+
+# Utilities
+tqdm>=4.67,<5
