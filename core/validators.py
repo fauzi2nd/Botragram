@@ -17,6 +17,7 @@ from collections.abc import Collection
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
+from typing import Any
 
 from core.constants import ZERO
 from core.exceptions import ValidationError
@@ -33,11 +34,13 @@ __all__ = [
     # Decimal
     "validate_decimal_positive",
     "validate_decimal_non_negative",
-    "validate_decimal_greater_or_equal",
-    "validate_decimal_less_or_equal",
     # Integer
     "validate_int_positive",
     "validate_int_non_negative",
+    # Generic Comparison
+    "validate_greater_or_equal",
+    "validate_less_or_equal",
+    "validate_between",
     # Enum
     "validate_enum",
     # Datetime
@@ -64,7 +67,7 @@ def validate_not_none(
 
 def validate_instance(
     value: object,
-    expected_type: type,
+    expected_type: type[Any],
     field_name: str,
 ) -> None:
     """Validate object type."""
@@ -151,32 +154,6 @@ def validate_decimal_non_negative(
         )
 
 
-def validate_decimal_greater_or_equal(
-    value: Decimal,
-    minimum: Decimal,
-    field_name: str,
-) -> None:
-    """Validate decimal >= minimum."""
-
-    if value < minimum:
-        raise ValidationError(
-            f"{field_name} must be >= {minimum}"
-        )
-
-
-def validate_decimal_less_or_equal(
-    value: Decimal,
-    maximum: Decimal,
-    field_name: str,
-) -> None:
-    """Validate decimal <= maximum."""
-
-    if value > maximum:
-        raise ValidationError(
-            f"{field_name} must be <= {maximum}"
-        )
-
-
 # =============================================================================
 # Integer
 # =============================================================================
@@ -203,6 +180,52 @@ def validate_int_non_negative(
     if value < 0:
         raise ValidationError(
             f"{field_name} must be >= 0"
+        )
+
+
+# =============================================================================
+# Generic Comparison
+# =============================================================================
+
+
+def validate_greater_or_equal(
+    value: Any,
+    minimum: Any,
+    field_name: str,
+) -> None:
+    """Validate value >= minimum."""
+
+    if value < minimum:
+        raise ValidationError(
+            f"{field_name} must be >= {minimum}"
+        )
+
+
+def validate_less_or_equal(
+    value: Any,
+    maximum: Any,
+    field_name: str,
+) -> None:
+    """Validate value <= maximum."""
+
+    if value > maximum:
+        raise ValidationError(
+            f"{field_name} must be <= {maximum}"
+        )
+
+
+def validate_between(
+    value: Any,
+    minimum: Any,
+    maximum: Any,
+    field_name: str,
+) -> None:
+    """Validate minimum <= value <= maximum."""
+
+    if value < minimum or value > maximum:
+        raise ValidationError(
+            f"{field_name} must be between "
+            f"{minimum} and {maximum}"
         )
 
 
