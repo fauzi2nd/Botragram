@@ -5,7 +5,7 @@ Module:
     models.ticker
 
 Description:
-    Domain model representing a market ticker snapshot.
+    Domain model representing a market ticker.
 
 Python:
     3.14
@@ -17,94 +17,123 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
+from core.validators import (
+    validate_decimal_non_negative,
+    validate_decimal_positive,
+    validate_greater_or_equal,
+    validate_timezone_aware,
+)
 from models.symbol import Symbol
 
 __all__ = [
     "Ticker",
 ]
 
-_ZERO = Decimal("0")
-
 
 @dataclass(slots=True, frozen=True)
 class Ticker:
-    """Represents a market ticker snapshot."""
+    """Represents the latest market ticker."""
 
     symbol: Symbol
 
     timestamp: datetime
 
-    last_price: Decimal
+    bid: Decimal
+    ask: Decimal
+    last: Decimal
 
-    bid_price: Decimal | None = None
-    ask_price: Decimal | None = None
+    high: Decimal
+    low: Decimal
 
-    high_price_24h: Decimal | None = None
-    low_price_24h: Decimal | None = None
+    open: Decimal
 
-    base_volume_24h: Decimal | None = None
-    quote_volume_24h: Decimal | None = None
+    base_volume: Decimal
+    quote_volume: Decimal
 
     def __post_init__(self) -> None:
-        """Validate ticker data."""
+        """Validate ticker."""
 
-        # ------------------------------------------------------------------
-        # Timestamp
-        # ------------------------------------------------------------------
+        validate_timezone_aware(
+            self.timestamp,
+            "timestamp",
+        )
 
-        if self.timestamp.tzinfo is None:
-            raise ValueError("timestamp must be timezone-aware")
+        validate_decimal_positive(
+            self.bid,
+            "bid",
+        )
 
-        # ------------------------------------------------------------------
-        # Prices
-        # ------------------------------------------------------------------
+        validate_decimal_positive(
+            self.ask,
+            "ask",
+        )
 
-        if self.last_price < _ZERO:
-            raise ValueError("last_price must be >= 0")
+        validate_decimal_positive(
+            self.last,
+            "last",
+        )
 
-        for name, value in (
-            ("bid_price", self.bid_price),
-            ("ask_price", self.ask_price),
-            ("high_price_24h", self.high_price_24h),
-            ("low_price_24h", self.low_price_24h),
-        ):
-            if value is not None and value < _ZERO:
-                raise ValueError(f"{name} must be >= 0")
+        validate_decimal_positive(
+            self.high,
+            "high",
+        )
 
-        if (
-            self.bid_price is not None
-            and self.ask_price is not None
-            and self.bid_price > self.ask_price
-        ):
-            raise ValueError(
-                "bid_price must be <= ask_price"
-            )
+        validate_decimal_positive(
+            self.low,
+            "low",
+        )
 
-        # ------------------------------------------------------------------
-        # Volumes
-        # ------------------------------------------------------------------
+        validate_decimal_positive(
+            self.open,
+            "open",
+        )
 
-        for name, value in (
-            ("base_volume_24h", self.base_volume_24h),
-            ("quote_volume_24h", self.quote_volume_24h),
-        ):
-            if value is not None and value < _ZERO:
-                raise ValueError(f"{name} must be >= 0")
+        validate_greater_or_equal(
+            self.ask,
+            self.bid,
+            "ask",
+        )
 
-    @property
-    def has_orderbook(self) -> bool:
-        """Return True if bid and ask prices are available."""
+        validate_greater_or_equal(
+            self.high,
+            self.low,
+            "high",
+        )
 
-        return (
-            self.bid_price is not None
-            and self.ask_price is not None
+        validate_decimal_non_negative(
+            self.base_volume,
+            "base_volume",
+        )
+
+        validate_decimal_non_negative(
+            self.quote_volume,
+            "quote_volume",
         )
 
     @property
-    def spread(self) -> Decimal | None:
+    def spread(self) -> Decimal:
         """Return bid-ask spread."""
 
-        if not self.has_orderbook:
-            return None
+        return self.ask - self.bid
 
-        return self.ask_price - self.bid_price
+    @property
+    def mid_price(self) -> Decimal:
+        """Return midpoint price."""
+
+        return (self.bid + self.ask) / Decimal("2")
+
+    @property
+    def change(self) -> Decimal:
+        """Return absolute price change."""
+
+        return self.last - self.open
+
+    @property
+    def change_percent(self) -> Decimal:
+        """Return percentage price change."""
+
+        return (
+            (self.last - self.open)
+            / self.open
+            * Decimal("100")
+        )
