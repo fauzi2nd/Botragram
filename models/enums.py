@@ -29,7 +29,7 @@ __all__ = [
     "RiskLevel",
     "TrendDirection",
     "TrendStrength",
-    "MarketState",
+    "MarketCondition",
     "VolatilityLevel",
     "VolumeStrength",
     "PriceSource",
