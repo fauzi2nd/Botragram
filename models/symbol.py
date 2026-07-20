@@ -16,13 +16,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+from core.validators import (
+    validate_decimal_non_negative,
+    validate_decimal_positive,
+    validate_greater_or_equal,
+    validate_int_non_negative,
+    validate_no_whitespace,
+    validate_not_empty,
+)
 from models.enums import ExchangeType, MarketType
 
 __all__ = [
     "Symbol",
 ]
-
-_ZERO = Decimal("0")
 
 
 @dataclass(slots=True, frozen=True)
@@ -57,75 +63,91 @@ class Symbol:
         """Validate symbol metadata."""
 
         # ------------------------------------------------------------------
-        # Required strings
+        # Strings
         # ------------------------------------------------------------------
 
-        if not self.symbol.strip():
-            raise ValueError("symbol cannot be empty")
+        validate_not_empty(self.symbol, "symbol")
+        validate_no_whitespace(self.symbol, "symbol")
 
-        if " " in self.symbol:
-            raise ValueError("symbol must not contain spaces")
+        validate_not_empty(
+            self.native_symbol,
+            "native_symbol",
+        )
+        validate_no_whitespace(
+            self.native_symbol,
+            "native_symbol",
+        )
 
-        if not self.native_symbol.strip():
-            raise ValueError("native_symbol cannot be empty")
+        validate_not_empty(
+            self.base_asset,
+            "base_asset",
+        )
 
-        if " " in self.native_symbol:
-            raise ValueError("native_symbol must not contain spaces")
+        validate_not_empty(
+            self.quote_asset,
+            "quote_asset",
+        )
 
-        if not self.base_asset.strip():
-            raise ValueError("base_asset cannot be empty")
-
-        if not self.quote_asset.strip():
-            raise ValueError("quote_asset cannot be empty")
-
-        if (
-            self.settle_asset is not None
-            and not self.settle_asset.strip()
-        ):
-            raise ValueError("settle_asset cannot be empty")
+        if self.settle_asset is not None:
+            validate_not_empty(
+                self.settle_asset,
+                "settle_asset",
+            )
 
         # ------------------------------------------------------------------
         # Precision
         # ------------------------------------------------------------------
 
-        if self.price_precision < 0:
-            raise ValueError("price_precision must be >= 0")
+        validate_int_non_negative(
+            self.price_precision,
+            "price_precision",
+        )
 
-        if self.quantity_precision < 0:
-            raise ValueError("quantity_precision must be >= 0")
+        validate_int_non_negative(
+            self.quantity_precision,
+            "quantity_precision",
+        )
 
         # ------------------------------------------------------------------
-        # Trading rules
+        # Trading Rules
         # ------------------------------------------------------------------
 
-        if self.tick_size <= _ZERO:
-            raise ValueError("tick_size must be > 0")
+        validate_decimal_positive(
+            self.tick_size,
+            "tick_size",
+        )
 
-        if self.lot_size <= _ZERO:
-            raise ValueError("lot_size must be > 0")
+        validate_decimal_positive(
+            self.lot_size,
+            "lot_size",
+        )
 
-        if self.min_quantity <= _ZERO:
-            raise ValueError("min_quantity must be > 0")
+        validate_decimal_positive(
+            self.min_quantity,
+            "min_quantity",
+        )
 
-        if (
-            self.max_quantity is not None
-            and self.max_quantity <= _ZERO
-        ):
-            raise ValueError("max_quantity must be > 0")
-
-        if (
-            self.max_quantity is not None
-            and self.max_quantity < self.min_quantity
-        ):
-            raise ValueError(
-                "max_quantity must be >= min_quantity"
+        if self.max_quantity is not None:
+            validate_decimal_positive(
+                self.max_quantity,
+                "max_quantity",
             )
 
-        if self.min_notional < _ZERO:
-            raise ValueError("min_notional must be >= 0")
+            validate_greater_or_equal(
+                self.max_quantity,
+                self.min_quantity,
+                "max_quantity",
+            )
 
-        if self.contract_size <= _ZERO:
-            raise ValueError("contract_size must be > 0")
+        validate_decimal_non_negative(
+            self.min_notional,
+            "min_notional",
+        )
+
+        validate_decimal_positive(
+            self.contract_size,
+            "contract_size",
+        )
 
     @property
     def is_spot(self) -> bool:
