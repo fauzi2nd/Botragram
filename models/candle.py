@@ -17,14 +17,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
+from core.validators import (
+    validate_decimal_non_negative,
+    validate_greater_or_equal,
+    validate_less_or_equal,
+    validate_timezone_aware,
+)
 from models.enums import Timeframe
 from models.symbol import Symbol
 
 __all__ = [
     "Candle",
 ]
-
-_ZERO = Decimal("0")
 
 
 @dataclass(slots=True, frozen=True)
@@ -50,55 +54,104 @@ class Candle:
         # Timestamp
         # ------------------------------------------------------------------
 
-        if self.open_time.tzinfo is None:
-            raise ValueError("open_time must be timezone-aware")
+        validate_timezone_aware(
+            self.open_time,
+            "open_time",
+        )
 
         # ------------------------------------------------------------------
-        # Price validation
+        # Price
         # ------------------------------------------------------------------
 
-        if self.high_price < self.low_price:
-            raise ValueError("high_price must be >= low_price")
+        validate_greater_or_equal(
+            self.high_price,
+            self.low_price,
+            "high_price",
+        )
 
-        if self.high_price < self.open_price:
-            raise ValueError("high_price must be >= open_price")
+        validate_greater_or_equal(
+            self.high_price,
+            self.open_price,
+            "high_price",
+        )
 
-        if self.high_price < self.close_price:
-            raise ValueError("high_price must be >= close_price")
+        validate_greater_or_equal(
+            self.high_price,
+            self.close_price,
+            "high_price",
+        )
 
-        if self.low_price > self.open_price:
-            raise ValueError("low_price must be <= open_price")
+        validate_less_or_equal(
+            self.low_price,
+            self.open_price,
+            "low_price",
+        )
 
-        if self.low_price > self.close_price:
-            raise ValueError("low_price must be <= close_price")
+        validate_less_or_equal(
+            self.low_price,
+            self.close_price,
+            "low_price",
+        )
 
         # ------------------------------------------------------------------
         # Volume
         # ------------------------------------------------------------------
 
-        if self.volume < _ZERO:
-            raise ValueError("volume must be >= 0")
+        validate_decimal_non_negative(
+            self.volume,
+            "volume",
+        )
 
     @property
     def bullish(self) -> bool:
-        """Return True if the candle is bullish."""
+        """Return True if the candle closed above its open."""
 
         return self.close_price > self.open_price
 
     @property
     def bearish(self) -> bool:
-        """Return True if the candle is bearish."""
+        """Return True if the candle closed below its open."""
 
         return self.close_price < self.open_price
 
     @property
+    def neutral(self) -> bool:
+        """Return True if the candle closed at its open."""
+
+        return self.close_price == self.open_price
+
+    @property
     def body_size(self) -> Decimal:
-        """Return candle body size."""
+        """Return the candle body size."""
 
         return abs(self.close_price - self.open_price)
 
     @property
+    def upper_shadow(self) -> Decimal:
+        """Return the upper shadow size."""
+
+        return self.high_price - max(
+            self.open_price,
+            self.close_price,
+        )
+
+    @property
+    def lower_shadow(self) -> Decimal:
+        """Return the lower shadow size."""
+
+        return min(
+            self.open_price,
+            self.close_price,
+        ) - self.low_price
+
+    @property
     def range_size(self) -> Decimal:
-        """Return candle total range."""
+        """Return the total candle range."""
 
         return self.high_price - self.low_price
+
+    @property
+    def is_doji(self) -> bool:
+        """Return True if the candle has no body."""
+
+        return self.open_price == self.close_price
