@@ -2,10 +2,10 @@
 Trading Bot
 
 Module:
-    models.asset_balance
+    models.balance
 
 Description:
-    Domain model representing the balance of a single asset.
+    Domain model representing an account balance snapshot.
 
 Python:
     3.14
@@ -14,58 +14,57 @@ Python:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from datetime import datetime
+
+from models.asset_balance import AssetBalance
+from models.enums import ExchangeType
 
 __all__ = [
-    "AssetBalance",
+    "Balance",
 ]
-
-_ZERO = Decimal("0")
 
 
 @dataclass(slots=True, frozen=True)
-class AssetBalance:
-    """Represents the balance of a single asset."""
+class Balance:
+    """Represents an account balance snapshot."""
 
-    asset: str
+    exchange: ExchangeType
 
-    free: Decimal
-    used: Decimal
-    total: Decimal
+    timestamp: datetime
+
+    assets: tuple[AssetBalance, ...]
 
     def __post_init__(self) -> None:
-        """Validate asset balance."""
+        """Validate balance."""
 
         # ------------------------------------------------------------------
-        # Asset
+        # Timestamp
         # ------------------------------------------------------------------
 
-        if not self.asset.strip():
-            raise ValueError("asset cannot be empty")
-
-        if " " in self.asset:
-            raise ValueError("asset must not contain spaces")
-
-        # ------------------------------------------------------------------
-        # Balances
-        # ------------------------------------------------------------------
-
-        if self.free < _ZERO:
-            raise ValueError("free must be >= 0")
-
-        if self.used < _ZERO:
-            raise ValueError("used must be >= 0")
-
-        if self.total < _ZERO:
-            raise ValueError("total must be >= 0")
-
-        if self.free + self.used != self.total:
+        if self.timestamp.tzinfo is None:
             raise ValueError(
-                "free + used must equal total"
+                "timestamp must be timezone-aware"
             )
 
-    @property
-    def available(self) -> Decimal:
-        """Return available balance."""
+        # ------------------------------------------------------------------
+        # Duplicate assets
+        # ------------------------------------------------------------------
 
-        return self.free
+        names = {asset.asset for asset in self.assets}
+
+        if len(names) != len(self.assets):
+            raise ValueError(
+                "duplicate assets are not allowed"
+            )
+
+    def get(
+        self,
+        asset: str,
+    ) -> AssetBalance | None:
+        """Return the balance for the given asset."""
+
+        for balance in self.assets:
+            if balance.asset == asset:
+                return balance
+
+        return None
