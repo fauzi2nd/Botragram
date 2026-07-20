@@ -5,7 +5,7 @@ Module:
     models.symbol
 
 Description:
-    Symbol domain model.
+    Domain model representing a tradable instrument.
 
 Python:
     3.14
@@ -22,10 +22,12 @@ __all__ = [
     "Symbol",
 ]
 
+_ZERO = Decimal("0")
+
 
 @dataclass(slots=True, frozen=True)
 class Symbol:
-    """Trading instrument metadata."""
+    """Represents a tradable instrument and its trading rules."""
 
     exchange: ExchangeType
     market_type: MarketType
@@ -54,15 +56,21 @@ class Symbol:
     def __post_init__(self) -> None:
         """Validate symbol metadata."""
 
-        # ---------------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Required strings
-        # ---------------------------------------------------------------------
+        # ------------------------------------------------------------------
 
         if not self.symbol.strip():
             raise ValueError("symbol cannot be empty")
 
+        if " " in self.symbol:
+            raise ValueError("symbol must not contain spaces")
+
         if not self.native_symbol.strip():
             raise ValueError("native_symbol cannot be empty")
+
+        if " " in self.native_symbol:
+            raise ValueError("native_symbol must not contain spaces")
 
         if not self.base_asset.strip():
             raise ValueError("base_asset cannot be empty")
@@ -76,9 +84,9 @@ class Symbol:
         ):
             raise ValueError("settle_asset cannot be empty")
 
-        # ---------------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Precision
-        # ---------------------------------------------------------------------
+        # ------------------------------------------------------------------
 
         if self.price_precision < 0:
             raise ValueError("price_precision must be >= 0")
@@ -86,22 +94,22 @@ class Symbol:
         if self.quantity_precision < 0:
             raise ValueError("quantity_precision must be >= 0")
 
-        # ---------------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Trading rules
-        # ---------------------------------------------------------------------
+        # ------------------------------------------------------------------
 
-        if self.tick_size <= Decimal("0"):
+        if self.tick_size <= _ZERO:
             raise ValueError("tick_size must be > 0")
 
-        if self.lot_size <= Decimal("0"):
+        if self.lot_size <= _ZERO:
             raise ValueError("lot_size must be > 0")
 
-        if self.min_quantity <= Decimal("0"):
+        if self.min_quantity <= _ZERO:
             raise ValueError("min_quantity must be > 0")
 
         if (
             self.max_quantity is not None
-            and self.max_quantity <= Decimal("0")
+            and self.max_quantity <= _ZERO
         ):
             raise ValueError("max_quantity must be > 0")
 
@@ -113,27 +121,21 @@ class Symbol:
                 "max_quantity must be >= min_quantity"
             )
 
-        if self.min_notional < Decimal("0"):
+        if self.min_notional < _ZERO:
             raise ValueError("min_notional must be >= 0")
 
-        if self.contract_size <= Decimal("0"):
+        if self.contract_size <= _ZERO:
             raise ValueError("contract_size must be > 0")
 
     @property
-    def display_name(self) -> str:
-        """Return exchange-prefixed symbol."""
-
-        return f"{self.exchange.name}:{self.symbol}"
-
-    @property
     def is_spot(self) -> bool:
-        """Return True if this is a spot market."""
+        """Return True if the instrument is traded on the spot market."""
 
         return self.market_type is MarketType.SPOT
 
     @property
     def is_derivative(self) -> bool:
-        """Return True if this is a derivative market."""
+        """Return True if the instrument is a derivative product."""
 
         return self.market_type in (
             MarketType.LINEAR,
