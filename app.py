@@ -1,17 +1,14 @@
-from pybit.unified_trading import WebSocket
 import threading
 import time
-from trade_aggregator import TradeAggregator
+
+from exchanges.bybit.ws_client import BybitWebSocketClient
+from exchanges.bybit.trade_stream import TradeStream
+from core.trade_aggregator import TradeAggregator
+
 
 aggregator = TradeAggregator("BTCUSDT")
+trade_stream = TradeStream(aggregator)
 
-def handle_trade(message):
-
-    trades = message["data"]
-
-    for trade in trades:
-
-        aggregator.add_trade(trade["S"], float(trade["v"]))
 
 def summary():
 
@@ -28,22 +25,21 @@ def summary():
 
         aggregator.reset()
 
-ws = WebSocket(
-    testnet=False,
-    channel_type="linear",
-)
 
-ws.trade_stream(
-    symbol="BTCUSDT",
-    callback=handle_trade,
-)
+client = BybitWebSocketClient()
 
-print("Trade Stream Connected")
+client.connect()
+
+client.subscribe_trade(
+    "BTCUSDT",
+    trade_stream.handle_message,
+)
 
 threading.Thread(
     target=summary,
-    daemon=True
+    daemon=True,
 ).start()
+
 
 while True:
     time.sleep(1)
