@@ -7,6 +7,8 @@ from exchanges.bybit.trade_stream import TradeStream
 from core.trade_aggregator import TradeAggregator
 from exchanges.bybit.orderbook_stream import OrderBookStream
 from core.orderbook import OrderBook
+from core.ticker import Ticker
+from exchanges.bybit.ticker_stream import TickerStream
 
 market = MarketState()
 orderbook = OrderBook()
@@ -17,6 +19,10 @@ trade_stream = TradeStream(aggregator)
 
 market.trade = aggregator
 market.orderbook = orderbook
+ticker = Ticker()
+market.ticker = ticker
+
+ticker_stream = TickerStream(ticker)
 
 def summary():
 
@@ -44,6 +50,11 @@ client.subscribe_trade(
 client.subscribe_orderbook(                         "BTCUSDT",
     orderbook_stream.handle_message,            )
 
+client.subscribe_ticker(
+    "BTCUSDT",
+    ticker_stream.handle_message,
+)
+
 #threading.Thread(
 #    target=summary,
 #    daemon=True,
@@ -53,10 +64,18 @@ client.subscribe_orderbook(                         "BTCUSDT",
 while True:
     time.sleep(1)
 
-    bid, ask = market.orderbook.get_best_prices()
+#    bid, ask = market.orderbook.get_best_prices()
 
-    if bid and ask:
-        print(
-            f"Bid: {bid[0]} ({bid[1]}) | "
-            f"Ask: {ask[0]} ({ask[1]})"
-        )
+ #   if bid and ask:
+  #      print(
+   #         f"Bid: {bid[0]} ({bid[1]}) | "
+    #        f"Ask: {ask[0]} ({ask[1]})"
+     #   )
+
+    ticker = market.ticker.snapshot()
+
+    print(
+        f"Last: {ticker['last_price']} | "
+        f"Mark: {ticker['mark_price']} | "
+        f"Funding: {ticker['funding_rate']}"
+    )

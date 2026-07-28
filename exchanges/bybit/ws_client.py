@@ -1,8 +1,8 @@
 from pybit.unified_trading import WebSocket
+from core.exchange import Exchange
 
 
-class BybitWebSocketClient:
-
+class BybitWebSocketClient(Exchange):
     def __init__(self):
         self.ws = None
 
@@ -20,6 +20,11 @@ class BybitWebSocketClient:
             callback=callback,
         )
 
+    def subscribe_ticker(self, symbol, callback):
+        self.ws.ticker_stream(
+            symbol=symbol,
+            callback=callback,
+        )
     def subscribe_orderbook(self, symbol, callback):
 
         self.ws.orderbook_stream(
