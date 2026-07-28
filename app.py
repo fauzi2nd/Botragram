@@ -14,7 +14,13 @@ from exchanges.bybit.kline_stream import KlineStream
 from core.indicator_manager import IndicatorManager
 from exchanges.bybit.rest_client import BybitRESTClient
 from core.history_loader import HistoryLoader
+from strategies.ema_rsi import EmaRsiStrategy
+from strategies.strategy_manager import StrategyManager
+from strategies.signal_manager import SignalManager
 
+
+strategy = StrategyManager(EmaRsiStrategy())
+signal_manager = SignalManager()
 
 market = MarketState()
 orderbook = OrderBook()
@@ -128,10 +134,13 @@ while True:
     candles = market.kline.last(200)
 
     indicators.update(candles)
+    signal = strategy.analyze(market)
+    signal = signal_manager.update(signal)
 
-    print(
-        f"EMA20 : {market.indicators.ema20} | "
-        f"EMA50 : {market.indicators.ema50} | "
-        f"EMA200: {market.indicators.ema200} | "
-        f"RSI14 : {market.indicators.rsi14}"
-    )
+    if signal:
+        print(
+            f"NEW SIGNAL: {signal.value} | "
+            f"EMA20: {market.indicators.ema20:.2f} | "
+            f"EMA50: {market.indicators.ema50:.2f} | "
+            f"RSI14: {market.indicators.rsi14:.2f}"
+        )
