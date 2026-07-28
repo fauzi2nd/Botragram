@@ -1,18 +1,22 @@
 import threading
 import time
 
+from core.market_state import MarketState
 from exchanges.bybit.ws_client import BybitWebSocketClient
 from exchanges.bybit.trade_stream import TradeStream
 from core.trade_aggregator import TradeAggregator
 from exchanges.bybit.orderbook_stream import OrderBookStream
 from core.orderbook import OrderBook
 
+market = MarketState()
 orderbook = OrderBook()
 orderbook_stream = OrderBookStream(orderbook)
 
 aggregator = TradeAggregator("BTCUSDT")
 trade_stream = TradeStream(aggregator)
 
+market.trade = aggregator
+market.orderbook = orderbook
 
 def summary():
 
@@ -49,7 +53,7 @@ client.subscribe_orderbook(                         "BTCUSDT",
 while True:
     time.sleep(1)
 
-    bid, ask = orderbook.get_best_prices()
+    bid, ask = market.orderbook.get_best_prices()
 
     if bid and ask:
         print(
