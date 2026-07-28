@@ -11,6 +11,8 @@ from core.ticker import Ticker
 from exchanges.bybit.ticker_stream import TickerStream
 from core.kline import Kline
 from exchanges.bybit.kline_stream import KlineStream
+from indicators.ema import EMA
+from indicators.rsi import RSI
 
 market = MarketState()
 orderbook = OrderBook()
@@ -30,6 +32,8 @@ kline = Kline()
 market.kline = kline
 
 kline_stream = KlineStream(kline)
+ema20 = EMA(20)
+rsi14 = RSI(14)
 
 def summary():
 
@@ -107,3 +111,19 @@ while True:
     candles = market.kline.get_candles()
 
     print(f"Closed Candles: {len(candles)}")
+
+
+    candles = market.kline.last(20)
+
+    ema = ema20.update(candles)
+
+    if ema is not None:
+        print(f"EMA20 : {ema:.2f}")
+
+    candles = market.kline.last(100)
+
+    ema = ema20.update(candles)
+    rsi = rsi14.update(candles)
+
+    if ema is not None and rsi is not None:
+        print(f"EMA20: {ema:.2f} | RSI14: {rsi:.2f}")
