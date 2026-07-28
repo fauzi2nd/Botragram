@@ -26,9 +26,15 @@ class BybitWebSocketClient(Exchange):
             callback=callback,
         )
     def subscribe_orderbook(self, symbol, callback):
-
         self.ws.orderbook_stream(
             depth=50,
             symbol=symbol,
+            callback=callback,
+        )
+
+    def subscribe_kline(self, symbol, interval, callback):
+        self.ws.kline_stream(
+            symbol=symbol,
+            interval=interval,
             callback=callback,
         )

@@ -9,6 +9,8 @@ from exchanges.bybit.orderbook_stream import OrderBookStream
 from core.orderbook import OrderBook
 from core.ticker import Ticker
 from exchanges.bybit.ticker_stream import TickerStream
+from core.kline import Kline
+from exchanges.bybit.kline_stream import KlineStream
 
 market = MarketState()
 orderbook = OrderBook()
@@ -23,6 +25,11 @@ ticker = Ticker()
 market.ticker = ticker
 
 ticker_stream = TickerStream(ticker)
+
+kline = Kline()
+market.kline = kline
+
+kline_stream = KlineStream(kline)
 
 def summary():
 
@@ -55,6 +62,12 @@ client.subscribe_ticker(
     ticker_stream.handle_message,
 )
 
+client.subscribe_kline(
+    symbol="BTCUSDT",
+    interval=1,
+    callback=kline_stream.handle_message,
+)
+
 #threading.Thread(
 #    target=summary,
 #    daemon=True,
@@ -72,10 +85,25 @@ while True:
     #        f"Ask: {ask[0]} ({ask[1]})"
      #   )
 
-    ticker = market.ticker.snapshot()
+#    ticker = market.ticker.snapshot()
 
-    print(
-        f"Last: {ticker['last_price']} | "
-        f"Mark: {ticker['mark_price']} | "
-        f"Funding: {ticker['funding_rate']}"
-    )
+ #   print(
+#        f"Last: {ticker['last_price']} | "
+#        f"Mark: {ticker['mark_price']} | "
+#        f"Funding: {ticker['funding_rate']}"
+#    )
+
+    candle = market.kline.snapshot()
+
+    if candle:
+        print(
+            f"O:{candle.open} "
+            f"H:{candle.high} "
+            f"L:{candle.low} "
+            f"C:{candle.close} "
+            f"Confirmed:{candle.confirm}"
+        )
+
+    candles = market.kline.get_candles()
+
+    print(f"Closed Candles: {len(candles)}")
