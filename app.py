@@ -35,7 +35,7 @@ market.kline = kline
 
 kline_stream = KlineStream(kline)
 indicators = IndicatorManager()
-
+market.indicators = indicators
 rest = BybitRESTClient()
 
 loader = HistoryLoader(rest)
@@ -127,11 +127,11 @@ while True:
 
     candles = market.kline.last(200)
 
-    values = indicators.update(candles)
+    indicators.update(candles)
 
     print(
-        f"EMA20: {values['ema20']} | "
-        f"EMA50: {values['ema50']} | "
-        f"EMA200: {values['ema200']} | "
-        f"RSI14: {values['rsi14']}"
+        f"EMA20 : {market.indicators.ema20} | "
+        f"EMA50 : {market.indicators.ema50} | "
+        f"EMA200: {market.indicators.ema200} | "
+        f"RSI14 : {market.indicators.rsi14}"
     )

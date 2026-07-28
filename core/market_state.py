@@ -5,3 +5,4 @@ class MarketState:
         self.orderbook = None
         self.ticker = None
         self.kline = None
+        self.indicators = None
