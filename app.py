@@ -12,6 +12,8 @@ from exchanges.bybit.ticker_stream import TickerStream
 from core.kline import Kline
 from exchanges.bybit.kline_stream import KlineStream
 from core.indicator_manager import IndicatorManager
+from exchanges.bybit.rest_client import BybitRESTClient
+from core.history_loader import HistoryLoader
 
 
 market = MarketState()
@@ -33,6 +35,18 @@ market.kline = kline
 
 kline_stream = KlineStream(kline)
 indicators = IndicatorManager()
+
+rest = BybitRESTClient()
+
+loader = HistoryLoader(rest)
+
+loader.load(
+    market,
+    symbol="BTCUSDT",
+    interval="1",
+    limit=200,
+)
+
 def summary():
 
     while True:
