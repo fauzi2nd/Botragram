@@ -19,3 +19,11 @@ class BybitWebSocketClient:
             symbol=symbol,
             callback=callback,
         )
+
+    def subscribe_orderbook(self, symbol, callback):
+
+        self.ws.orderbook_stream(
+            depth=50,
+            symbol=symbol,
+            callback=callback,
+        )

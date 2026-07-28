@@ -4,7 +4,11 @@ import time
 from exchanges.bybit.ws_client import BybitWebSocketClient
 from exchanges.bybit.trade_stream import TradeStream
 from core.trade_aggregator import TradeAggregator
+from exchanges.bybit.orderbook_stream import OrderBookStream
+from core.orderbook import OrderBook
 
+orderbook = OrderBook()
+orderbook_stream = OrderBookStream(orderbook)
 
 aggregator = TradeAggregator("BTCUSDT")
 trade_stream = TradeStream(aggregator)
@@ -33,11 +37,22 @@ client.subscribe_trade(
     trade_stream.handle_message,
 )
 
-threading.Thread(
-    target=summary,
-    daemon=True,
-).start()
+client.subscribe_orderbook(                         "BTCUSDT",
+    orderbook_stream.handle_message,            )
+
+#threading.Thread(
+#    target=summary,
+#    daemon=True,
+#).start()
 
 
 while True:
     time.sleep(1)
+
+    bid, ask = orderbook.get_best_prices()
+
+    if bid and ask:
+        print(
+            f"Bid: {bid[0]} ({bid[1]}) | "
+            f"Ask: {ask[0]} ({ask[1]})"
+        )
