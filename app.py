@@ -15,15 +15,13 @@ def summary():
     while True:
         time.sleep(1)
 
-        data = aggregator.get_summary()
+        data = aggregator.consume_summary()
 
         print("\n===== 1 SECOND SUMMARY =====")
         print(f"Buy Volume : {data['buy_volume']:.3f}")
         print(f"Sell Volume: {data['sell_volume']:.3f}")
         print(f"Buy Count  : {data['buy_count']}")
         print(f"Sell Count : {data['sell_count']}")
-
-        aggregator.reset()
 
 
 client = BybitWebSocketClient()
