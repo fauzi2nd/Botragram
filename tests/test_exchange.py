@@ -20,14 +20,22 @@ import asyncio
 from decimal import Decimal
 
 # =============================================================================
+# Third Party
+# =============================================================================
+import pytest
+
+# =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.config.exchange_settings import ExchangeSettings
+from botragram.enums.exchange_type import ExchangeType
 from botragram.enums.order_side import OrderSide
 from botragram.enums.order_type import OrderType
 from botragram.exchanges.binance.client import BinanceClient
 from botragram.exchanges.binance.mapper import BinanceMapper
 from botragram.exchanges.bybit.client import BybitClient
 from botragram.exchanges.bybit.mapper import BybitMapper
+from botragram.exchanges.factory import create_exchange_client
 
 
 def test_bybit_mapper_candle() -> None:
@@ -88,3 +96,20 @@ def test_binance_client_order() -> None:
         await client.close()
 
     asyncio.run(run_test())
+
+
+@pytest.mark.parametrize(
+    "exchange_type",
+    [
+        ExchangeType.OKX,
+        ExchangeType.BITGET,
+    ],
+)
+def test_unimplemented_exchange_does_not_fall_back_to_bybit(
+    exchange_type: ExchangeType,
+) -> None:
+    """Test unavailable exchange connectors fail explicitly."""
+    settings = ExchangeSettings(exchange_type=exchange_type)
+
+    with pytest.raises(NotImplementedError):
+        create_exchange_client(settings)

@@ -72,6 +72,7 @@ class SignalEngine:
         signal = self._strategy.generate_signal(candles)
         if signal != SignalType.NEUTRAL:
             logger.info(
-                f"SignalEngine generated signal [{signal.value}] using {self._strategy.name}"
+                "SignalEngine generated signal "
+                f"[{signal.value}] using {self._strategy.name}"
             )
         return signal

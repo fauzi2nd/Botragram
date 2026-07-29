@@ -50,7 +50,7 @@ class BybitMapper(BaseExchangeMapper):
         Returns:
             Standardized Candle object.
         """
-        # Bybit format: [startTime, openPrice, highPrice, lowPrice, closePrice, volume, turnover]
+        # Payload order follows Bybit's documented kline response schema.
         return Candle(
             timestamp_ms=int(raw_data[0]),
             open_price=to_decimal(raw_data[1]),

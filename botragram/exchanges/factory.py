@@ -66,11 +66,9 @@ def create_exchange_client(settings: ExchangeSettings) -> BaseExchangeClient:
         )
 
     if settings.exchange_type in (ExchangeType.OKX, ExchangeType.BITGET):
-        logger.warning(
-            f"{settings.exchange_type.value.upper()} connector not implemented yet. "
-            "Falling back to BybitClient in testnet mode."
+        raise NotImplementedError(
+            f"{settings.exchange_type.value.upper()} connector is not implemented."
         )
-        return BybitClient(testnet=True)
 
     raise NotImplementedError(
         f"Exchange type '{settings.exchange_type}' is not supported."

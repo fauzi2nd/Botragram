@@ -63,7 +63,8 @@ class SettingsManager:
         """Load and return ExchangeSettings for specified or active exchange.
 
         Args:
-            exchange_type: Optional ExchangeType override. If None, reads EXCHANGE from env.
+            exchange_type: Optional ExchangeType override. If None, reads
+                EXCHANGE from the environment.
 
         Returns:
             ExchangeSettings instance populated with correct credentials.

@@ -93,12 +93,12 @@ class Application:
             exchange_type: ExchangeType to switch to.
         """
         logger.info(f"Switching exchange to: {exchange_type.value.upper()}")
-        await self._engine.stop()
-
         ex_settings = self._manager.load_exchange_settings(
             exchange_type=exchange_type
         )
         new_client = create_exchange_client(ex_settings)
+
+        await self._engine.stop()
         self._engine.set_exchange_client(new_client)
         await self._engine.start()
         logger.info(f"Exchange switched to: {exchange_type.value.upper()}")
