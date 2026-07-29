@@ -30,7 +30,7 @@ from botragram.enums.exchange_type import ExchangeType
 from botragram.exchanges.factory import create_exchange_client
 from botragram.telegram.bot import TelegramBot
 
-logger = logging.getLogger("botragram")
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================

@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -51,7 +52,7 @@ class TelegramBot:
         self,
         settings: TelegramSettings | None = None,
         engine: TradingEngine | None = None,
-        application: "Application | None" = None,
+        application: Application | None = None,
     ) -> None:
         """Initialize TelegramBot with settings and optional engine reference.
 
@@ -88,6 +89,7 @@ class TelegramBot:
         """Refresh bot_data context from live engine state."""
         if self._app and self._engine:
             self._app.bot_data[BOT_CONTEXT_KEY] = self._build_bot_context()
+        await asyncio.sleep(0)
 
     async def start(self) -> None:
         """Initialize, start Telegram bot, and begin long polling."""
@@ -105,14 +107,16 @@ class TelegramBot:
         await app.start()
 
         # Register only Botragram commands in Telegram menu
-        await app.bot.set_my_commands([
-            BotCommand("start", "Mulai bot & tampilkan menu utama"),
-            BotCommand("status", "Lihat status bot & pasar saat ini"),
-            BotCommand("positions", "Lihat posisi trading yang aktif"),
-            BotCommand("settings", "Lihat pengaturan bot saat ini"),
-            BotCommand("exchange", "Pilih exchange yang digunakan"),
-            BotCommand("stop", "Hentikan trading sementara"),
-        ])
+        await app.bot.set_my_commands(
+            [
+                BotCommand("start", "Mulai bot & tampilkan menu utama"),
+                BotCommand("status", "Lihat status bot & pasar saat ini"),
+                BotCommand("positions", "Lihat posisi trading yang aktif"),
+                BotCommand("settings", "Lihat pengaturan bot saat ini"),
+                BotCommand("exchange", "Pilih exchange yang digunakan"),
+                BotCommand("stop", "Hentikan trading sementara"),
+            ]
+        )
 
         if app.updater:
             await app.updater.start_polling()

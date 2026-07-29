@@ -27,14 +27,14 @@ from botragram.config.app_settings import AppSettings
 from botragram.config.market_settings import MarketSettings
 from botragram.config.risk_settings import RiskSettings
 from botragram.config.strategy_settings import StrategySettings
-from botragram.enums.order_side import OrderSide
-from botragram.enums.order_type import OrderType
-from botragram.enums.signal_type import SignalType
 from botragram.engine.order_engine import OrderEngine
 from botragram.engine.pnl_engine import PnLEngine
 from botragram.engine.position_engine import PositionEngine
 from botragram.engine.risk_engine import RiskEngine
 from botragram.engine.signal_engine import SignalEngine
+from botragram.enums.order_side import OrderSide
+from botragram.enums.order_type import OrderType
+from botragram.enums.signal_type import SignalType
 from botragram.exchanges.base.client import BaseExchangeClient
 from botragram.exchanges.bybit.client import BybitClient
 from botragram.strategies.ema_cross import EMACrossStrategy
@@ -156,7 +156,6 @@ class TradingEngine:
         """Lock to serialize market processing and exchange switching."""
         return self._process_lock
 
-
     async def start(self) -> None:
         """Start trading engine lifecycle."""
         self._is_running = True
@@ -203,7 +202,9 @@ class TradingEngine:
             has_pos = self._position_engine.has_active_position(self._market.symbol)
 
             if signal in (SignalType.BUY_ENTRY, SignalType.SELL_ENTRY) and not has_pos:
-                side = OrderSide.BUY if signal == SignalType.BUY_ENTRY else OrderSide.SELL
+                side = (
+                    OrderSide.BUY if signal == SignalType.BUY_ENTRY else OrderSide.SELL
+                )
                 qty = self._risk_engine.calculate_position_size(
                     account_balance=Decimal("10000.0"),
                     entry_price=ticker.last_price,

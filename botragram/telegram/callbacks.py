@@ -21,7 +21,7 @@ import logging
 # =============================================================================
 # Third Party
 # =============================================================================
-from telegram import Update
+from telegram import CallbackQuery, Update
 from telegram.ext import ContextTypes
 
 # =============================================================================
@@ -30,7 +30,7 @@ from telegram.ext import ContextTypes
 from botragram.constants.telegram import DEFAULT_PARSE_MODE
 from botragram.enums.exchange_type import ExchangeType
 from botragram.telegram.context import BotContext
-from botragram.telegram.keyboards import get_exchange_keyboard, get_main_menu_keyboard
+from botragram.telegram.keyboards import get_exchange_keyboard
 from botragram.telegram.messages import (
     get_exchange_message,
     get_exchange_switched_message,
@@ -60,6 +60,66 @@ def _get_context(context: ContextTypes.DEFAULT_TYPE) -> BotContext:
 
 
 # =============================================================================
+# Helper Handlers
+# =============================================================================
+async def _handle_exchange_switch(
+    query: CallbackQuery,
+    context: ContextTypes.DEFAULT_TYPE,
+    ctx: BotContext,
+    data: str,
+) -> None:
+    """Handle switching exchange logic to reduce Cognitive Complexity.
+
+    Args:
+        query: Telegram callback query object.
+        context: Callback context object.
+        ctx: Current BotContext state.
+        data: Callback data string.
+    """
+    exchange_map: dict[str, ExchangeType] = {
+        "cb_exchange_bybit": ExchangeType.BYBIT,
+        "cb_exchange_binance": ExchangeType.BINANCE,
+        "cb_exchange_okx": ExchangeType.OKX,
+        "cb_exchange_bitget": ExchangeType.BITGET,
+    }
+    new_exchange = exchange_map[data]
+    new_exchange_name = new_exchange.value.upper()
+
+    if not ctx.application:
+        await query.edit_message_text(
+            "⚠️ <b>Tidak dapat ganti exchange</b> — application tidak tersedia.",
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
+        return
+
+    try:
+        await ctx.application.switch_exchange(new_exchange)
+        context.bot_data[BOT_CONTEXT_KEY] = BotContext(
+            is_running=ctx.is_running,
+            trade_mode=ctx.trade_mode,
+            symbol=ctx.symbol,
+            strategy_name=ctx.strategy_name,
+            exchange_type=new_exchange_name,
+            last_price=ctx.last_price,
+            positions=ctx.positions,
+            application=ctx.application,
+        )
+        msg = get_exchange_switched_message(new_exchange_name)
+        await query.edit_message_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_exchange_keyboard(new_exchange_name),
+        )
+    except Exception as err:
+        logger.exception("Exchange switch failed: %s", err)
+        await query.edit_message_text(
+            f"❌ <b>Gagal ganti exchange:</b> {err}",
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_exchange_keyboard(ctx.exchange_type),
+        )
+
+
+# =============================================================================
 # Callback Handlers
 # =============================================================================
 async def handle_callback_query(
@@ -83,7 +143,7 @@ async def handle_callback_query(
     # ------------------------------------------------------------------
     # Main menu navigation
     # ------------------------------------------------------------------
-    if data == "cb_status":
+    if data in ("cb_status", "cb_back_main"):
         msg = get_status_message(
             is_running=ctx.is_running,
             trade_mode=ctx.trade_mode,
@@ -112,15 +172,6 @@ async def handle_callback_query(
             parse_mode=DEFAULT_PARSE_MODE,
         )
 
-    elif data == "cb_back_main":
-        msg = get_status_message(
-            is_running=ctx.is_running,
-            trade_mode=ctx.trade_mode,
-            symbol=ctx.symbol,
-            last_price=ctx.last_price,
-        )
-        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE)
-
     # ------------------------------------------------------------------
     # Exchange selection menu
     # ------------------------------------------------------------------
@@ -138,44 +189,4 @@ async def handle_callback_query(
         "cb_exchange_okx",
         "cb_exchange_bitget",
     ):
-        exchange_map: dict[str, ExchangeType] = {
-            "cb_exchange_bybit": ExchangeType.BYBIT,
-            "cb_exchange_binance": ExchangeType.BINANCE,
-            "cb_exchange_okx": ExchangeType.OKX,
-            "cb_exchange_bitget": ExchangeType.BITGET,
-        }
-        new_exchange = exchange_map[data]
-        new_exchange_name = new_exchange.value.upper()
-
-        if ctx.application:
-            try:
-                await ctx.application.switch_exchange(new_exchange)
-                # Update context exchange name
-                context.bot_data[BOT_CONTEXT_KEY] = BotContext(
-                    is_running=ctx.is_running,
-                    trade_mode=ctx.trade_mode,
-                    symbol=ctx.symbol,
-                    strategy_name=ctx.strategy_name,
-                    exchange_type=new_exchange_name,
-                    last_price=ctx.last_price,
-                    positions=ctx.positions,
-                    application=ctx.application,
-                )
-                msg = get_exchange_switched_message(new_exchange_name)
-                await query.edit_message_text(
-                    msg,
-                    parse_mode=DEFAULT_PARSE_MODE,
-                    reply_markup=get_exchange_keyboard(new_exchange_name),
-                )
-            except Exception as e:
-                logger.exception(f"Exchange switch failed: {e}")
-                await query.edit_message_text(
-                    f"❌ <b>Gagal ganti exchange:</b> {e}",
-                    parse_mode=DEFAULT_PARSE_MODE,
-                    reply_markup=get_exchange_keyboard(ctx.exchange_type),
-                )
-        else:
-            await query.edit_message_text(
-                f"⚠️ <b>Tidak dapat ganti exchange</b> — application tidak tersedia.",
-                parse_mode=DEFAULT_PARSE_MODE,
-            )
+        await _handle_exchange_switch(query, context, ctx, data)

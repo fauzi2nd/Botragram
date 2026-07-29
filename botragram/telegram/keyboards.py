@@ -31,14 +31,14 @@ from botragram.constants.telegram import (
     MENU_HISTORY,
     MENU_MARKET,
     MENU_ORDERS,
+    MENU_PAUSE,
     MENU_POSITIONS,
     MENU_SETTINGS,
     MENU_START,
-    MENU_STOP,
-    MENU_STREAM,
     MENU_STATUS,
+    MENU_STOP,
     MENU_STRATEGY,
-    MENU_PAUSE,
+    MENU_STREAM,
     MENU_TEST,
 )
 

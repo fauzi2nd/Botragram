@@ -13,10 +13,11 @@ Python:
 # =============================================================================
 from __future__ import annotations
 
+import logging
+
 # =============================================================================
 # Standard Library
 # =============================================================================
-import logging
 from decimal import Decimal
 
 # =============================================================================
@@ -30,19 +31,15 @@ from telegram.ext import ContextTypes
 # =============================================================================
 from botragram.constants.telegram import (
     DEFAULT_PARSE_MODE,
-    MENU_BALANCE,
     MENU_EXCHANGE,
-    MENU_HISTORY,
-    MENU_MARKET,
-    MENU_ORDERS,
     MENU_PAUSE,
     MENU_POSITIONS,
     MENU_SETTINGS,
     MENU_START,
     MENU_STATUS,
-    MENU_STREAM,
-    MENU_STRATEGY,
     MENU_STOP,
+    MENU_STRATEGY,
+    MENU_STREAM,
     MENU_TEST,
 )
 from botragram.telegram.context import BotContext
@@ -50,7 +47,6 @@ from botragram.telegram.keyboards import get_exchange_keyboard, get_main_menu_ke
 from botragram.telegram.messages import (
     get_balance_message,
     get_exchange_message,
-    get_exchange_switched_message,
     get_history_message,
     get_market_message,
     get_orders_message,
@@ -58,8 +54,8 @@ from botragram.telegram.messages import (
     get_settings_message,
     get_start_message,
     get_status_message,
-    get_stream_message,
     get_strategy_message,
+    get_stream_message,
     get_test_message,
     get_welcome_message,
 )

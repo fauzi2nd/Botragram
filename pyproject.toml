@@ -7,3 +7,18 @@ venv = ".venv"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.ruff]
+# Panjang baris maksimum (default 88 seperti Black)
+line-length = 88
+target-version = "py314"
+
+[tool.ruff.lint]
+# Aturan yang diaktifkan:
+# E/W = pycodestyle (pep8)
+# F   = Pyflakes (error variabel/import)
+# I   = isort (sorting import)
+select = ["E", "F", "I"]
+
+# Aturan yang diabaikan (optional)
+ignore = []

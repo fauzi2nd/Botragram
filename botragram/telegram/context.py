@@ -45,4 +45,4 @@ class BotContext:
     positions: list[PositionInfo] = field(
         default_factory=lambda: list[PositionInfo]()
     )
-    application: "Application | None" = field(default=None, repr=False)
+    application: Application | None = field(default=None, repr=False)
