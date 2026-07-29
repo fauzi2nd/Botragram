@@ -1,6 +1,6 @@
-Botragram Coding Style
+# Botragram Coding Style
 
-1. General
+1.General
 
 - Python 3.14+
 - UTF-8 Encoding.
@@ -17,7 +17,7 @@ Botragram Coding Style
 
 ---
 
-2. Project Rules
+2.Project Rules
 
 - Make it work.
 - Test it.
@@ -28,7 +28,7 @@ Jangan melakukan refactor sebelum fitur selesai dan berjalan.
 
 ---
 
-3. Naming Convention
+3.Naming Convention
 
 Package
 
@@ -68,7 +68,7 @@ _snake_case
 
 ---
 
-4. Folder Responsibility
+4.Folder Responsibility
 
 config/
 
@@ -104,36 +104,36 @@ tests/
 
 ---
 
-5. Import Order
+5.Import Order
 
-1. Future
-2. Standard Library
-3. Third Party
-4. Local Imports
+    1. Future
+    2. Standard Library
+    3. Third Party
+    4. Local Imports
 
 Gunakan header section.
 
 Contoh:
 
-# =============================================================================
-# Future
-# =============================================================================
+    # =============================================================================
+    # Future
+    # =============================================================================
 
-# =============================================================================
-# Standard Library
-# =============================================================================
+    # =============================================================================
+    # Standard Library
+    # =============================================================================
 
-# =============================================================================
-# Third Party
-# =============================================================================
+    # =============================================================================
+    # Third Party
+    # =============================================================================
 
-# =============================================================================
-# Local Imports
-# =============================================================================
+    # =============================================================================
+    # Local Imports
+    # =============================================================================
 
 ---
 
-6. File Header
+6.File Header
 
 Semua file wajib memiliki header.
 
@@ -149,17 +149,17 @@ Python:
 
 ---
 
-7. Section Header
+7.Section Header
 
 Gunakan format berikut.
 
-# =============================================================================
-# Constants
-# =============================================================================
+    # =============================================================================
+    # Constants
+    # =============================================================================
 
 ---
 
-8. Type Hint
+8.Type Hint
 
 Semua:
 
@@ -183,7 +183,7 @@ jika diperlukan.
 
 ---
 
-9. Pylance
+9.Pylance
 
 Gunakan
 
@@ -203,26 +203,26 @@ kecuali benar-benar diperlukan.
 
 ---
 
-10. Constructor
+10.Constructor
 
 Constructor diletakkan setelah class variable.
 
 ---
 
-11. Class Layout
+11.Class Layout
 
 Urutan:
 
-1. Docstring
-2. Class Variable
-3. Constructor
-4. Property
-5. Public Method
-6. Private Method
+    1. Docstring
+    2. Class Variable
+    3. Constructor
+    4. Property
+    5. Public Method
+    6. Private Method
 
 ---
 
-12. Function Layout
+12.Function Layout
 
 Gunakan trailing comma.
 
@@ -237,7 +237,7 @@ def create_order(
 
 ---
 
-13. Constants
+13.Constants
 
 Semua konstanta wajib berada di folder:
 
@@ -247,13 +247,13 @@ Tidak boleh hardcode.
 
 ---
 
-14. Enum
+14.Enum
 
 Semua pilihan menggunakan Enum.
 
 ---
 
-15. Config
+15.Config
 
 Semua konfigurasi berada di folder:
 
@@ -261,7 +261,7 @@ config/
 
 ---
 
-16. Exception
+16.Exception
 
 Tidak boleh:
 
@@ -271,7 +271,7 @@ Gunakan exception yang spesifik.
 
 ---
 
-17. Logging
+17.Logging
 
 Tidak boleh:
 
@@ -281,7 +281,7 @@ Gunakan logging.
 
 ---
 
-18. Async
+18.Async
 
 Semua operasi:
 
@@ -294,7 +294,7 @@ menggunakan Async.
 
 ---
 
-19. Dependency Injection
+19.Dependency Injection
 
 Tidak boleh menggunakan Global Singleton.
 
@@ -302,7 +302,7 @@ Gunakan Dependency Injection.
 
 ---
 
-20. Comment
+20.Comment
 
 Comment hanya menjelaskan:
 
@@ -314,7 +314,7 @@ WHAT
 
 ---
 
-21. TODO
+21.TODO
 
 Gunakan:
 
@@ -324,7 +324,7 @@ Gunakan:
 
 ---
 
-22. Line Length
+22.Line Length
 
 Maksimal:
 
@@ -332,7 +332,7 @@ Maksimal:
 
 ---
 
-23. Docstring
+23.Docstring
 
 Semua Public:
 
@@ -346,13 +346,13 @@ Gunakan Google Style.
 
 ---
 
-24. Testing
+24.Testing
 
 Semua fitur baru harus dapat diuji.
 
 ---
 
-25. Lint
+25.Lint
 
 Kode dianggap selesai jika:
 
@@ -363,7 +363,7 @@ Kode dianggap selesai jika:
 
 ---
 
-26. Refactor
+26.Refactor
 
 Refactor hanya dilakukan jika:
 
@@ -374,8 +374,7 @@ Refactor hanya dilakukan jika:
 
 Tidak melakukan refactor saat fitur masih dalam proses.
 
-
-Botragram Project Structure
+## Botragram Project Structure
 
 botragram/
 │
