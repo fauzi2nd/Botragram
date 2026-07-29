@@ -28,9 +28,12 @@ from telegram.ext import ContextTypes
 # Local Imports
 # =============================================================================
 from botragram.constants.telegram import DEFAULT_PARSE_MODE
+from botragram.enums.exchange_type import ExchangeType
 from botragram.telegram.context import BotContext
-from botragram.telegram.keyboards import get_main_menu_keyboard
+from botragram.telegram.keyboards import get_exchange_keyboard, get_main_menu_keyboard
 from botragram.telegram.messages import (
+    get_exchange_message,
+    get_exchange_switched_message,
     get_positions_message,
     get_settings_message,
     get_status_message,
@@ -77,6 +80,9 @@ async def handle_callback_query(
     data = query.data or ""
     ctx = _get_context(context)
 
+    # ------------------------------------------------------------------
+    # Main menu navigation
+    # ------------------------------------------------------------------
     if data == "cb_status":
         msg = get_status_message(
             is_running=ctx.is_running,
@@ -84,13 +90,15 @@ async def handle_callback_query(
             symbol=ctx.symbol,
             last_price=ctx.last_price,
         )
-        kb = get_main_menu_keyboard()
-        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=kb)
+        await query.edit_message_text(
+            msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=get_main_menu_keyboard()
+        )
 
     elif data == "cb_positions":
         msg = get_positions_message(ctx.positions)
-        kb = get_main_menu_keyboard()
-        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=kb)
+        await query.edit_message_text(
+            msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=get_main_menu_keyboard()
+        )
 
     elif data == "cb_settings":
         msg = get_settings_message(
@@ -98,20 +106,85 @@ async def handle_callback_query(
             strategy_name=ctx.strategy_name,
             trade_mode=ctx.trade_mode,
         )
-        kb = get_main_menu_keyboard()
-        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=kb)
+        await query.edit_message_text(
+            msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=get_main_menu_keyboard()
+        )
 
     elif data == "cb_stop":
-        context.bot_data[BOT_CONTEXT_KEY] = BotContext(
-            is_running=False,
-            trade_mode=ctx.trade_mode,
-            symbol=ctx.symbol,
-            strategy_name=ctx.strategy_name,
-            exchange_type=ctx.exchange_type,
-            last_price=ctx.last_price,
-            positions=ctx.positions,
-        )
+        if ctx.application:
+            await ctx.application.engine.stop()
         await query.edit_message_text(
             "🛑 <b>Trading Bot has been paused.</b>",
             parse_mode=DEFAULT_PARSE_MODE,
         )
+
+    elif data == "cb_back_main":
+        msg = get_status_message(
+            is_running=ctx.is_running,
+            trade_mode=ctx.trade_mode,
+            symbol=ctx.symbol,
+            last_price=ctx.last_price,
+        )
+        await query.edit_message_text(
+            msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=get_main_menu_keyboard()
+        )
+
+    # ------------------------------------------------------------------
+    # Exchange selection menu
+    # ------------------------------------------------------------------
+    elif data == "cb_exchange":
+        msg = get_exchange_message(ctx.exchange_type)
+        await query.edit_message_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_exchange_keyboard(ctx.exchange_type),
+        )
+
+    elif data in (
+        "cb_exchange_bybit",
+        "cb_exchange_binance",
+        "cb_exchange_okx",
+        "cb_exchange_bitget",
+    ):
+        exchange_map: dict[str, ExchangeType] = {
+            "cb_exchange_bybit": ExchangeType.BYBIT,
+            "cb_exchange_binance": ExchangeType.BINANCE,
+            "cb_exchange_okx": ExchangeType.OKX,
+            "cb_exchange_bitget": ExchangeType.BITGET,
+        }
+        new_exchange = exchange_map[data]
+        new_exchange_name = new_exchange.value.upper()
+
+        if ctx.application:
+            try:
+                await ctx.application.switch_exchange(new_exchange)
+                # Update context exchange name
+                context.bot_data[BOT_CONTEXT_KEY] = BotContext(
+                    is_running=ctx.is_running,
+                    trade_mode=ctx.trade_mode,
+                    symbol=ctx.symbol,
+                    strategy_name=ctx.strategy_name,
+                    exchange_type=new_exchange_name,
+                    last_price=ctx.last_price,
+                    positions=ctx.positions,
+                    application=ctx.application,
+                )
+                msg = get_exchange_switched_message(new_exchange_name)
+                await query.edit_message_text(
+                    msg,
+                    parse_mode=DEFAULT_PARSE_MODE,
+                    reply_markup=get_exchange_keyboard(new_exchange_name),
+                )
+            except Exception as e:
+                logger.exception(f"Exchange switch failed: {e}")
+                await query.edit_message_text(
+                    f"❌ <b>Gagal ganti exchange:</b> {e}",
+                    parse_mode=DEFAULT_PARSE_MODE,
+                    reply_markup=get_exchange_keyboard(ctx.exchange_type),
+                )
+        else:
+            await query.edit_message_text(
+                f"⚠️ <b>Tidak dapat ganti exchange</b> — application tidak tersedia.",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=get_main_menu_keyboard(),
+            )

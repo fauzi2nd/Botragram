@@ -29,8 +29,9 @@ from telegram.ext import ContextTypes
 # =============================================================================
 from botragram.constants.telegram import DEFAULT_PARSE_MODE
 from botragram.telegram.context import BotContext
-from botragram.telegram.keyboards import get_main_menu_keyboard
+from botragram.telegram.keyboards import get_exchange_keyboard, get_main_menu_keyboard
 from botragram.telegram.messages import (
+    get_exchange_message,
     get_positions_message,
     get_settings_message,
     get_status_message,
@@ -134,3 +135,22 @@ async def settings_command(
             trade_mode=ctx.trade_mode,
         )
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+
+
+async def exchange_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /exchange command — show exchange selection keyboard.
+
+    Args:
+        update: Telegram update object.
+        context: Callback context object.
+    """
+    if update.message:
+        ctx = _get_context(context)
+        msg = get_exchange_message(ctx.exchange_type)
+        kb = get_exchange_keyboard(ctx.exchange_type)
+        await update.message.reply_text(
+            msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=kb
+        )

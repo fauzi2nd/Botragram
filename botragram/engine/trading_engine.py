@@ -127,6 +127,18 @@ class TradingEngine:
         """
         return self._last_price
 
+    @property
+    def exchange_type(self) -> str:
+        """Return active exchange client class name.
+
+        Returns:
+            Exchange type name string.
+        """
+        name = type(self._exchange).__name__
+        # BybitClient -> BYBIT, BinanceClient -> BINANCE
+        return name.replace("Client", "").upper()
+
+
     async def start(self) -> None:
         """Start trading engine lifecycle."""
         self._is_running = True
@@ -140,6 +152,16 @@ class TradingEngine:
         self._is_running = False
         await self._exchange.close()
         logger.info("TradingEngine stopped")
+
+    def set_exchange_client(self, client: BaseExchangeClient) -> None:
+        """Replace active exchange client for hot-swap.
+
+        Args:
+            client: New BaseExchangeClient instance.
+        """
+        self._exchange = client
+        self._order_engine = OrderEngine(exchange_client=self._exchange)
+        logger.info(f"Exchange client replaced: {type(client).__name__}")
 
     async def process_tick(self) -> None:
         """Process a single market tick/cycle evaluation."""

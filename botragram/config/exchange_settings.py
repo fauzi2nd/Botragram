@@ -38,6 +38,7 @@ class ExchangeSettings:
     exchange_type: ExchangeType = ExchangeType.BYBIT
     api_key: str = ""
     api_secret: str = ""
+    passphrase: str = ""
     testnet: bool = True
     timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
     max_retries: int = DEFAULT_MAX_RETRIES

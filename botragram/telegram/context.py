@@ -18,11 +18,15 @@ from __future__ import annotations
 # =============================================================================
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.exchanges.base.mapper import PositionInfo
+
+if TYPE_CHECKING:
+    from botragram.app.application import Application
 
 
 # =============================================================================
@@ -38,4 +42,7 @@ class BotContext:
     strategy_name: str = "EMA_CROSS"
     exchange_type: str = "BYBIT"
     last_price: Decimal = field(default_factory=lambda: Decimal("0"))
-    positions: list[PositionInfo] = field(default_factory=lambda: list[PositionInfo]())
+    positions: list[PositionInfo] = field(
+        default_factory=lambda: list[PositionInfo]()
+    )
+    application: "Application | None" = field(default=None, repr=False)

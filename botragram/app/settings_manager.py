@@ -23,6 +23,7 @@ from botragram.config.market_settings import MarketSettings
 from botragram.config.risk_settings import RiskSettings
 from botragram.config.strategy_settings import StrategySettings
 from botragram.config.telegram_settings import TelegramSettings
+from botragram.enums.exchange_type import ExchangeType
 from botragram.enums.trade_mode import TradeMode
 
 
@@ -55,15 +56,55 @@ class SettingsManager:
         )
         return AppSettings(trade_mode=trade_mode)
 
-    def load_exchange_settings(self) -> ExchangeSettings:
-        """Load and return populated ExchangeSettings.
+    def load_exchange_settings(
+        self,
+        exchange_type: ExchangeType | None = None,
+    ) -> ExchangeSettings:
+        """Load and return ExchangeSettings for specified or active exchange.
+
+        Args:
+            exchange_type: Optional ExchangeType override. If None, reads EXCHANGE from env.
 
         Returns:
-            ExchangeSettings instance.
+            ExchangeSettings instance populated with correct credentials.
         """
+        env = self._env_provider
+        if exchange_type is None:
+            active = env.get_active_exchange()
+            try:
+                exchange_type = ExchangeType(active.lower())
+            except ValueError:
+                exchange_type = ExchangeType.BYBIT
+
+        if exchange_type == ExchangeType.BINANCE:
+            return ExchangeSettings(
+                exchange_type=ExchangeType.BINANCE,
+                api_key=env.get_binance_api_key(),
+                api_secret=env.get_binance_api_secret(),
+                testnet=env.get_binance_testnet(),
+            )
+        if exchange_type == ExchangeType.OKX:
+            return ExchangeSettings(
+                exchange_type=ExchangeType.OKX,
+                api_key=env.get_okx_api_key(),
+                api_secret=env.get_okx_api_secret(),
+                passphrase=env.get_okx_passphrase(),
+                testnet=env.get_okx_testnet(),
+            )
+        if exchange_type == ExchangeType.BITGET:
+            return ExchangeSettings(
+                exchange_type=ExchangeType.BITGET,
+                api_key=env.get_bitget_api_key(),
+                api_secret=env.get_bitget_api_secret(),
+                passphrase=env.get_bitget_passphrase(),
+                testnet=env.get_bitget_testnet(),
+            )
+        # Default: BYBIT
         return ExchangeSettings(
-            api_key=self._env_provider.get_api_key(),
-            api_secret=self._env_provider.get_api_secret(),
+            exchange_type=ExchangeType.BYBIT,
+            api_key=env.get_bybit_api_key(),
+            api_secret=env.get_bybit_api_secret(),
+            testnet=env.get_bybit_testnet(),
         )
 
     def load_telegram_settings(self) -> TelegramSettings:

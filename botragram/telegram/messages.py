@@ -117,3 +117,42 @@ def get_settings_message(
         f"<b>Strategy:</b> {strategy_name}\n"
         f"<b>Trade Mode:</b> {trade_mode}"
     )
+
+
+def get_exchange_message(current_exchange: str) -> str:
+    """Get exchange selection message.
+
+    Args:
+        current_exchange: Currently active exchange name.
+
+    Returns:
+        Formatted HTML string.
+    """
+    exchange_info: dict[str, str] = {
+        "BYBIT": "🟡 <b>Bybit</b> — Derivatives &amp; Spot",
+        "BINANCE": "🟠 <b>Binance</b> — World's Largest Exchange",
+        "OKX": "⚫ <b>OKX</b> — Advanced Trading Platform",
+        "BITGET": "🔵 <b>Bitget</b> — Copy Trading Exchange",
+    }
+    desc = exchange_info.get(current_exchange.upper(), current_exchange)
+    return (
+        f"🔄 <b>Exchange Selection</b>\n\n"
+        f"<b>Active:</b> {desc}\n\n"
+        "Pilih exchange yang ingin digunakan:"
+    )
+
+
+def get_exchange_switched_message(new_exchange: str) -> str:
+    """Get confirmation message after exchange switch.
+
+    Args:
+        new_exchange: Newly selected exchange name.
+
+    Returns:
+        Formatted HTML string.
+    """
+    return (
+        f"✅ <b>Exchange berhasil diganti!</b>\n\n"
+        f"<b>Sekarang menggunakan:</b> {new_exchange.upper()}\n\n"
+        "Bot akan menggunakan credentials dari <code>.env</code> untuk exchange ini."
+    )

@@ -34,6 +34,7 @@ from botragram.constants.telegram import (
 )
 from botragram.telegram.callbacks import handle_callback_query
 from botragram.telegram.commands import (
+    exchange_command,
     positions_command,
     settings_command,
     start_command,
@@ -54,4 +55,5 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler(CMD_STATUS, status_command))
     app.add_handler(CommandHandler(CMD_POSITIONS, positions_command))
     app.add_handler(CommandHandler(CMD_SETTINGS, settings_command))
+    app.add_handler(CommandHandler("exchange", exchange_command))
     app.add_handler(CallbackQueryHandler(handle_callback_query))

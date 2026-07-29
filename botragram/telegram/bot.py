@@ -17,7 +17,7 @@ from __future__ import annotations
 # Standard Library
 # =============================================================================
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # =============================================================================
 # Third Party
@@ -32,6 +32,9 @@ from botragram.config.telegram_settings import TelegramSettings
 from botragram.engine.trading_engine import TradingEngine
 from botragram.telegram.context import BotContext
 from botragram.telegram.handlers import register_handlers
+
+if TYPE_CHECKING:
+    from botragram.app.application import Application
 
 logger = logging.getLogger(__name__)
 
@@ -48,15 +51,18 @@ class TelegramBot:
         self,
         settings: TelegramSettings | None = None,
         engine: TradingEngine | None = None,
+        application: "Application | None" = None,
     ) -> None:
         """Initialize TelegramBot with settings and optional engine reference.
 
         Args:
             settings: Optional TelegramSettings object.
             engine: Optional TradingEngine to read live state from.
+            application: Optional Application for exchange switching.
         """
         self._settings = settings or TelegramSettings()
         self._engine = engine
+        self._application = application
         self._app: Any = None
 
     def _build_bot_context(self) -> BotContext:
@@ -71,14 +77,15 @@ class TelegramBot:
                 trade_mode=self._engine.trade_mode,
                 symbol=self._engine.symbol,
                 strategy_name=self._engine.strategy_name,
-                exchange_type="BYBIT",
+                exchange_type=self._engine.exchange_type.upper(),
                 last_price=self._engine.last_price,
                 positions=[],
+                application=self._application,
             )
         return BotContext()
 
     async def _refresh_context(self) -> None:
-        """Refresh bot_data context from live engine state (called each tick)."""
+        """Refresh bot_data context from live engine state."""
         if self._app and self._engine:
             self._app.bot_data[BOT_CONTEXT_KEY] = self._build_bot_context()
 
@@ -103,6 +110,7 @@ class TelegramBot:
             BotCommand("status", "Lihat status bot & pasar saat ini"),
             BotCommand("positions", "Lihat posisi trading yang aktif"),
             BotCommand("settings", "Lihat pengaturan bot saat ini"),
+            BotCommand("exchange", "Pilih exchange yang digunakan"),
             BotCommand("stop", "Hentikan trading sementara"),
         ])
 
