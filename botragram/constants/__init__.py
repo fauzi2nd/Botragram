@@ -19,10 +19,16 @@ from __future__ import annotations
 from botragram.constants.app import APP_NAME, APP_VERSION, DEFAULT_ENCODING
 from botragram.constants.env import (
     ENV_BOT_TOKEN,
+    ENV_BOT_TOKEN_ALT,
+    ENV_CHAT_ID,
     ENV_EXCHANGE_API_KEY,
+    ENV_EXCHANGE_API_KEY_ALT,
     ENV_EXCHANGE_API_SECRET,
+    ENV_EXCHANGE_API_SECRET_ALT,
     ENV_LOG_LEVEL,
+    ENV_LOG_LEVEL_ALT,
     ENV_TRADE_MODE,
+    ENV_TRADE_MODE_ALT,
 )
 from botragram.constants.exchange import (
     DEFAULT_CANDLE_FETCH_LIMIT,
@@ -74,10 +80,16 @@ __all__ = [
     "DEFAULT_WS_RECONNECT_DELAY_SECONDS",
     "DISPLAY_DATETIME_FORMAT",
     "ENV_BOT_TOKEN",
+    "ENV_BOT_TOKEN_ALT",
+    "ENV_CHAT_ID",
     "ENV_EXCHANGE_API_KEY",
+    "ENV_EXCHANGE_API_KEY_ALT",
     "ENV_EXCHANGE_API_SECRET",
+    "ENV_EXCHANGE_API_SECRET_ALT",
     "ENV_LOG_LEVEL",
+    "ENV_LOG_LEVEL_ALT",
     "ENV_TRADE_MODE",
+    "ENV_TRADE_MODE_ALT",
     "ISO_DATETIME_FORMAT",
     "SECONDS_IN_DAY",
     "SECONDS_IN_HOUR",
