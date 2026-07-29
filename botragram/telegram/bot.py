@@ -17,6 +17,7 @@ from __future__ import annotations
 # Standard Library
 # =============================================================================
 import logging
+from typing import Any
 
 # =============================================================================
 # Third Party
@@ -45,9 +46,10 @@ class TelegramBot:
             settings: Optional TelegramSettings object.
         """
         self._settings = settings or TelegramSettings()
+        self._app: Any = None
 
     async def start(self) -> None:
-        """Initialize and start Telegram bot if enabled."""
+        """Initialize, start Telegram bot, and begin long polling."""
         if not self._settings.enabled or not self._settings.bot_token:
             logger.info("Telegram bot is disabled or bot token is empty")
             return
@@ -56,4 +58,17 @@ class TelegramBot:
         register_handlers(app)
         await app.initialize()
         await app.start()
-        logger.info("Telegram bot initialized and started successfully")
+        if app.updater:
+            await app.updater.start_polling()
+
+        self._app = app
+        logger.info("Telegram bot initialized and long polling started successfully")
+
+    async def stop(self) -> None:
+        """Stop Telegram bot polling and shutdown application."""
+        if self._app:
+            if self._app.updater and self._app.updater.is_running:
+                await self._app.updater.stop()
+            await self._app.stop()
+            await self._app.shutdown()
+            logger.info("Telegram bot stopped gracefully")

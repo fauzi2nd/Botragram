@@ -97,4 +97,5 @@ class Application:
         except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("Shutdown signal received")
         finally:
+            await self._telegram_bot.stop()
             await self._engine.stop()
