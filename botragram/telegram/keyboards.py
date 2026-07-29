@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram bot inline keyboard layouts.
+    Telegram bot reply and inline keyboard layouts.
 
 Python:
     3.14+
@@ -16,32 +16,56 @@ from __future__ import annotations
 # =============================================================================
 # Third Party
 # =============================================================================
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+)
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from botragram.constants.telegram import (
+    MENU_BALANCE,
+    MENU_EXCHANGE,
+    MENU_HISTORY,
+    MENU_MARKET,
+    MENU_ORDERS,
+    MENU_POSITIONS,
+    MENU_SETTINGS,
+    MENU_START,
+    MENU_STOP,
+    MENU_STREAM,
+    MENU_STATUS,
+    MENU_STRATEGY,
+    MENU_PAUSE,
+    MENU_TEST,
+)
 
 
 # =============================================================================
 # Keyboard Helpers
 # =============================================================================
-def get_main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Get main menu inline markup keyboard.
+def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Get the persistent main menu shown below Telegram's input field.
 
     Returns:
-        InlineKeyboardMarkup instance.
+        ReplyKeyboardMarkup instance.
     """
     keyboard = [
-        [
-            InlineKeyboardButton("📊 Status", callback_data="cb_status"),
-            InlineKeyboardButton("💼 Positions", callback_data="cb_positions"),
-        ],
-        [
-            InlineKeyboardButton("⚙️ Settings", callback_data="cb_settings"),
-            InlineKeyboardButton("🔄 Exchange", callback_data="cb_exchange"),
-        ],
-        [
-            InlineKeyboardButton("🛑 Stop Bot", callback_data="cb_stop"),
-        ],
+        [MENU_STATUS, MENU_POSITIONS],
+        [MENU_MARKET, MENU_ORDERS],
+        [MENU_BALANCE, MENU_HISTORY],
+        [MENU_SETTINGS, MENU_EXCHANGE],
+        [MENU_STRATEGY, MENU_STREAM],
+        [MENU_START, MENU_PAUSE],
+        [MENU_TEST, MENU_STOP],
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return ReplyKeyboardMarkup(
+        keyboard,
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
 
 def get_exchange_keyboard(active_exchange: str = "BYBIT") -> InlineKeyboardMarkup:

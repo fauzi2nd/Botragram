@@ -90,15 +90,11 @@ async def handle_callback_query(
             symbol=ctx.symbol,
             last_price=ctx.last_price,
         )
-        await query.edit_message_text(
-            msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=get_main_menu_keyboard()
-        )
+        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
     elif data == "cb_positions":
         msg = get_positions_message(ctx.positions)
-        await query.edit_message_text(
-            msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=get_main_menu_keyboard()
-        )
+        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
     elif data == "cb_settings":
         msg = get_settings_message(
@@ -106,9 +102,7 @@ async def handle_callback_query(
             strategy_name=ctx.strategy_name,
             trade_mode=ctx.trade_mode,
         )
-        await query.edit_message_text(
-            msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=get_main_menu_keyboard()
-        )
+        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
     elif data == "cb_stop":
         if ctx.application:
@@ -125,9 +119,7 @@ async def handle_callback_query(
             symbol=ctx.symbol,
             last_price=ctx.last_price,
         )
-        await query.edit_message_text(
-            msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=get_main_menu_keyboard()
-        )
+        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
     # ------------------------------------------------------------------
     # Exchange selection menu
@@ -186,5 +178,4 @@ async def handle_callback_query(
             await query.edit_message_text(
                 f"⚠️ <b>Tidak dapat ganti exchange</b> — application tidak tersedia.",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_main_menu_keyboard(),
             )

@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
+import asyncio
 import logging
 from decimal import Decimal
 
@@ -81,6 +82,8 @@ class TradingEngine:
 
         self._is_running: bool = False
         self._last_price: Decimal = Decimal("0")
+        self._account_balance: Decimal = Decimal("10000.0")
+        self._process_lock: asyncio.Lock = asyncio.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -138,6 +141,21 @@ class TradingEngine:
         # BybitClient -> BYBIT, BinanceClient -> BINANCE
         return name.replace("Client", "").upper()
 
+    @property
+    def account_balance(self) -> Decimal:
+        """Return simulated account balance."""
+        return self._account_balance
+
+    @property
+    def active_orders(self) -> list:
+        """Return currently tracked active orders."""
+        return self._order_engine.get_active_orders()
+
+    @property
+    def process_lock(self) -> asyncio.Lock:
+        """Lock to serialize market processing and exchange switching."""
+        return self._process_lock
+
 
     async def start(self) -> None:
         """Start trading engine lifecycle."""
@@ -146,12 +164,14 @@ class TradingEngine:
             f"TradingEngine started: mode={self._settings.trade_mode.value}, "
             f"symbol={self._market.symbol}, strategy={self._strategy.name}"
         )
+        await asyncio.sleep(0)
 
     async def stop(self) -> None:
         """Stop trading engine and close connections."""
-        self._is_running = False
-        await self._exchange.close()
-        logger.info("TradingEngine stopped")
+        async with self._process_lock:
+            self._is_running = False
+            await self._exchange.close()
+            logger.info("TradingEngine stopped")
 
     def set_exchange_client(self, client: BaseExchangeClient) -> None:
         """Replace active exchange client for hot-swap.
@@ -165,18 +185,39 @@ class TradingEngine:
 
     async def process_tick(self) -> None:
         """Process a single market tick/cycle evaluation."""
-        if not self._is_running:
-            return
+        async with self._process_lock:
+            if not self._is_running:
+                return
 
-        ticker = await self._exchange.fetch_ticker(self._market.symbol)
-        self._last_price = ticker.last_price
-        candles = await self._exchange.fetch_candles(
-            symbol=self._market.symbol, interval=self._market.interval, limit=100
-        )
+            ticker = await self._exchange.fetch_ticker(self._market.symbol)
+            self._last_price = ticker.last_price
+            candles = await self._exchange.fetch_candles(
+                symbol=self._market.symbol, interval=self._market.interval, limit=100
+            )
 
-        signal = self._signal_engine.evaluate(candles)
-        if signal == SignalType.NEUTRAL:
-            return
+            signal = self._signal_engine.evaluate(candles)
+            if signal == SignalType.NEUTRAL:
+                return
+
+            # Check existing position state
+            has_pos = self._position_engine.has_active_position(self._market.symbol)
+
+            if signal in (SignalType.BUY_ENTRY, SignalType.SELL_ENTRY) and not has_pos:
+                side = OrderSide.BUY if signal == SignalType.BUY_ENTRY else OrderSide.SELL
+                qty = self._risk_engine.calculate_position_size(
+                    account_balance=Decimal("10000.0"),
+                    entry_price=ticker.last_price,
+                )
+
+                if self._risk_engine.validate_order(qty, ticker.last_price):
+                    order_res = await self._order_engine.execute_order(
+                        symbol=self._market.symbol,
+                        side=side,
+                        order_type=OrderType.MARKET,
+                        quantity=qty,
+                        price=ticker.last_price,
+                    )
+                    logger.info(f"Order executed successfully: id={order_res.order_id}")
 
         # Check existing position state
         has_pos = self._position_engine.has_active_position(self._market.symbol)

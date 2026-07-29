@@ -55,6 +55,7 @@ def test_telegram_messages() -> None:
 
 
 def test_telegram_keyboards() -> None:
-    """Test Telegram inline menu keyboard."""
+    """Test Telegram persistent reply menu keyboard."""
     kb = get_main_menu_keyboard()
-    assert len(kb.inline_keyboard) == 2
+    assert len(kb.keyboard) == 3
+    assert kb.is_persistent is True

@@ -17,6 +17,7 @@ from __future__ import annotations
 # Standard Library
 # =============================================================================
 import logging
+from decimal import Decimal
 
 # =============================================================================
 # Third Party
@@ -27,14 +28,39 @@ from telegram.ext import ContextTypes
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.constants.telegram import DEFAULT_PARSE_MODE
+from botragram.constants.telegram import (
+    DEFAULT_PARSE_MODE,
+    MENU_BALANCE,
+    MENU_EXCHANGE,
+    MENU_HISTORY,
+    MENU_MARKET,
+    MENU_ORDERS,
+    MENU_PAUSE,
+    MENU_POSITIONS,
+    MENU_SETTINGS,
+    MENU_START,
+    MENU_STATUS,
+    MENU_STREAM,
+    MENU_STRATEGY,
+    MENU_STOP,
+    MENU_TEST,
+)
 from botragram.telegram.context import BotContext
 from botragram.telegram.keyboards import get_exchange_keyboard, get_main_menu_keyboard
 from botragram.telegram.messages import (
+    get_balance_message,
     get_exchange_message,
+    get_exchange_switched_message,
+    get_history_message,
+    get_market_message,
+    get_orders_message,
     get_positions_message,
     get_settings_message,
+    get_start_message,
     get_status_message,
+    get_stream_message,
+    get_strategy_message,
+    get_test_message,
     get_welcome_message,
 )
 
@@ -153,4 +179,145 @@ async def exchange_command(
         kb = get_exchange_keyboard(ctx.exchange_type)
         await update.message.reply_text(
             msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=kb
+        )
+
+
+async def market_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message:
+        ctx = _get_context(context)
+        msg = get_market_message(ctx.symbol, ctx.last_price)
+        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+
+
+async def orders_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message:
+        ctx = _get_context(context)
+        orders = []
+        if ctx.application:
+            orders = ctx.application.engine.active_orders
+        msg = get_orders_message(orders)
+        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+
+
+async def balance_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message:
+        balance = Decimal("10000.0")
+        ctx = _get_context(context)
+        if ctx.application:
+            balance = ctx.application.engine.account_balance
+        msg = get_balance_message(balance)
+        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+
+
+async def history_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message:
+        msg = get_history_message()
+        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+
+
+async def strategy_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message:
+        ctx = _get_context(context)
+        fast_period = 9
+        slow_period = 21
+        msg = get_strategy_message(ctx.strategy_name, fast_period, slow_period)
+        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+
+
+async def stream_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message:
+        msg = get_stream_message()
+        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+
+
+async def start_bot_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message:
+        ctx = _get_context(context)
+        if ctx.application:
+            await ctx.application.engine.start()
+        msg = get_start_message(ctx.is_running)
+        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+
+
+async def pause_bot_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message:
+        ctx = _get_context(context)
+        if ctx.application:
+            await ctx.application.engine.stop()
+        msg = get_pause_message(ctx.is_running)
+        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+
+
+async def test_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message:
+        msg = get_test_message()
+        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+
+
+async def menu_message_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle a selection from the persistent Telegram reply keyboard.
+
+    Args:
+        update: Incoming Telegram update.
+        context: Telegram handler context.
+    """
+    if update.message is None:
+        return
+
+    action = update.message.text
+    if action == MENU_STATUS:
+        await status_command(update, context)
+    elif action == MENU_POSITIONS:
+        await positions_command(update, context)
+    elif action == MENU_SETTINGS:
+        await settings_command(update, context)
+    elif action == MENU_EXCHANGE:
+        await exchange_command(update, context)
+    elif action == MENU_STRATEGY:
+        await strategy_command(update, context)
+    elif action == MENU_STREAM:
+        await stream_command(update, context)
+    elif action == MENU_START:
+        await start_bot_command(update, context)
+    elif action == MENU_PAUSE:
+        await pause_bot_command(update, context)
+    elif action == MENU_TEST:
+        await test_command(update, context)
+    elif action == MENU_STOP:
+        ctx = _get_context(context)
+        if ctx.application:
+            await ctx.application.engine.stop()
+        await update.message.reply_text(
+            "❌ <b>Trading Bot has been stopped.</b>",
+            parse_mode=DEFAULT_PARSE_MODE,
         )
