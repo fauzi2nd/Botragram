@@ -22,6 +22,7 @@ from typing import Any
 # =============================================================================
 # Third Party
 # =============================================================================
+from telegram import BotCommand
 from telegram.ext import ApplicationBuilder
 
 # =============================================================================
@@ -95,6 +96,16 @@ class TelegramBot:
 
         await app.initialize()
         await app.start()
+
+        # Register only Botragram commands in Telegram menu
+        await app.bot.set_my_commands([
+            BotCommand("start", "Mulai bot & tampilkan menu utama"),
+            BotCommand("status", "Lihat status bot & pasar saat ini"),
+            BotCommand("positions", "Lihat posisi trading yang aktif"),
+            BotCommand("settings", "Lihat pengaturan bot saat ini"),
+            BotCommand("stop", "Hentikan trading sementara"),
+        ])
+
         if app.updater:
             await app.updater.start_polling()
 
@@ -108,7 +119,7 @@ class TelegramBot:
     async def stop(self) -> None:
         """Stop Telegram bot polling and shutdown application."""
         if self._app:
-            if self._app.updater and self._app.updater.is_running:
+            if self._app.updater and self._app.updater.running:
                 await self._app.updater.stop()
             await self._app.stop()
             await self._app.shutdown()
