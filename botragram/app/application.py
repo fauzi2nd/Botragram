@@ -16,18 +16,20 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
+import asyncio
 import logging
 
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.app.settings_manager import SettingsManager
+from botragram.app.startup import initialize_logging
 from botragram.config.app_settings import AppSettings
 from botragram.engine.trading_engine import TradingEngine
 from botragram.exchanges.bybit.client import BybitClient
 from botragram.telegram.bot import TelegramBot
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("botragram")
 
 
 # =============================================================================
@@ -82,8 +84,17 @@ class Application:
         return self._engine
 
     async def run(self) -> None:
-        """Run application lifecycle."""
+        """Run application lifecycle and maintain main event loop."""
+        initialize_logging()
         logger.info(f"Starting Botragram v{self._settings.version}...")
         await self._engine.start()
         await self._telegram_bot.start()
-        logger.info("Botragram application started successfully")
+        logger.info("Botragram application started successfully. Press Ctrl+C to exit.")
+
+        try:
+            while self._engine.is_running:
+                await asyncio.sleep(1)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            logger.info("Shutdown signal received")
+        finally:
+            await self._engine.stop()
