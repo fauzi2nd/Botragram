@@ -113,10 +113,19 @@ class Application:
 
         try:
             while self._engine.is_running:
-                await self._telegram_bot.sync_engine_state()
+                await self._run_iteration()
                 await asyncio.sleep(1)
         except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("Shutdown signal received")
         finally:
             await self._telegram_bot.stop()
             await self._engine.stop()
+
+    async def _run_iteration(self) -> None:
+        """Process market data and then publish the latest state to Telegram."""
+        try:
+            await self._engine.process_tick()
+        except Exception:
+            logger.exception("Market-data update failed; retaining the last price")
+
+        await self._telegram_bot.sync_engine_state()
