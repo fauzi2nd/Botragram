@@ -72,7 +72,10 @@ class Application:
             risk_settings=risk_settings,
             strategy_settings=strat_settings,
         )
-        self._telegram_bot = TelegramBot(settings=tg_settings)
+        self._telegram_bot = TelegramBot(
+            settings=tg_settings,
+            engine=self._engine,
+        )
 
     @property
     def engine(self) -> TradingEngine:
@@ -93,6 +96,7 @@ class Application:
 
         try:
             while self._engine.is_running:
+                await self._telegram_bot.sync_engine_state()
                 await asyncio.sleep(1)
         except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("Shutdown signal received")

@@ -17,7 +17,6 @@ from __future__ import annotations
 # Standard Library
 # =============================================================================
 import logging
-from decimal import Decimal
 
 # =============================================================================
 # Third Party
@@ -29,6 +28,7 @@ from telegram.ext import ContextTypes
 # Local Imports
 # =============================================================================
 from botragram.constants.telegram import DEFAULT_PARSE_MODE
+from botragram.telegram.context import BotContext
 from botragram.telegram.keyboards import get_main_menu_keyboard
 from botragram.telegram.messages import (
     get_positions_message,
@@ -38,6 +38,24 @@ from botragram.telegram.messages import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Key used to store BotContext inside telegram bot_data
+BOT_CONTEXT_KEY: str = "bot_context"
+
+
+def _get_context(context: ContextTypes.DEFAULT_TYPE) -> BotContext:
+    """Retrieve BotContext from Telegram bot_data.
+
+    Args:
+        context: Telegram callback context.
+
+    Returns:
+        BotContext instance, or a fresh default if not set.
+    """
+    ctx = context.bot_data.get(BOT_CONTEXT_KEY)
+    if isinstance(ctx, BotContext):
+        return ctx
+    return BotContext()
 
 
 # =============================================================================
@@ -72,11 +90,12 @@ async def status_command(
         context: Callback context object.
     """
     if update.message:
+        ctx = _get_context(context)
         msg = get_status_message(
-            is_running=True,
-            trade_mode="PAPER",
-            symbol="BTCUSDT",
-            last_price=Decimal("50000.0"),
+            is_running=ctx.is_running,
+            trade_mode=ctx.trade_mode,
+            symbol=ctx.symbol,
+            last_price=ctx.last_price,
         )
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
@@ -92,7 +111,8 @@ async def positions_command(
         context: Callback context object.
     """
     if update.message:
-        msg = get_positions_message([])
+        ctx = _get_context(context)
+        msg = get_positions_message(ctx.positions)
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
 
@@ -107,9 +127,10 @@ async def settings_command(
         context: Callback context object.
     """
     if update.message:
+        ctx = _get_context(context)
         msg = get_settings_message(
-            exchange_type="BYBIT",
-            strategy_name="EMA_CROSS",
-            trade_mode="PAPER",
+            exchange_type=ctx.exchange_type,
+            strategy_name=ctx.strategy_name,
+            trade_mode=ctx.trade_mode,
         )
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)

@@ -80,6 +80,7 @@ class TradingEngine:
         self._pnl_engine = PnLEngine()
 
         self._is_running: bool = False
+        self._last_price: Decimal = Decimal("0")
 
     @property
     def is_running(self) -> bool:
@@ -89,6 +90,42 @@ class TradingEngine:
             True if running, False otherwise.
         """
         return self._is_running
+
+    @property
+    def trade_mode(self) -> str:
+        """Return active trade mode string.
+
+        Returns:
+            Trade mode string e.g. PAPER or LIVE.
+        """
+        return self._settings.trade_mode.value
+
+    @property
+    def symbol(self) -> str:
+        """Return active trading symbol.
+
+        Returns:
+            Symbol string e.g. BTCUSDT.
+        """
+        return self._market.symbol
+
+    @property
+    def strategy_name(self) -> str:
+        """Return active strategy name.
+
+        Returns:
+            Strategy name string.
+        """
+        return self._strategy.name
+
+    @property
+    def last_price(self) -> Decimal:
+        """Return last fetched market price.
+
+        Returns:
+            Last price as Decimal.
+        """
+        return self._last_price
 
     async def start(self) -> None:
         """Start trading engine lifecycle."""
@@ -110,6 +147,7 @@ class TradingEngine:
             return
 
         ticker = await self._exchange.fetch_ticker(self._market.symbol)
+        self._last_price = ticker.last_price
         candles = await self._exchange.fetch_candles(
             symbol=self._market.symbol, interval=self._market.interval, limit=100
         )
