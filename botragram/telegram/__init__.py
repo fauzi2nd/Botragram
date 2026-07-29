@@ -2,14 +2,36 @@
 Botragram
 
 Description:
-    Telegram integration package.
+    Telegram package initialization.
 
 Python:
     3.14+
 """
 
+# =============================================================================
+# Future
+# =============================================================================
 from __future__ import annotations
 
-from botragram.telegram.commands import start_command
+# =============================================================================
+# Local Imports
+# =============================================================================
+from botragram.telegram.bot import TelegramBot
+from botragram.telegram.handlers import register_handlers
+from botragram.telegram.keyboards import get_main_menu_keyboard
+from botragram.telegram.messages import (
+    get_positions_message,
+    get_settings_message,
+    get_status_message,
+    get_welcome_message,
+)
 
-__all__ = ["start_command"]
+__all__ = [
+    "TelegramBot",
+    "get_main_menu_keyboard",
+    "get_positions_message",
+    "get_settings_message",
+    "get_status_message",
+    "get_welcome_message",
+    "register_handlers",
+]

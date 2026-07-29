@@ -1,0 +1,57 @@
+"""
+Botragram
+
+Description:
+    Telegram bot handler registration helper.
+
+Python:
+    3.14+
+"""
+
+# =============================================================================
+# Future
+# =============================================================================
+from __future__ import annotations
+
+# =============================================================================
+# Standard Library
+# =============================================================================
+from typing import Any
+
+# =============================================================================
+# Third Party
+# =============================================================================
+from telegram.ext import CallbackQueryHandler, CommandHandler
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from botragram.constants.telegram import (
+    CMD_POSITIONS,
+    CMD_SETTINGS,
+    CMD_START,
+    CMD_STATUS,
+)
+from botragram.telegram.callbacks import handle_callback_query
+from botragram.telegram.commands import (
+    positions_command,
+    settings_command,
+    start_command,
+    status_command,
+)
+
+
+# =============================================================================
+# Registration Function
+# =============================================================================
+def register_handlers(app: Any) -> None:
+    """Register command and callback handlers on Telegram app.
+
+    Args:
+        app: Telegram Application instance.
+    """
+    app.add_handler(CommandHandler(CMD_START, start_command))
+    app.add_handler(CommandHandler(CMD_STATUS, status_command))
+    app.add_handler(CommandHandler(CMD_POSITIONS, positions_command))
+    app.add_handler(CommandHandler(CMD_SETTINGS, settings_command))
+    app.add_handler(CallbackQueryHandler(handle_callback_query))
