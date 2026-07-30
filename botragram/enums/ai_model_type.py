@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram conversation state enumeration.
+    AI model type enumeration.
 
 Python:
     3.14+
@@ -23,19 +23,22 @@ from enum import unique
 # =============================================================================
 from enums.base import BaseEnum
 
-__all__ = ["TelegramState"]
+__all__ = ["AiModelType"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class TelegramState(BaseEnum):
-    """Supported Telegram conversation states."""
+class AiModelType(BaseEnum):
+    """Supported AI models."""
 
-    IDLE = "idle"
-    WAITING_INPUT = "waiting_input"
+    GPT_5_5 = "gpt-5.5"
+    GPT_5 = "gpt-5"
 
-    CONFIGURING = "configuring"
+    GEMINI_2_5_PRO = "gemini-2.5-pro"
+    GEMINI_2_5_FLASH = "gemini-2.5-flash"
 
-    RUNNING = "running"
+    CLAUDE_SONNET_4 = "claude-sonnet-4"
+
+    LLAMA_3_1 = "llama3.1"

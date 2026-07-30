@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Position side enumeration (LONG/SHORT/BOTH).
+    Position side enumeration.
 
 Python:
     3.14+
@@ -14,18 +14,25 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-from enum import Enum, unique
+from enum import unique
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from enums.base import BaseEnum
+
+__all__ = ["PositionSide"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class PositionSide(str, Enum):
-    """Futures position side."""
+class PositionSide(BaseEnum):
+    """Supported futures position sides."""
 
-    LONG = "LONG"
-    SHORT = "SHORT"
-    BOTH = "BOTH"
+    LONG = "long"
+    SHORT = "short"
+    BOTH = "both"

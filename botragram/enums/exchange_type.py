@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Supported crypto exchange types.
+    Supported cryptocurrency exchange types.
 
 Python:
     3.14+
@@ -14,16 +14,23 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-from enum import Enum, unique
+from enum import unique
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from enums.base import BaseEnum
+
+__all__ = ["ExchangeType"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class ExchangeType(str, Enum):
+class ExchangeType(BaseEnum):
     """Supported cryptocurrency exchange types."""
 
     BINANCE = "binance"

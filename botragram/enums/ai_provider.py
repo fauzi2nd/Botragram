@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram conversation state enumeration.
+    AI provider enumeration.
 
 Python:
     3.14+
@@ -23,19 +23,17 @@ from enum import unique
 # =============================================================================
 from enums.base import BaseEnum
 
-__all__ = ["TelegramState"]
+__all__ = ["AiProvider"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class TelegramState(BaseEnum):
-    """Supported Telegram conversation states."""
+class AiProvider(BaseEnum):
+    """Supported AI providers."""
 
-    IDLE = "idle"
-    WAITING_INPUT = "waiting_input"
-
-    CONFIGURING = "configuring"
-
-    RUNNING = "running"
+    OPENAI = "OPENAI"
+    GOOGLE = "GOOGLE"
+    ANTHROPIC = "ANTHROPIC"
+    OLLAMA = "OLLAMA"

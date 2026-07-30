@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram conversation state enumeration.
+    Position status enumeration.
 
 Python:
     3.14+
@@ -23,19 +23,16 @@ from enum import unique
 # =============================================================================
 from enums.base import BaseEnum
 
-__all__ = ["TelegramState"]
+__all__ = ["PositionStatus"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class TelegramState(BaseEnum):
-    """Supported Telegram conversation states."""
+class PositionStatus(BaseEnum):
+    """Supported position statuses."""
 
-    IDLE = "idle"
-    WAITING_INPUT = "waiting_input"
-
-    CONFIGURING = "configuring"
-
-    RUNNING = "running"
+    OPEN = "open"
+    CLOSED = "closed"
+    LIQUIDATED = "liquidated"

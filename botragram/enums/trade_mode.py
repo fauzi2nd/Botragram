@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Trading mode enumeration (PAPER/LIVE).
+    Trading mode enumeration.
 
 Python:
     3.14+
@@ -14,17 +14,24 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-from enum import Enum, unique
+from enum import unique
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from enums.base import BaseEnum
+
+__all__ = ["TradeMode"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class TradeMode(str, Enum):
-    """Trading execution mode."""
+class TradeMode(BaseEnum):
+    """Supported trading modes."""
 
-    PAPER = "PAPER"
-    LIVE = "LIVE"
+    PAPER = "paper"
+    LIVE = "live"

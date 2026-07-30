@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram conversation state enumeration.
+    Account type enumeration.
 
 Python:
     3.14+
@@ -23,19 +23,17 @@ from enum import unique
 # =============================================================================
 from enums.base import BaseEnum
 
-__all__ = ["TelegramState"]
+__all__ = ["AccountType"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class TelegramState(BaseEnum):
-    """Supported Telegram conversation states."""
+class AccountType(BaseEnum):
+    """Supported account types."""
 
-    IDLE = "idle"
-    WAITING_INPUT = "waiting_input"
-
-    CONFIGURING = "configuring"
-
-    RUNNING = "running"
+    DEFAULT = "DEFAULT"
+    UNIFIED = "UNIFIED"
+    CLASSIC = "CLASSIC"
+    FUNDING = "FUNDING"

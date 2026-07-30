@@ -14,19 +14,32 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-from enum import Enum, unique
+from enum import unique
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from enums.base import BaseEnum
+
+__all__ = ["OrderType"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class OrderType(str, Enum):
-    """Trading order type."""
+class OrderType(BaseEnum):
+    """Supported order types."""
 
-    MARKET = "MARKET"
-    LIMIT = "LIMIT"
-    STOP_LOSS = "STOP_LOSS"
-    TAKE_PROFIT = "TAKE_PROFIT"
+    MARKET = "market"
+    LIMIT = "limit"
+
+    STOP = "stop"
+    STOP_MARKET = "stop_market"
+
+    TAKE_PROFIT = "take_profit"
+    TAKE_PROFIT_MARKET = "take_profit_market"
+
+    TRAILING_STOP = "trailing_stop"

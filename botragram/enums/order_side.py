@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Order side enumeration (BUY/SELL).
+    Order side enumeration.
 
 Python:
     3.14+
@@ -14,17 +14,24 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-from enum import Enum, unique
+from enum import unique
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from enums.base import BaseEnum
+
+__all__ = ["OrderSide"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class OrderSide(str, Enum):
-    """Trading order side."""
+class OrderSide(BaseEnum):
+    """Supported order sides."""
 
     BUY = "BUY"
     SELL = "SELL"

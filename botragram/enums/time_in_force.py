@@ -14,18 +14,26 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-from enum import Enum, unique
+from enum import unique
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from enums.base import BaseEnum
+
+__all__ = ["TimeInForce"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class TimeInForce(str, Enum):
-    """Order time-in-force option."""
+class TimeInForce(BaseEnum):
+    """Supported order time-in-force policies."""
 
-    GTC = "GTC"
-    IOC = "IOC"
-    FOK = "FOK"
+    GTC = "gtc"
+    IOC = "ioc"
+    FOK = "fok"
+    GTD = "gtd"

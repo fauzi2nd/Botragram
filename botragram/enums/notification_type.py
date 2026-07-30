@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram conversation state enumeration.
+    Notification type enumeration.
 
 Python:
     3.14+
@@ -23,19 +23,24 @@ from enum import unique
 # =============================================================================
 from enums.base import BaseEnum
 
-__all__ = ["TelegramState"]
+__all__ = ["NotificationType"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class TelegramState(BaseEnum):
-    """Supported Telegram conversation states."""
+class NotificationType(BaseEnum):
+    """Supported notification types."""
 
-    IDLE = "idle"
-    WAITING_INPUT = "waiting_input"
+    SYSTEM = "system"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
 
-    CONFIGURING = "configuring"
+    SIGNAL = "signal"
+    ORDER = "order"
+    POSITION = "position"
+    TRADE = "trade"
 
-    RUNNING = "running"
+    RISK = "risk"

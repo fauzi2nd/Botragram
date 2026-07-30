@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram conversation state enumeration.
+    Market trend type enumeration.
 
 Python:
     3.14+
@@ -23,19 +23,16 @@ from enum import unique
 # =============================================================================
 from enums.base import BaseEnum
 
-__all__ = ["TelegramState"]
+__all__ = ["TrendType"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class TelegramState(BaseEnum):
-    """Supported Telegram conversation states."""
+class TrendType(BaseEnum):
+    """Supported market trend types."""
 
-    IDLE = "idle"
-    WAITING_INPUT = "waiting_input"
-
-    CONFIGURING = "configuring"
-
-    RUNNING = "running"
+    BULLISH = "bullish"
+    BEARISH = "bearish"
+    SIDEWAYS = "sideways"

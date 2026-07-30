@@ -14,21 +14,29 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-from enum import Enum, unique
+from enum import unique
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from enums.base import BaseEnum
+
+__all__ = ["OrderStatus"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class OrderStatus(str, Enum):
-    """Execution status of an order."""
+class OrderStatus(BaseEnum):
+    """Supported order statuses."""
 
-    NEW = "NEW"
-    FILLED = "FILLED"
-    PARTIALLY_FILLED = "PARTIALLY_FILLED"
-    CANCELLED = "CANCELLED"
-    REJECTED = "REJECTED"
-    EXPIRED = "EXPIRED"
+    NEW = "new"
+    PARTIALLY_FILLED = "partially_filled"
+    FILLED = "filled"
+
+    CANCELED = "canceled"
+    REJECTED = "rejected"
+    EXPIRED = "expired"

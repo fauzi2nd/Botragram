@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram conversation state enumeration.
+    Supported technical indicator types.
 
 Python:
     3.14+
@@ -23,19 +23,42 @@ from enum import unique
 # =============================================================================
 from enums.base import BaseEnum
 
-__all__ = ["TelegramState"]
+__all__ = ["IndicatorType"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class TelegramState(BaseEnum):
-    """Supported Telegram conversation states."""
+class IndicatorType(BaseEnum):
+    """Supported technical indicator types."""
 
-    IDLE = "idle"
-    WAITING_INPUT = "waiting_input"
+    # Trend
+    EMA = "ema"
+    SMA = "sma"
+    WMA = "wma"
+    HMA = "hma"
 
-    CONFIGURING = "configuring"
+    # Momentum
+    RSI = "rsi"
+    MACD = "macd"
+    STOCH = "stoch"
+    CCI = "cci"
 
-    RUNNING = "running"
+    # Volatility
+    ATR = "atr"
+    BBANDS = "bbands"
+
+    # Trend Strength
+    ADX = "adx"
+
+    # Volume
+    OBV = "obv"
+    VWAP = "vwap"
+
+    # Hybrid
+    SUPERTREND = "supertrend"
+    ICHIMOKU = "ichimoku"
+
+    # Custom
+    CUSTOM = "custom"

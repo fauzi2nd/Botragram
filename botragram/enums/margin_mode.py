@@ -14,17 +14,24 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-from enum import Enum, unique
+from enum import unique
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from enums.base import BaseEnum
+
+__all__ = ["MarginMode"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class MarginMode(str, Enum):
-    """Futures margin mode."""
+class MarginMode(BaseEnum):
+    """Supported futures margin modes."""
 
-    ISOLATED = "ISOLATED"
-    CROSS = "CROSS"
+    CROSS = "cross"
+    ISOLATED = "isolated"

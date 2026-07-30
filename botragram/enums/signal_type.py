@@ -14,20 +14,29 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-from enum import Enum, unique
+from enum import unique
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from enums.base import BaseEnum
+
+__all__ = ["SignalType"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class SignalType(str, Enum):
-    """Trading strategy signal type."""
+class SignalType(BaseEnum):
+    """Supported strategy signal types."""
 
-    BUY_ENTRY = "BUY_ENTRY"
-    SELL_ENTRY = "SELL_ENTRY"
-    EXIT_LONG = "EXIT_LONG"
-    EXIT_SHORT = "EXIT_SHORT"
-    NEUTRAL = "NEUTRAL"
+    BUY = "buy"
+    SELL = "sell"
+
+    CLOSE_LONG = "close_long"
+    CLOSE_SHORT = "close_short"
+
+    HOLD = "hold"

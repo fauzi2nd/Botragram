@@ -561,15 +561,19 @@ Proyek bot trading Multi-CEX (Binance, Bybit, Bitget, OKX) dengan integrasi Tele
     │   ├── app.py
     │   ├── env.py
     │   ├── exchange.py
-    │   ├── market.py
-    │   ├── telegram.py
     │   ├── indicator.py
-    │   ├── strategy.py
+    │   ├── market.py
+    │   ├── order.py
+    │   ├── position.py
     │   ├── risk.py
+    │   ├── status.py
+    │   ├── strategy.py
+    │   ├── telegram.py
     │   └── time.py
     │
     ├── enums/
     │   ├── __init__.py
+    │   ├── base.py
     │   ├── exchange_type.py
     │   ├── interval.py
     │   ├── order_side.py

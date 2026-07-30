@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram conversation state enumeration.
+    Log level enumeration.
 
 Python:
     3.14+
@@ -23,19 +23,18 @@ from enum import unique
 # =============================================================================
 from enums.base import BaseEnum
 
-__all__ = ["TelegramState"]
+__all__ = ["LogLevel"]
 
 
 # =============================================================================
 # Enums
 # =============================================================================
 @unique
-class TelegramState(BaseEnum):
-    """Supported Telegram conversation states."""
+class LogLevel(BaseEnum):
+    """Supported log levels."""
 
-    IDLE = "idle"
-    WAITING_INPUT = "waiting_input"
-
-    CONFIGURING = "configuring"
-
-    RUNNING = "running"
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
