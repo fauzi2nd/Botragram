@@ -534,203 +534,202 @@ Tidak melakukan refactor saat fitur masih dalam proses.
 
 Proyek bot trading Multi-CEX (Binance, Bybit, Bitget, OKX) dengan integrasi Telegram dan standar arsitektur modular yang ketat.
 
-```text```
-botragram/
-├── app/
-│   ├── __init__.py
-│   ├── application.py
-│   ├── startup.py
-│   ├── shutdown.py
-│   ├── lifecycle.py
-│   ├── dependency_provider.py
-│   ├── environment_provider.py
-│   └── settings_manager.py
-│
-├── config/
-│   ├── __init__.py
-│   ├── app_settings.py
-│   ├── exchange_settings.py
-│   ├── telegram_settings.py
-│   ├── market_settings.py
-│   ├── strategy_settings.py
-│   ├── risk_settings.py
-│   ├── ai_settings.py
-│   └── logging_settings.py
-│
-├── constants/
-│   ├── __init__.py
-│   ├── app.py
-│   ├── env.py
-│   ├── exchange.py
-│   ├── market.py
-│   ├── telegram.py
-│   ├── indicator.py
-│   ├── strategy.py
-│   ├── risk.py
-│   └── time.py
-│
-├── enums/
-│   ├── __init__.py
-│   ├── exchange_type.py
-│   ├── interval.py
-│   ├── order_side.py
-│   ├── order_type.py
-│   ├── order_status.py
-│   ├── position_side.py
-│   ├── margin_mode.py
-│   ├── trade_mode.py
-│   ├── signal_type.py
-│   ├── strategy_type.py
-│   ├── telegram_state.py
-│   ├── ai_model_type.py
-│   └── notification_type.py
-│
-├── core/
-│   ├── __init__.py
-│   ├── events/
-│   ├── scheduler/
-│   ├── dependency_injection.py
-│   ├── event_bus.py
-│   ├── clock.py
-│   └── state_machine.py
-│
-├── models/
-│   ├── __init__.py
-│   ├── candle.py
-│   ├── ticker.py
-│   ├── order.py
-│   ├── position.py
-│   ├── balance.py
-│   ├── trade.py
-│   ├── signal.py
-│   ├── account.py
-│   └── notification.py
-│
-├── repositories/
-│   ├── __init__.py
-│   ├── trade_repository.py
-│   ├── order_repository.py
-│   ├── position_repository.py
-│   ├── candle_repository.py
-│   └── signal_repository.py
-│
-├── storage/
-│   ├── __init__.py
-│   ├── file/
-│   ├── sqlite/
-│   ├── cache/
-│   └── memory/
-│
-├── services/
-│   ├── __init__.py
-│   ├── account_service.py
-│   ├── market_service.py
-│   ├── notification_service.py
-│   ├── strategy_service.py
-│   ├── exchange_service.py
-│   └── telegram_service.py
-│
-├── exchanges/
-│   ├── __init__.py
-│   ├── base/
-│   ├── binance/
-│   ├── bybit/
-│   ├── bitget/
-│   ├── okx/
-│   └── factory.py
-│
-├── indicators/
-│   ├── __init__.py
-│   ├── trend/
-│   ├── momentum/
-│   ├── volatility/
-│   ├── volume/
-│   └── overlap/
-│
-├── strategies/
-│   ├── __init__.py
-│   ├── base/
-│   ├── trend/
-│   ├── breakout/
-│   ├── scalping/
-│   ├── swing/
-│   ├── ai/
-│   └── factory.py
-│
-├── ai/
-│   ├── __init__.py
-│   ├── datasets/
-│   ├── features/
-│   ├── preprocessing/
-│   ├── labels/
-│   ├── trainers/
-│   ├── predictors/
-│   ├── models/
-│   ├── evaluation/
-│   - optimization/
-│   └── backtesting/
-│
-├── engine/
-│   ├── __init__.py
-│   ├── trading_engine.py
-│   ├── signal_engine.py
-│   ├── order_engine.py
-│   ├── position_engine.py
-│   ├── risk_engine.py
-│   ├── pnl_engine.py
-│   └── portfolio_engine.py
-│
-├── telegram/
-│   ├── __init__.py
-│   ├── bot.py
-│   ├── commands/
-│   ├── callbacks/
-│   ├── handlers/
-│   ├── middlewares/
-│   ├── keyboards/
-│   ├── conversations/
-│   └── messages/
-│
-├── tasks/
-│   ├── __init__.py
-│   ├── market_scan.py
-│   ├── sync_balance.py
-│   ├── clean_cache.py
-│   └── health_check.py
-│
-├── utils/
-│   ├── __init__.py
-│   ├── datetime.py
-│   ├── decimal.py
-│   ├── formatter.py
-│   ├── validator.py
-│   ├── retry.py
-│   ├── logger.py
-│   ├── json.py
-│   └── crypto.py
-│
-├── exceptions/
-│   ├── __init__.py
-│   ├── exchange.py
-│   ├── strategy.py
-│   ├── telegram.py
-│   ├── validation.py
-│   └── storage.py
-│
-├── docs/
-│   ├── architecture.md
-│   ├── api.md
-│   ├── exchanges.md
-│   ├── strategy.md
-│   ├── ai.md
-│   └── deployment.md
-│
-├── scripts/
-├── tests/
-├── logs/
-├── .github/
-├── main.py
-├── pyproject.toml
-├── requirements.txt
-├── README.md
-└── DEVELOPMENT_GUIDE.md
+    botragram/
+    ├── app/
+    │   ├── __init__.py
+    │   ├── application.py
+    │   ├── startup.py
+    │   ├── shutdown.py
+    │   ├── lifecycle.py
+    │   ├── dependency_provider.py
+    │   ├── environment_provider.py
+    │   └── settings_manager.py
+    │
+    ├── config/
+    │   ├── __init__.py
+    │   ├── app_settings.py
+    │   ├── exchange_settings.py
+    │   ├── telegram_settings.py
+    │   ├── market_settings.py
+    │   ├── strategy_settings.py
+    │   ├── risk_settings.py
+    │   ├── ai_settings.py
+    │   └── logging_settings.py
+    │
+    ├── constants/
+    │   ├── __init__.py
+    │   ├── app.py
+    │   ├── env.py
+    │   ├── exchange.py
+    │   ├── market.py
+    │   ├── telegram.py
+    │   ├── indicator.py
+    │   ├── strategy.py
+    │   ├── risk.py
+    │   └── time.py
+    │
+    ├── enums/
+    │   ├── __init__.py
+    │   ├── exchange_type.py
+    │   ├── interval.py
+    │   ├── order_side.py
+    │   ├── order_type.py
+    │   ├── order_status.py
+    │   ├── position_side.py
+    │   ├── margin_mode.py
+    │   ├── trade_mode.py
+    │   ├── signal_type.py
+    │   ├── strategy_type.py
+    │   ├── telegram_state.py
+    │   ├── ai_model_type.py
+    │   └── notification_type.py
+    │
+    ├── core/
+    │   ├── __init__.py
+    │   ├── events/
+    │   ├── scheduler/
+    │   ├── dependency_injection.py
+    │   ├── event_bus.py
+    │   ├── clock.py
+    │   └── state_machine.py
+    │
+    ├── models/
+    │   ├── __init__.py
+    │   ├── candle.py
+    │   ├── ticker.py
+    │   ├── order.py
+    │   ├── position.py
+    │   ├── balance.py
+    │   ├── trade.py
+    │   ├── signal.py
+    │   ├── account.py
+    │   └── notification.py
+    │
+    ├── repositories/
+    │   ├── __init__.py
+    │   ├── trade_repository.py
+    │   ├── order_repository.py
+    │   ├── position_repository.py
+    │   ├── candle_repository.py
+    │   └── signal_repository.py
+    │
+    ├── storage/
+    │   ├── __init__.py
+    │   ├── file/
+    │   ├── sqlite/
+    │   ├── cache/
+    │   └── memory/
+    │
+    ├── services/
+    │   ├── __init__.py
+    │   ├── account_service.py
+    │   ├── market_service.py
+    │   ├── notification_service.py
+    │   ├── strategy_service.py
+    │   ├── exchange_service.py
+    │   └── telegram_service.py
+    │
+    ├── exchanges/
+    │   ├── __init__.py
+    │   ├── base/
+    │   ├── binance/
+    │   ├── bybit/
+    │   ├── bitget/
+    │   ├── okx/
+    │   └── factory.py
+    │
+    ├── indicators/
+    │   ├── __init__.py
+    │   ├── trend/
+    │   ├── momentum/
+    │   ├── volatility/
+    │   ├── volume/
+    │   └── overlap/
+    │
+    ├── strategies/
+    │   ├── __init__.py
+    │   ├── base/
+    │   ├── trend/
+    │   ├── breakout/
+    │   ├── scalping/
+    │   ├── swing/
+    │   ├── ai/
+    │   └── factory.py
+    │
+    ├── ai/
+    │   ├── __init__.py
+    │   ├── datasets/
+    │   ├── features/
+    │   ├── preprocessing/
+    │   ├── labels/
+    │   ├── trainers/
+    │   ├── predictors/
+    │   ├── models/
+    │   ├── evaluation/
+    │   - optimization/
+    │   └── backtesting/
+    │
+    ├── engine/
+    │   ├── __init__.py
+    │   ├── trading_engine.py
+    │   ├── signal_engine.py
+    │   ├── order_engine.py
+    │   ├── position_engine.py
+    │   ├── risk_engine.py
+    │   ├── pnl_engine.py
+    │   └── portfolio_engine.py
+    │
+    ├── telegram/
+    │   ├── __init__.py
+    │   ├── bot.py
+    │   ├── commands/
+    │   ├── callbacks/
+    │   ├── handlers/
+    │   ├── middlewares/
+    │   ├── keyboards/
+    │   ├── conversations/
+    │   └── messages/
+    │
+    ├── tasks/
+    │   ├── __init__.py
+    │   ├── market_scan.py
+    │   ├── sync_balance.py
+    │   ├── clean_cache.py
+    │   └── health_check.py
+    │
+    ├── utils/
+    │   ├── __init__.py
+    │   ├── datetime.py
+    │   ├── decimal.py
+    │   ├── formatter.py
+    │   ├── validator.py
+    │   ├── retry.py
+    │   ├── logger.py
+    │   ├── json.py
+    │   └── crypto.py
+    │
+    ├── exceptions/
+    │   ├── __init__.py
+    │   ├── exchange.py
+    │   ├── strategy.py
+    │   ├── telegram.py
+    │   ├── validation.py
+    │   └── storage.py
+    │
+    ├── docs/
+    │   ├── architecture.md
+    │   ├── api.md
+    │   ├── exchanges.md
+    │   ├── strategy.md
+    │   ├── ai.md
+    │   └── deployment.md
+    │
+    ├── scripts/
+    ├── tests/
+    ├── logs/
+    ├── .github/
+    ├── main.py
+    ├── pyproject.toml
+    ├── requirements.txt
+    ├── README.md
+    └── DEVELOPMENT_GUIDE.md
