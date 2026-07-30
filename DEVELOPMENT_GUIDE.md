@@ -558,6 +558,7 @@ Proyek bot trading Multi-CEX (Binance, Bybit, Bitget, OKX) dengan integrasi Tele
     │
     ├── constants/
     │   ├── __init__.py
+    │   ├── ai.py
     │   ├── app.py
     │   ├── env.py
     │   ├── exchange.py
@@ -573,20 +574,29 @@ Proyek bot trading Multi-CEX (Binance, Bybit, Bitget, OKX) dengan integrasi Tele
     │
     ├── enums/
     │   ├── __init__.py
+    │   ├── account_type.py
+    │   ├── ai_model_type.py
+    │   ├── ai_provider.py
     │   ├── base.py
     │   ├── exchange_type.py
+    │   ├── indicator_type.py
     │   ├── interval.py
-    │   ├── order_side.py
-    │   ├── order_type.py
-    │   ├── order_status.py
-    │   ├── position_side.py
+    │   ├── leverage_mode.py
+    │   ├── log_level.py
     │   ├── margin_mode.py
-    │   ├── trade_mode.py
+    │   ├── market_type.py
+    │   ├── notification_type.py
+    │   ├── order_side.py
+    │   ├── order_status.py
+    │   ├── order_type.py
+    │   ├── position_side.py
+    │   ├── position_status.py
     │   ├── signal_type.py
     │   ├── strategy_type.py
     │   ├── telegram_state.py
-    │   ├── ai_model_type.py
-    │   └── notification_type.py
+    │   ├── time_in_force.py
+    │   ├── trade_mode.py
+    │   └── trend_type.py
     │
     ├── core/
     │   ├── __init__.py
@@ -670,7 +680,7 @@ Proyek bot trading Multi-CEX (Binance, Bybit, Bitget, OKX) dengan integrasi Tele
     │   ├── predictors/
     │   ├── models/
     │   ├── evaluation/
-    │   - optimization/
+    │   ├── optimization/
     │   └── backtesting/
     │
     ├── engine/

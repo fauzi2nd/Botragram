@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Order default constants.
+    AI related constants.
 
 Python:
     3.14+
@@ -14,25 +14,27 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Local Imports
 # =============================================================================
-from decimal import Decimal
+from botragram.enums import AiModelType, AiProvider
 
 __all__ = [
-    "DEFAULT_ORDER_QUANTITY",
-    "DEFAULT_SLIPPAGE_TOLERANCE",
-    "DEFAULT_CLIENT_ORDER_ID_PREFIX",
+    "DEFAULT_AI_PROVIDER",
+    "DEFAULT_AI_MODEL",
+    "DEFAULT_AI_TEMPERATURE",
+    "DEFAULT_AI_MAX_TOKENS",
+    "DEFAULT_AI_TIMEOUT",
 ]
 
 # =============================================================================
-# Order
+# AI
 # =============================================================================
+DEFAULT_AI_PROVIDER: AiProvider = AiProvider.OPENAI
 
-# Default quantity used for examples, testing, or paper trading.
-DEFAULT_ORDER_QUANTITY: Decimal = Decimal("1")
+DEFAULT_AI_MODEL: AiModelType = AiModelType.GPT_5_5
 
-# Maximum acceptable slippage before rejecting execution (0.5%).
-DEFAULT_SLIPPAGE_TOLERANCE: Decimal = Decimal("0.005")
+DEFAULT_AI_TEMPERATURE: float = 0.2
 
-# Prefix for generated client order IDs.
-DEFAULT_CLIENT_ORDER_ID_PREFIX: str = "BOTRAGRAM"
+DEFAULT_AI_MAX_TOKENS: int = 2_048
+
+DEFAULT_AI_TIMEOUT: int = 30
