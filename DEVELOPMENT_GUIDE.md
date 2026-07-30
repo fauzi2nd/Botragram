@@ -1,6 +1,6 @@
 # Botragram Coding Style
 
-1.General
+## 1. General
 
 - Python 3.14+
 - UTF-8 Encoding.
@@ -17,7 +17,7 @@
 
 ---
 
-2.Project Rules
+## 2. Project Rules
 
 - Make it work.
 - Test it.
@@ -28,7 +28,163 @@ Jangan melakukan refactor sebelum fitur selesai dan berjalan.
 
 ---
 
-3.Naming Convention
+## 3. Design Principles
+
+- SOLID
+- DRY (Don't Repeat Yourself)
+- KISS (Keep It Simple)
+- YAGNI (You Aren't Gonna Need It)
+- Composition over Inheritance
+- Single Responsibility Principle
+
+---
+
+## 4. Architecture Rules
+
+Dependency Direction:
+
+main
+↓
+Application
+↓
+Engine
+↓
+Strategy
+↓
+Exchange
+↓
+Utils
+
+Tidak boleh terjadi circular import.
+
+Module level dependency harus satu arah.
+
+---
+
+## 5. Async Rules
+
+Gunakan:
+
+- asyncio
+- TaskGroup
+- asyncio.timeout()
+
+Tidak boleh:
+
+- time.sleep()
+- requests
+- blocking I/O
+
+Gunakan:
+
+- await
+- async with
+- async for
+
+---
+
+## 6. Error Handling
+
+Semua exception harus:
+
+- memiliki pesan jelas
+- menggunakan exception spesifik
+- dicatat melalui logger
+
+Tidak boleh:
+
+except Exception:
+    pass
+
+---
+
+## 7. Testing Standard
+
+Minimal:
+
+- Unit Test
+- Integration Test
+
+Target:
+
+Coverage ≥ 90%
+
+Semua bug yang diperbaiki harus memiliki test baru.
+
+---
+
+## 8. Git Rules
+
+Branch
+
+feature/*
+bugfix/*
+hotfix/*
+release/*
+
+Commit
+
+Gunakan Conventional Commits
+
+feat:
+fix:
+refactor:
+test:
+docs:
+style:
+perf:
+build:
+ci:
+chore:
+
+---
+
+## 9. Security
+
+Tidak boleh commit:
+
+- .env
+- API Key
+- Secret
+- Token
+- Private Key
+
+Semua credential berasal dari Environment Variable.
+
+---
+
+## 10. Performance
+
+Hindari:
+
+- nested loop yang tidak perlu
+- object allocation berlebihan
+- blocking operation
+
+Gunakan:
+
+- cache bila diperlukan
+- lazy loading
+- generator
+
+---
+
+## 11. Code Review Checklist
+
+Sebelum merge:
+
+✓ Test lulus
+✓ Pylance Strict = 0 Error
+✓ Formatter bersih
+✓ Import benar
+✓ Tidak ada dead code
+✓ Tidak ada TODO yang terlupakan
+✓ Tidak ada credential
+✓ Docstring lengkap
+
+---
+
+## 12. Naming Convention
 
 Package
 
@@ -68,7 +224,7 @@ _snake_case
 
 ---
 
-4.Folder Responsibility
+## 13. Folder Responsibility
 
 config/
 
@@ -104,7 +260,33 @@ tests/
 
 ---
 
-5.Import Order
+## 14. File Header
+
+Semua file wajib memiliki header.
+
+"""
+Botragram
+
+Description:
+    ...
+
+Python:
+    3.14+
+"""
+
+---
+
+## 15. Section Header
+
+Gunakan format berikut.
+
+    # =============================================================================
+    # Constants
+    # =============================================================================
+
+---
+
+## 16. Import Order
 
     1. Future
     2. Standard Library
@@ -133,33 +315,7 @@ Contoh:
 
 ---
 
-6.File Header
-
-Semua file wajib memiliki header.
-
-"""
-Botragram
-
-Description:
-    ...
-
-Python:
-    3.14+
-"""
-
----
-
-7.Section Header
-
-Gunakan format berikut.
-
-    # =============================================================================
-    # Constants
-    # =============================================================================
-
----
-
-8.Type Hint
+## 17. Type Hint
 
 Semua:
 
@@ -183,7 +339,7 @@ jika diperlukan.
 
 ---
 
-9.Pylance
+## 18. Pylance
 
 Gunakan
 
@@ -203,13 +359,13 @@ kecuali benar-benar diperlukan.
 
 ---
 
-10.Constructor
+## 19. Constructor
 
 Constructor diletakkan setelah class variable.
 
 ---
 
-11.Class Layout
+## 20. Class Layout
 
 Urutan:
 
@@ -222,7 +378,7 @@ Urutan:
 
 ---
 
-12.Function Layout
+## 21. Function Layout
 
 Gunakan trailing comma.
 
@@ -237,7 +393,7 @@ def create_order(
 
 ---
 
-13.Constants
+## 22. Constants
 
 Semua konstanta wajib berada di folder:
 
@@ -247,13 +403,13 @@ Tidak boleh hardcode.
 
 ---
 
-14.Enum
+## 23. Enum
 
 Semua pilihan menggunakan Enum.
 
 ---
 
-15.Config
+## 24. Config
 
 Semua konfigurasi berada di folder:
 
@@ -261,7 +417,7 @@ config/
 
 ---
 
-16.Exception
+## 25. Exception
 
 Tidak boleh:
 
@@ -271,7 +427,7 @@ Gunakan exception yang spesifik.
 
 ---
 
-17.Logging
+## 26. Logging
 
 Tidak boleh:
 
@@ -281,7 +437,7 @@ Gunakan logging.
 
 ---
 
-18.Async
+## 27. Async
 
 Semua operasi:
 
@@ -294,7 +450,7 @@ menggunakan Async.
 
 ---
 
-19.Dependency Injection
+## 28. Dependency Injection
 
 Tidak boleh menggunakan Global Singleton.
 
@@ -302,7 +458,7 @@ Gunakan Dependency Injection.
 
 ---
 
-20.Comment
+## 29. Comment
 
 Comment hanya menjelaskan:
 
@@ -314,7 +470,7 @@ WHAT
 
 ---
 
-21.TODO
+## 30. TODO
 
 Gunakan:
 
@@ -324,7 +480,7 @@ Gunakan:
 
 ---
 
-22.Line Length
+## 31. Line Length
 
 Maksimal:
 
@@ -332,7 +488,7 @@ Maksimal:
 
 ---
 
-23.Docstring
+## 32. Docstring
 
 Semua Public:
 
@@ -346,13 +502,13 @@ Gunakan Google Style.
 
 ---
 
-24.Testing
+## 33. Testing
 
 Semua fitur baru harus dapat diuji.
 
 ---
 
-25.Lint
+## 34. Lint
 
 Kode dianggap selesai jika:
 
@@ -363,7 +519,7 @@ Kode dianggap selesai jika:
 
 ---
 
-26.Refactor
+## 35. Refactor
 
 Refactor hanya dilakukan jika:
 
@@ -376,23 +532,30 @@ Tidak melakukan refactor saat fitur masih dalam proses.
 
 ## Botragram Project Structure
 
+Proyek bot trading Multi-CEX (Binance, Bybit, Bitget, OKX) dengan integrasi Telegram dan standar arsitektur modular yang ketat.
+
+```text```
 botragram/
-│
 ├── app/
 │   ├── __init__.py
 │   ├── application.py
+│   ├── startup.py
+│   ├── shutdown.py
+│   ├── lifecycle.py
+│   ├── dependency_provider.py
 │   ├── environment_provider.py
-│   ├── settings_manager.py
-│   └── startup.py
+│   └── settings_manager.py
 │
 ├── config/
 │   ├── __init__.py
 │   ├── app_settings.py
 │   ├── exchange_settings.py
+│   ├── telegram_settings.py
 │   ├── market_settings.py
-│   ├── risk_settings.py
 │   ├── strategy_settings.py
-│   └── telegram_settings.py
+│   ├── risk_settings.py
+│   ├── ai_settings.py
+│   └── logging_settings.py
 │
 ├── constants/
 │   ├── __init__.py
@@ -401,60 +564,111 @@ botragram/
 │   ├── exchange.py
 │   ├── market.py
 │   ├── telegram.py
+│   ├── indicator.py
+│   ├── strategy.py
+│   ├── risk.py
 │   └── time.py
 │
 ├── enums/
 │   ├── __init__.py
 │   ├── exchange_type.py
 │   ├── interval.py
-│   ├── margin_mode.py
 │   ├── order_side.py
-│   ├── order_status.py
 │   ├── order_type.py
+│   ├── order_status.py
 │   ├── position_side.py
+│   ├── margin_mode.py
+│   ├── trade_mode.py
 │   ├── signal_type.py
 │   ├── strategy_type.py
 │   ├── telegram_state.py
-│   ├── time_in_force.py
-│   └── trade_mode.py
+│   ├── ai_model_type.py
+│   └── notification_type.py
+│
+├── core/
+│   ├── __init__.py
+│   ├── events/
+│   ├── scheduler/
+│   ├── dependency_injection.py
+│   ├── event_bus.py
+│   ├── clock.py
+│   └── state_machine.py
+│
+├── models/
+│   ├── __init__.py
+│   ├── candle.py
+│   ├── ticker.py
+│   ├── order.py
+│   ├── position.py
+│   ├── balance.py
+│   ├── trade.py
+│   ├── signal.py
+│   ├── account.py
+│   └── notification.py
+│
+├── repositories/
+│   ├── __init__.py
+│   ├── trade_repository.py
+│   ├── order_repository.py
+│   ├── position_repository.py
+│   ├── candle_repository.py
+│   └── signal_repository.py
+│
+├── storage/
+│   ├── __init__.py
+│   ├── file/
+│   ├── sqlite/
+│   ├── cache/
+│   └── memory/
+│
+├── services/
+│   ├── __init__.py
+│   ├── account_service.py
+│   ├── market_service.py
+│   ├── notification_service.py
+│   ├── strategy_service.py
+│   ├── exchange_service.py
+│   └── telegram_service.py
 │
 ├── exchanges/
 │   ├── __init__.py
-│   │
 │   ├── base/
-│   │   ├── __init__.py
-│   │   ├── client.py
-│   │   ├── rest.py
-│   │   ├── stream.py
-│   │   └── mapper.py
-│   │
-│   ├── bybit/
-│   │   ├── __init__.py
-│   │   ├── client.py
-│   │   ├── rest.py
-│   │   ├── stream.py
-│   │   └── mapper.py
-│   │
 │   ├── binance/
-│   │   ├── __init__.py
-│   │   ├── client.py
-│   │   ├── rest.py
-│   │   ├── stream.py
-│   │   └── mapper.py
-│   │
+│   ├── bybit/
+│   ├── bitget/
 │   ├── okx/
-│   │   ├── __init__.py
-│   │   ├── client.py
-│   │   ├── rest.py
-│   │   ├── stream.py
-│   │   └── mapper.py
-│   │
-│   └── bitget/
-│       ├── __init__.py
-│       ├── client.py
-│       ├── rest.py
-│       ├── stream.py
-│       └── mapper.py
+│   └── factory.py
+│
+├── indicators/
+│   ├── __init__.py
+│   ├── trend/
+│   ├── momentum/
+│   ├── volatility/
+│   ├── volume/
+│   └── overlap/
+│
+├── strategies/
+│   ├── __init__.py
+│   ├── base/
+│   ├── trend/
+│   ├── breakout/
+│   ├── scalping/
+│   ├── swing/
+│   ├── ai/
+│   └── factory.py
+│
+├── ai/
+│   ├── __init__.py
+│   ├── datasets/
+│   ├── features/
+│   ├── preprocessing/
+│   ├── labels/
+│   ├── trainers/
+│   ├── predictors/
+│   ├── models/
+│   ├── evaluation/
+│   - optimization/
+│   └── backtesting/
 │
 ├── engine/
 │   ├── __init__.py
@@ -463,53 +677,60 @@ botragram/
 │   ├── order_engine.py
 │   ├── position_engine.py
 │   ├── risk_engine.py
-│   └── pnl_engine.py
-│
-├── indicators/
-│   ├── __init__.py
-│   ├── ema.py
-│   ├── sma.py
-│   ├── rsi.py
-│   ├── macd.py
-│   ├── atr.py
-│   └── supertrend.py
-│
-├── strategies/
-│   ├── __init__.py
-│   ├── base_strategy.py
-│   ├── ema_cross.py
-│   ├── ema_rsi.py
-│   └── supertrend.py
+│   ├── pnl_engine.py
+│   └── portfolio_engine.py
 │
 ├── telegram/
 │   ├── __init__.py
 │   ├── bot.py
-│   ├── commands.py
-│   ├── handlers.py
-│   ├── callbacks.py
-│   ├── keyboards.py
-│   └── messages.py
+│   ├── commands/
+│   ├── callbacks/
+│   ├── handlers/
+│   ├── middlewares/
+│   ├── keyboards/
+│   ├── conversations/
+│   └── messages/
+│
+├── tasks/
+│   ├── __init__.py
+│   ├── market_scan.py
+│   ├── sync_balance.py
+│   ├── clean_cache.py
+│   └── health_check.py
 │
 ├── utils/
 │   ├── __init__.py
 │   ├── datetime.py
 │   ├── decimal.py
 │   ├── formatter.py
+│   ├── validator.py
+│   ├── retry.py
 │   ├── logger.py
-│   └── validator.py
+│   ├── json.py
+│   └── crypto.py
 │
-├── tests/
+├── exceptions/
 │   ├── __init__.py
-│   ├── test_engine.py
-│   ├── test_exchange.py
-│   ├── test_indicator.py
-│   ├── test_strategy.py
-│   └── test_telegram.py
+│   ├── exchange.py
+│   ├── strategy.py
+│   ├── telegram.py
+│   ├── validation.py
+│   └── storage.py
 │
-├── .env
-├── .env.example
-├── .gitignore
+├── docs/
+│   ├── architecture.md
+│   ├── api.md
+│   ├── exchanges.md
+│   ├── strategy.md
+│   ├── ai.md
+│   └── deployment.md
+│
+├── scripts/
+├── tests/
+├── logs/
+├── .github/
 ├── main.py
+├── pyproject.toml
 ├── requirements.txt
 ├── README.md
 └── DEVELOPMENT_GUIDE.md
