@@ -35,7 +35,11 @@ __all__ = [
 # =============================================================================
 # Type Aliases
 # =============================================================================
-type CandleKey = tuple[str, datetime]
+type CandleKey = tuple[
+    str,
+    Interval,
+    datetime,
+]
 
 
 # =============================================================================
@@ -85,17 +89,20 @@ class MemoryCandleRepository(CandleRepository):
         interval: Interval,
         limit: int,
     ) -> Sequence[Candle]:
-        """Return the latest candles for a trading symbol."""
+        """Return the latest candles for a symbol and interval."""
         if limit <= 0:
             raise ValueError("Candle limit must be greater than zero")
 
         normalized_symbol = self._normalize_symbol(symbol)
 
         async with self._lock:
-            candles = [
+            candles: list[Candle] = [
                 candle
                 for candle in self._candles.values()
-                if candle.symbol.upper() == normalized_symbol
+                if (
+                    candle.symbol.upper() == normalized_symbol
+                    and candle.interval is interval
+                )
             ]
 
         candles.sort(key=lambda candle: candle.open_time)
@@ -117,11 +124,12 @@ class MemoryCandleRepository(CandleRepository):
         normalized_symbol = self._normalize_symbol(symbol)
 
         async with self._lock:
-            candles = [
+            candles: list[Candle] = [
                 candle
                 for candle in self._candles.values()
                 if (
                     candle.symbol.upper() == normalized_symbol
+                    and candle.interval is interval
                     and start_time <= candle.open_time <= end_time
                 )
             ]
@@ -137,9 +145,10 @@ class MemoryCandleRepository(CandleRepository):
         interval: Interval,
         open_time: datetime,
     ) -> Candle | None:
-        """Return a candle by symbol and exact open time."""
-        key = (
+        """Return a candle by symbol, interval, and open time."""
+        key: CandleKey = (
             self._normalize_symbol(symbol),
+            interval,
             open_time,
         )
 
@@ -159,7 +168,7 @@ class MemoryCandleRepository(CandleRepository):
         )
 
         async with self._lock:
-            keys_to_delete = tuple(
+            keys_to_delete: tuple[CandleKey, ...] = tuple(
                 key
                 for key, candle in self._candles.items()
                 if (
@@ -168,6 +177,7 @@ class MemoryCandleRepository(CandleRepository):
                         normalized_symbol is None
                         or candle.symbol.upper() == normalized_symbol
                     )
+                    and (interval is None or candle.interval is interval)
                 )
             )
 
@@ -188,13 +198,16 @@ class MemoryCandleRepository(CandleRepository):
         )
 
         async with self._lock:
-            if normalized_symbol is None:
-                return len(self._candles)
-
             return sum(
                 1
                 for candle in self._candles.values()
-                if candle.symbol.upper() == normalized_symbol
+                if (
+                    (
+                        normalized_symbol is None
+                        or candle.symbol.upper() == normalized_symbol
+                    )
+                    and (interval is None or candle.interval is interval)
+                )
             )
 
     @staticmethod
@@ -204,6 +217,7 @@ class MemoryCandleRepository(CandleRepository):
         """Create a unique in-memory candle key."""
         return (
             MemoryCandleRepository._normalize_symbol(candle.symbol),
+            candle.interval,
             candle.open_time,
         )
 

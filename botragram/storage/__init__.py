@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    In-memory storage package initialization.
+    Storage package initialization.
 
 Python:
     3.14+
@@ -16,19 +16,11 @@ from __future__ import annotations
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.storage.memory.candle_repository import (
+from botragram.storage.memory import (
     MemoryCandleRepository,
-)
-from botragram.storage.memory.order_repository import (
     MemoryOrderRepository,
-)
-from botragram.storage.memory.position_repository import (
     MemoryPositionRepository,
-)
-from botragram.storage.memory.signal_repository import (
     MemorySignalRepository,
-)
-from botragram.storage.memory.trade_repository import (
     MemoryTradeRepository,
 )
 
