@@ -39,19 +39,24 @@ __all__ = [
     frozen=True,
 )
 class Trade:
-    """Immutable executed trade."""
+    """Immutable executed trade (exchange fill)."""
 
     trade_id: str
     order_id: str
+
     symbol: str
 
     side: OrderSide
 
     price: Decimal
     quantity: Decimal
-
     quote_quantity: Decimal
+
     fee: Decimal
     fee_asset: str
 
     executed_at: datetime
+
+    # Futures exchanges may provide this value.
+    # Spot exchanges will typically return None.
+    realized_pnl: Decimal | None = None

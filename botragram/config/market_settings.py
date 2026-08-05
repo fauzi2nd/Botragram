@@ -21,17 +21,29 @@ from dataclasses import dataclass
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.interval import Interval
+from botragram.enums import Interval
+
+__all__ = [
+    "MarketSettings",
+]
 
 
 # =============================================================================
 # Configuration Classes
 # =============================================================================
-@dataclass(slots=True)
+@dataclass(
+    slots=True,
+    kw_only=True,
+    frozen=True,
+)
 class MarketSettings:
-    """Settings defining market pair and candlestick intervals."""
+    """Settings defining market pair and candlestick interval."""
 
-    symbol: str = "BTCUSDT"
     base_asset: str = "BTC"
     quote_asset: str = "USDT"
     interval: Interval = Interval.M15
+
+    @property
+    def symbol(self) -> str:
+        """Combined market symbol."""
+        return f"{self.base_asset}{self.quote_asset}"

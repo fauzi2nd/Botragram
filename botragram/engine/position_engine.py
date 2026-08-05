@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Position engine for tracking active market positions.
+    Trading position management engine.
 
 Python:
     3.14+
@@ -16,70 +16,149 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
-import logging
-from decimal import Decimal
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.exchanges.base.mapper import PositionInfo
+from botragram.exchanges.base import BaseExchangeClient
+from botragram.models import Position
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    "PositionEngine",
+]
 
 
 # =============================================================================
-# Position Engine Class
+# Position Engine
 # =============================================================================
+@dataclass(
+    slots=True,
+    kw_only=True,
+    frozen=True,
+)
 class PositionEngine:
-    """Engine responsible for maintaining open positions state."""
+    """Query and inspect trading positions through an exchange client."""
 
-    def __init__(self) -> None:
-        """Initialize PositionEngine."""
-        self._positions: dict[str, PositionInfo] = {}
+    exchange_client: BaseExchangeClient
 
-    def update_position(self, position: PositionInfo) -> None:
-        """Add or update position in active tracker.
+    async def get_positions(
+        self,
+        *,
+        symbol: str | None = None,
+    ) -> Sequence[Position]:
+        """Return active exchange positions.
 
         Args:
-            position: PositionInfo model instance.
+            symbol: Optional trading symbol filter.
+
+        Returns:
+            Active positions returned by the exchange.
         """
-        if position.size == Decimal("0"):
-            self._positions.pop(position.symbol, None)
-            logger.info(f"Position closed for symbol: {position.symbol}")
-        else:
-            self._positions[position.symbol] = position
-            logger.info(
-                f"Position updated for {position.symbol}: "
-                f"side={position.position_side.value}, size={position.size}"
+        normalized_symbol = (
+            self._normalize_symbol(symbol) if symbol is not None else None
+        )
+
+        return await self.exchange_client.get_positions(
+            symbol=normalized_symbol,
+        )
+
+    async def get_position(
+        self,
+        *,
+        symbol: str,
+    ) -> Position | None:
+        """Return the active position for a symbol.
+
+        Args:
+            symbol: Trading pair symbol.
+
+        Returns:
+            Matching active position, or None if no position exists.
+
+        Raises:
+            RuntimeError: If the exchange returns multiple positions for
+                the same symbol.
+        """
+        normalized_symbol = self._normalize_symbol(symbol)
+
+        positions = await self.get_positions(
+            symbol=normalized_symbol,
+        )
+
+        matching_position: Position | None = None
+
+        for position in positions:
+            if position.symbol.upper() != normalized_symbol:
+                continue
+
+            if matching_position is not None:
+                raise RuntimeError(
+                    "Exchange returned multiple positions for symbol "
+                    f"{normalized_symbol!r}"
+                )
+
+            matching_position = position
+
+        return matching_position
+
+    async def has_open_position(
+        self,
+        *,
+        symbol: str,
+    ) -> bool:
+        """Return whether an active position exists for a symbol.
+
+        Args:
+            symbol: Trading pair symbol.
+
+        Returns:
+            True when an active non-zero position exists.
+        """
+        position = await self.get_position(
+            symbol=symbol,
+        )
+
+        return position is not None and position.quantity > 0
+
+    async def require_position(
+        self,
+        *,
+        symbol: str,
+    ) -> Position:
+        """Return an active position or raise an error.
+
+        Args:
+            symbol: Trading pair symbol.
+
+        Returns:
+            Active position for the symbol.
+
+        Raises:
+            LookupError: If no active position exists.
+        """
+        normalized_symbol = self._normalize_symbol(symbol)
+
+        position = await self.get_position(
+            symbol=normalized_symbol,
+        )
+
+        if position is None:
+            raise LookupError(
+                f"No active position found for symbol {normalized_symbol!r}"
             )
 
-    def get_position(self, symbol: str) -> PositionInfo | None:
-        """Get active position info for symbol.
+        return position
 
-        Args:
-            symbol: Symbol string.
+    @staticmethod
+    def _normalize_symbol(
+        symbol: str,
+    ) -> str:
+        """Normalize and validate a trading symbol."""
+        normalized_symbol = symbol.strip().upper()
 
-        Returns:
-            PositionInfo if exists, else None.
-        """
-        return self._positions.get(symbol)
+        if not normalized_symbol:
+            raise ValueError("Trading symbol must not be empty")
 
-    def has_active_position(self, symbol: str) -> bool:
-        """Check whether an active position exists for symbol.
-
-        Args:
-            symbol: Symbol string.
-
-        Returns:
-            True if position size > 0, False otherwise.
-        """
-        pos = self._positions.get(symbol)
-        return pos is not None and pos.size > Decimal("0")
-
-    def get_all_positions(self) -> list[PositionInfo]:
-        """Get list of all active positions.
-
-        Returns:
-            List of PositionInfo instances.
-        """
-        return list(self._positions.values())
+        return normalized_symbol

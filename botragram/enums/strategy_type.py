@@ -21,7 +21,7 @@ from enum import unique
 # =============================================================================
 # Local Imports
 # =============================================================================
-from enums.base import BaseEnum
+from botragram.enums.base import BaseEnum
 
 __all__ = ["StrategyType"]
 
@@ -33,8 +33,10 @@ __all__ = ["StrategyType"]
 class StrategyType(BaseEnum):
     """Supported trading strategy types."""
 
+    BOLLINGER_BREAKOUT = "bollinger_breakout"
     EMA_CROSS = "ema_cross"
     EMA_RSI = "ema_rsi"
+    EMA_SCALPING = "ema_scalping"
+    MACD_SWING = "macd_swing"
     SUPERTREND = "supertrend"
-
     CUSTOM = "custom"

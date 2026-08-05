@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Binance exchange data mapper implementation.
+    Binance exchange payload mapper.
 
 Python:
     3.14+
@@ -16,148 +16,352 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
-from typing import Any
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from decimal import Decimal
+from typing import cast
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.order_side import OrderSide
-from botragram.enums.order_status import OrderStatus
-from botragram.enums.order_type import OrderType
-from botragram.enums.position_side import PositionSide
-from botragram.exchanges.base.mapper import (
-    BaseExchangeMapper,
-    Candle,
-    OrderResult,
-    PositionInfo,
-    Ticker,
-)
-from botragram.utils.decimal import to_decimal
+from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
+from botragram.exchanges.base import BaseExchangeMapper
+from botragram.exchanges.base.mapper import ExchangePayload, ExchangeSequencePayload
+from botragram.models import Account, Balance, Candle, Order, Position, Ticker, Trade
+
+__all__ = [
+    "BinanceExchangeMapper",
+]
 
 
 # =============================================================================
-# Mapper Implementation Class
+# Binance Exchange Mapper
 # =============================================================================
-class BinanceMapper(BaseExchangeMapper):
-    """Data mapper for converting Binance API payloads to standard models."""
+class BinanceExchangeMapper(BaseExchangeMapper):
+    """Map Binance REST and WebSocket payloads into domain models."""
 
-    def parse_candle(self, raw_data: Any) -> Candle:
-        """Parse Binance kline list [open_time, open, high, low, close, volume, ...].
-
-        Args:
-            raw_data: List payload from Binance klines API.
-
-        Returns:
-            Standardized Candle object.
-        """
-        return Candle(
-            timestamp_ms=int(raw_data[0]),
-            open_price=to_decimal(raw_data[1]),
-            high_price=to_decimal(raw_data[2]),
-            low_price=to_decimal(raw_data[3]),
-            close_price=to_decimal(raw_data[4]),
-            volume=to_decimal(raw_data[5]),
+    def map_account(
+        self,
+        payload: ExchangePayload,
+    ) -> Account:
+        """Map a Binance account payload into an Account model."""
+        raw_balances = self._require_list_field(
+            payload,
+            key="balances",
         )
 
-    def parse_ticker(self, raw_data: Any) -> Ticker:
-        """Parse Binance 24hr ticker dict payload.
+        balances: tuple[Balance, ...] = tuple(
+            self._map_balance(
+                self._require_mapping(item),
+            )
+            for item in raw_balances
+        )
 
-        Args:
-            raw_data: Dict payload from Binance ticker API.
+        return Account(
+            balances=balances,
+            can_trade=self._to_bool(payload.get("canTrade")),
+            can_deposit=self._to_bool(payload.get("canDeposit")),
+            can_withdraw=self._to_bool(payload.get("canWithdraw")),
+        )
 
-        Returns:
-            Standardized Ticker object.
-        """
-        symbol = str(raw_data.get("symbol", ""))
-        last_price = to_decimal(raw_data.get("lastPrice", "0"))
-        bid_price = to_decimal(raw_data.get("bidPrice", "0"))
-        ask_price = to_decimal(raw_data.get("askPrice", "0"))
-        volume_24h = to_decimal(raw_data.get("volume", "0"))
+    def map_ticker(
+        self,
+        payload: ExchangePayload,
+    ) -> Ticker:
+        """Map a Binance REST ticker payload into a Ticker model."""
+        timestamp_value = payload.get("closeTime")
+
         return Ticker(
-            symbol=symbol,
-            last_price=last_price,
-            bid_price=bid_price,
-            ask_price=ask_price,
-            volume_24h=volume_24h,
+            symbol=self._to_string(payload.get("symbol")),
+            bid_price=self._to_decimal(payload.get("bidPrice")),
+            ask_price=self._to_decimal(payload.get("askPrice")),
+            last_price=self._to_decimal(payload.get("lastPrice")),
+            timestamp=(
+                self._to_datetime(timestamp_value)
+                if timestamp_value is not None
+                else datetime.now(tz=UTC)
+            ),
         )
 
-    def parse_order(self, raw_data: Any) -> OrderResult:
-        """Parse Binance order dict payload.
-
-        Args:
-            raw_data: Dict payload from Binance order API.
-
-        Returns:
-            Standardized OrderResult object.
-        """
-        order_id = str(raw_data.get("orderId", ""))
-        symbol = str(raw_data.get("symbol", ""))
-        raw_side = str(raw_data.get("side", "BUY")).upper()
-        side = OrderSide.BUY if raw_side == "BUY" else OrderSide.SELL
-
-        raw_type = str(raw_data.get("type", "MARKET")).upper()
-        order_type = (
-            OrderType.LIMIT if raw_type == "LIMIT" else OrderType.MARKET
+    def map_stream_ticker(
+        self,
+        payload: ExchangePayload,
+    ) -> Ticker:
+        """Map a Binance WebSocket ticker payload into a Ticker model."""
+        return Ticker(
+            symbol=self._to_string(payload.get("s")),
+            bid_price=self._to_decimal(payload.get("b")),
+            ask_price=self._to_decimal(payload.get("a")),
+            last_price=self._to_decimal(payload.get("c")),
+            timestamp=self._to_datetime(payload.get("E")),
         )
 
-        raw_status = str(raw_data.get("status", "NEW")).upper()
-        status_map = {
-            "NEW": OrderStatus.NEW,
-            "FILLED": OrderStatus.FILLED,
-            "PARTIALLY_FILLED": OrderStatus.PARTIALLY_FILLED,
-            "CANCELED": OrderStatus.CANCELLED,
-            "REJECTED": OrderStatus.REJECTED,
-            "EXPIRED": OrderStatus.EXPIRED,
-        }
-        status = status_map.get(raw_status, OrderStatus.NEW)
+    def map_candle(
+        self,
+        payload: ExchangeSequencePayload,
+        *,
+        symbol: str,
+    ) -> Candle:
+        """Map a Binance REST kline payload into a Candle model."""
+        if len(payload) < 7:
+            raise ValueError("Binance candle payload must contain at least 7 elements")
 
-        price = to_decimal(raw_data.get("price", "0"))
-        quantity = to_decimal(raw_data.get("origQty", "0"))
-        filled_qty = to_decimal(raw_data.get("executedQty", "0"))
-        avg_price = to_decimal(raw_data.get("price", "0"))
-
-        return OrderResult(
-            order_id=order_id,
+        return Candle(
             symbol=symbol,
-            side=side,
-            order_type=order_type,
-            status=status,
+            open_time=self._to_datetime(payload[0]),
+            close_time=self._to_datetime(payload[6]),
+            open_price=self._to_decimal(payload[1]),
+            high_price=self._to_decimal(payload[2]),
+            low_price=self._to_decimal(payload[3]),
+            close_price=self._to_decimal(payload[4]),
+            volume=self._to_decimal(payload[5]),
+        )
+
+    def map_stream_candle(
+        self,
+        payload: ExchangePayload,
+    ) -> Candle:
+        """Map a Binance WebSocket kline event into a Candle model."""
+        raw_kline = self._require_mapping_field(
+            payload,
+            key="k",
+        )
+
+        symbol_value = raw_kline.get("s", payload.get("s"))
+
+        return Candle(
+            symbol=self._to_string(symbol_value),
+            open_time=self._to_datetime(raw_kline.get("t")),
+            close_time=self._to_datetime(raw_kline.get("T")),
+            open_price=self._to_decimal(raw_kline.get("o")),
+            high_price=self._to_decimal(raw_kline.get("h")),
+            low_price=self._to_decimal(raw_kline.get("l")),
+            close_price=self._to_decimal(raw_kline.get("c")),
+            volume=self._to_decimal(raw_kline.get("v")),
+        )
+
+    def map_order(
+        self,
+        payload: ExchangePayload,
+    ) -> Order:
+        """Map a Binance order payload into an Order model."""
+        created_at_value = payload.get(
+            "time",
+            payload.get("transactTime"),
+        )
+        updated_at_value = payload.get(
+            "updateTime",
+            created_at_value,
+        )
+
+        created_at = self._to_datetime(created_at_value)
+
+        return Order(
+            order_id=self._to_string(payload.get("orderId")),
+            symbol=self._to_string(payload.get("symbol")),
+            side=OrderSide(self._to_string(payload.get("side"))),
+            order_type=OrderType(self._to_string(payload.get("type"))),
+            status=OrderStatus(self._to_string(payload.get("status"))),
+            quantity=self._to_decimal(payload.get("origQty")),
+            executed_quantity=self._to_decimal(payload.get("executedQty")),
+            price=self._to_decimal(payload.get("price")),
+            stop_price=self._to_decimal(payload.get("stopPrice")),
+            created_at=created_at,
+            updated_at=(
+                self._to_datetime(updated_at_value)
+                if updated_at_value is not None
+                else created_at
+            ),
+        )
+
+    def map_position(
+        self,
+        payload: ExchangePayload,
+    ) -> Position:
+        """Map a Binance futures position into a Position model."""
+        quantity = self._to_decimal(payload.get("positionAmt"))
+        updated_at = self._to_datetime(payload.get("updateTime"))
+
+        return Position(
+            symbol=self._to_string(payload.get("symbol")),
+            side=self._resolve_position_side(
+                raw_side=payload.get("positionSide"),
+                quantity=quantity,
+            ),
+            quantity=abs(quantity),
+            entry_price=self._to_decimal(payload.get("entryPrice")),
+            current_price=self._to_decimal(payload.get("markPrice")),
+            unrealized_pnl=self._to_decimal(payload.get("unRealizedProfit")),
+            leverage=self._to_int(payload.get("leverage")),
+            opened_at=updated_at,
+            updated_at=updated_at,
+        )
+
+    def map_trade(
+        self,
+        payload: ExchangePayload,
+    ) -> Trade:
+        """Map a Binance trade payload into a Trade model."""
+        price = self._to_decimal(payload.get("price"))
+        quantity = self._to_decimal(payload.get("qty"))
+        quote_quantity_value = payload.get("quoteQty")
+
+        quote_quantity = (
+            self._to_decimal(quote_quantity_value)
+            if quote_quantity_value is not None
+            else price * quantity
+        )
+
+        return Trade(
+            trade_id=self._to_string(payload.get("id")),
+            order_id=self._to_string(payload.get("orderId")),
+            symbol=self._to_string(payload.get("symbol")),
+            side=self._resolve_trade_side(payload),
             price=price,
             quantity=quantity,
-            filled_quantity=filled_qty,
-            average_price=avg_price,
+            quote_quantity=quote_quantity,
+            fee=self._to_decimal(payload.get("commission")),
+            fee_asset=self._to_string(payload.get("commissionAsset")),
+            executed_at=self._to_datetime(payload.get("time")),
         )
 
-    def parse_position(self, raw_data: Any) -> PositionInfo:
-        """Parse Binance position risk dict payload.
-
-        Args:
-            raw_data: Dict payload from Binance positionRisk API.
-
-        Returns:
-            Standardized PositionInfo object.
-        """
-        symbol = str(raw_data.get("symbol", ""))
-        raw_side = str(raw_data.get("positionSide", "BOTH")).upper()
-        if raw_side == "LONG":
-            side = PositionSide.LONG
-        elif raw_side == "SHORT":
-            side = PositionSide.SHORT
-        else:
-            side = PositionSide.BOTH
-
-        amt = to_decimal(raw_data.get("positionAmt", "0"))
-        entry_price = to_decimal(raw_data.get("entryPrice", "0"))
-        mark_price = to_decimal(raw_data.get("markPrice", "0"))
-        unrealized_pnl = to_decimal(raw_data.get("unRealizedProfit", "0"))
-        leverage = int(raw_data.get("leverage", 1))
-
-        return PositionInfo(
-            symbol=symbol,
-            position_side=side,
-            size=abs(amt),
-            entry_price=entry_price,
-            mark_price=mark_price,
-            unrealized_pnl=unrealized_pnl,
-            leverage=leverage,
+    @staticmethod
+    def _map_balance(
+        payload: ExchangePayload,
+    ) -> Balance:
+        """Map a Binance balance entry."""
+        return Balance(
+            asset=BinanceExchangeMapper._to_string(payload.get("asset")),
+            free=BinanceExchangeMapper._to_decimal(payload.get("free")),
+            locked=BinanceExchangeMapper._to_decimal(payload.get("locked")),
         )
+
+    @staticmethod
+    def _resolve_position_side(
+        *,
+        raw_side: object,
+        quantity: Decimal,
+    ) -> PositionSide:
+        """Resolve Binance position direction."""
+        side_value = BinanceExchangeMapper._to_string(raw_side)
+
+        if side_value in {"LONG", "SHORT"}:
+            return PositionSide(side_value)
+
+        if quantity < Decimal("0"):
+            return PositionSide.SHORT
+
+        return PositionSide.LONG
+
+    @staticmethod
+    def _resolve_trade_side(
+        payload: ExchangePayload,
+    ) -> OrderSide:
+        """Resolve trade side from a Binance trade payload."""
+        raw_side = payload.get("side")
+
+        if raw_side is not None:
+            return OrderSide(BinanceExchangeMapper._to_string(raw_side))
+
+        return (
+            OrderSide.BUY
+            if BinanceExchangeMapper._to_bool(payload.get("isBuyer"))
+            else OrderSide.SELL
+        )
+
+    @staticmethod
+    def _require_mapping(
+        value: object,
+    ) -> ExchangePayload:
+        """Return a mapping payload or raise ValueError."""
+        if not isinstance(value, Mapping):
+            raise ValueError("Expected a mapping payload")
+
+        return cast(ExchangePayload, value)
+
+    @staticmethod
+    def _require_mapping_field(
+        payload: ExchangePayload,
+        *,
+        key: str,
+    ) -> ExchangePayload:
+        """Return a mapping field or raise ValueError."""
+        value = payload.get(key)
+
+        if not isinstance(value, Mapping):
+            raise ValueError(f"Expected '{key}' to contain a mapping")
+
+        return cast(ExchangePayload, value)
+
+    @staticmethod
+    def _require_list_field(
+        payload: ExchangePayload,
+        *,
+        key: str,
+    ) -> list[object]:
+        """Return a JSON list field or raise ValueError."""
+        value = payload.get(key)
+
+        if not isinstance(value, list):
+            raise ValueError(f"Expected '{key}' to contain a list")
+
+        return cast(list[object], value)
+
+    @staticmethod
+    def _to_datetime(
+        value: object,
+    ) -> datetime:
+        """Convert a millisecond timestamp into UTC datetime."""
+        timestamp_ms = BinanceExchangeMapper._to_int(value)
+
+        return datetime.fromtimestamp(
+            timestamp_ms / 1_000,
+            tz=UTC,
+        )
+
+    @staticmethod
+    def _to_decimal(
+        value: object,
+    ) -> Decimal:
+        """Convert a payload value into Decimal."""
+        if value is None or value == "":
+            return Decimal("0")
+
+        return Decimal(str(value))
+
+    @staticmethod
+    def _to_int(
+        value: object,
+    ) -> int:
+        """Convert a payload value into int."""
+        if value is None or value == "":
+            return 0
+
+        return int(str(value))
+
+    @staticmethod
+    def _to_string(
+        value: object,
+    ) -> str:
+        """Convert a payload value into string."""
+        if value is None:
+            return ""
+
+        return str(value)
+
+    @staticmethod
+    def _to_bool(
+        value: object,
+    ) -> bool:
+        """Convert a payload value into bool."""
+        if isinstance(value, bool):
+            return value
+
+        if isinstance(value, str):
+            return value.lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+
+        return bool(value)

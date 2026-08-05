@@ -17,23 +17,66 @@ from __future__ import annotations
 # Standard Library
 # =============================================================================
 from dataclasses import dataclass
+from decimal import Decimal
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.strategy_type import StrategyType
+from botragram.enums import StrategyType
+
+__all__ = [
+    "StrategySettings",
+]
 
 
 # =============================================================================
 # Configuration Classes
 # =============================================================================
-@dataclass(slots=True)
+@dataclass(
+    slots=True,
+    kw_only=True,
+    frozen=True,
+)
 class StrategySettings:
     """Settings controlling indicator periods and strategy behavior."""
 
     strategy_type: StrategyType = StrategyType.EMA_CROSS
+
+    # ============================================================================
+    # EMA Cross
+    # ============================================================================
     fast_period: int = 9
     slow_period: int = 21
+
+    # ============================================================================
+    # RSI
+    # ============================================================================
     rsi_period: int = 14
-    rsi_overbought: float = 70.0
-    rsi_oversold: float = 30.0
+    rsi_overbought: Decimal = Decimal("70.0")
+    rsi_oversold: Decimal = Decimal("30.0")
+
+    # ============================================================================
+    # MACD
+    # ============================================================================
+    macd_fast_period: int = 12
+    macd_slow_period: int = 26
+    macd_signal_period: int = 9
+
+    # ============================================================================
+    # Bollinger Bands
+    # ============================================================================
+    bb_period: int = 20
+    bb_standard_deviation: Decimal = Decimal("2.0")
+
+    # =========================================================================
+    # Supertrend
+    # =========================================================================
+    supertrend_period: int = 10
+    supertrend_multiplier: Decimal = Decimal("3")
+
+    # =========================================================================
+    # EMA Scalping
+    # =========================================================================
+    scalping_fast_period: int = 5
+    scalping_slow_period: int = 13
+    scalping_minimum_body_ratio: Decimal = Decimal("0.25")

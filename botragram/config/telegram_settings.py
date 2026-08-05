@@ -21,13 +21,21 @@ from dataclasses import dataclass, field
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.constants.telegram import DEFAULT_PARSE_MODE
+from botragram.constants import DEFAULT_PARSE_MODE
+
+__all__ = [
+    "TelegramSettings",
+]
 
 
 # =============================================================================
 # Configuration Classes
 # =============================================================================
-@dataclass(slots=True)
+@dataclass(
+    slots=True,
+    kw_only=True,
+    frozen=True,
+)
 class TelegramSettings:
     """Telegram bot access and notification settings."""
 

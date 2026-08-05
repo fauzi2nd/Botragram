@@ -21,7 +21,7 @@ from enum import unique
 # =============================================================================
 # Local Imports
 # =============================================================================
-from enums.base import BaseEnum
+from botragram.enums.base import BaseEnum
 
 __all__ = ["MarketType"]
 

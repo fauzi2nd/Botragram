@@ -22,9 +22,15 @@ from botragram.models.candle import Candle
 from botragram.models.notification import Notification
 from botragram.models.order import Order
 from botragram.models.position import Position
+from botragram.models.risk import (
+    PositionSize,
+    RiskMetrics,
+    RiskResult,
+)
 from botragram.models.signal import Signal
 from botragram.models.ticker import Ticker
 from botragram.models.trade import Trade
+from botragram.models.trading import TradingDecision, TradingResult
 
 # =============================================================================
 # Exports
@@ -36,7 +42,12 @@ __all__ = [
     "Notification",
     "Order",
     "Position",
+    "PositionSize",
+    "RiskMetrics",
+    "RiskResult",
     "Signal",
     "Ticker",
     "Trade",
+    "TradingDecision",
+    "TradingResult",
 ]

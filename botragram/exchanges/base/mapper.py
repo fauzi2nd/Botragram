@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Base exchange data mapper and standardized payload models.
+    Base exchange payload mapper interface.
 
 Python:
     3.14+
@@ -16,121 +16,117 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
-from dataclasses import dataclass
-from decimal import Decimal
-from typing import Any
+from abc import ABC, abstractmethod
+from collections.abc import Mapping
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.order_side import OrderSide
-from botragram.enums.order_status import OrderStatus
-from botragram.enums.order_type import OrderType
-from botragram.enums.position_side import PositionSide
+from botragram.models import Account, Candle, Order, Position, Ticker, Trade
+
+__all__ = [
+    "BaseExchangeMapper",
+    "ExchangePayload",
+    "ExchangeSequencePayload",
+]
 
 
 # =============================================================================
-# Data Models
+# Type Aliases
 # =============================================================================
-@dataclass(slots=True)
-class Candle:
-    """Standardized candlestick (OHLCV) model."""
-
-    timestamp_ms: int
-    open_price: Decimal
-    high_price: Decimal
-    low_price: Decimal
-    close_price: Decimal
-    volume: Decimal
-
-
-@dataclass(slots=True)
-class Ticker:
-    """Standardized ticker model."""
-
-    symbol: str
-    last_price: Decimal
-    bid_price: Decimal
-    ask_price: Decimal
-    volume_24h: Decimal
-
-
-@dataclass(slots=True)
-class OrderResult:
-    """Standardized order response model."""
-
-    order_id: str
-    symbol: str
-    side: OrderSide
-    order_type: OrderType
-    status: OrderStatus
-    price: Decimal
-    quantity: Decimal
-    filled_quantity: Decimal
-    average_price: Decimal
-
-
-@dataclass(slots=True)
-class PositionInfo:
-    """Standardized position information model."""
-
-    symbol: str
-    position_side: PositionSide
-    size: Decimal
-    entry_price: Decimal
-    mark_price: Decimal
-    unrealized_pnl: Decimal
-    leverage: int
+type ExchangePayload = Mapping[str, object]
+type ExchangeSequencePayload = tuple[object, ...]
 
 
 # =============================================================================
-# Base Mapper Class
+# Abstract Base Mapper Class
 # =============================================================================
-class BaseExchangeMapper:
-    """Base mapper for converting raw exchange responses to standard models."""
+class BaseExchangeMapper(ABC):
+    """Convert exchange-specific payloads into domain models."""
 
-    def parse_candle(self, raw_data: Any) -> Candle:
-        """Parse raw candle data into Candle object.
-
-        Args:
-            raw_data: Raw payload from exchange REST/WS.
-
-        Returns:
-            Standardized Candle object.
-        """
-        raise NotImplementedError("parse_candle must be implemented by subclass")
-
-    def parse_ticker(self, raw_data: Any) -> Ticker:
-        """Parse raw ticker payload into Ticker object.
+    @abstractmethod
+    def map_account(
+        self,
+        payload: ExchangePayload,
+    ) -> Account:
+        """Map an account payload into an Account model.
 
         Args:
-            raw_data: Raw payload from exchange REST/WS.
+            payload: Raw exchange account payload.
 
         Returns:
-            Standardized Ticker object.
+            Standardized account model.
         """
-        raise NotImplementedError("parse_ticker must be implemented by subclass")
 
-    def parse_order(self, raw_data: Any) -> OrderResult:
-        """Parse raw order response into OrderResult object.
+    @abstractmethod
+    def map_ticker(
+        self,
+        payload: ExchangePayload,
+    ) -> Ticker:
+        """Map a ticker payload into a Ticker model.
 
         Args:
-            raw_data: Raw payload from exchange REST/WS.
+            payload: Raw exchange ticker payload.
 
         Returns:
-            Standardized OrderResult object.
+            Standardized ticker model.
         """
-        raise NotImplementedError("parse_order must be implemented by subclass")
 
-    def parse_position(self, raw_data: Any) -> PositionInfo:
-        """Parse raw position response into PositionInfo object.
+    @abstractmethod
+    def map_candle(
+        self,
+        payload: ExchangeSequencePayload,
+        *,
+        symbol: str,
+    ) -> Candle:
+        """Map a candle payload into a Candle model.
 
         Args:
-            raw_data: Raw payload from exchange REST/WS.
+            payload: Raw exchange candle payload.
+            symbol: Trading pair associated with the candle.
 
         Returns:
-            Standardized PositionInfo object.
+            Standardized candle model.
         """
-        raise NotImplementedError(
-            "parse_position must be implemented by subclass"
-        )
+
+    @abstractmethod
+    def map_order(
+        self,
+        payload: ExchangePayload,
+    ) -> Order:
+        """Map an order payload into an Order model.
+
+        Args:
+            payload: Raw exchange order payload.
+
+        Returns:
+            Standardized order model.
+        """
+
+    @abstractmethod
+    def map_position(
+        self,
+        payload: ExchangePayload,
+    ) -> Position:
+        """Map a position payload into a Position model.
+
+        Args:
+            payload: Raw exchange position payload.
+
+        Returns:
+            Standardized position model.
+        """
+
+    @abstractmethod
+    def map_trade(
+        self,
+        payload: ExchangePayload,
+    ) -> Trade:
+        """Map a trade payload into a Trade model.
+
+        Args:
+            payload: Raw exchange trade payload.
+
+        Returns:
+            Standardized trade model.
+        """

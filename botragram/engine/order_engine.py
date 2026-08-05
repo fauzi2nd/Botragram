@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Order engine for managing order placement and execution lifecycle.
+    Trading order execution engine.
 
 Python:
     3.14+
@@ -16,91 +16,159 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
-import logging
+from dataclasses import dataclass
 from decimal import Decimal
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.order_side import OrderSide
-from botragram.enums.order_type import OrderType
-from botragram.exchanges.base.client import BaseExchangeClient
-from botragram.exchanges.base.mapper import OrderResult
+from botragram.enums import OrderSide, OrderType, SignalType
+from botragram.exchanges.base import BaseExchangeClient
+from botragram.models import Order, RiskResult, Signal
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    "OrderEngine",
+]
 
 
 # =============================================================================
-# Order Engine Class
+# Constants
 # =============================================================================
+_DECIMAL_ZERO = Decimal("0")
+
+
+# =============================================================================
+# Order Engine
+# =============================================================================
+@dataclass(
+    slots=True,
+    kw_only=True,
+    frozen=True,
+)
 class OrderEngine:
-    """Engine responsible for submitting and tracking order executions."""
+    """Create and manage orders through an exchange client."""
 
-    def __init__(self, exchange_client: BaseExchangeClient) -> None:
-        """Initialize OrderEngine.
+    exchange_client: BaseExchangeClient
+
+    async def submit(
+        self,
+        *,
+        signal: Signal,
+        risk_result: RiskResult,
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+    ) -> Order:
+        """Submit an approved trading signal as an exchange order.
 
         Args:
-            exchange_client: Active exchange client instance.
-        """
-        self._exchange = exchange_client
-        self._active_orders: dict[str, OrderResult] = {}
+            signal: Trading signal to execute.
+            risk_result: Approved risk evaluation result.
+            order_type: Exchange order type.
+            price: Optional limit-order price.
 
-    async def execute_order(
+        Returns:
+            Created exchange order.
+
+        Raises:
+            ValueError: If the signal or risk result cannot be executed.
+        """
+        self._validate_submission(
+            signal=signal,
+            risk_result=risk_result,
+            order_type=order_type,
+            price=price,
+        )
+
+        return await self.exchange_client.create_order(
+            symbol=signal.symbol,
+            side=self._resolve_order_side(signal.signal_type),
+            order_type=order_type,
+            quantity=risk_result.position.quantity,
+            price=price,
+        )
+
+    async def cancel(
         self,
+        *,
         symbol: str,
-        side: OrderSide,
-        order_type: OrderType,
-        quantity: Decimal,
-        price: Decimal | None = None,
-    ) -> OrderResult:
-        """Execute an order via the exchange client.
+        order_id: str,
+    ) -> Order:
+        """Cancel an active exchange order.
 
         Args:
             symbol: Trading pair symbol.
-            side: Order side enum (BUY/SELL).
-            order_type: Order type enum (LIMIT/MARKET).
-            quantity: Order size quantity.
-            price: Optional limit order price.
+            order_id: Exchange order identifier.
 
         Returns:
-            OrderResult instance.
+            Cancelled exchange order.
         """
-        logger.info(
-            f"Executing {side.value} {order_type.value} order for {symbol}: "
-            f"qty={quantity}, price={price}"
-        )
-        result = await self._exchange.create_order(
+        return await self.exchange_client.cancel_order(
             symbol=symbol,
-            side=side,
-            order_type=order_type,
-            quantity=quantity,
-            price=price,
+            order_id=order_id,
         )
-        self._active_orders[result.order_id] = result
-        return result
 
-    async def cancel_order(self, symbol: str, order_id: str) -> bool:
-        """Cancel an active order.
+    async def get(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> Order:
+        """Return an exchange order by identifier.
 
         Args:
-            symbol: Symbol string.
-            order_id: Order ID string.
+            symbol: Trading pair symbol.
+            order_id: Exchange order identifier.
 
         Returns:
-            True if cancelled, False otherwise.
+            Exchange order.
         """
-        success = await self._exchange.cancel_order(
-            symbol=symbol, order_id=order_id
+        return await self.exchange_client.get_order(
+            symbol=symbol,
+            order_id=order_id,
         )
-        if success:
-            self._active_orders.pop(order_id, None)
-            logger.info(f"Order cancelled: id={order_id}, symbol={symbol}")
-        return success
 
-    def get_active_orders(self) -> list[OrderResult]:
-        """Get list of currently active orders.
+    def _validate_submission(
+        self,
+        *,
+        signal: Signal,
+        risk_result: RiskResult,
+        order_type: OrderType,
+        price: Decimal | None,
+    ) -> None:
+        """Validate an order submission."""
+        if not risk_result.approved:
+            reason = risk_result.reason or "Risk evaluation rejected the signal"
 
-        Returns:
-            List of OrderResult instances.
-        """
-        return list(self._active_orders.values())
+            raise ValueError(f"Cannot submit rejected risk result: {reason}")
+
+        if signal.signal_type is SignalType.HOLD:
+            raise ValueError("Hold signals cannot create orders")
+
+        if risk_result.position.quantity <= _DECIMAL_ZERO:
+            raise ValueError("Order quantity must be greater than zero")
+
+        if signal.price <= _DECIMAL_ZERO:
+            raise ValueError("Signal price must be greater than zero")
+
+        if order_type is OrderType.LIMIT and price is None:
+            raise ValueError("Limit orders require an explicit price")
+
+        if price is not None and price <= _DECIMAL_ZERO:
+            raise ValueError("Order price must be greater than zero")
+
+    @staticmethod
+    def _resolve_order_side(
+        signal_type: SignalType,
+    ) -> OrderSide:
+        """Convert a trading signal type into an order side."""
+        match signal_type:
+            case SignalType.BUY:
+                return OrderSide.BUY
+
+            case SignalType.SELL:
+                return OrderSide.SELL
+
+            case _:
+                raise ValueError(
+                    f"Unsupported signal type for order creation: {signal_type.value!r}"
+                )

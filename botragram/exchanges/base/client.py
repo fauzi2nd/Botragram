@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Base exchange client protocol and abstract base class.
+    Base exchange client interface.
 
 Python:
     3.14+
@@ -14,108 +14,176 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from datetime import datetime
 from decimal import Decimal
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.interval import Interval
-from botragram.enums.order_side import OrderSide
-from botragram.enums.order_type import OrderType
-from botragram.exchanges.base.mapper import (
-    Candle,
-    OrderResult,
-    PositionInfo,
-    Ticker,
-)
+from botragram.enums import Interval, OrderSide, OrderType
+from botragram.models import Account, Candle, Order, Position, Ticker, Trade
+
+__all__ = [
+    "BaseExchangeClient",
+]
 
 
 # =============================================================================
-# Abstract Base Client Class
+# Abstract Exchange Clients
 # =============================================================================
 class BaseExchangeClient(ABC):
-    """Abstract Base Class for crypto exchange clients."""
+    """Abstract interface implemented by exchange clients."""
+
+    # =========================================================================
+    # Lifecycle
+    # =========================================================================
 
     @abstractmethod
-    async def fetch_ticker(self, symbol: str) -> Ticker:
-        """Fetch latest price ticker for symbol.
-
-        Args:
-            symbol: Trading pair symbol (e.g. BTCUSDT).
-
-        Returns:
-            Standardized Ticker instance.
-        """
+    async def connect(self) -> None:
+        """Initialize exchange connections and resources."""
 
     @abstractmethod
-    async def fetch_candles(
+    async def close(self) -> None:
+        """Close exchange connections and release resources."""
+
+    @abstractmethod
+    async def ping(self) -> bool:
+        """Return whether the exchange is reachable."""
+
+    # =========================================================================
+    # Account and Market Data
+    # =========================================================================
+
+    @abstractmethod
+    async def get_account(self) -> Account:
+        """Return current exchange account information."""
+
+    @abstractmethod
+    async def get_ticker(
         self,
+        *,
+        symbol: str,
+    ) -> Ticker:
+        """Return the latest ticker for a trading symbol."""
+
+    @abstractmethod
+    async def get_candles(
+        self,
+        *,
         symbol: str,
         interval: Interval,
-        limit: int = 100,
-    ) -> list[Candle]:
-        """Fetch historical candlestick OHLCV data.
+        limit: int,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> Sequence[Candle]:
+        """Return candlestick market data."""
 
-        Args:
-            symbol: Trading pair symbol.
-            interval: Timeframe interval enum.
-            limit: Number of candles to retrieve.
+    @abstractmethod
+    async def get_trades(
+        self,
+        *,
+        symbol: str,
+        limit: int,
+    ) -> Sequence[Trade]:
+        """Return executed trades for a symbol."""
 
-        Returns:
-            List of standardized Candle instances.
-        """
+    # =========================================================================
+    # Orders
+    # =========================================================================
 
     @abstractmethod
     async def create_order(
         self,
+        *,
         symbol: str,
         side: OrderSide,
         order_type: OrderType,
         quantity: Decimal,
         price: Decimal | None = None,
-    ) -> OrderResult:
-        """Submit a new trading order.
-
-        Args:
-            symbol: Trading pair symbol.
-            side: Order side enum (BUY/SELL).
-            order_type: Order type enum (LIMIT/MARKET).
-            quantity: Order quantity as Decimal.
-            price: Optional order price for LIMIT orders.
-
-        Returns:
-            Standardized OrderResult instance.
-        """
+    ) -> Order:
+        """Create an entry or standard exchange order."""
 
     @abstractmethod
-    async def cancel_order(self, symbol: str, order_id: str) -> bool:
-        """Cancel an active order.
-
-        Args:
-            symbol: Trading pair symbol.
-            order_id: Exchange order ID string.
-
-        Returns:
-            True if cancelled successfully, False otherwise.
-        """
-
-    @abstractmethod
-    async def fetch_positions(
+    async def create_protection_orders(
         self,
-        symbol: str | None = None,
-    ) -> list[PositionInfo]:
-        """Fetch active positions info.
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        stop_loss: Decimal | None = None,
+        take_profit: Decimal | None = None,
+    ) -> Sequence[Order]:
+        """Create stop-loss and/or take-profit protection orders.
 
         Args:
-            symbol: Optional symbol filter.
+            symbol: Trading pair symbol.
+            side: Order side used to close or reduce the position.
+            quantity: Quantity protected by the orders.
+            stop_loss: Optional stop-loss trigger price.
+            take_profit: Optional take-profit trigger price.
 
         Returns:
-            List of PositionInfo instances.
+            Created protection orders.
         """
 
     @abstractmethod
-    async def close(self) -> None:
-        """Close underlying HTTP sessions and WebSocket streams."""
+    async def cancel_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> Order:
+        """Cancel an existing order."""
+
+    @abstractmethod
+    async def cancel_all_orders(
+        self,
+        *,
+        symbol: str | None = None,
+    ) -> Sequence[Order]:
+        """Cancel all active orders, optionally filtered by symbol."""
+
+    @abstractmethod
+    async def get_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> Order:
+        """Return an order by its identifier."""
+
+    @abstractmethod
+    async def get_open_orders(
+        self,
+        *,
+        symbol: str | None = None,
+    ) -> Sequence[Order]:
+        """Return currently open orders."""
+
+    # =========================================================================
+    # Positions
+    # =========================================================================
+
+    @abstractmethod
+    async def get_positions(
+        self,
+        *,
+        symbol: str | None = None,
+    ) -> Sequence[Position]:
+        """Return current trading positions."""
+
+    @abstractmethod
+    async def close_position(
+        self,
+        *,
+        symbol: str,
+    ) -> Order:
+        """Close the active position for a trading symbol."""
+
+    @abstractmethod
+    async def close_all_positions(self) -> Sequence[Order]:
+        """Close all active trading positions."""

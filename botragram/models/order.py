@@ -51,8 +51,8 @@ class Order:
     quantity: Decimal
     executed_quantity: Decimal
 
-    price: Decimal | None
-    stop_price: Decimal | None
-
     created_at: datetime
     updated_at: datetime
+
+    price: Decimal | None = None
+    stop_price: Decimal | None = None

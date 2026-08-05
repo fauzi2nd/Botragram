@@ -21,19 +21,33 @@ from dataclasses import dataclass
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.constants.app import APP_NAME, APP_VERSION
-from botragram.enums.trade_mode import TradeMode
+from botragram.constants import APP_NAME, APP_VERSION
+from botragram.enums import Environment, TradeMode
+
+__all__ = [
+    "AppSettings",
+]
 
 
 # =============================================================================
 # Configuration Classes
 # =============================================================================
-@dataclass(slots=True)
+@dataclass(
+    slots=True,
+    kw_only=True,
+    frozen=True,
+)
 class AppSettings:
     """Application-wide environment and runtime settings."""
 
     app_name: str = APP_NAME
-    version: str = APP_VERSION
-    environment: str = "development"
-    debug: bool = True
+    app_version: str = APP_VERSION
+    environment: Environment = Environment.DEVELOPMENT
     trade_mode: TradeMode = TradeMode.PAPER
+
+    @property
+    def debug(self) -> bool:
+        return self.environment in (
+            Environment.DEVELOPMENT,
+            Environment.TESTING,
+        )

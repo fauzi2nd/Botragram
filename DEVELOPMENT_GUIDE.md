@@ -545,18 +545,19 @@ Proyek bot trading Multi-CEX (Binance, Bybit, Bitget, OKX) dengan integrasi Tele
     │   ├── environment_provider.py
     │   └── settings_manager.py
     │
-    ├── config/
-    │   ├── __init__.py
-    │   ├── app_settings.py
-    │   ├── exchange_settings.py
-    │   ├── telegram_settings.py
-    │   ├── market_settings.py
-    │   ├── strategy_settings.py
-    │   ├── risk_settings.py
-    │   ├── ai_settings.py
-    │   └── logging_settings.py
+    ├── config/ # Done
+    │    ├── __init__.py
+    │    ├── ai_settings.py
+    │    ├── app_settings.py
+    │    ├── exchange_settings.py
+    │    ├── logging_settings.py
+    │    ├── market_settings.py
+    │    ├── risk_settings.py
+    │    ├── settings.py
+    │    ├── strategy_settings.py
+    │    └── telegram_settings.py
     │
-    ├── constants/
+    ├── constants/ # Done
     │   ├── __init__.py
     │   ├── ai.py
     │   ├── app.py
@@ -567,12 +568,22 @@ Proyek bot trading Multi-CEX (Binance, Bybit, Bitget, OKX) dengan integrasi Tele
     │   ├── order.py
     │   ├── position.py
     │   ├── risk.py
-    │   ├── status.py
     │   ├── strategy.py
     │   ├── telegram.py
     │   └── time.py
     │
-    ├── enums/
+    ├── exceptions/ # Done
+    │    ├── __init__.py
+    │    ├── base.py
+    │    ├── ai.py
+    │    ├── config.py
+    │    ├── exchange.py
+    │    ├── indicator.py
+    │    ├── strategy.py
+    │    ├── telegram.py
+    │    └── trading.py
+    │
+    ├── enums/ # Done
     │   ├── __init__.py
     │   ├── account_type.py
     │   ├── ai_model_type.py
@@ -652,13 +663,30 @@ Proyek bot trading Multi-CEX (Binance, Bybit, Bitget, OKX) dengan integrasi Tele
     │   ├── okx/
     │   └── factory.py
     │
-    ├── indicators/
-    │   ├── __init__.py
-    │   ├── trend/
-    │   ├── momentum/
-    │   ├── volatility/
-    │   ├── volume/
-    │   └── overlap/
+    ├──indicators/
+        ├── __init__.py
+        ├── momentum
+        │   ├── __init__.py
+        │   ├── macd.py
+        │   └── rsi.py
+        ├── overlap
+        │   ├── __init__.py
+        │   ├── ichimoku.py
+        │   └── psar.py
+        ├── trend
+        │   ├── __init__.py
+        │   ├── adx.py
+        │   ├── ema.py
+        │   ├── sma.py
+        │   └── supertrend.py
+        ├── volatility
+        │   ├── __init__.py
+        │   ├── atr.py
+        │   └── bollinger_bands.py
+        └── volume
+            ├── __init__.py
+            ├── obv.py
+            └── vwap.py
     │
     ├── strategies/
     │   ├── __init__.py

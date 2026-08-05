@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Main Trading Engine orchestrator.
+    Trading execution decision engine.
 
 Python:
     3.14+
@@ -14,228 +14,117 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-import asyncio
-import logging
+from dataclasses import dataclass
 from decimal import Decimal
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.config.app_settings import AppSettings
-from botragram.config.market_settings import MarketSettings
-from botragram.config.risk_settings import RiskSettings
-from botragram.config.strategy_settings import StrategySettings
-from botragram.engine.order_engine import OrderEngine
-from botragram.engine.pnl_engine import PnLEngine
-from botragram.engine.position_engine import PositionEngine
 from botragram.engine.risk_engine import RiskEngine
-from botragram.engine.signal_engine import SignalEngine
-from botragram.enums.order_side import OrderSide
-from botragram.enums.order_type import OrderType
-from botragram.enums.signal_type import SignalType
-from botragram.exchanges.base.client import BaseExchangeClient
-from botragram.exchanges.bybit.client import BybitClient
-from botragram.strategies.ema_cross import EMACrossStrategy
+from botragram.enums import SignalType
+from botragram.models import Signal, TradingDecision
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    "TradingEngine",
+]
 
 
 # =============================================================================
-# Trading Engine Class
+# Constants
 # =============================================================================
+_DECIMAL_ZERO = Decimal("0")
+
+_HOLD_SIGNAL_REASON = "Strategy generated a hold signal"
+_OPEN_POSITION_REASON = "An active position already exists for the symbol"
+
+
+# =============================================================================
+# Trading Engine
+# =============================================================================
+@dataclass(
+    slots=True,
+    kw_only=True,
+    frozen=True,
+)
 class TradingEngine:
-    """Main trading bot orchestrator coordinating all sub-engines."""
+    """Evaluate whether a trading signal should be executed."""
 
-    def __init__(
+    risk_engine: RiskEngine
+
+    def evaluate(
         self,
-        settings: AppSettings | None = None,
-        exchange_client: BaseExchangeClient | None = None,
-        market_settings: MarketSettings | None = None,
-        risk_settings: RiskSettings | None = None,
-        strategy_settings: StrategySettings | None = None,
+        *,
+        signal: Signal,
+        account_balance: Decimal,
+        has_open_position: bool,
+        current_drawdown_pct: Decimal = _DECIMAL_ZERO,
+    ) -> TradingDecision:
+        """Evaluate a signal and produce an execution decision.
+
+        Args:
+            signal: Trading signal to evaluate.
+            account_balance: Available balance in quote currency.
+            has_open_position: Whether the symbol already has a position.
+            current_drawdown_pct: Current account drawdown ratio.
+
+        Returns:
+            Immutable trading execution decision.
+
+        Raises:
+            ValueError: If evaluation inputs are invalid.
+        """
+        self._validate_inputs(
+            account_balance=account_balance,
+            current_drawdown_pct=current_drawdown_pct,
+        )
+
+        if signal.signal_type is SignalType.HOLD:
+            return TradingDecision(
+                should_execute=False,
+                signal=signal,
+                risk_result=None,
+                reason=_HOLD_SIGNAL_REASON,
+            )
+
+        if has_open_position:
+            return TradingDecision(
+                should_execute=False,
+                signal=signal,
+                risk_result=None,
+                reason=_OPEN_POSITION_REASON,
+            )
+
+        risk_result = self.risk_engine.evaluate(
+            signal=signal,
+            account_balance=account_balance,
+            current_drawdown_pct=current_drawdown_pct,
+        )
+
+        if not risk_result.approved:
+            return TradingDecision(
+                should_execute=False,
+                signal=signal,
+                risk_result=risk_result,
+                reason=risk_result.reason,
+            )
+
+        return TradingDecision(
+            should_execute=True,
+            signal=signal,
+            risk_result=risk_result,
+        )
+
+    @staticmethod
+    def _validate_inputs(
+        *,
+        account_balance: Decimal,
+        current_drawdown_pct: Decimal,
     ) -> None:
-        """Initialize TradingEngine and sub-engines.
+        """Validate trading decision inputs."""
+        if account_balance <= _DECIMAL_ZERO:
+            raise ValueError("Account balance must be greater than zero")
 
-        Args:
-            settings: AppSettings instance.
-            exchange_client: BaseExchangeClient instance.
-            market_settings: MarketSettings instance.
-            risk_settings: RiskSettings instance.
-            strategy_settings: StrategySettings instance.
-        """
-        self._settings = settings or AppSettings()
-        self._market = market_settings or MarketSettings()
-        self._exchange = exchange_client or BybitClient(testnet=True)
-
-        # Sub-engines
-        self._strategy = EMACrossStrategy(
-            fast_period=strategy_settings.fast_period if strategy_settings else 9,
-            slow_period=strategy_settings.slow_period if strategy_settings else 21,
-        )
-        self._signal_engine = SignalEngine(strategy=self._strategy)
-        self._risk_engine = RiskEngine(settings=risk_settings)
-        self._position_engine = PositionEngine()
-        self._order_engine = OrderEngine(exchange_client=self._exchange)
-        self._pnl_engine = PnLEngine()
-
-        self._is_running: bool = False
-        self._last_price: Decimal = Decimal("0")
-        self._account_balance: Decimal = Decimal("10000.0")
-        self._process_lock: asyncio.Lock = asyncio.Lock()
-
-    @property
-    def is_running(self) -> bool:
-        """Return engine running state.
-
-        Returns:
-            True if running, False otherwise.
-        """
-        return self._is_running
-
-    @property
-    def trade_mode(self) -> str:
-        """Return active trade mode string.
-
-        Returns:
-            Trade mode string e.g. PAPER or LIVE.
-        """
-        return self._settings.trade_mode.value
-
-    @property
-    def symbol(self) -> str:
-        """Return active trading symbol.
-
-        Returns:
-            Symbol string e.g. BTCUSDT.
-        """
-        return self._market.symbol
-
-    @property
-    def strategy_name(self) -> str:
-        """Return active strategy name.
-
-        Returns:
-            Strategy name string.
-        """
-        return self._strategy.name
-
-    @property
-    def last_price(self) -> Decimal:
-        """Return last fetched market price.
-
-        Returns:
-            Last price as Decimal.
-        """
-        return self._last_price
-
-    @property
-    def exchange_type(self) -> str:
-        """Return active exchange client class name.
-
-        Returns:
-            Exchange type name string.
-        """
-        name = type(self._exchange).__name__
-        # BybitClient -> BYBIT, BinanceClient -> BINANCE
-        return name.replace("Client", "").upper()
-
-    @property
-    def account_balance(self) -> Decimal:
-        """Return simulated account balance."""
-        return self._account_balance
-
-    @property
-    def active_orders(self) -> list:
-        """Return currently tracked active orders."""
-        return self._order_engine.get_active_orders()
-
-    @property
-    def process_lock(self) -> asyncio.Lock:
-        """Lock to serialize market processing and exchange switching."""
-        return self._process_lock
-
-    async def start(self) -> None:
-        """Start trading engine lifecycle."""
-        self._is_running = True
-        logger.info(
-            f"TradingEngine started: mode={self._settings.trade_mode.value}, "
-            f"symbol={self._market.symbol}, strategy={self._strategy.name}"
-        )
-        await asyncio.sleep(0)
-
-    async def stop(self) -> None:
-        """Stop trading engine and close connections."""
-        async with self._process_lock:
-            self._is_running = False
-            await self._exchange.close()
-            logger.info("TradingEngine stopped")
-
-    def set_exchange_client(self, client: BaseExchangeClient) -> None:
-        """Replace active exchange client for hot-swap.
-
-        Args:
-            client: New BaseExchangeClient instance.
-        """
-        self._exchange = client
-        self._order_engine = OrderEngine(exchange_client=self._exchange)
-        logger.info(f"Exchange client replaced: {type(client).__name__}")
-
-    async def process_tick(self) -> None:
-        """Process a single market tick/cycle evaluation."""
-        async with self._process_lock:
-            if not self._is_running:
-                return
-
-            ticker = await self._exchange.fetch_ticker(self._market.symbol)
-            self._last_price = ticker.last_price
-            candles = await self._exchange.fetch_candles(
-                symbol=self._market.symbol, interval=self._market.interval, limit=100
-            )
-
-            signal = self._signal_engine.evaluate(candles)
-            if signal == SignalType.NEUTRAL:
-                return
-
-            # Check existing position state
-            has_pos = self._position_engine.has_active_position(self._market.symbol)
-
-            if signal in (SignalType.BUY_ENTRY, SignalType.SELL_ENTRY) and not has_pos:
-                side = (
-                    OrderSide.BUY if signal == SignalType.BUY_ENTRY else OrderSide.SELL
-                )
-                qty = self._risk_engine.calculate_position_size(
-                    account_balance=Decimal("10000.0"),
-                    entry_price=ticker.last_price,
-                )
-
-                if self._risk_engine.validate_order(qty, ticker.last_price):
-                    order_res = await self._order_engine.execute_order(
-                        symbol=self._market.symbol,
-                        side=side,
-                        order_type=OrderType.MARKET,
-                        quantity=qty,
-                        price=ticker.last_price,
-                    )
-                    logger.info(f"Order executed successfully: id={order_res.order_id}")
-
-        # Check existing position state
-        has_pos = self._position_engine.has_active_position(self._market.symbol)
-
-        if signal in (SignalType.BUY_ENTRY, SignalType.SELL_ENTRY) and not has_pos:
-            side = OrderSide.BUY if signal == SignalType.BUY_ENTRY else OrderSide.SELL
-            qty = self._risk_engine.calculate_position_size(
-                account_balance=Decimal("10000.0"),
-                entry_price=ticker.last_price,
-            )
-
-            if self._risk_engine.validate_order(qty, ticker.last_price):
-                order_res = await self._order_engine.execute_order(
-                    symbol=self._market.symbol,
-                    side=side,
-                    order_type=OrderType.MARKET,
-                    quantity=qty,
-                    price=ticker.last_price,
-                )
-                logger.info(f"Order executed successfully: id={order_res.order_id}")
+        if current_drawdown_pct < _DECIMAL_ZERO:
+            raise ValueError("Current drawdown must not be negative")
