@@ -23,6 +23,7 @@ from datetime import datetime
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.enums import Interval
 from botragram.models import Candle
 
 __all__ = [
@@ -67,12 +68,14 @@ class CandleRepository(ABC):
         self,
         *,
         symbol: str,
+        interval: Interval,
         limit: int,
     ) -> Sequence[Candle]:
         """Return the latest candles for a trading symbol.
 
         Args:
             symbol: Trading pair symbol.
+            interval: Candle interval.
             limit: Maximum number of candles to return.
 
         Returns:
@@ -84,6 +87,7 @@ class CandleRepository(ABC):
         self,
         *,
         symbol: str,
+        interval: Interval,
         start_time: datetime,
         end_time: datetime,
     ) -> Sequence[Candle]:
@@ -91,6 +95,7 @@ class CandleRepository(ABC):
 
         Args:
             symbol: Trading pair symbol.
+            interval: Candle interval.
             start_time: Inclusive candle open-time boundary.
             end_time: Inclusive candle open-time boundary.
 
@@ -103,12 +108,14 @@ class CandleRepository(ABC):
         self,
         *,
         symbol: str,
+        interval: Interval,
         open_time: datetime,
     ) -> Candle | None:
         """Return a candle by symbol and open time.
 
         Args:
             symbol: Trading pair symbol.
+            interval: Candle interval.
             open_time: Exact candle open time.
 
         Returns:
@@ -121,12 +128,14 @@ class CandleRepository(ABC):
         *,
         before: datetime,
         symbol: str | None = None,
+        interval: Interval | None = None,
     ) -> int:
         """Delete candles older than a datetime boundary.
 
         Args:
             before: Exclusive deletion boundary.
             symbol: Optional trading symbol filter.
+            interval: Optional candle interval filter.
 
         Returns:
             Number of deleted candle records.
@@ -137,11 +146,13 @@ class CandleRepository(ABC):
         self,
         *,
         symbol: str | None = None,
+        interval: Interval | None = None,
     ) -> int:
         """Count stored candles.
 
         Args:
             symbol: Optional trading symbol filter.
+            interval: Optional candle interval filter.
 
         Returns:
             Number of matching candle records.

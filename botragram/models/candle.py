@@ -20,6 +20,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
+# =============================================================================
+# Local Imports
+# =============================================================================
+from botragram.enums import Interval
+
 __all__ = [
     "Candle",
 ]
@@ -34,9 +39,11 @@ __all__ = [
     frozen=True,
 )
 class Candle:
-    """Immutable OHLCV candlestick market data."""
+    """Immutable candlestick market data."""
 
     symbol: str
+    interval: Interval
+
     open_time: datetime
     close_time: datetime
 

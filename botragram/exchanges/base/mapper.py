@@ -19,6 +19,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
+from botragram.enums import Interval
+
 # =============================================================================
 # Local Imports
 # =============================================================================
@@ -78,12 +80,14 @@ class BaseExchangeMapper(ABC):
         payload: ExchangeSequencePayload,
         *,
         symbol: str,
+        interval: Interval,
     ) -> Candle:
         """Map a candle payload into a Candle model.
 
         Args:
             payload: Raw exchange candle payload.
             symbol: Trading pair associated with the candle.
+            interval: Candle interval.
 
         Returns:
             Standardized candle model.

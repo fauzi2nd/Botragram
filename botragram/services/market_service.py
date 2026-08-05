@@ -116,12 +116,14 @@ class MarketService:
         self,
         *,
         symbol: str,
+        interval: Interval,
         limit: int,
     ) -> Sequence[Candle]:
         """Return the latest persisted candles.
 
         Args:
             symbol: Trading pair symbol.
+            interval: Candle interval.
             limit: Maximum number of candles to return.
 
         Returns:
@@ -135,6 +137,7 @@ class MarketService:
 
         return await self.candle_repository.get_latest(
             symbol=self._normalize_symbol(symbol),
+            interval=interval,
             limit=limit,
         )
 

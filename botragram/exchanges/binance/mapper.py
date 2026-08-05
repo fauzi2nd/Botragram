@@ -24,7 +24,7 @@ from typing import cast
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
+from botragram.enums import Interval, OrderSide, OrderStatus, OrderType, PositionSide
 from botragram.exchanges.base import BaseExchangeMapper
 from botragram.exchanges.base.mapper import ExchangePayload, ExchangeSequencePayload
 from botragram.models import Account, Balance, Candle, Order, Position, Ticker, Trade
@@ -101,6 +101,7 @@ class BinanceExchangeMapper(BaseExchangeMapper):
         payload: ExchangeSequencePayload,
         *,
         symbol: str,
+        interval: Interval,
     ) -> Candle:
         """Map a Binance REST kline payload into a Candle model."""
         if len(payload) < 7:
@@ -108,6 +109,7 @@ class BinanceExchangeMapper(BaseExchangeMapper):
 
         return Candle(
             symbol=symbol,
+            interval=interval,
             open_time=self._to_datetime(payload[0]),
             close_time=self._to_datetime(payload[6]),
             open_price=self._to_decimal(payload[1]),

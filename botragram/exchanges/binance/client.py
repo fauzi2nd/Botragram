@@ -190,6 +190,7 @@ class BinanceExchangeClient(BaseExchangeClient):
             self._mapper.map_candle(
                 self._require_sequence(item),
                 symbol=normalized_symbol,
+                interval=interval,
             )
             for item in raw_candles
         )
