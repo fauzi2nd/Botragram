@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram bot callback query handlers.
+    Telegram callback query handlers.
 
 Python:
     3.14+
@@ -14,179 +14,116 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-import logging
+from typing import Final
 
 # =============================================================================
-# Third Party
+# Third-Party Imports
 # =============================================================================
-from telegram import CallbackQuery, Update
+from telegram import Update
 from telegram.ext import ContextTypes
 
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.constants.telegram import DEFAULT_PARSE_MODE
-from botragram.enums.exchange_type import ExchangeType
 from botragram.telegram.context import BotContext
 from botragram.telegram.keyboards import get_exchange_keyboard
 from botragram.telegram.messages import (
     get_exchange_message,
-    get_exchange_switched_message,
     get_positions_message,
     get_settings_message,
     get_status_message,
 )
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    "handle_callback_query",
+]
 
-BOT_CONTEXT_KEY: str = "bot_context"
+
+# =============================================================================
+# Constants
+# =============================================================================
+_BOT_CONTEXT_KEY: Final[str] = "bot_context"
+_EXCHANGE_CALLBACKS: Final[frozenset[str]] = frozenset(
+    {
+        "cb_exchange_bybit",
+        "cb_exchange_binance",
+        "cb_exchange_okx",
+        "cb_exchange_bitget",
+    }
+)
 
 
-def _get_context(context: ContextTypes.DEFAULT_TYPE) -> BotContext:
-    """Retrieve BotContext from Telegram bot_data.
+# =============================================================================
+# Helpers
+# =============================================================================
+def _get_context(
+    context: ContextTypes.DEFAULT_TYPE,
+) -> BotContext:
+    """Return the stored Botragram context or safe defaults."""
+    bot_context = context.bot_data.get(_BOT_CONTEXT_KEY)
 
-    Args:
-        context: Telegram callback context.
+    if isinstance(bot_context, BotContext):
+        return bot_context
 
-    Returns:
-        BotContext instance, or a fresh default if not set.
-    """
-    ctx = context.bot_data.get(BOT_CONTEXT_KEY)
-    if isinstance(ctx, BotContext):
-        return ctx
     return BotContext()
 
 
 # =============================================================================
-# Helper Handlers
-# =============================================================================
-async def _handle_exchange_switch(
-    query: CallbackQuery,
-    context: ContextTypes.DEFAULT_TYPE,
-    ctx: BotContext,
-    data: str,
-) -> None:
-    """Handle switching exchange logic to reduce Cognitive Complexity.
-
-    Args:
-        query: Telegram callback query object.
-        context: Callback context object.
-        ctx: Current BotContext state.
-        data: Callback data string.
-    """
-    exchange_map: dict[str, ExchangeType] = {
-        "cb_exchange_bybit": ExchangeType.BYBIT,
-        "cb_exchange_binance": ExchangeType.BINANCE,
-        "cb_exchange_okx": ExchangeType.OKX,
-        "cb_exchange_bitget": ExchangeType.BITGET,
-    }
-    new_exchange = exchange_map[data]
-    new_exchange_name = new_exchange.value.upper()
-
-    if not ctx.application:
-        await query.edit_message_text(
-            "⚠️ <b>Tidak dapat ganti exchange</b> — application tidak tersedia.",
-            parse_mode=DEFAULT_PARSE_MODE,
-        )
-        return
-
-    try:
-        await ctx.application.switch_exchange(new_exchange)
-        context.bot_data[BOT_CONTEXT_KEY] = BotContext(
-            is_running=ctx.is_running,
-            trade_mode=ctx.trade_mode,
-            symbol=ctx.symbol,
-            strategy_name=ctx.strategy_name,
-            exchange_type=new_exchange_name,
-            last_price=ctx.last_price,
-            positions=ctx.positions,
-            application=ctx.application,
-        )
-        msg = get_exchange_switched_message(new_exchange_name)
-        await query.edit_message_text(
-            msg,
-            parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_exchange_keyboard(new_exchange_name),
-        )
-    except Exception as err:
-        logger.exception("Exchange switch failed: %s", err)
-        await query.edit_message_text(
-            f"❌ <b>Gagal ganti exchange:</b> {err}",
-            parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_exchange_keyboard(ctx.exchange_type),
-        )
-
-
-# =============================================================================
-# Callback Handlers
+# Callback Handler
 # =============================================================================
 async def handle_callback_query(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle inline button callback queries.
-
-    Args:
-        update: Telegram update object.
-        context: Callback context object.
-    """
+    """Handle navigation callbacks without mutating trading configuration."""
     query = update.callback_query
+
     if query is None:
         return
 
     await query.answer()
     data = query.data or ""
-    ctx = _get_context(context)
+    bot_context = _get_context(context)
 
-    # ------------------------------------------------------------------
-    # Main menu navigation
-    # ------------------------------------------------------------------
-    if data in ("cb_status", "cb_back_main"):
-        msg = get_status_message(
-            is_running=ctx.is_running,
-            trade_mode=ctx.trade_mode,
-            symbol=ctx.symbol,
-            last_price=ctx.last_price,
+    if data in {"cb_status", "cb_back_main"}:
+        message = get_status_message(
+            is_running=bot_context.is_running,
+            trade_mode=bot_context.trade_mode,
+            symbol=bot_context.symbol,
+            last_price=bot_context.last_price,
         )
-        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE)
-
+        await query.edit_message_text(message, parse_mode=DEFAULT_PARSE_MODE)
     elif data == "cb_positions":
-        msg = get_positions_message(ctx.positions)
-        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE)
-
+        await query.edit_message_text(
+            get_positions_message(bot_context.positions),
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
     elif data == "cb_settings":
-        msg = get_settings_message(
-            exchange_type=ctx.exchange_type,
-            strategy_name=ctx.strategy_name,
-            trade_mode=ctx.trade_mode,
+        await query.edit_message_text(
+            get_settings_message(
+                exchange_type=bot_context.exchange_type,
+                strategy_name=bot_context.strategy_name,
+                trade_mode=bot_context.trade_mode,
+            ),
+            parse_mode=DEFAULT_PARSE_MODE,
         )
-        await query.edit_message_text(msg, parse_mode=DEFAULT_PARSE_MODE)
-
     elif data == "cb_stop":
-        if ctx.application:
-            await ctx.application.engine.stop()
         await query.edit_message_text(
-            "🛑 <b>Trading Bot has been paused.</b>",
+            "ℹ️ <b>Kontrol runtime belum tersedia melalui Telegram.</b>",
             parse_mode=DEFAULT_PARSE_MODE,
         )
-
-    # ------------------------------------------------------------------
-    # Exchange selection menu
-    # ------------------------------------------------------------------
     elif data == "cb_exchange":
-        msg = get_exchange_message(ctx.exchange_type)
         await query.edit_message_text(
-            msg,
+            get_exchange_message(bot_context.exchange_type),
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_exchange_keyboard(ctx.exchange_type),
+            reply_markup=get_exchange_keyboard(bot_context.exchange_type),
         )
-
-    elif data in (
-        "cb_exchange_bybit",
-        "cb_exchange_binance",
-        "cb_exchange_okx",
-        "cb_exchange_bitget",
-    ):
-        await _handle_exchange_switch(query, context, ctx, data)
+    elif data in _EXCHANGE_CALLBACKS:
+        await query.edit_message_text(
+            "⚠️ <b>Perubahan exchange saat runtime belum didukung.</b>",
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_exchange_keyboard(bot_context.exchange_type),
+        )

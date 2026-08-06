@@ -12,6 +12,17 @@ dependencies = [
     "aiohttp",
     "aiosqlite",
     "python-dotenv",
+    "python-telegram-bot",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "pyright",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
 ]
 
 [tool.pyright]
@@ -23,6 +34,9 @@ venv = ".venv"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+testpaths = ["tests"]
+norecursedirs = ["manual"]
+cache_dir = ".cache/pytest"
 
 [tool.ruff]
 line-length = 88

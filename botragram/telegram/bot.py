@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram bot main runner class.
+    Telegram bot lifecycle adapter.
 
 Python:
     3.14+
@@ -14,14 +14,13 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any, Final
 
 # =============================================================================
-# Third Party
+# Third-Party Imports
 # =============================================================================
 from telegram import BotCommand
 from telegram.ext import ApplicationBuilder
@@ -30,109 +29,104 @@ from telegram.ext import ApplicationBuilder
 # Local Imports
 # =============================================================================
 from botragram.config.telegram_settings import TelegramSettings
-from botragram.engine.trading_engine import TradingEngine
 from botragram.telegram.context import BotContext
 from botragram.telegram.handlers import register_handlers
 
-if TYPE_CHECKING:
-    from botragram.app.application import Application
-
-logger = logging.getLogger(__name__)
-
-BOT_CONTEXT_KEY: str = "bot_context"
+__all__ = [
+    "TelegramBot",
+]
 
 
 # =============================================================================
-# Telegram Bot Class
+# Constants
+# =============================================================================
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+_BOT_CONTEXT_KEY: Final[str] = "bot_context"
+
+
+# =============================================================================
+# Telegram Bot
 # =============================================================================
 class TelegramBot:
-    """Telegram bot orchestrator for messaging and interaction."""
+    """Own Telegram polling resources and displayed application context."""
+
+    __slots__ = (
+        "_app",
+        "_context",
+        "_settings",
+    )
 
     def __init__(
         self,
+        *,
         settings: TelegramSettings | None = None,
-        engine: TradingEngine | None = None,
-        application: Application | None = None,
+        context: BotContext | None = None,
     ) -> None:
-        """Initialize TelegramBot with settings and optional engine reference.
+        """Initialize the Telegram adapter.
 
         Args:
-            settings: Optional TelegramSettings object.
-            engine: Optional TradingEngine to read live state from.
-            application: Optional Application for exchange switching.
+            settings: Telegram access and lifecycle settings.
+            context: Initial state displayed by handlers.
         """
-        self._settings = settings or TelegramSettings()
-        self._engine = engine
-        self._application = application
+        self._settings = settings if settings is not None else TelegramSettings()
+        self._context = context if context is not None else BotContext()
         self._app: Any = None
 
-    def _build_bot_context(self) -> BotContext:
-        """Build BotContext from live TradingEngine state.
-
-        Returns:
-            BotContext populated with current engine state.
-        """
-        if self._engine:
-            return BotContext(
-                is_running=self._engine.is_running,
-                trade_mode=self._engine.trade_mode,
-                symbol=self._engine.symbol,
-                strategy_name=self._engine.strategy_name,
-                exchange_type=self._engine.exchange_type.upper(),
-                last_price=self._engine.last_price,
-                positions=[],
-                application=self._application,
-            )
-        return BotContext()
-
-    async def _refresh_context(self) -> None:
-        """Refresh bot_data context from live engine state."""
-        if self._app and self._engine:
-            self._app.bot_data[BOT_CONTEXT_KEY] = self._build_bot_context()
-        await asyncio.sleep(0)
-
     async def start(self) -> None:
-        """Initialize, start Telegram bot, and begin long polling."""
+        """Initialize Telegram resources and begin long polling."""
         if not self._settings.enabled or not self._settings.bot_token:
-            logger.info("Telegram bot is disabled or bot token is empty")
+            _LOGGER.info("Telegram bot is disabled or bot token is empty")
             return
 
         app = ApplicationBuilder().token(self._settings.bot_token).build()
         register_handlers(app)
-
-        # Seed initial BotContext into bot_data
-        app.bot_data[BOT_CONTEXT_KEY] = self._build_bot_context()
+        app.bot_data[_BOT_CONTEXT_KEY] = self._context
 
         await app.initialize()
         await app.start()
-
-        # Register only Botragram commands in Telegram menu
         await app.bot.set_my_commands(
             [
-                BotCommand("start", "Mulai bot & tampilkan menu utama"),
-                BotCommand("status", "Lihat status bot & pasar saat ini"),
-                BotCommand("positions", "Lihat posisi trading yang aktif"),
-                BotCommand("settings", "Lihat pengaturan bot saat ini"),
-                BotCommand("exchange", "Pilih exchange yang digunakan"),
-                BotCommand("stop", "Hentikan trading sementara"),
+                BotCommand("start", "Mulai bot dan tampilkan menu utama"),
+                BotCommand("status", "Lihat status bot dan pasar"),
+                BotCommand("positions", "Lihat posisi trading aktif"),
+                BotCommand("settings", "Lihat pengaturan bot"),
+                BotCommand("exchange", "Lihat exchange aktif"),
+                BotCommand("stop", "Lihat status penghentian bot"),
             ]
         )
 
-        if app.updater:
-            await app.updater.start_polling()
+        updater = app.updater
+
+        if updater is not None:
+            await updater.start_polling()
 
         self._app = app
-        logger.info("Telegram bot initialized and long polling started successfully")
+        _LOGGER.info("Telegram bot polling started")
 
-    async def sync_engine_state(self) -> None:
-        """Synchronize live engine state into bot_data (call from main loop)."""
-        await self._refresh_context()
+    async def sync_context(
+        self,
+        *,
+        context: BotContext,
+    ) -> None:
+        """Replace state displayed by Telegram handlers."""
+        self._context = context
+
+        if self._app is not None:
+            self._app.bot_data[_BOT_CONTEXT_KEY] = context
 
     async def stop(self) -> None:
-        """Stop Telegram bot polling and shutdown application."""
-        if self._app:
-            if self._app.updater and self._app.updater.running:
-                await self._app.updater.stop()
-            await self._app.stop()
-            await self._app.shutdown()
-            logger.info("Telegram bot stopped gracefully")
+        """Stop Telegram polling and release owned resources."""
+        app = self._app
+        self._app = None
+
+        if app is None:
+            return
+
+        updater = app.updater
+
+        if updater is not None and updater.running:
+            await updater.stop()
+
+        await app.stop()
+        await app.shutdown()
+        _LOGGER.info("Telegram bot stopped")

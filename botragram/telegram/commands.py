@@ -50,6 +50,7 @@ from botragram.telegram.messages import (
     get_history_message,
     get_market_message,
     get_orders_message,
+    get_pause_message,
     get_positions_message,
     get_settings_message,
     get_start_message,
@@ -193,11 +194,7 @@ async def orders_command(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     if update.message:
-        ctx = _get_context(context)
-        orders = []
-        if ctx.application:
-            orders = ctx.application.engine.active_orders
-        msg = get_orders_message(orders)
+        msg = get_orders_message(())
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
 
@@ -206,11 +203,7 @@ async def balance_command(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     if update.message:
-        balance = Decimal("10000.0")
-        ctx = _get_context(context)
-        if ctx.application:
-            balance = ctx.application.engine.account_balance
-        msg = get_balance_message(balance)
+        msg = get_balance_message(Decimal("0"))
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
 
@@ -250,8 +243,6 @@ async def start_bot_command(
 ) -> None:
     if update.message:
         ctx = _get_context(context)
-        if ctx.application:
-            await ctx.application.engine.start()
         msg = get_start_message(ctx.is_running)
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
@@ -262,8 +253,6 @@ async def pause_bot_command(
 ) -> None:
     if update.message:
         ctx = _get_context(context)
-        if ctx.application:
-            await ctx.application.engine.stop()
         msg = get_pause_message(ctx.is_running)
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
@@ -310,9 +299,6 @@ async def menu_message_handler(
     elif action == MENU_TEST:
         await test_command(update, context)
     elif action == MENU_STOP:
-        ctx = _get_context(context)
-        if ctx.application:
-            await ctx.application.engine.stop()
         await update.message.reply_text(
             "❌ <b>Trading Bot has been stopped.</b>",
             parse_mode=DEFAULT_PARSE_MODE,

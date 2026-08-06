@@ -40,7 +40,7 @@ __all__ = [
 class ExchangeSettings:
     """Settings for crypto exchange API connection."""
 
-    exchange: ExchangeType = ExchangeType.BYBIT
+    exchange: ExchangeType = ExchangeType.BINANCE
     api_key: str = ""
     api_secret: str = ""
     passphrase: str = ""

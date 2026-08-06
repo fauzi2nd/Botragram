@@ -17,6 +17,7 @@ from __future__ import annotations
 # Standard Library
 # =============================================================================
 from dataclasses import dataclass
+from pathlib import Path
 
 # =============================================================================
 # Local Imports
@@ -44,6 +45,7 @@ class AppSettings:
     app_version: str = APP_VERSION
     environment: Environment = Environment.DEVELOPMENT
     trade_mode: TradeMode = TradeMode.PAPER
+    database_path: Path = Path("botragram.db")
 
     @property
     def debug(self) -> bool:

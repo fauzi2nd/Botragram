@@ -16,7 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
-from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 
 
 # =============================================================================

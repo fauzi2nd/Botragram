@@ -77,7 +77,7 @@ class MACDSwingStrategy(BaseStrategy):
     @property
     def minimum_candles(self) -> int:
         """Return the minimum candle count required."""
-        return self.slow_period + self.signal_period - 1
+        return self.slow_period + self.signal_period
 
     def generate_signal(
         self,

@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Telegram bot formatted message templates.
+    Telegram bot HTML message templates.
 
 Python:
     3.14+
@@ -14,29 +14,46 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
+from collections.abc import Sequence
 from decimal import Decimal
+from html import escape
 
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.constants.app import APP_NAME, APP_VERSION
-from botragram.exchanges.base.mapper import OrderResult, PositionInfo
-from botragram.utils.formatter import format_currency, format_percentage
+from botragram.models import Order, Position
+from botragram.utils.formatter import format_currency
+
+__all__ = [
+    "get_balance_message",
+    "get_exchange_message",
+    "get_exchange_switched_message",
+    "get_history_message",
+    "get_market_message",
+    "get_orders_message",
+    "get_pause_message",
+    "get_positions_message",
+    "get_settings_message",
+    "get_start_message",
+    "get_status_message",
+    "get_stop_message",
+    "get_strategy_message",
+    "get_stream_message",
+    "get_test_message",
+    "get_welcome_message",
+]
 
 
 # =============================================================================
 # Message Templates
 # =============================================================================
 def get_welcome_message() -> str:
-    """Get welcome message for /start command.
-
-    Returns:
-        Formatted HTML string.
-    """
+    """Return the welcome and security notice message."""
     return (
-        f"🤖 <b>Welcome to {APP_NAME} v{APP_VERSION}</b>\n\n"
+        f"🤖 <b>Selamat datang di {APP_NAME} v{APP_VERSION}</b>\n\n"
         "Gunakan menu di bawah untuk memantau bot dan mengelola trading.\n\n"
         "⚠️ <b>Keamanan</b>\n"
         "Botragram tidak pernah meminta password, OTP, API key, atau secret "
@@ -50,46 +67,32 @@ def get_status_message(
     symbol: str,
     last_price: Decimal,
 ) -> str:
-    """Get status message for /status command.
+    """Return current application and market status."""
+    state = "🟢 RUNNING" if is_running else "🔴 STOPPED"
 
-    Args:
-        is_running: Engine running state boolean.
-        trade_mode: Trade execution mode string.
-        symbol: Active trading symbol.
-        last_price: Current market price as Decimal.
-
-    Returns:
-        Formatted HTML string.
-    """
-    state_str = "🟢 RUNNING" if is_running else "🔴 STOPPED"
-    price_str = format_currency(last_price, symbol="USDT")
     return (
         f"📊 <b>{APP_NAME} Status</b>\n\n"
-        f"<b>State:</b> {state_str}\n"
-        f"<b>Mode:</b> {trade_mode}\n"
-        f"<b>Symbol:</b> {symbol}\n"
-        f"<b>Last Price:</b> {price_str}"
+        f"<b>State:</b> {state}\n"
+        f"<b>Mode:</b> {escape(trade_mode)}\n"
+        f"<b>Symbol:</b> {escape(symbol)}\n"
+        f"<b>Last Price:</b> {format_currency(last_price, symbol='USDT')}"
     )
 
 
-def get_positions_message(positions: list[PositionInfo]) -> str:
-    """Get positions list message for /positions command.
-
-    Args:
-        positions: List of PositionInfo objects.
-
-    Returns:
-        Formatted HTML string.
-    """
+def get_positions_message(
+    positions: Sequence[Position],
+) -> str:
+    """Return active trading positions."""
     if not positions:
-        return "ℹ️ <b>No active open positions.</b>"
+        return "ℹ️ <b>Tidak ada posisi aktif.</b>"
 
-    lines: list[str] = ["💼 <b>Active Open Positions:</b>\n"]
-    for pos in positions:
-        pnl_str = format_percentage(pos.unrealized_pnl)
+    lines: list[str] = ["💼 <b>Posisi Aktif:</b>\n"]
+
+    for position in positions:
         lines.append(
-            f"• <b>{pos.symbol}</b> ({pos.position_side.value}): "
-            f"Size={pos.size}, Entry={pos.entry_price}, PnL={pnl_str}"
+            f"• <b>{escape(position.symbol)}</b> ({position.side.value}): "
+            f"Qty={position.quantity}, Entry={position.entry_price}, "
+            f"PnL={format_currency(position.unrealized_pnl, symbol='USDT')}"
         )
 
     return "\n".join(lines)
@@ -100,146 +103,136 @@ def get_settings_message(
     strategy_name: str,
     trade_mode: str,
 ) -> str:
-    """Get settings summary message for /settings command.
-
-    Args:
-        exchange_type: Exchange name string.
-        strategy_name: Active strategy name.
-        trade_mode: Execution mode string.
-
-    Returns:
-        Formatted HTML string.
-    """
+    """Return current exchange, strategy, and trade mode settings."""
     return (
         f"⚙️ <b>{APP_NAME} Settings</b>\n\n"
-        f"<b>Exchange:</b> {exchange_type}\n"
-        f"<b>Strategy:</b> {strategy_name}\n"
-        f"<b>Trade Mode:</b> {trade_mode}"
+        f"<b>Exchange:</b> {escape(exchange_type)}\n"
+        f"<b>Strategy:</b> {escape(strategy_name)}\n"
+        f"<b>Trade Mode:</b> {escape(trade_mode)}"
     )
 
 
-def get_exchange_message(current_exchange: str) -> str:
-    """Get exchange selection message.
-
-    Args:
-        current_exchange: Currently active exchange name.
-
-    Returns:
-        Formatted HTML string.
-    """
+def get_exchange_message(
+    current_exchange: str,
+) -> str:
+    """Return the exchange selection message."""
+    exchange_name = current_exchange.strip().upper()
     exchange_info: dict[str, str] = {
         "BYBIT": "🟡 <b>Bybit</b> — Derivatives &amp; Spot",
-        "BINANCE": "🟠 <b>Binance</b> — World's Largest Exchange",
+        "BINANCE": "🟠 <b>Binance</b> — Spot Exchange",
         "OKX": "⚫ <b>OKX</b> — Advanced Trading Platform",
         "BITGET": "🔵 <b>Bitget</b> — Copy Trading Exchange",
     }
-    desc = exchange_info.get(current_exchange.upper(), current_exchange)
+    description = exchange_info.get(exchange_name, escape(exchange_name))
+
     return (
-        f"🔄 <b>Exchange Selection</b>\n\n"
-        f"<b>Active:</b> {desc}\n\n"
+        "🔄 <b>Pemilihan Exchange</b>\n\n"
+        f"<b>Aktif:</b> {description}\n\n"
         "Pilih exchange yang ingin digunakan:"
     )
 
 
-def get_exchange_switched_message(new_exchange: str) -> str:
-    """Get confirmation message after exchange switch.
-
-    Args:
-        new_exchange: Newly selected exchange name.
-
-    Returns:
-        Formatted HTML string.
-    """
+def get_exchange_switched_message(
+    new_exchange: str,
+) -> str:
+    """Return confirmation after an exchange switch."""
     return (
-        f"✅ <b>Exchange berhasil diganti!</b>\n\n"
-        f"<b>Sekarang menggunakan:</b> {new_exchange.upper()}\n\n"
-        "Bot akan menggunakan credentials dari <code>.env</code> untuk exchange ini."
+        "✅ <b>Exchange berhasil diganti.</b>\n\n"
+        f"<b>Sekarang menggunakan:</b> {escape(new_exchange.upper())}"
     )
 
 
-def get_market_message(symbol: str, last_price: Decimal) -> str:
-    """Get market status message."""
+def get_market_message(
+    symbol: str,
+    last_price: Decimal,
+) -> str:
+    """Return current market summary."""
     return (
         "📈 <b>Market Data</b>\n\n"
-        f"<b>Symbol:</b> {symbol}\n"
-        f"<b>Last Price:</b> {format_currency(last_price, symbol='USDT')}\n"
-        "\n" 
-        "Data pasar diperbarui secara berkala dari exchange aktif."
+        f"<b>Symbol:</b> {escape(symbol)}\n"
+        f"<b>Last Price:</b> {format_currency(last_price, symbol='USDT')}\n\n"
+        "Data pasar diperbarui dari exchange aktif."
     )
 
 
-def get_orders_message(orders: list[OrderResult]) -> str:
-    """Get active orders message."""
+def get_orders_message(
+    orders: Sequence[Order],
+) -> str:
+    """Return active trading orders."""
     if not orders:
-        return "ℹ️ <b>No active open orders.</b>"
+        return "ℹ️ <b>Tidak ada order aktif.</b>"
 
-    lines: list[str] = ["📑 <b>Active Orders</b>\n"]
+    lines: list[str] = ["📑 <b>Order Aktif:</b>\n"]
+
     for order in orders:
         lines.append(
-            f"• <b>{order.symbol}</b> {order.side.value} {order.order_type.value} "
-            f"qty={order.quantity} status={order.status.value}"
+            f"• <b>{escape(order.symbol)}</b> {order.side.value} "
+            f"{order.order_type.value} qty={order.quantity} "
+            f"status={order.status.value}"
         )
+
     return "\n".join(lines)
 
 
-def get_balance_message(balance_usdt: Decimal) -> str:
-    """Get account balance summary message."""
+def get_balance_message(
+    balance_usdt: Decimal,
+) -> str:
+    """Return account balance summary."""
     return (
         "💰 <b>Account Balance</b>\n\n"
-        f"<b>Available:</b> {format_currency(balance_usdt, symbol='USDT')}\n"
-        "\n"
-        "Saldo ini berasal dari mode PAPER default."
+        f"<b>Available:</b> {format_currency(balance_usdt, symbol='USDT')}"
     )
 
 
 def get_history_message() -> str:
-    """Get account history placeholder message."""
-    return (
-        "📜 <b>History</b>\n\n"
-        "Riwayat trading dan order akan ditampilkan di sini ketika fitur tersedia."
-    )
+    """Return trading history placeholder."""
+    return "📜 <b>History</b>\n\nRiwayat trading belum tersedia."
 
 
-def get_strategy_message(strategy_name: str, fast_period: int, slow_period: int) -> str:
-    """Get current strategy details message."""
+def get_strategy_message(
+    strategy_name: str,
+    fast_period: int,
+    slow_period: int,
+) -> str:
+    """Return current strategy details."""
     return (
         "🧠 <b>Strategy</b>\n\n"
-        f"<b>Active Strategy:</b> {strategy_name}\n"
+        f"<b>Active Strategy:</b> {escape(strategy_name)}\n"
         f"<b>Fast EMA period:</b> {fast_period}\n"
         f"<b>Slow EMA period:</b> {slow_period}"
     )
 
 
 def get_stream_message() -> str:
-    """Get stream status placeholder message."""
-    return (
-        "📡 <b>Stream</b>\n\n"
-        "Koneksi streaming belum diaktifkan di versi ini."
-    )
+    """Return streaming status placeholder."""
+    return "📡 <b>Stream</b>\n\nStatus streaming belum tersedia."
 
 
-def get_start_message(is_running: bool) -> str:
-    """Get bot start confirmation message."""
+def get_start_message(
+    is_running: bool,
+) -> str:
+    """Return application start status."""
     if is_running:
         return "▶️ <b>Bot sudah berjalan.</b>"
-    return "▶️ <b>Bot trading telah dimulai kembali.</b>"
+
+    return "▶️ <b>Bot trading telah dimulai.</b>"
 
 
-def get_pause_message(is_running: bool) -> str:
-    """Get bot pause confirmation message."""
+def get_pause_message(
+    is_running: bool,
+) -> str:
+    """Return application pause status."""
     if not is_running:
         return "⏸️ <b>Bot trading telah dijeda.</b>"
+
     return "⏸️ <b>Bot masih berjalan.</b>"
 
 
 def get_test_message() -> str:
-    """Get test mode message."""
-    return (
-        "🧪 <b>Test</b>\n\n"
-        "Alur pengujian sementara belum diimplementasikan."
-    )
+    """Return test mode placeholder."""
+    return "🧪 <b>Test</b>\n\nAlur pengujian belum diimplementasikan."
 
 
 def get_stop_message() -> str:
-    """Get bot stop confirmation message."""
-    return "❌ <b>Trading Bot telah dihentikan.</b>"
+    """Return application stop confirmation."""
+    return "❌ <b>Trading bot telah dihentikan.</b>"

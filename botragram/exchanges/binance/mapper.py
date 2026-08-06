@@ -163,8 +163,12 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             order_id=self._to_string(payload.get("orderId")),
             symbol=self._to_string(payload.get("symbol")),
             side=OrderSide(self._to_string(payload.get("side"))),
-            order_type=OrderType(self._to_string(payload.get("type"))),
-            status=OrderStatus(self._to_string(payload.get("status"))),
+            order_type=OrderType(
+                self._to_string(payload.get("type")).lower(),
+            ),
+            status=OrderStatus(
+                self._to_string(payload.get("status")).lower(),
+            ),
             quantity=self._to_decimal(payload.get("origQty")),
             executed_quantity=self._to_decimal(payload.get("executedQty")),
             price=self._to_optional_decimal(payload.get("price")),

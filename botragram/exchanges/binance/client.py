@@ -247,7 +247,7 @@ class BinanceExchangeClient(BaseExchangeClient):
         params: RequestParams = {
             "symbol": self._normalize_symbol(symbol),
             "side": side.value,
-            "type": order_type.value,
+            "type": order_type.value.upper(),
             "quantity": self._format_decimal(quantity),
         }
 

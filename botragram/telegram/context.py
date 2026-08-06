@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Shared bot context for passing live engine state to Telegram handlers.
+    Shared state exposed to Telegram handlers.
 
 Python:
     3.14+
@@ -14,35 +14,35 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import TYPE_CHECKING
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.exchanges.base.mapper import PositionInfo
+from botragram.models import Position
 
-if TYPE_CHECKING:
-    from botragram.app.application import Application
+__all__ = [
+    "BotContext",
+]
 
 
 # =============================================================================
-# Bot Context Dataclass
+# Bot Context
 # =============================================================================
-@dataclass
+@dataclass(
+    slots=True,
+    kw_only=True,
+)
 class BotContext:
-    """Shared context object injected into Telegram bot_data."""
+    """Store the application state displayed by Telegram handlers."""
 
     is_running: bool = False
     trade_mode: str = "PAPER"
     symbol: str = "BTCUSDT"
     strategy_name: str = "EMA_CROSS"
-    exchange_type: str = "BYBIT"
-    last_price: Decimal = field(default_factory=lambda: Decimal("0"))
-    positions: list[PositionInfo] = field(
-        default_factory=lambda: list[PositionInfo]()
-    )
-    application: Application | None = field(default=None, repr=False)
+    exchange_type: str = "BINANCE"
+    last_price: Decimal = Decimal("0")
+    positions: tuple[Position, ...] = ()

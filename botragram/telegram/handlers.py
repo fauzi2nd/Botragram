@@ -58,4 +58,9 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler(CMD_SETTINGS, settings_command))
     app.add_handler(CommandHandler("exchange", exchange_command))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_message_handler))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            menu_message_handler,
+        )
+    )

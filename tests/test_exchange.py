@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Unit tests for exchange connectors and mappers.
+    Exchange factory and Binance payload mapping tests.
 
 Python:
     3.14+
@@ -14,102 +14,215 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
+# Standard Library Imports
 # =============================================================================
-import asyncio
+from datetime import timezone
 from decimal import Decimal
 
 # =============================================================================
-# Third Party
+# Third-Party Imports
 # =============================================================================
 import pytest
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.config.exchange_settings import ExchangeSettings
-from botragram.enums.exchange_type import ExchangeType
-from botragram.enums.order_side import OrderSide
-from botragram.enums.order_type import OrderType
-from botragram.exchanges.binance.client import BinanceClient
-from botragram.exchanges.binance.mapper import BinanceMapper
-from botragram.exchanges.bybit.client import BybitClient
-from botragram.exchanges.bybit.mapper import BybitMapper
-from botragram.exchanges.factory import create_exchange_client
+from botragram.enums import (
+    ExchangeType,
+    Interval,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+)
+from botragram.exchanges.binance.client import BinanceExchangeClient
+from botragram.exchanges.binance.mapper import BinanceExchangeMapper
+from botragram.exchanges.binance.rest import BinanceRestClient
+from botragram.exchanges.binance.stream import BinanceStreamClient
+from botragram.exchanges.factory import ExchangeFactory
 
 
-def test_bybit_mapper_candle() -> None:
-    """Test Bybit candle mapping."""
-    mapper = BybitMapper()
-    raw = [1600000000000, "50000.5", "51000.0", "49500.0", "50500.0", "100.5", "5000"]
-    candle = mapper.parse_candle(raw)
-    assert candle.timestamp_ms == 1600000000000
-    assert candle.open_price == Decimal("50000.5")
-    assert candle.high_price == Decimal("51000.0")
-    assert candle.low_price == Decimal("49500.0")
-    assert candle.close_price == Decimal("50500.0")
-    assert candle.volume == Decimal("100.5")
+# =============================================================================
+# Factory Tests
+# =============================================================================
+def test_exchange_factory_builds_matching_binance_dependencies() -> None:
+    """Verify factory creates one matching Binance client pair."""
+    exchange_client, stream_client = ExchangeFactory.create(
+        exchange_type=ExchangeType.BINANCE,
+        rest_base_url="https://example.test",
+        websocket_base_url="wss://example.test",
+    )
 
-
-def test_binance_mapper_candle() -> None:
-    """Test Binance candle mapping."""
-    mapper = BinanceMapper()
-    raw = [1600000000000, "60000.0", "61000.0", "59000.0", "60500.0", "200.0"]
-    candle = mapper.parse_candle(raw)
-    assert candle.timestamp_ms == 1600000000000
-    assert candle.open_price == Decimal("60000.0")
-    assert candle.close_price == Decimal("60500.0")
-
-
-def test_bybit_client_order() -> None:
-    """Test Bybit client order creation stub."""
-
-    async def run_test() -> None:
-        client = BybitClient(testnet=True)
-        res = await client.create_order(
-            symbol="BTCUSDT",
-            side=OrderSide.BUY,
-            order_type=OrderType.MARKET,
-            quantity=Decimal("0.01"),
-        )
-        assert res.symbol == "BTCUSDT"
-        assert res.side == OrderSide.BUY
-        await client.close()
-
-    asyncio.run(run_test())
-
-
-def test_binance_client_order() -> None:
-    """Test Binance client order creation stub."""
-
-    async def run_test() -> None:
-        client = BinanceClient(testnet=True)
-        res = await client.create_order(
-            symbol="BTCUSDT",
-            side=OrderSide.SELL,
-            order_type=OrderType.LIMIT,
-            quantity=Decimal("0.05"),
-            price=Decimal("65000.0"),
-        )
-        assert res.symbol == "BTCUSDT"
-        assert res.side == OrderSide.SELL
-        await client.close()
-
-    asyncio.run(run_test())
+    assert isinstance(exchange_client, BinanceExchangeClient)
+    assert isinstance(stream_client, BinanceStreamClient)
 
 
 @pytest.mark.parametrize(
     "exchange_type",
-    [
-        ExchangeType.OKX,
-        ExchangeType.BITGET,
-    ],
+    (ExchangeType.BITGET, ExchangeType.BYBIT, ExchangeType.OKX),
 )
-def test_unimplemented_exchange_does_not_fall_back_to_bybit(
+def test_exchange_factory_rejects_unimplemented_exchange_types(
     exchange_type: ExchangeType,
 ) -> None:
-    """Test unavailable exchange connectors fail explicitly."""
-    settings = ExchangeSettings(exchange_type=exchange_type)
+    """Verify incomplete exchange integrations cannot be selected silently."""
+    with pytest.raises(ValueError, match="Unsupported exchange type"):
+        ExchangeFactory.create_rest_client(
+            exchange_type=exchange_type,
+            base_url="https://example.test",
+        )
 
-    with pytest.raises(NotImplementedError):
-        create_exchange_client(settings)
+
+def test_exchange_factory_accepts_a_binance_transport_subclass() -> None:
+    """Verify compatible Binance transport extensions preserve the contract."""
+
+    class OtherRestClient(BinanceRestClient):
+        """Test transport used to retain the required abstract contract."""
+
+    rest_client = OtherRestClient(base_url="https://example.test")
+
+    assert isinstance(
+        ExchangeFactory.create_exchange_client(
+            exchange_type=ExchangeType.BINANCE,
+            rest_client=rest_client,
+        ),
+        BinanceExchangeClient,
+    )
+
+
+# =============================================================================
+# Mapper Tests
+# =============================================================================
+def test_binance_mapper_maps_account_and_balances() -> None:
+    """Verify account capabilities and Decimal balances are normalized."""
+    account = BinanceExchangeMapper().map_account(
+        {
+            "canTrade": True,
+            "canDeposit": "true",
+            "canWithdraw": 1,
+            "balances": [
+                {
+                    "asset": "USDT",
+                    "free": "100.25",
+                    "locked": "2.5",
+                }
+            ],
+        }
+    )
+
+    assert account.can_trade
+    assert account.can_deposit
+    assert account.can_withdraw
+    assert len(account.balances) == 1
+    assert account.balances[0].asset == "USDT"
+    assert account.balances[0].free == Decimal("100.25")
+    assert account.balances[0].locked == Decimal("2.5")
+
+
+def test_binance_mapper_maps_rest_ticker_and_candle() -> None:
+    """Verify REST market payloads become timezone-aware domain models."""
+    mapper = BinanceExchangeMapper()
+    ticker = mapper.map_ticker(
+        {
+            "symbol": "BTCUSDT",
+            "bidPrice": "99.5",
+            "askPrice": "100.5",
+            "lastPrice": "100",
+            "closeTime": 1_700_000_000_000,
+        }
+    )
+    candle = mapper.map_candle(
+        [
+            1_700_000_000_000,
+            "99",
+            "102",
+            "98",
+            "101",
+            "12.5",
+            1_700_000_060_000,
+        ],
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+    )
+
+    assert ticker.symbol == "BTCUSDT"
+    assert ticker.bid_price == Decimal("99.5")
+    assert ticker.timestamp.tzinfo is timezone.utc
+    assert candle.interval is Interval.M1
+    assert candle.open_price == Decimal("99")
+    assert candle.close_price == Decimal("101")
+    assert candle.close_time.tzinfo is timezone.utc
+
+
+def test_binance_mapper_maps_optional_order_prices() -> None:
+    """Verify zero or absent Binance order prices remain optional."""
+    order = BinanceExchangeMapper().map_order(
+        {
+            "orderId": 123,
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "type": "MARKET",
+            "status": "FILLED",
+            "origQty": "1.2",
+            "executedQty": "1.2",
+            "price": "0",
+            "stopPrice": "",
+            "transactTime": 1_700_000_000_000,
+        }
+    )
+
+    assert order.order_id == "123"
+    assert order.side is OrderSide.BUY
+    assert order.order_type is OrderType.MARKET
+    assert order.status is OrderStatus.FILLED
+    assert order.price is None
+    assert order.stop_price is None
+
+
+def test_binance_mapper_maps_short_position_and_trade_fallbacks() -> None:
+    """Verify signed positions and buyer flags map to domain enum values."""
+    mapper = BinanceExchangeMapper()
+    position = mapper.map_position(
+        {
+            "symbol": "BTCUSDT",
+            "positionSide": "BOTH",
+            "positionAmt": "-2",
+            "entryPrice": "100",
+            "markPrice": "90",
+            "unRealizedProfit": "20",
+            "leverage": "3",
+            "updateTime": 1_700_000_000_000,
+        }
+    )
+    trade = mapper.map_trade(
+        {
+            "id": 5,
+            "orderId": 7,
+            "symbol": "BTCUSDT",
+            "isBuyer": False,
+            "price": "100",
+            "qty": "2",
+            "commission": "0.1",
+            "commissionAsset": "USDT",
+            "time": 1_700_000_000_000,
+        }
+    )
+
+    assert position.side is PositionSide.SHORT
+    assert position.quantity == Decimal("2")
+    assert trade.side is OrderSide.SELL
+    assert trade.quote_quantity == Decimal("200")
+
+
+def test_binance_mapper_rejects_malformed_payloads() -> None:
+    """Verify malformed vendor payloads fail at the exchange boundary."""
+    mapper = BinanceExchangeMapper()
+
+    with pytest.raises(ValueError, match="at least 7 elements"):
+        mapper.map_candle(
+            [1, "1"],
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+        )
+
+    with pytest.raises(ValueError, match="balances"):
+        mapper.map_account({"balances": {}})

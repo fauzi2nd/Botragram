@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Bybit REST API client implementation.
+    Explicit placeholder for the unavailable Bybit REST transport.
 
 Python:
     3.14+
@@ -14,86 +14,71 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
-# =============================================================================
-import logging
-from typing import Any
-
-# =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.exchanges.base.rest import BaseRestClient
+from botragram.exchanges.base.rest import (
+    BaseRestClient,
+    JsonObject,
+    JsonResponse,
+    QueryParams,
+    RequestHeaders,
+)
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    "BybitRestClient",
+]
 
 
 # =============================================================================
-# Bybit REST Client Class
+# Constants
+# =============================================================================
+_NOT_IMPLEMENTED_ERROR = "Bybit REST transport is not implemented"
+
+
+# =============================================================================
+# Bybit REST Client
 # =============================================================================
 class BybitRestClient(BaseRestClient):
-    """Bybit v5 REST API client implementation."""
+    """Represent the reserved Bybit transport integration point."""
 
-    def __init__(
+    __slots__ = ()
+
+    async def get(
         self,
-        api_key: str = "",
-        api_secret: str = "",
-        testnet: bool = True,
-    ) -> None:
-        """Initialize Bybit REST API client.
+        path: str,
+        *,
+        params: QueryParams | None = None,
+        headers: RequestHeaders | None = None,
+        authenticated: bool = False,
+    ) -> JsonResponse:
+        """Reject GET requests until the Bybit transport is implemented."""
+        del path, params, headers, authenticated
+        raise NotImplementedError(_NOT_IMPLEMENTED_ERROR)
 
-        Args:
-            api_key: Bybit API key.
-            api_secret: Bybit API secret.
-            testnet: Use Bybit testnet if True.
-        """
-        base_url = (
-            "https://api-testnet.bybit.com"
-            if testnet
-            else "https://api.bybit.com"
-        )
-        super().__init__(
-            base_url=base_url,
-            api_key=api_key,
-            api_secret=api_secret,
-        )
-
-    async def get_tickers(self, category: str = "linear", symbol: str = "") -> Any:
-        """Fetch market ticker information.
-
-        Args:
-            category: Product category (linear, spot, etc.).
-            symbol: Optional symbol filter.
-
-        Returns:
-            JSON response dictionary.
-        """
-        params: dict[str, Any] = {"category": category}
-        if symbol:
-            params["symbol"] = symbol
-        return await self._request("GET", "/v5/market/tickers", params=params)
-
-    async def get_kline(
+    async def post(
         self,
-        symbol: str,
-        interval: str,
-        limit: int = 100,
-        category: str = "linear",
-    ) -> Any:
-        """Fetch candlestick kline data.
+        path: str,
+        *,
+        params: QueryParams | None = None,
+        data: JsonObject | None = None,
+        headers: RequestHeaders | None = None,
+        authenticated: bool = False,
+    ) -> JsonResponse:
+        """Reject POST requests until the Bybit transport is implemented."""
+        del path, params, data, headers, authenticated
+        raise NotImplementedError(_NOT_IMPLEMENTED_ERROR)
 
-        Args:
-            symbol: Symbol name string.
-            interval: Timeframe interval string.
-            limit: Candle count limit.
-            category: Product category string.
+    async def delete(
+        self,
+        path: str,
+        *,
+        params: QueryParams | None = None,
+        headers: RequestHeaders | None = None,
+        authenticated: bool = False,
+    ) -> JsonResponse:
+        """Reject DELETE requests until the Bybit transport is implemented."""
+        del path, params, headers, authenticated
+        raise NotImplementedError(_NOT_IMPLEMENTED_ERROR)
 
-        Returns:
-            JSON response dictionary.
-        """
-        params: dict[str, Any] = {
-            "category": category,
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit,
-        }
-        return await self._request("GET", "/v5/market/kline", params=params)
+    async def close(self) -> None:
+        """Close the placeholder transport without side effects."""
