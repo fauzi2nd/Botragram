@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    App package initialization.
+    Application package initialization.
 
 Python:
     3.14+
@@ -17,13 +17,15 @@ from __future__ import annotations
 # Local Imports
 # =============================================================================
 from botragram.app.application import Application
-from botragram.app.environment_provider import EnvironmentProvider
-from botragram.app.settings_manager import SettingsManager
-from botragram.app.startup import initialize_logging
+from botragram.app.dependency_provider import DependencyProvider
+from botragram.app.lifecycle import ApplicationLifecycle
+from botragram.app.shutdown import shutdown_application
+from botragram.app.startup import startup_application
 
 __all__ = [
     "Application",
-    "EnvironmentProvider",
-    "SettingsManager",
-    "initialize_logging",
+    "ApplicationLifecycle",
+    "DependencyProvider",
+    "shutdown_application",
+    "startup_application",
 ]

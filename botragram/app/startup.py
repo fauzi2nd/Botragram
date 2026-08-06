@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Startup helper functions for initializing components.
+    Application startup entry point.
 
 Python:
     3.14+
@@ -14,27 +14,25 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library
-# =============================================================================
-import logging
-
-# =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.utils.logger import setup_logger
+from botragram.app.lifecycle import ApplicationLifecycle
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    "startup_application",
+]
 
 
 # =============================================================================
-# Functions
+# Startup Functions
 # =============================================================================
-def initialize_logging() -> logging.Logger:
-    """Initialize root application logger.
+async def startup_application(
+    *,
+    lifecycle: ApplicationLifecycle,
+) -> None:
+    """Start application resources.
 
-    Returns:
-        Configured Logger instance.
+    Args:
+        lifecycle: Application resource lifecycle manager.
     """
-    app_logger = setup_logger(name="botragram", level=logging.INFO)
-    logger.info("Logging infrastructure initialized")
-    return app_logger
+    await lifecycle.startup()

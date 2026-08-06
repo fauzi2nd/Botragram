@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Storage package initialization.
+    Storage implementations package initialization.
 
 Python:
     3.14+
@@ -23,6 +23,13 @@ from botragram.storage.memory import (
     MemorySignalRepository,
     MemoryTradeRepository,
 )
+from botragram.storage.sqlite import (
+    SQLiteCandleRepository,
+    SQLiteOrderRepository,
+    SQLitePositionRepository,
+    SQLiteSignalRepository,
+    SQLiteTradeRepository,
+)
 
 __all__ = [
     "MemoryCandleRepository",
@@ -30,4 +37,9 @@ __all__ = [
     "MemoryPositionRepository",
     "MemorySignalRepository",
     "MemoryTradeRepository",
+    "SQLiteCandleRepository",
+    "SQLiteOrderRepository",
+    "SQLitePositionRepository",
+    "SQLiteSignalRepository",
+    "SQLiteTradeRepository",
 ]
