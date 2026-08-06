@@ -16,7 +16,6 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-import asyncio
 from collections.abc import Sequence
 
 # =============================================================================
@@ -25,6 +24,7 @@ from collections.abc import Sequence
 from botragram.enums import PositionSide
 from botragram.models import Position
 from botragram.repositories import PositionRepository
+from botragram.storage.base import BaseMemoryRepository
 
 __all__ = [
     "MemoryPositionRepository",
@@ -34,18 +34,19 @@ __all__ = [
 # =============================================================================
 # Repository Implementations
 # =============================================================================
-class MemoryPositionRepository(PositionRepository):
+class MemoryPositionRepository(
+    BaseMemoryRepository,
+    PositionRepository,
+):
     """Store trading positions in process memory."""
 
-    __slots__ = (
-        "_lock",
-        "_positions",
-    )
+    __slots__ = ("_positions",)
 
     def __init__(self) -> None:
         """Initialize an empty position repository."""
+        super().__init__()
+
         self._positions: dict[str, Position] = {}
-        self._lock = asyncio.Lock()
 
     async def save(
         self,
@@ -191,15 +192,3 @@ class MemoryPositionRepository(PositionRepository):
         """Return the number of stored positions."""
         async with self._lock:
             return len(self._positions)
-
-    @staticmethod
-    def _normalize_symbol(
-        symbol: str,
-    ) -> str:
-        """Normalize and validate a trading symbol."""
-        normalized_symbol = symbol.strip().upper()
-
-        if not normalized_symbol:
-            raise ValueError("Trading symbol must not be empty")
-
-        return normalized_symbol

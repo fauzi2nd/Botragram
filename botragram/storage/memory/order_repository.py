@@ -16,7 +16,6 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-import asyncio
 from collections.abc import Sequence
 from datetime import datetime
 
@@ -26,6 +25,7 @@ from datetime import datetime
 from botragram.enums import OrderSide, OrderStatus, OrderType
 from botragram.models import Order
 from botragram.repositories import OrderRepository
+from botragram.storage.base import BaseMemoryRepository
 
 __all__ = [
     "MemoryOrderRepository",
@@ -41,18 +41,19 @@ type OrderKey = tuple[str, str]
 # =============================================================================
 # Repository Implementations
 # =============================================================================
-class MemoryOrderRepository(OrderRepository):
+class MemoryOrderRepository(
+    BaseMemoryRepository,
+    OrderRepository,
+):
     """Store trading orders in process memory."""
 
-    __slots__ = (
-        "_lock",
-        "_orders",
-    )
+    __slots__ = ("_orders",)
 
     def __init__(self) -> None:
         """Initialize an empty order repository."""
+        super().__init__()
+
         self._orders: dict[OrderKey, Order] = {}
-        self._lock = asyncio.Lock()
 
     async def save(
         self,
@@ -85,7 +86,10 @@ class MemoryOrderRepository(OrderRepository):
         symbol: str | None = None,
     ) -> Order | None:
         """Return an order by identifier."""
-        normalized_order_id = self._normalize_order_id(order_id)
+        normalized_order_id = self._normalize_identifier(
+            order_id,
+            label="Order",
+        )
 
         if symbol is not None:
             key: OrderKey = (
@@ -122,8 +126,10 @@ class MemoryOrderRepository(OrderRepository):
         status: OrderStatus | None = None,
     ) -> Sequence[Order]:
         """Return the latest trading orders."""
-        if limit <= 0:
-            raise ValueError("Order limit must be greater than zero")
+        self._validate_limit(
+            limit,
+            label="Order",
+        )
 
         normalized_symbol = (
             self._normalize_symbol(symbol) if symbol is not None else None
@@ -157,8 +163,11 @@ class MemoryOrderRepository(OrderRepository):
         status: OrderStatus | None = None,
     ) -> Sequence[Order]:
         """Return orders created within an inclusive datetime range."""
-        if start_time > end_time:
-            raise ValueError("Order start time must not be after end time")
+        self._validate_time_range(
+            start_time=start_time,
+            end_time=end_time,
+            label="Order",
+        )
 
         normalized_symbol = (
             self._normalize_symbol(symbol) if symbol is not None else None
@@ -266,14 +275,18 @@ class MemoryOrderRepository(OrderRepository):
                 )
             )
 
-    @staticmethod
+    @classmethod
     def _create_key(
+        cls,
         order: Order,
     ) -> OrderKey:
         """Create a unique in-memory order key."""
         return (
-            MemoryOrderRepository._normalize_symbol(order.symbol),
-            MemoryOrderRepository._normalize_order_id(order.order_id),
+            cls._normalize_symbol(order.symbol),
+            cls._normalize_identifier(
+                order.order_id,
+                label="Order",
+            ),
         )
 
     @staticmethod
@@ -303,27 +316,3 @@ class MemoryOrderRepository(OrderRepository):
             "PARTIALLY_FILLED",
             "PENDING_NEW",
         }
-
-    @staticmethod
-    def _normalize_symbol(
-        symbol: str,
-    ) -> str:
-        """Normalize and validate a trading symbol."""
-        normalized_symbol = symbol.strip().upper()
-
-        if not normalized_symbol:
-            raise ValueError("Trading symbol must not be empty")
-
-        return normalized_symbol
-
-    @staticmethod
-    def _normalize_order_id(
-        order_id: str,
-    ) -> str:
-        """Normalize and validate an order identifier."""
-        normalized_order_id = order_id.strip()
-
-        if not normalized_order_id:
-            raise ValueError("Order identifier must not be empty")
-
-        return normalized_order_id

@@ -16,7 +16,6 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-import asyncio
 from collections.abc import Sequence
 from datetime import datetime
 
@@ -26,6 +25,7 @@ from datetime import datetime
 from botragram.enums import OrderSide
 from botragram.models import Trade
 from botragram.repositories import TradeRepository
+from botragram.storage.base import BaseMemoryRepository
 
 __all__ = [
     "MemoryTradeRepository",
@@ -41,18 +41,19 @@ type TradeKey = tuple[str, str]
 # =============================================================================
 # Repository Implementations
 # =============================================================================
-class MemoryTradeRepository(TradeRepository):
+class MemoryTradeRepository(
+    BaseMemoryRepository,
+    TradeRepository,
+):
     """Store executed trades in process memory."""
 
-    __slots__ = (
-        "_lock",
-        "_trades",
-    )
+    __slots__ = ("_trades",)
 
     def __init__(self) -> None:
         """Initialize an empty trade repository."""
+        super().__init__()
+
         self._trades: dict[TradeKey, Trade] = {}
-        self._lock = asyncio.Lock()
 
     async def save(
         self,
@@ -155,8 +156,10 @@ class MemoryTradeRepository(TradeRepository):
         side: OrderSide | None = None,
     ) -> Sequence[Trade]:
         """Return the latest executed trades."""
-        if limit <= 0:
-            raise ValueError("Trade limit must be greater than zero")
+        self._validate_limit(
+            limit,
+            label="Trade",
+        )
 
         normalized_symbol = (
             self._normalize_symbol(symbol) if symbol is not None else None
@@ -186,8 +189,11 @@ class MemoryTradeRepository(TradeRepository):
         side: OrderSide | None = None,
     ) -> Sequence[Trade]:
         """Return trades executed within an inclusive datetime range."""
-        if start_time > end_time:
-            raise ValueError("Trade start time must not be after end time")
+        self._validate_time_range(
+            start_time=start_time,
+            end_time=end_time,
+            label="Trade",
+        )
 
         normalized_symbol = (
             self._normalize_symbol(symbol) if symbol is not None else None
@@ -262,14 +268,15 @@ class MemoryTradeRepository(TradeRepository):
                 )
             )
 
-    @staticmethod
+    @classmethod
     def _create_key(
+        cls,
         trade: Trade,
     ) -> TradeKey:
         """Create a unique in-memory trade key."""
         return (
-            MemoryTradeRepository._normalize_symbol(trade.symbol),
-            MemoryTradeRepository._normalize_identifier(
+            cls._normalize_symbol(trade.symbol),
+            cls._normalize_identifier(
                 trade.trade_id,
                 label="Trade",
             ),
@@ -286,29 +293,3 @@ class MemoryTradeRepository(TradeRepository):
         return (symbol is None or trade.symbol.upper() == symbol) and (
             side is None or trade.side is side
         )
-
-    @staticmethod
-    def _normalize_symbol(
-        symbol: str,
-    ) -> str:
-        """Normalize and validate a trading symbol."""
-        normalized_symbol = symbol.strip().upper()
-
-        if not normalized_symbol:
-            raise ValueError("Trading symbol must not be empty")
-
-        return normalized_symbol
-
-    @staticmethod
-    def _normalize_identifier(
-        identifier: str,
-        *,
-        label: str,
-    ) -> str:
-        """Normalize and validate an exchange identifier."""
-        normalized_identifier = identifier.strip()
-
-        if not normalized_identifier:
-            raise ValueError(f"{label} identifier must not be empty")
-
-        return normalized_identifier

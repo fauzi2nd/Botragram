@@ -16,7 +16,6 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-import asyncio
 from collections.abc import Sequence
 from datetime import datetime
 
@@ -26,6 +25,7 @@ from datetime import datetime
 from botragram.enums import Interval
 from botragram.models import Candle
 from botragram.repositories import CandleRepository
+from botragram.storage.base import BaseMemoryRepository
 
 __all__ = [
     "MemoryCandleRepository",
@@ -45,18 +45,19 @@ type CandleKey = tuple[
 # =============================================================================
 # Repository Implementations
 # =============================================================================
-class MemoryCandleRepository(CandleRepository):
+class MemoryCandleRepository(
+    BaseMemoryRepository,
+    CandleRepository,
+):
     """Store candlestick market data in process memory."""
 
-    __slots__ = (
-        "_candles",
-        "_lock",
-    )
+    __slots__ = ("_candles",)
 
     def __init__(self) -> None:
         """Initialize an empty candle repository."""
+        super().__init__()
+
         self._candles: dict[CandleKey, Candle] = {}
-        self._lock = asyncio.Lock()
 
     async def save(
         self,
@@ -90,8 +91,10 @@ class MemoryCandleRepository(CandleRepository):
         limit: int,
     ) -> Sequence[Candle]:
         """Return the latest candles for a symbol and interval."""
-        if limit <= 0:
-            raise ValueError("Candle limit must be greater than zero")
+        self._validate_limit(
+            limit,
+            label="Candle",
+        )
 
         normalized_symbol = self._normalize_symbol(symbol)
 
@@ -118,8 +121,11 @@ class MemoryCandleRepository(CandleRepository):
         end_time: datetime,
     ) -> Sequence[Candle]:
         """Return candles within an inclusive datetime range."""
-        if start_time > end_time:
-            raise ValueError("Candle start time must not be after end time")
+        self._validate_time_range(
+            start_time=start_time,
+            end_time=end_time,
+            label="Candle",
+        )
 
         normalized_symbol = self._normalize_symbol(symbol)
 
@@ -210,25 +216,14 @@ class MemoryCandleRepository(CandleRepository):
                 )
             )
 
-    @staticmethod
+    @classmethod
     def _create_key(
+        cls,
         candle: Candle,
     ) -> CandleKey:
         """Create a unique in-memory candle key."""
         return (
-            MemoryCandleRepository._normalize_symbol(candle.symbol),
+            cls._normalize_symbol(candle.symbol),
             candle.interval,
             candle.open_time,
         )
-
-    @staticmethod
-    def _normalize_symbol(
-        symbol: str,
-    ) -> str:
-        """Normalize and validate a trading symbol."""
-        normalized_symbol = symbol.strip().upper()
-
-        if not normalized_symbol:
-            raise ValueError("Trading symbol must not be empty")
-
-        return normalized_symbol

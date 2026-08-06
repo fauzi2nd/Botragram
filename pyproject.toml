@@ -1,3 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "botragram"
+version = "0.1.0"
+description = "Asynchronous algorithmic trading framework."
+requires-python = ">=3.14"
+
+dependencies = [
+    "aiohttp",
+    "aiosqlite",
+    "python-dotenv",
+]
+
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
@@ -9,16 +25,9 @@ venv = ".venv"
 pythonpath = ["."]
 
 [tool.ruff]
-# Panjang baris maksimum (default 88 seperti Black)
 line-length = 88
 target-version = "py314"
 
 [tool.ruff.lint]
-# Aturan yang diaktifkan:
-# E/W = pycodestyle (pep8)
-# F   = Pyflakes (error variabel/import)
-# I   = isort (sorting import)
 select = ["E", "F", "I"]
-
-# Aturan yang diabaikan (optional)
 ignore = []

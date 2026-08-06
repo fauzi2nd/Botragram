@@ -16,7 +16,6 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-import asyncio
 from collections.abc import Sequence
 from datetime import datetime
 
@@ -26,6 +25,7 @@ from datetime import datetime
 from botragram.enums import SignalType
 from botragram.models import Signal
 from botragram.repositories import SignalRepository
+from botragram.storage.base import BaseMemoryRepository
 
 __all__ = [
     "MemorySignalRepository",
@@ -45,18 +45,19 @@ type SignalKey = tuple[
 # =============================================================================
 # Repository Implementations
 # =============================================================================
-class MemorySignalRepository(SignalRepository):
+class MemorySignalRepository(
+    BaseMemoryRepository,
+    SignalRepository,
+):
     """Store generated trading signals in process memory."""
 
-    __slots__ = (
-        "_lock",
-        "_signals",
-    )
+    __slots__ = ("_signals",)
 
     def __init__(self) -> None:
         """Initialize an empty signal repository."""
+        super().__init__()
+
         self._signals: dict[SignalKey, Signal] = {}
-        self._lock = asyncio.Lock()
 
     async def save(
         self,
@@ -91,8 +92,10 @@ class MemorySignalRepository(SignalRepository):
         strategy_name: str | None = None,
     ) -> Sequence[Signal]:
         """Return the latest generated signals."""
-        if limit <= 0:
-            raise ValueError("Signal limit must be greater than zero")
+        self._validate_limit(
+            limit,
+            label="Signal",
+        )
 
         normalized_symbol = (
             self._normalize_symbol(symbol) if symbol is not None else None
@@ -129,8 +132,11 @@ class MemorySignalRepository(SignalRepository):
         strategy_name: str | None = None,
     ) -> Sequence[Signal]:
         """Return signals generated within an inclusive datetime range."""
-        if start_time > end_time:
-            raise ValueError("Signal start time must not be after end time")
+        self._validate_time_range(
+            start_time=start_time,
+            end_time=end_time,
+            label="Signal",
+        )
 
         normalized_symbol = (
             self._normalize_symbol(symbol) if symbol is not None else None
@@ -252,14 +258,15 @@ class MemorySignalRepository(SignalRepository):
                 )
             )
 
-    @staticmethod
+    @classmethod
     def _create_key(
+        cls,
         signal: Signal,
     ) -> SignalKey:
         """Create a unique in-memory signal key."""
         return (
-            MemorySignalRepository._normalize_symbol(signal.symbol),
-            MemorySignalRepository._normalize_strategy_name(signal.strategy_name),
+            cls._normalize_symbol(signal.symbol),
+            cls._normalize_strategy_name(signal.strategy_name),
             signal.generated_at,
         )
 
@@ -277,18 +284,6 @@ class MemorySignalRepository(SignalRepository):
             and (signal_type is None or signal.signal_type is signal_type)
             and (strategy_name is None or signal.strategy_name == strategy_name)
         )
-
-    @staticmethod
-    def _normalize_symbol(
-        symbol: str,
-    ) -> str:
-        """Normalize and validate a trading symbol."""
-        normalized_symbol = symbol.strip().upper()
-
-        if not normalized_symbol:
-            raise ValueError("Trading symbol must not be empty")
-
-        return normalized_symbol
 
     @staticmethod
     def _normalize_strategy_name(
