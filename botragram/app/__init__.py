@@ -19,6 +19,7 @@ from __future__ import annotations
 from botragram.app.application import Application
 from botragram.app.dependency_provider import DependencyProvider
 from botragram.app.lifecycle import ApplicationLifecycle
+from botragram.app.settings_manager import SettingsManager
 from botragram.app.shutdown import shutdown_application
 from botragram.app.startup import startup_application
 
@@ -26,6 +27,7 @@ __all__ = [
     "Application",
     "ApplicationLifecycle",
     "DependencyProvider",
+    "SettingsManager",
     "shutdown_application",
     "startup_application",
 ]

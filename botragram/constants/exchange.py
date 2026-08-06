@@ -20,6 +20,10 @@ __all__ = [
     "DEFAULT_WS_RECONNECT_DELAY_SECONDS",
     "DEFAULT_RECV_WINDOW_MS",
     "DEFAULT_CANDLE_FETCH_LIMIT",
+    "BINANCE_REST_BASE_URL",
+    "BINANCE_TESTNET_REST_BASE_URL",
+    "BINANCE_WEBSOCKET_BASE_URL",
+    "BINANCE_TESTNET_WEBSOCKET_BASE_URL",
 ]
 
 # =============================================================================
@@ -42,3 +46,11 @@ DEFAULT_WS_RECONNECT_DELAY_SECONDS: float = 5.0
 DEFAULT_RECV_WINDOW_MS: int = 5_000
 
 DEFAULT_CANDLE_FETCH_LIMIT: int = 100
+
+# =============================================================================
+# Binance URLs
+# =============================================================================
+BINANCE_REST_BASE_URL: str = "https://api.binance.com"
+BINANCE_TESTNET_REST_BASE_URL: str = "https://testnet.binance.vision"
+BINANCE_WEBSOCKET_BASE_URL: str = "wss://stream.binance.com:9443"
+BINANCE_TESTNET_WEBSOCKET_BASE_URL: str = "wss://stream.testnet.binance.vision"
