@@ -162,10 +162,11 @@ def test_risk_engine_rejects_invalid_inputs(
 ) -> None:
     """Verify unsafe numeric inputs fail before position sizing."""
     engine = RiskEngine(settings=RiskSettings())
+    signal = _create_signal(price=price)
 
     with pytest.raises(ValueError, match=message):
         engine.evaluate(
-            signal=_create_signal(price=price),
+            signal=signal,
             account_balance=balance,
             current_drawdown_pct=drawdown,
         )
@@ -284,21 +285,27 @@ def test_pnl_engine_rejects_invalid_financial_values() -> None:
     """Verify PnL calculations reject zero prices and negative fees."""
     engine = PnLEngine()
 
+    zero_entry_price = Decimal("0")
+    valid_entry_price = Decimal("1")
+    valid_exit_price = Decimal("2")
+    valid_quantity = Decimal("1")
+    negative_entry_fee = Decimal("-0.1")
+
     with pytest.raises(ValueError, match="Entry price"):
         engine.calculate_realized(
             side=PositionSide.LONG,
-            entry_price=Decimal("0"),
-            exit_price=Decimal("1"),
-            quantity=Decimal("1"),
+            entry_price=zero_entry_price,
+            exit_price=valid_entry_price,
+            quantity=valid_quantity,
         )
 
     with pytest.raises(ValueError, match="Entry fee"):
         engine.calculate_realized(
             side=PositionSide.LONG,
-            entry_price=Decimal("1"),
-            exit_price=Decimal("2"),
-            quantity=Decimal("1"),
-            entry_fee=Decimal("-0.1"),
+            entry_price=valid_entry_price,
+            exit_price=valid_exit_price,
+            quantity=valid_quantity,
+            entry_fee=negative_entry_fee,
         )
 
 
@@ -345,8 +352,12 @@ def test_portfolio_engine_calculates_exposure_and_position_metrics() -> None:
 
 def test_portfolio_engine_rejects_invalid_equity() -> None:
     """Verify exposure ratio requires positive account equity."""
+    engine = PortfolioEngine()
+    positions: tuple[Position, ...] = ()
+    zero_equity = Decimal("0")
+
     with pytest.raises(ValueError, match="Account equity"):
-        PortfolioEngine().calculate_exposure_ratio(
-            positions=(),
-            account_equity=Decimal("0"),
+        engine.calculate_exposure_ratio(
+            positions=positions,
+            account_equity=zero_equity,
         )

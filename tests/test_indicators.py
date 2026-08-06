@@ -239,31 +239,43 @@ def test_moving_averages_reject_non_positive_periods(period: int) -> None:
 
 def test_indicators_reject_misaligned_or_invalid_input() -> None:
     """Verify public indicator boundaries reject unsafe input."""
+    atr_highs = _decimal_series(2, 3)
+    atr_lows = _decimal_series(1)
+    atr_closes = _decimal_series(1, 2)
+
     with pytest.raises(ValueError, match="equal lengths"):
         calculate_atr(
-            _decimal_series(2, 3),
-            _decimal_series(1),
-            _decimal_series(1, 2),
+            atr_highs,
+            atr_lows,
+            atr_closes,
             period=1,
         )
 
+    obv_closes = _decimal_series(1, 2)
+    invalid_volumes = _decimal_series(1, -1)
+
     with pytest.raises(ValueError, match="must not be negative"):
         calculate_obv(
-            _decimal_series(1, 2),
-            _decimal_series(1, -1),
+            obv_closes,
+            invalid_volumes,
         )
+
+    vwap_prices = _decimal_series(1)
+    zero_volume = _decimal_series(0)
 
     with pytest.raises(ValueError, match="cumulative volume"):
         calculate_vwap(
-            _decimal_series(1),
-            _decimal_series(1),
-            _decimal_series(1),
-            _decimal_series(0),
+            vwap_prices,
+            vwap_prices,
+            vwap_prices,
+            zero_volume,
         )
+
+    macd_values = _decimal_series(1, 2, 3)
 
     with pytest.raises(ValueError, match="fast period must be less"):
         calculate_macd(
-            _decimal_series(1, 2, 3),
+            macd_values,
             fast_period=3,
             slow_period=2,
             signal_period=1,

@@ -495,10 +495,10 @@ python -m pyright
 python -m pytest
 ```
 
-Jalankan MyPy jika sudah tersedia pada scope perubahan:
+Jalankan MyPy strict pada seluruh scope yang dikonfigurasi:
 
 ```powershell
-python -m mypy botragram
+python -m mypy
 ```
 
 Kriteria lulus:
@@ -506,6 +506,8 @@ Kriteria lulus:
 - Tidak ada syntax/compile error.
 - Ruff format dan lint bersih.
 - Pyright strict: 0 error dan 0 warning.
+- Pylance workspace diagnostics: 0 error dan 0 warning, termasuk `tests/`.
+- MyPy: 0 issue pada production code, automated test, dan manual test.
 - Semua automated test lulus.
 - Tidak ada warning baru dari source proyek.
 - Coverage tidak turun tanpa alasan yang disetujui.

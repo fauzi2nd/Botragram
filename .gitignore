@@ -3,7 +3,10 @@ __pycache__/
 .env
 .venv/
 .pytest_cache/
+/.pytest-runtime/
 .mypy_cache/
 .cache/
 .coverage
 htmlcov/
+/logs/
+/botragram.db

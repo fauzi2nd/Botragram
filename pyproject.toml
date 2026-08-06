@@ -28,15 +28,22 @@ dev = [
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
-include = ["botragram", "main.py"]
+include = ["botragram", "tests", "main.py"]
 venvPath = "."
 venv = ".venv"
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["botragram", "tests", "main.py"]
+exclude = [".venv"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
 norecursedirs = ["manual"]
-cache_dir = ".cache/pytest"
+addopts = ["--basetemp=.pytest-runtime"]
+cache_dir = ".cache/pytest-runtime/cache"
 
 [tool.ruff]
 line-length = 88

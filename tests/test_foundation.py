@@ -105,7 +105,7 @@ def test_configuration_defaults_are_safe_and_immutable() -> None:
     assert settings.market.symbol == "BTCUSDT"
 
     with pytest.raises(FrozenInstanceError):
-        settings.app.trade_mode = TradeMode.LIVE
+        setattr(settings.app, "trade_mode", TradeMode.LIVE)
 
 
 def test_app_debug_mode_depends_on_environment() -> None:
@@ -210,9 +210,10 @@ def test_settings_manager_rejects_unknown_exchange(
         temporary_path=tmp_path,
     )
     monkeypatch.setenv("ACTIVE_EXCHANGE", "unknown")
+    settings_manager = SettingsManager(environment_provider=provider)
 
     with pytest.raises(ValueError, match="ACTIVE_EXCHANGE"):
-        SettingsManager(environment_provider=provider).load()
+        settings_manager.load()
 
 
 def test_settings_validation_rejects_partial_credentials() -> None:
@@ -283,9 +284,10 @@ def test_validation_utilities_accept_and_reject_domain_values() -> None:
     """Verify common validation helpers enforce their contracts."""
     validate_positive_decimal(Decimal("0.01"), "quantity")
     validate_symbol("BTCUSDT")
+    zero_quantity = Decimal("0")
 
     with pytest.raises(ValueError, match="quantity"):
-        validate_positive_decimal(Decimal("0"), "quantity")
+        validate_positive_decimal(zero_quantity, "quantity")
 
     for invalid_symbol in ("", "   ", "BTC/USDT"):
         with pytest.raises(ValueError, match="Invalid trading symbol"):

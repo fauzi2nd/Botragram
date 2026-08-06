@@ -16,8 +16,11 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Final
 
 # =============================================================================
 # Local Imports
@@ -34,6 +37,12 @@ __all__ = [
 # Type Aliases
 # =============================================================================
 type ApplicationRunner = Callable[[], Awaitable[None]]
+
+
+# =============================================================================
+# Constants
+# =============================================================================
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -67,9 +76,25 @@ class Application:
             raise RuntimeError("Application is already running")
 
         self._running = True
+        _LOGGER.info(
+            "Application starting",
+            extra={
+                "app_name": self.settings.app.app_name,
+                "app_version": self.settings.app.app_version,
+                "trade_mode": self.settings.app.trade_mode.value,
+            },
+        )
 
         try:
             async with self.lifecycle:
+                _LOGGER.info("Application resources started")
                 await self.runner()
+        except asyncio.CancelledError:
+            _LOGGER.info("Application cancellation requested")
+            raise
+        except Exception:
+            _LOGGER.exception("Application runner failed")
+            raise
         finally:
             self._running = False
+            _LOGGER.info("Application stopped")

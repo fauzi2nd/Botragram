@@ -128,10 +128,10 @@ def test_strategy_factory_builds_each_supported_strategy(
 
 def test_strategy_factory_rejects_custom_without_an_implementation() -> None:
     """Verify unsupported custom strategy configuration fails explicitly."""
+    settings = StrategySettings(strategy_type=StrategyType.CUSTOM)
+
     with pytest.raises(ValueError, match="Unsupported strategy type"):
-        StrategyFactory.create(
-            settings=StrategySettings(strategy_type=StrategyType.CUSTOM),
-        )
+        StrategyFactory.create(settings=settings)
 
 
 @pytest.mark.parametrize(
@@ -211,9 +211,10 @@ def test_each_strategy_can_evaluate_its_documented_minimum_candles(
 def test_strategy_rejects_insufficient_candles() -> None:
     """Verify strategy evaluation enforces its minimum candle count."""
     strategy = EMACrossStrategy(fast_period=2, slow_period=3)
+    candles = _create_candles((1, 2, 3))
 
     with pytest.raises(ValueError, match="requires at least 4 candles"):
-        strategy.generate_signal(candles=_create_candles((1, 2, 3)))
+        strategy.generate_signal(candles=candles)
 
 
 def test_strategy_rejects_mixed_symbols() -> None:

@@ -16,7 +16,9 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import logging
 from pathlib import Path
+from typing import Final
 
 # =============================================================================
 # Local Imports
@@ -75,6 +77,7 @@ __all__ = [
 # =============================================================================
 _DATABASE_PATH_ERROR = "Database path must not be empty"
 _PROVIDER_NOT_INITIALIZED_ERROR = "Dependency provider has not been initialized"
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -176,9 +179,18 @@ class DependencyProvider:
     async def initialize(self) -> None:
         """Initialize repositories, exchange clients, engines, and services."""
         if self._initialized:
+            _LOGGER.debug("Dependency provider is already initialized")
             return
 
         database = SQLiteDatabase(database_path=self._database_path)
+        _LOGGER.info(
+            "Dependency initialization starting",
+            extra={
+                "database_path": str(self._database_path),
+                "exchange": self._settings.exchange.exchange.value,
+                "testnet": self._settings.exchange.testnet,
+            },
+        )
 
         try:
             await database.connect()
@@ -190,8 +202,10 @@ class DependencyProvider:
             self._build_engines()
             self._build_services()
             self._initialized = True
+            _LOGGER.info("Dependencies initialized")
         except BaseException:
             await self.close()
+            _LOGGER.exception("Dependency initialization failed")
             raise
 
     async def close(self) -> None:
@@ -201,6 +215,7 @@ class DependencyProvider:
         database = self._database
 
         self._clear_dependencies()
+        _LOGGER.debug("Dependency shutdown starting")
 
         try:
             if stream_client is not None:
@@ -212,6 +227,8 @@ class DependencyProvider:
             finally:
                 if database is not None:
                     await database.close()
+
+        _LOGGER.info("Dependencies shut down")
 
     # =========================================================================
     # Repository Dependencies

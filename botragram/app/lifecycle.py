@@ -16,7 +16,10 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import asyncio
+import logging
 from dataclasses import dataclass
+from typing import Final
 
 # =============================================================================
 # Local Imports
@@ -32,6 +35,7 @@ __all__ = [
 # Constants
 # =============================================================================
 _ALREADY_STARTED_ERROR = "Application lifecycle has already been started"
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -62,13 +66,21 @@ class ApplicationLifecycle:
         if self._started:
             raise RuntimeError(_ALREADY_STARTED_ERROR)
 
+        _LOGGER.info("Application resource initialization starting")
+
         try:
             await self.dependency_provider.initialize()
+        except asyncio.CancelledError:
+            await self.dependency_provider.close()
+            _LOGGER.info("Application resource initialization cancelled")
+            raise
         except BaseException:
             await self.dependency_provider.close()
+            _LOGGER.exception("Application resource initialization failed")
             raise
 
         self._started = True
+        _LOGGER.info("Application resources initialized")
 
     async def shutdown(self) -> None:
         """Close application resources.
@@ -78,10 +90,13 @@ class ApplicationLifecycle:
         if not self._started:
             return
 
+        _LOGGER.info("Application resource shutdown starting")
+
         try:
             await self.dependency_provider.close()
         finally:
             self._started = False
+            _LOGGER.info("Application resources shut down")
 
     async def __aenter__(self) -> ApplicationLifecycle:
         """Start application resources for an async context."""

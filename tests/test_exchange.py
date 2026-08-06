@@ -131,7 +131,7 @@ def test_binance_mapper_maps_rest_ticker_and_candle() -> None:
         }
     )
     candle = mapper.map_candle(
-        [
+        (
             1_700_000_000_000,
             "99",
             "102",
@@ -139,7 +139,7 @@ def test_binance_mapper_maps_rest_ticker_and_candle() -> None:
             "101",
             "12.5",
             1_700_000_060_000,
-        ],
+        ),
         symbol="BTCUSDT",
         interval=Interval.M1,
     )
@@ -219,7 +219,7 @@ def test_binance_mapper_rejects_malformed_payloads() -> None:
 
     with pytest.raises(ValueError, match="at least 7 elements"):
         mapper.map_candle(
-            [1, "1"],
+            (1, "1"),
             symbol="BTCUSDT",
             interval=Interval.M1,
         )
