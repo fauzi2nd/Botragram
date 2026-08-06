@@ -56,10 +56,12 @@ INSERT INTO positions (
     unrealized_pnl,
     leverage,
     opened_at,
-    updated_at
+    updated_at,
+    stop_loss,
+    take_profit
 )
 VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT (
     symbol
@@ -72,7 +74,9 @@ DO UPDATE SET
     unrealized_pnl = excluded.unrealized_pnl,
     leverage = excluded.leverage,
     opened_at = excluded.opened_at,
-    updated_at = excluded.updated_at;
+    updated_at = excluded.updated_at,
+    stop_loss = excluded.stop_loss,
+    take_profit = excluded.take_profit;
 """
 
 _UPDATE_POSITION_SQL: Final[str] = """
@@ -85,7 +89,9 @@ SET
     unrealized_pnl = ?,
     leverage = ?,
     opened_at = ?,
-    updated_at = ?
+    updated_at = ?,
+    stop_loss = ?,
+    take_profit = ?
 WHERE symbol = ?;
 """
 
@@ -99,7 +105,9 @@ SELECT
     unrealized_pnl,
     leverage,
     opened_at,
-    updated_at
+    updated_at,
+    stop_loss,
+    take_profit
 FROM positions
 """
 
@@ -168,6 +176,8 @@ type PositionParameters = tuple[
     int,
     str,
     str,
+    str | None,
+    str | None,
 ]
 
 type PositionUpdateParameters = tuple[
@@ -179,6 +189,8 @@ type PositionUpdateParameters = tuple[
     int,
     str,
     str,
+    str | None,
+    str | None,
     str,
 ]
 
@@ -357,6 +369,8 @@ class SQLitePositionRepository(PositionRepository):
                 position.updated_at,
                 label="update time",
             ),
+            cls._optional_decimal_to_text(position.stop_loss),
+            cls._optional_decimal_to_text(position.take_profit),
         )
 
     @classmethod
@@ -380,6 +394,8 @@ class SQLitePositionRepository(PositionRepository):
                 position.updated_at,
                 label="update time",
             ),
+            cls._optional_decimal_to_text(position.stop_loss),
+            cls._optional_decimal_to_text(position.take_profit),
             cls._normalize_symbol(position.symbol),
         )
 
@@ -428,6 +444,14 @@ class SQLitePositionRepository(PositionRepository):
                 row,
                 column="updated_at",
             ),
+            stop_loss=cls._get_optional_decimal(
+                row,
+                column="stop_loss",
+            ),
+            take_profit=cls._get_optional_decimal(
+                row,
+                column="take_profit",
+            ),
         )
 
     @staticmethod
@@ -464,6 +488,13 @@ class SQLitePositionRepository(PositionRepository):
     ) -> str:
         """Convert a Decimal into exact text."""
         return format(value, "f")
+
+    @staticmethod
+    def _optional_decimal_to_text(
+        value: Decimal | None,
+    ) -> str | None:
+        """Convert an optional Decimal into exact text."""
+        return format(value, "f") if value is not None else None
 
     @classmethod
     def _get_datetime(
@@ -503,6 +534,24 @@ class SQLitePositionRepository(PositionRepository):
                 column=column,
             )
         )
+
+    @classmethod
+    def _get_optional_decimal(
+        cls,
+        row: Row,
+        *,
+        column: str,
+    ) -> Decimal | None:
+        """Return an optional Decimal from a nullable text column."""
+        value: object = row[column]
+
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            raise TypeError(f"SQLite column {column!r} must contain text or null")
+
+        return Decimal(value)
 
     @staticmethod
     def _get_string(

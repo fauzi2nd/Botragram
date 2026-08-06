@@ -28,7 +28,13 @@ from botragram.config import Settings
 from botragram.config.exchange_settings import ExchangeSettings
 from botragram.enums import ExchangeType
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
-from botragram.services import TradingService
+from botragram.services import (
+    HealthService,
+    PaperTradingService,
+    RuntimeReporter,
+    TradingService,
+)
+from botragram.telegram import TelegramBot
 
 
 # =============================================================================
@@ -59,8 +65,20 @@ async def _run_application_dependency_smoke_test() -> None:
             assert isinstance(provider.exchange_client, BaseExchangeClient)
             assert isinstance(provider.stream_client, BaseStreamClient)
             assert isinstance(provider.trading_service, TradingService)
+            assert isinstance(provider.paper_trading_service, PaperTradingService)
+            assert isinstance(provider.telegram_bot, TelegramBot)
+            assert isinstance(provider.health_service, HealthService)
+            assert isinstance(provider.runtime_reporter, RuntimeReporter)
             assert provider.trading_service.market_service is provider.market_service
             assert provider.trading_service.order_service is provider.order_service
+            assert (
+                provider.trading_service.paper_trading_service
+                is provider.paper_trading_service
+            )
+            assert (
+                provider.paper_trading_service.notification_publisher
+                is provider.telegram_bot
+            )
             assert await provider.candle_repository.count() == 0
 
         application = Application(

@@ -34,10 +34,16 @@ from botragram.constants.telegram import (
 )
 from botragram.telegram.callbacks import handle_callback_query
 from botragram.telegram.commands import (
+    balance_command,
     exchange_command,
+    history_command,
+    market_command,
     menu_message_handler,
+    orders_command,
+    pause_bot_command,
     positions_command,
     settings_command,
+    start_bot_command,
     start_command,
     status_command,
 )
@@ -55,6 +61,12 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler(CMD_START, start_command))
     app.add_handler(CommandHandler(CMD_STATUS, status_command))
     app.add_handler(CommandHandler(CMD_POSITIONS, positions_command))
+    app.add_handler(CommandHandler("balance", balance_command))
+    app.add_handler(CommandHandler("history", history_command))
+    app.add_handler(CommandHandler("market", market_command))
+    app.add_handler(CommandHandler("orders", orders_command))
+    app.add_handler(CommandHandler("pause", pause_bot_command))
+    app.add_handler(CommandHandler("resume", start_bot_command))
     app.add_handler(CommandHandler(CMD_SETTINGS, settings_command))
     app.add_handler(CommandHandler("exchange", exchange_command))
     app.add_handler(CallbackQueryHandler(handle_callback_query))

@@ -28,7 +28,9 @@ from botragram.app import (
     ApplicationLifecycle,
     DependencyProvider,
     SettingsManager,
+    TradingRunner,
 )
+from botragram.config import Settings
 from botragram.utils.logger import configure_logging, shutdown_logging
 
 __all__ = [
@@ -45,9 +47,26 @@ _LOGGER: Final[logging.Logger] = logging.getLogger("botragram.main")
 # =============================================================================
 # Runtime Functions
 # =============================================================================
-async def _run_until_cancelled() -> None:
-    """Keep initialized resources active until the process is cancelled."""
-    await asyncio.Event().wait()
+async def _run_trading(
+    *,
+    dependency_provider: DependencyProvider,
+    settings: Settings,
+) -> None:
+    """Build and run trading orchestration after resources are initialized."""
+    minimum_candles = dependency_provider.signal_engine.strategy.minimum_candles
+    runner = TradingRunner(
+        executor=dependency_provider.trading_service,
+        symbol=settings.market.symbol,
+        interval=settings.market.interval,
+        trade_mode=settings.app.trade_mode,
+        candle_limit=max(100, minimum_candles),
+        cycle_interval_seconds=float(settings.market.interval.seconds),
+        runtime_control=dependency_provider.runtime_control,
+        runtime_observer=dependency_provider.runtime_reporter,
+        maximum_consecutive_failures=3,
+        failure_retry_delay_seconds=5.0,
+    )
+    await runner.run()
 
 
 async def main() -> None:
@@ -75,7 +94,10 @@ async def main() -> None:
         application = Application(
             settings=settings,
             lifecycle=lifecycle,
-            runner=_run_until_cancelled,
+            runner=lambda: _run_trading(
+                dependency_provider=dependency_provider,
+                settings=settings,
+            ),
         )
         await application.run()
     finally:

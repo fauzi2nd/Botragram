@@ -28,7 +28,7 @@ from botragram.enums import (
     OrderType,
     PositionSide,
 )
-from botragram.models import Order, Position
+from botragram.models import Order, Position, Trade
 from botragram.telegram.context import BotContext
 from botragram.telegram.keyboards import (
     get_exchange_keyboard,
@@ -36,6 +36,8 @@ from botragram.telegram.keyboards import (
 )
 from botragram.telegram.messages import (
     get_orders_message,
+    get_paper_entry_message,
+    get_paper_exit_message,
     get_positions_message,
     get_settings_message,
     get_status_message,
@@ -126,6 +128,67 @@ def test_orders_message_uses_current_domain_model() -> None:
     assert "BUY limit" in message
     assert "qty=1.5" in message
     assert "Tidak ada order" in get_orders_message(())
+
+
+def test_paper_notifications_include_portfolio_results_and_escape_reason() -> None:
+    """Render entry and exit details without allowing Telegram HTML injection."""
+    order = Order(
+        order_id="paper-1",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("2"),
+        executed_quantity=Decimal("2"),
+        price=Decimal("110"),
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    trade = Trade(
+        trade_id="paper-trade-1",
+        order_id=order.order_id,
+        symbol=order.symbol,
+        side=order.side,
+        price=Decimal("110"),
+        quantity=Decimal("2"),
+        quote_quantity=Decimal("220"),
+        fee=Decimal("0.22"),
+        fee_asset="USDT",
+        executed_at=_NOW,
+        realized_pnl=Decimal("19.58"),
+    )
+    position = Position(
+        symbol=order.symbol,
+        side=PositionSide.LONG,
+        quantity=order.quantity,
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+    )
+
+    entry_message = get_paper_entry_message(
+        order=order,
+        trade=trade,
+        position=position,
+        available_balance=Decimal("9000"),
+    )
+    exit_message = get_paper_exit_message(
+        order=order,
+        trade=trade,
+        available_balance=Decimal("10019.58"),
+        reason="Take profit <triggered>",
+    )
+
+    assert "Stop Loss" in entry_message
+    assert "9000.00 USDT" in entry_message
+    assert "Realized PnL" in exit_message
+    assert "19.58 USDT" in exit_message
+    assert "&lt;triggered&gt;" in exit_message
 
 
 # =============================================================================

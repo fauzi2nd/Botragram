@@ -24,7 +24,7 @@ from html import escape
 # Local Imports
 # =============================================================================
 from botragram.constants.app import APP_NAME, APP_VERSION
-from botragram.models import Order, Position
+from botragram.models import Order, Position, Trade
 from botragram.utils.formatter import format_currency
 
 __all__ = [
@@ -34,8 +34,13 @@ __all__ = [
     "get_history_message",
     "get_market_message",
     "get_orders_message",
+    "get_paper_entry_message",
+    "get_paper_exit_message",
     "get_pause_message",
     "get_positions_message",
+    "get_resume_message",
+    "get_runtime_pause_message",
+    "get_runtime_portfolio_message",
     "get_settings_message",
     "get_start_message",
     "get_status_message",
@@ -66,17 +71,32 @@ def get_status_message(
     trade_mode: str,
     symbol: str,
     last_price: Decimal,
+    available_balance: Decimal | None = None,
+    open_position_count: int | None = None,
+    is_paused: bool = False,
 ) -> str:
     """Return current application and market status."""
-    state = "🟢 RUNNING" if is_running else "🔴 STOPPED"
-
-    return (
+    if is_running and is_paused:
+        state = "🟡 PAUSED"
+    else:
+        state = "🟢 RUNNING" if is_running else "🔴 STOPPED"
+    lines = [
         f"📊 <b>{APP_NAME} Status</b>\n\n"
         f"<b>State:</b> {state}\n"
         f"<b>Mode:</b> {escape(trade_mode)}\n"
         f"<b>Symbol:</b> {escape(symbol)}\n"
         f"<b>Last Price:</b> {format_currency(last_price, symbol='USDT')}"
-    )
+    ]
+
+    if available_balance is not None:
+        lines.append(
+            f"\n<b>Available:</b> {format_currency(available_balance, symbol='USDT')}"
+        )
+
+    if open_position_count is not None:
+        lines.append(f"\n<b>Open Positions:</b> {open_position_count}")
+
+    return "".join(lines)
 
 
 def get_positions_message(
@@ -160,9 +180,9 @@ def get_orders_message(
 ) -> str:
     """Return active trading orders."""
     if not orders:
-        return "ℹ️ <b>Tidak ada order aktif.</b>"
+        return "ℹ️ <b>Tidak ada order tersimpan.</b>"
 
-    lines: list[str] = ["📑 <b>Order Aktif:</b>\n"]
+    lines: list[str] = ["📑 <b>Order Terbaru:</b>\n"]
 
     for order in orders:
         lines.append(
@@ -184,9 +204,83 @@ def get_balance_message(
     )
 
 
-def get_history_message() -> str:
-    """Return trading history placeholder."""
-    return "📜 <b>History</b>\n\nRiwayat trading belum tersedia."
+def get_paper_entry_message(
+    *,
+    order: Order,
+    trade: Trade,
+    position: Position,
+    available_balance: Decimal,
+) -> str:
+    """Return a safe paper-position entry notification."""
+    return (
+        "<b>Paper Entry</b>\n\n"
+        f"<b>Symbol:</b> {escape(order.symbol)}\n"
+        f"<b>Position:</b> {position.side.value.upper()}\n"
+        f"<b>Quantity:</b> {order.executed_quantity}\n"
+        f"<b>Fill:</b> {format_currency(trade.price, symbol='USDT')}\n"
+        f"<b>Fee:</b> {format_currency(trade.fee, symbol=trade.fee_asset)}\n"
+        f"<b>Stop Loss:</b> {_format_optional_price(position.stop_loss)}\n"
+        f"<b>Take Profit:</b> {_format_optional_price(position.take_profit)}\n"
+        f"<b>Available Balance:</b> "
+        f"{format_currency(available_balance, symbol='USDT')}"
+    )
+
+
+def get_paper_exit_message(
+    *,
+    order: Order,
+    trade: Trade,
+    available_balance: Decimal,
+    reason: str,
+) -> str:
+    """Return a safe paper-position exit notification."""
+    realized_pnl = trade.realized_pnl or Decimal("0")
+
+    return (
+        "<b>Paper Exit</b>\n\n"
+        f"<b>Symbol:</b> {escape(order.symbol)}\n"
+        f"<b>Side:</b> {order.side.value}\n"
+        f"<b>Quantity:</b> {order.executed_quantity}\n"
+        f"<b>Fill:</b> {format_currency(trade.price, symbol='USDT')}\n"
+        f"<b>Fee:</b> {format_currency(trade.fee, symbol=trade.fee_asset)}\n"
+        f"<b>Realized PnL:</b> {format_currency(realized_pnl, symbol='USDT')}\n"
+        f"<b>Available Balance:</b> "
+        f"{format_currency(available_balance, symbol='USDT')}\n"
+        f"<b>Reason:</b> {escape(reason)}"
+    )
+
+
+def _format_optional_price(value: Decimal | None) -> str:
+    """Format an optional protective price for Telegram HTML."""
+    if value is None:
+        return "-"
+
+    return format_currency(value, symbol="USDT")
+
+
+def get_history_message(trades: Sequence[Trade] = ()) -> str:
+    """Return recent persisted paper fills."""
+    if not trades:
+        return "📜 <b>History</b>\n\nBelum ada paper trade."
+
+    lines = ["📜 <b>Paper Trade History</b>\n"]
+
+    for trade in reversed(trades):
+        pnl = (
+            "-"
+            if trade.realized_pnl is None
+            else format_currency(trade.realized_pnl, symbol=trade.fee_asset)
+        )
+        lines.append(
+            f"\n<b>{escape(trade.symbol)}</b> {trade.side.value} "
+            f"qty={trade.quantity}\n"
+            f"Fill={format_currency(trade.price, symbol=trade.fee_asset)} | "
+            f"Fee={format_currency(trade.fee, symbol=trade.fee_asset)} | "
+            f"PnL={pnl}\n"
+            f"Time={escape(trade.executed_at.isoformat())}"
+        )
+
+    return "\n".join(lines)
 
 
 def get_strategy_message(
@@ -226,6 +320,44 @@ def get_pause_message(
         return "⏸️ <b>Bot trading telah dijeda.</b>"
 
     return "⏸️ <b>Bot masih berjalan.</b>"
+
+
+def get_runtime_pause_message(*, changed: bool) -> str:
+    """Return cooperative trading pause confirmation."""
+    if changed:
+        return "⏸️ <b>Trading berhasil dijeda.</b>"
+
+    return "ℹ️ <b>Trading sudah dalam keadaan paused.</b>"
+
+
+def get_resume_message(*, changed: bool) -> str:
+    """Return cooperative trading resume confirmation."""
+    if changed:
+        return "▶️ <b>Trading berhasil dilanjutkan.</b>"
+
+    return "ℹ️ <b>Trading sudah aktif.</b>"
+
+
+def get_runtime_portfolio_message(
+    *,
+    available_balance: Decimal,
+    positions: Sequence[Position],
+    completed_cycles: int,
+) -> str:
+    """Return a periodic paper portfolio summary."""
+    total_unrealized = sum(
+        (position.unrealized_pnl for position in positions),
+        start=Decimal("0"),
+    )
+    return (
+        "<b>Periodic Paper Portfolio</b>\n\n"
+        f"<b>Completed Cycles:</b> {completed_cycles}\n"
+        f"<b>Available Balance:</b> "
+        f"{format_currency(available_balance, symbol='USDT')}\n"
+        f"<b>Open Positions:</b> {len(positions)}\n"
+        f"<b>Unrealized PnL:</b> "
+        f"{format_currency(total_unrealized, symbol='USDT')}"
+    )
 
 
 def get_test_message() -> str:

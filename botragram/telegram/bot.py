@@ -29,7 +29,12 @@ from telegram.ext import ApplicationBuilder
 # Local Imports
 # =============================================================================
 from botragram.config.telegram_settings import TelegramSettings
-from botragram.telegram.context import BotContext
+from botragram.models import Notification
+from botragram.telegram.context import (
+    ALLOWED_CHAT_IDS_KEY,
+    BOT_CONTEXT_KEY,
+    BotContext,
+)
 from botragram.telegram.handlers import register_handlers
 
 __all__ = [
@@ -41,7 +46,6 @@ __all__ = [
 # Constants
 # =============================================================================
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
-_BOT_CONTEXT_KEY: Final[str] = "bot_context"
 
 
 # =============================================================================
@@ -72,33 +76,64 @@ class TelegramBot:
         self._context = context if context is not None else BotContext()
         self._app: Any = None
 
+    @property
+    def is_running(self) -> bool:
+        """Return whether Telegram polling resources are active."""
+        return self._app is not None
+
     async def start(self) -> None:
         """Initialize Telegram resources and begin long polling."""
-        if not self._settings.enabled or not self._settings.bot_token:
-            _LOGGER.info("Telegram bot is disabled or bot token is empty")
+        if (
+            not self._settings.enabled
+            or not self._settings.bot_token
+            or not self._settings.allowed_chat_ids
+        ):
+            _LOGGER.info(
+                "Telegram bot is disabled or its token/chat allow-list is empty"
+            )
             return
 
         app = ApplicationBuilder().token(self._settings.bot_token).build()
         register_handlers(app)
-        app.bot_data[_BOT_CONTEXT_KEY] = self._context
-
-        await app.initialize()
-        await app.start()
-        await app.bot.set_my_commands(
-            [
-                BotCommand("start", "Mulai bot dan tampilkan menu utama"),
-                BotCommand("status", "Lihat status bot dan pasar"),
-                BotCommand("positions", "Lihat posisi trading aktif"),
-                BotCommand("settings", "Lihat pengaturan bot"),
-                BotCommand("exchange", "Lihat exchange aktif"),
-                BotCommand("stop", "Lihat status penghentian bot"),
-            ]
-        )
-
+        app.bot_data[BOT_CONTEXT_KEY] = self._context
+        app.bot_data[ALLOWED_CHAT_IDS_KEY] = frozenset(self._settings.allowed_chat_ids)
         updater = app.updater
+        initialized = False
+        started = False
 
-        if updater is not None:
-            await updater.start_polling()
+        try:
+            await app.initialize()
+            initialized = True
+            await app.start()
+            started = True
+            await app.bot.set_my_commands(
+                [
+                    BotCommand("start", "Mulai bot dan tampilkan menu utama"),
+                    BotCommand("status", "Lihat status bot dan pasar"),
+                    BotCommand("positions", "Lihat posisi trading aktif"),
+                    BotCommand("balance", "Lihat saldo paper tersedia"),
+                    BotCommand("history", "Lihat riwayat paper trading"),
+                    BotCommand("pause", "Jeda siklus trading baru"),
+                    BotCommand("resume", "Lanjutkan siklus trading"),
+                    BotCommand("settings", "Lihat pengaturan bot"),
+                    BotCommand("exchange", "Lihat exchange aktif"),
+                    BotCommand("stop", "Lihat status penghentian bot"),
+                ]
+            )
+
+            if updater is not None:
+                await updater.start_polling()
+        except BaseException:
+            if updater is not None and updater.running:
+                await updater.stop()
+
+            if started:
+                await app.stop()
+
+            if initialized:
+                await app.shutdown()
+
+            raise
 
         self._app = app
         _LOGGER.info("Telegram bot polling started")
@@ -112,7 +147,43 @@ class TelegramBot:
         self._context = context
 
         if self._app is not None:
-            self._app.bot_data[_BOT_CONTEXT_KEY] = context
+            self._app.bot_data[BOT_CONTEXT_KEY] = context
+
+    async def publish(
+        self,
+        *,
+        notification: Notification,
+    ) -> None:
+        """Send one notification to every configured chat safely."""
+        if (
+            not self._settings.enabled
+            or not self._settings.bot_token
+            or not self._settings.allowed_chat_ids
+        ):
+            return
+
+        app = self._app
+
+        if app is None:
+            _LOGGER.warning(
+                "Telegram notification skipped because the bot is not started: %s",
+                notification.title,
+            )
+            return
+
+        for chat_id in self._settings.allowed_chat_ids:
+            try:
+                await app.bot.send_message(
+                    chat_id=chat_id,
+                    text=notification.message,
+                    parse_mode=self._settings.parse_mode,
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Telegram notification delivery failed: title=%s chat_id=%d",
+                    notification.title,
+                    chat_id,
+                )
 
     async def stop(self) -> None:
         """Stop Telegram polling and release owned resources."""

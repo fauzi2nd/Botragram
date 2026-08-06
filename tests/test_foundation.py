@@ -103,6 +103,7 @@ def test_configuration_defaults_are_safe_and_immutable() -> None:
     assert settings.exchange.testnet
     assert not settings.exchange.is_live
     assert settings.market.symbol == "BTCUSDT"
+    assert settings.app.database_path == Path("data") / "botragram.db"
 
     with pytest.raises(FrozenInstanceError):
         setattr(settings.app, "trade_mode", TradeMode.LIVE)

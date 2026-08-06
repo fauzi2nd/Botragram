@@ -28,6 +28,7 @@ from botragram.models import TradingResult
 from botragram.services.account_service import AccountService
 from botragram.services.market_service import MarketService
 from botragram.services.order_service import OrderService
+from botragram.services.paper_trading_service import PaperTradingService
 from botragram.services.position_service import PositionService
 from botragram.services.strategy_service import StrategyService
 
@@ -42,6 +43,7 @@ __all__ = [
 _DECIMAL_ZERO = Decimal("0")
 _DEFAULT_BALANCE_ASSET = "USDT"
 _APPROVED_DECISION_RISK_ERROR = "Approved trading decision requires a risk result"
+_ORDER_SUBMISSION_DISABLED_REASON = "Order submission is disabled in paper mode"
 
 
 # =============================================================================
@@ -61,6 +63,7 @@ class TradingService:
     position_service: PositionService
     order_service: OrderService
     trading_engine: TradingEngine
+    paper_trading_service: PaperTradingService | None = None
 
     balance_asset: str = _DEFAULT_BALANCE_ASSET
 
@@ -81,9 +84,30 @@ class TradingService:
         current_drawdown_pct: Decimal = _DECIMAL_ZERO,
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
     ) -> TradingResult:
-        """Execute one complete trading cycle."""
+        """Execute one complete trading cycle.
+
+        Args:
+            symbol: Trading pair symbol.
+            interval: Candle interval used by the strategy.
+            candle_limit: Maximum historical candles to evaluate.
+            current_drawdown_pct: Current account drawdown as a ratio.
+            order_type: Exchange order type when execution is approved.
+            price: Optional limit or stop price.
+            account_balance_override: Optional balance used instead of reading
+                the exchange account. Intended for paper-mode evaluation.
+            synchronize_position: Whether to refresh the position from the
+                exchange before evaluating the signal.
+            submit_order: Whether an approved decision may reach the exchange.
+                Set this to false for paper trading.
+        """
         normalized_symbol = self._normalize_symbol(symbol)
+
+        if account_balance_override is not None and account_balance_override <= 0:
+            raise ValueError("Account balance override must be greater than zero")
 
         candles = await self.market_service.get_candles(
             symbol=normalized_symbol,
@@ -95,14 +119,26 @@ class TradingService:
             candles=candles,
         )
 
+        if not submit_order and self.paper_trading_service is not None:
+            return await self.paper_trading_service.execute(
+                signal=signal,
+                current_drawdown_pct=current_drawdown_pct,
+                initial_balance=account_balance_override,
+                order_type=order_type,
+                price=price,
+            )
+
         has_position = await self.position_service.has_position(
             symbol=normalized_symbol,
-            synchronize=True,
+            synchronize=synchronize_position,
         )
 
-        balance = await self.account_service.get_free_balance(
-            asset=self.balance_asset,
-        )
+        balance = account_balance_override
+
+        if balance is None:
+            balance = await self.account_service.get_free_balance(
+                asset=self.balance_asset,
+            )
 
         decision = self.trading_engine.evaluate(
             signal=signal,
@@ -117,6 +153,14 @@ class TradingService:
                 decision=decision,
                 order=None,
                 reason=decision.reason,
+            )
+
+        if not submit_order:
+            return TradingResult(
+                executed=False,
+                decision=decision,
+                order=None,
+                reason=_ORDER_SUBMISSION_DISABLED_REASON,
             )
 
         risk_result = decision.risk_result

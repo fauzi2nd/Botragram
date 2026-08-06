@@ -53,3 +53,6 @@ class Position:
 
     opened_at: datetime
     updated_at: datetime
+
+    stop_loss: Decimal | None = None
+    take_profit: Decimal | None = None

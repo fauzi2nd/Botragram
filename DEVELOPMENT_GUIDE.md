@@ -579,9 +579,11 @@ Botragram/
 |   |   |-- dependency_provider.py
 |   |   |-- environment_provider.py
 |   |   |-- lifecycle.py
+|   |   |-- runtime_control.py
 |   |   |-- settings_manager.py
 |   |   |-- shutdown.py
-|   |   `-- startup.py
+|   |   |-- startup.py
+|   |   `-- trading_runner.py
 |   |-- config/
 |   |   |-- __init__.py
 |   |   |-- ai_settings.py
@@ -690,9 +692,12 @@ Botragram/
 |   |-- services/
 |   |   |-- __init__.py
 |   |   |-- account_service.py
+|   |   |-- health_service.py
 |   |   |-- market_service.py
 |   |   |-- order_service.py
+|   |   |-- paper_trading_service.py
 |   |   |-- position_service.py
+|   |   |-- runtime_reporter.py
 |   |   |-- strategy_service.py
 |   |   `-- trading_service.py
 |   |-- storage/
@@ -719,13 +724,15 @@ Botragram/
 |   |   `-- trend/
 |   |-- telegram/
 |   |   |-- __init__.py
+|   |   |-- access.py
 |   |   |-- bot.py
 |   |   |-- callbacks.py
 |   |   |-- commands.py
 |   |   |-- context.py
 |   |   |-- handlers.py
 |   |   |-- keyboards.py
-|   |   `-- messages.py
+|   |   |-- messages.py
+|   |   `-- query_service.py
 |   `-- utils/
 |       |-- __init__.py
 |       |-- datetime.py
@@ -739,6 +746,8 @@ Botragram/
 |   |   |-- __init__.py
 |   |   `-- test_*.py
 |   `-- test_*.py
+|-- data/                         # SQLite runtime; isi diabaikan Git
+|-- logs/                         # Log runtime; isi diabaikan Git
 |-- .env.example
 |-- .gitignore
 |-- DEVELOPMENT_GUIDE.md
@@ -755,7 +764,10 @@ Catatan struktur:
 - `<domain_enum>.py`, `<domain_exception>.py`, dan `<entity_repository>.py` adalah
   singkatan dokumentasi untuk kumpulan module sejenis yang sudah ada; bukan nama
   file literal.
-- Folder cache, virtual environment, log, database lokal, dan `__pycache__` tidak
-  termasuk struktur source dan tidak boleh didokumentasikan sebagai package.
+- `data/` dan `logs/` adalah direktori runtime, bukan package Python. Database
+  SQLite default WAJIB berada di `data/botragram.db`; file database, WAL, dan log
+  tidak boleh di-commit.
+- Folder cache, virtual environment, dan `__pycache__` tidak termasuk struktur
+  source dan tidak boleh didokumentasikan sebagai package.
 - Folder aspiratif tidak boleh dimasukkan ke struktur ini sebelum benar-benar
   dibuat dan memiliki tanggung jawab yang disetujui.

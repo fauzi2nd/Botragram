@@ -280,6 +280,16 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
     );
     """,
     ),
+    _Migration(
+        version=6,
+        script="""
+        ALTER TABLE positions
+        ADD COLUMN stop_loss TEXT;
+
+        ALTER TABLE positions
+        ADD COLUMN take_profit TEXT;
+        """,
+    ),
 )
 
 

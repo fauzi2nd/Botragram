@@ -20,6 +20,8 @@ import logging
 from pathlib import Path
 from typing import Final
 
+from botragram.app.runtime_control import TradingRuntimeControl
+
 # =============================================================================
 # Local Imports
 # =============================================================================
@@ -33,6 +35,7 @@ from botragram.constants import (
 )
 from botragram.engine import (
     OrderEngine,
+    PnLEngine,
     PositionEngine,
     RiskEngine,
     SignalEngine,
@@ -50,9 +53,12 @@ from botragram.repositories import (
 )
 from botragram.services import (
     AccountService,
+    HealthService,
     MarketService,
     OrderService,
+    PaperTradingService,
     PositionService,
+    RuntimeReporter,
     StrategyService,
 )
 from botragram.services.trading_service import TradingService
@@ -66,6 +72,9 @@ from botragram.storage.sqlite import (
     SQLiteTradeRepository,
 )
 from botragram.strategies.factory import StrategyFactory
+from botragram.telegram import TelegramBot
+from botragram.telegram.context import BotContext
+from botragram.telegram.query_service import TelegramQueryService
 
 __all__ = [
     "DependencyProvider",
@@ -92,20 +101,25 @@ class DependencyProvider:
         "_database",
         "_database_path",
         "_exchange_client",
+        "_health_service",
         "_initialized",
         "_market_service",
         "_order_engine",
         "_order_repository",
         "_order_service",
+        "_paper_trading_service",
         "_position_engine",
         "_position_repository",
         "_position_service",
         "_risk_engine",
+        "_runtime_control",
+        "_runtime_reporter",
         "_settings",
         "_signal_engine",
         "_signal_repository",
         "_strategy_service",
         "_stream_client",
+        "_telegram_bot",
         "_trade_repository",
         "_trading_engine",
         "_trading_service",
@@ -138,9 +152,13 @@ class DependencyProvider:
             if settings is not None
             else Settings(exchange=ExchangeSettings(exchange=ExchangeType.BINANCE))
         )
+        self._runtime_control = TradingRuntimeControl()
         self._database: SQLiteDatabase | None = None
         self._exchange_client: BaseExchangeClient | None = None
         self._stream_client: BaseStreamClient | None = None
+        self._telegram_bot: TelegramBot | None = None
+        self._health_service: HealthService | None = None
+        self._runtime_reporter: RuntimeReporter | None = None
 
         self._candle_repository: CandleRepository | None = None
         self._signal_repository: SignalRepository | None = None
@@ -157,6 +175,7 @@ class DependencyProvider:
         self._market_service: MarketService | None = None
         self._strategy_service: StrategyService | None = None
         self._order_service: OrderService | None = None
+        self._paper_trading_service: PaperTradingService | None = None
         self._position_service: PositionService | None = None
         self._account_service: AccountService | None = None
         self._trading_service: TradingService | None = None
@@ -175,6 +194,11 @@ class DependencyProvider:
     def settings(self) -> Settings:
         """Return the immutable settings used to construct dependencies."""
         return self._settings
+
+    @property
+    def runtime_control(self) -> TradingRuntimeControl:
+        """Return the process-wide cooperative trading runtime controller."""
+        return self._runtime_control
 
     async def initialize(self) -> None:
         """Initialize repositories, exchange clients, engines, and services."""
@@ -200,7 +224,45 @@ class DependencyProvider:
             self._build_repositories(database=database)
             await self._build_exchange_dependencies()
             self._build_engines()
+            self._telegram_bot = TelegramBot(settings=self._settings.telegram)
             self._build_services()
+            self._health_service = HealthService(
+                database=database,
+                exchange=self.exchange_client,
+            )
+            self._runtime_reporter = RuntimeReporter(
+                health_service=self.health_service,
+                paper_trading_service=self.paper_trading_service,
+                position_repository=self.position_repository,
+                notification_publisher=self.telegram_bot,
+                trade_mode=self._settings.app.trade_mode,
+                symbol=self._settings.market.symbol,
+            )
+            query_service = TelegramQueryService(
+                symbol=self._settings.market.symbol,
+                market_service=self.market_service,
+                paper_trading_service=self.paper_trading_service,
+                position_repository=self.position_repository,
+                trade_repository=self.trade_repository,
+                order_repository=self.order_repository,
+            )
+            await self.telegram_bot.sync_context(
+                context=BotContext(
+                    is_running=True,
+                    trade_mode=self._settings.app.trade_mode.value,
+                    symbol=self._settings.market.symbol,
+                    strategy_name=self._settings.strategy.strategy_type.value,
+                    exchange_type=self._settings.exchange.exchange.value,
+                    query_provider=query_service,
+                    runtime_control=self.runtime_control,
+                )
+            )
+            try:
+                await self.telegram_bot.start()
+            except Exception:
+                _LOGGER.exception(
+                    "Telegram startup failed; trading will continue without it"
+                )
             self._initialized = True
             _LOGGER.info("Dependencies initialized")
         except BaseException:
@@ -212,21 +274,26 @@ class DependencyProvider:
         """Close owned network and database resources in reverse order."""
         exchange_client = self._exchange_client
         stream_client = self._stream_client
+        telegram_bot = self._telegram_bot
         database = self._database
 
         self._clear_dependencies()
         _LOGGER.debug("Dependency shutdown starting")
 
         try:
-            if stream_client is not None:
-                await stream_client.close()
+            if telegram_bot is not None:
+                await telegram_bot.stop()
         finally:
             try:
-                if exchange_client is not None:
-                    await exchange_client.close()
+                if stream_client is not None:
+                    await stream_client.close()
             finally:
-                if database is not None:
-                    await database.close()
+                try:
+                    if exchange_client is not None:
+                        await exchange_client.close()
+                finally:
+                    if database is not None:
+                        await database.close()
 
         _LOGGER.info("Dependencies shut down")
 
@@ -274,6 +341,21 @@ class DependencyProvider:
         return self._require(self._stream_client)
 
     @property
+    def telegram_bot(self) -> TelegramBot:
+        """Return the configured Telegram lifecycle and notification adapter."""
+        return self._require(self._telegram_bot)
+
+    @property
+    def health_service(self) -> HealthService:
+        """Return the configured dependency health service."""
+        return self._require(self._health_service)
+
+    @property
+    def runtime_reporter(self) -> RuntimeReporter:
+        """Return the configured runtime monitoring observer."""
+        return self._require(self._runtime_reporter)
+
+    @property
     def signal_engine(self) -> SignalEngine:
         """Return the configured signal engine."""
         return self._require(self._signal_engine)
@@ -317,6 +399,11 @@ class DependencyProvider:
     def position_service(self) -> PositionService:
         """Return the configured position service."""
         return self._require(self._position_service)
+
+    @property
+    def paper_trading_service(self) -> PaperTradingService:
+        """Return the configured paper-trading simulation service."""
+        return self._require(self._paper_trading_service)
 
     @property
     def account_service(self) -> AccountService:
@@ -401,6 +488,15 @@ class DependencyProvider:
             position_repository=self.position_repository,
         )
         self._account_service = AccountService(exchange_client=exchange_client)
+        self._paper_trading_service = PaperTradingService(
+            order_repository=self.order_repository,
+            trade_repository=self.trade_repository,
+            position_repository=self.position_repository,
+            trading_engine=self.trading_engine,
+            pnl_engine=PnLEngine(),
+            notification_publisher=self.telegram_bot,
+            quote_asset=self._settings.market.quote_asset,
+        )
         self._trading_service = TradingService(
             market_service=self.market_service,
             strategy_service=self.strategy_service,
@@ -408,6 +504,7 @@ class DependencyProvider:
             position_service=self.position_service,
             order_service=self.order_service,
             trading_engine=self.trading_engine,
+            paper_trading_service=self.paper_trading_service,
             balance_asset=self._settings.market.quote_asset,
         )
 
@@ -444,6 +541,9 @@ class DependencyProvider:
         self._position_repository = None
         self._exchange_client = None
         self._stream_client = None
+        self._telegram_bot = None
+        self._health_service = None
+        self._runtime_reporter = None
         self._signal_engine = None
         self._risk_engine = None
         self._trading_engine = None
@@ -454,6 +554,7 @@ class DependencyProvider:
         self._order_service = None
         self._position_service = None
         self._account_service = None
+        self._paper_trading_service = None
         self._trading_service = None
         self._database = None
         self._initialized = False

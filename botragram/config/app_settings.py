@@ -45,7 +45,7 @@ class AppSettings:
     app_version: str = APP_VERSION
     environment: Environment = Environment.DEVELOPMENT
     trade_mode: TradeMode = TradeMode.PAPER
-    database_path: Path = Path("botragram.db")
+    database_path: Path = Path("data") / "botragram.db"
 
     @property
     def debug(self) -> bool:
