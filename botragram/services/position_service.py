@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 
 # =============================================================================
 # Local Imports
@@ -29,6 +30,15 @@ from botragram.repositories import PositionRepository
 __all__ = [
     "PositionService",
 ]
+
+
+# =============================================================================
+# Constants
+# =============================================================================
+_DECIMAL_ZERO = Decimal("0")
+_MULTIPLE_POSITIONS_ERROR_TEMPLATE = (
+    "Exchange returned multiple positions for symbol {symbol!r}"
+)
 
 
 # =============================================================================
@@ -57,6 +67,9 @@ class PositionService:
 
         Returns:
             Synchronized positions.
+
+        Raises:
+            RuntimeError: If multiple positions are returned for one symbol.
         """
         normalized_symbol = (
             self._normalize_symbol(symbol) if symbol is not None else None
@@ -66,9 +79,29 @@ class PositionService:
             symbol=normalized_symbol,
         )
 
-        await self.position_repository.save_many(
-            positions=positions,
-        )
+        if normalized_symbol is not None:
+            matching_position = self._find_position(
+                positions=positions,
+                symbol=normalized_symbol,
+            )
+
+            if matching_position is None:
+                await self.position_repository.delete(
+                    symbol=normalized_symbol,
+                )
+            else:
+                await self.position_repository.save(
+                    position=matching_position,
+                )
+
+            return positions
+
+        await self.position_repository.delete_all()
+
+        if positions:
+            await self.position_repository.save_many(
+                positions=positions,
+            )
 
         return positions
 
@@ -78,15 +111,7 @@ class PositionService:
         symbol: str,
         synchronize: bool = False,
     ) -> Position | None:
-        """Return a position for a trading symbol.
-
-        Args:
-            symbol: Trading pair symbol.
-            synchronize: Refresh from exchange before reading.
-
-        Returns:
-            Matching position, or None.
-        """
+        """Return a position for a trading symbol."""
         normalized_symbol = self._normalize_symbol(symbol)
 
         if synchronize:
@@ -103,14 +128,7 @@ class PositionService:
         *,
         synchronize: bool = False,
     ) -> Sequence[Position]:
-        """Return all positions.
-
-        Args:
-            synchronize: Refresh from exchange before reading.
-
-        Returns:
-            Stored positions.
-        """
+        """Return all positions."""
         if synchronize:
             await self.sync()
 
@@ -122,13 +140,13 @@ class PositionService:
         symbol: str,
         synchronize: bool = False,
     ) -> bool:
-        """Return whether an active position exists."""
+        """Return whether an active non-zero position exists."""
         position = await self.get(
             symbol=symbol,
             synchronize=synchronize,
         )
 
-        return position is not None
+        return position is not None and position.quantity > _DECIMAL_ZERO
 
     async def delete(
         self,
@@ -147,6 +165,30 @@ class PositionService:
     async def count(self) -> int:
         """Return the number of stored positions."""
         return await self.position_repository.count()
+
+    @staticmethod
+    def _find_position(
+        *,
+        positions: Sequence[Position],
+        symbol: str,
+    ) -> Position | None:
+        """Return one matching position and reject duplicates."""
+        matching_position: Position | None = None
+
+        for position in positions:
+            if position.symbol.upper() != symbol:
+                continue
+
+            if matching_position is not None:
+                raise RuntimeError(
+                    _MULTIPLE_POSITIONS_ERROR_TEMPLATE.format(
+                        symbol=symbol,
+                    )
+                )
+
+            matching_position = position
+
+        return matching_position
 
     @staticmethod
     def _normalize_symbol(

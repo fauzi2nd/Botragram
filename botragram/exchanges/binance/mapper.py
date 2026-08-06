@@ -133,6 +133,7 @@ class BinanceExchangeMapper(BaseExchangeMapper):
 
         return Candle(
             symbol=self._to_string(symbol_value),
+            interval=Interval(self._to_string(raw_kline.get("i"))),
             open_time=self._to_datetime(raw_kline.get("t")),
             close_time=self._to_datetime(raw_kline.get("T")),
             open_price=self._to_decimal(raw_kline.get("o")),
@@ -166,8 +167,8 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             status=OrderStatus(self._to_string(payload.get("status"))),
             quantity=self._to_decimal(payload.get("origQty")),
             executed_quantity=self._to_decimal(payload.get("executedQty")),
-            price=self._to_decimal(payload.get("price")),
-            stop_price=self._to_decimal(payload.get("stopPrice")),
+            price=self._to_optional_decimal(payload.get("price")),
+            stop_price=self._to_optional_decimal(payload.get("stopPrice")),
             created_at=created_at,
             updated_at=(
                 self._to_datetime(updated_at_value)
@@ -330,6 +331,21 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             return Decimal("0")
 
         return Decimal(str(value))
+
+    @staticmethod
+    def _to_optional_decimal(
+        value: object,
+    ) -> Decimal | None:
+        """Convert an optional payload value into Decimal."""
+        if value is None or value == "":
+            return None
+
+        result = Decimal(str(value))
+
+        if result == Decimal("0"):
+            return None
+
+        return result
 
     @staticmethod
     def _to_int(

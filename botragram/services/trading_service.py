@@ -39,9 +39,9 @@ __all__ = [
 # =============================================================================
 # Constants
 # =============================================================================
+_DECIMAL_ZERO = Decimal("0")
 _DEFAULT_BALANCE_ASSET = "USDT"
-
-_DEFAULT_DRAWDOWN = Decimal("0")
+_APPROVED_DECISION_RISK_ERROR = "Approved trading decision requires a risk result"
 
 
 # =============================================================================
@@ -60,8 +60,17 @@ class TradingService:
     account_service: AccountService
     position_service: PositionService
     order_service: OrderService
-
     trading_engine: TradingEngine
+
+    balance_asset: str = _DEFAULT_BALANCE_ASSET
+
+    def __post_init__(self) -> None:
+        """Normalize immutable service configuration."""
+        object.__setattr__(
+            self,
+            "balance_asset",
+            self._normalize_asset(self.balance_asset),
+        )
 
     async def execute(
         self,
@@ -69,10 +78,11 @@ class TradingService:
         symbol: str,
         interval: Interval,
         candle_limit: int,
+        current_drawdown_pct: Decimal = _DECIMAL_ZERO,
         order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
     ) -> TradingResult:
-        """Execute one trading cycle."""
-
+        """Execute one complete trading cycle."""
         normalized_symbol = self._normalize_symbol(symbol)
 
         candles = await self.market_service.get_candles(
@@ -91,14 +101,14 @@ class TradingService:
         )
 
         balance = await self.account_service.get_free_balance(
-            asset=_DEFAULT_BALANCE_ASSET,
+            asset=self.balance_asset,
         )
 
         decision = self.trading_engine.evaluate(
             signal=signal,
             account_balance=balance,
             has_open_position=has_position,
-            current_drawdown_pct=_DEFAULT_DRAWDOWN,
+            current_drawdown_pct=current_drawdown_pct,
         )
 
         if not decision.should_execute:
@@ -109,13 +119,16 @@ class TradingService:
                 reason=decision.reason,
             )
 
-        if decision.risk_result is None:
-            raise RuntimeError("Approved trading decision requires a risk result")
+        risk_result = decision.risk_result
+
+        if risk_result is None:
+            raise RuntimeError(_APPROVED_DECISION_RISK_ERROR)
 
         order = await self.order_service.submit(
             signal=signal,
-            risk_result=decision.risk_result,
+            risk_result=risk_result,
             order_type=order_type,
+            price=price,
         )
 
         return TradingResult(
@@ -128,11 +141,22 @@ class TradingService:
     def _normalize_symbol(
         symbol: str,
     ) -> str:
-        """Normalize a trading symbol."""
-
+        """Normalize and validate a trading symbol."""
         normalized_symbol = symbol.strip().upper()
 
         if not normalized_symbol:
             raise ValueError("Trading symbol must not be empty")
 
         return normalized_symbol
+
+    @staticmethod
+    def _normalize_asset(
+        asset: str,
+    ) -> str:
+        """Normalize and validate a balance asset."""
+        normalized_asset = asset.strip().upper()
+
+        if not normalized_asset:
+            raise ValueError("Balance asset must not be empty")
+
+        return normalized_asset
