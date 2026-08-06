@@ -21,13 +21,25 @@ from botragram.storage.sqlite.candle_repository import (
 )
 from botragram.storage.sqlite.database import SQLiteDatabase
 from botragram.storage.sqlite.migrations import SQLiteMigrationManager
+from botragram.storage.sqlite.order_repository import (
+    SQLiteOrderRepository,
+)
+from botragram.storage.sqlite.position_repository import (
+    SQLitePositionRepository,
+)
 from botragram.storage.sqlite.signal_repository import (
     SQLiteSignalRepository,
+)
+from botragram.storage.sqlite.trade_repository import (
+    SQLiteTradeRepository,
 )
 
 __all__ = [
     "SQLiteCandleRepository",
     "SQLiteDatabase",
     "SQLiteMigrationManager",
+    "SQLiteOrderRepository",
+    "SQLitePositionRepository",
     "SQLiteSignalRepository",
+    "SQLiteTradeRepository",
 ]

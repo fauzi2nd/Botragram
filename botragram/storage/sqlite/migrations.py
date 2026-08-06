@@ -159,6 +159,127 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         );
         """,
     ),
+    _Migration(
+        version=3,
+        script="""
+    CREATE TABLE IF NOT EXISTS orders (
+        symbol TEXT NOT NULL,
+        order_id TEXT NOT NULL,
+
+        side TEXT NOT NULL,
+        order_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+
+        quantity TEXT NOT NULL,
+        executed_quantity TEXT NOT NULL,
+
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+
+        price TEXT,
+        stop_price TEXT,
+
+        PRIMARY KEY (
+            symbol,
+            order_id
+        )
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_orders_created_at
+    ON orders (
+        created_at
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_orders_lookup
+    ON orders (
+        symbol,
+        status,
+        side,
+        order_type,
+        created_at
+    );
+    """,
+    ),
+    _Migration(
+        version=4,
+        script="""
+    CREATE TABLE IF NOT EXISTS trades (
+        symbol TEXT NOT NULL,
+        trade_id TEXT NOT NULL,
+
+        order_id TEXT NOT NULL,
+
+        side TEXT NOT NULL,
+
+        price TEXT NOT NULL,
+        quantity TEXT NOT NULL,
+        quote_quantity TEXT NOT NULL,
+
+        fee TEXT NOT NULL,
+        fee_asset TEXT NOT NULL,
+
+        realized_pnl TEXT,
+
+        executed_at TEXT NOT NULL,
+
+        PRIMARY KEY (
+            symbol,
+            trade_id
+        )
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trades_order
+    ON trades (
+        order_id
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trades_time
+    ON trades (
+        executed_at
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trades_lookup
+    ON trades (
+        symbol,
+        side,
+        executed_at
+    );
+    """,
+    ),
+    _Migration(
+        version=5,
+        script="""
+    CREATE TABLE IF NOT EXISTS positions (
+        symbol TEXT NOT NULL,
+
+        side TEXT NOT NULL,
+
+        quantity TEXT NOT NULL,
+        entry_price TEXT NOT NULL,
+        current_price TEXT NOT NULL,
+
+        unrealized_pnl TEXT NOT NULL,
+        leverage INTEGER NOT NULL,
+
+        opened_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+
+        PRIMARY KEY (
+            symbol
+        )
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_positions_side
+    ON positions (
+        side
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_positions_updated_at
+    ON positions (
+        updated_at
+    );
+    """,
+    ),
 )
 
 
