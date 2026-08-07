@@ -24,9 +24,13 @@ __all__ = [
     "ENV_TELEGRAM_CHAT_ID",
     "ENV_TRADE_MODE",
     "ENV_LOG_LEVEL",
+    "ENV_EMA_SCALPING_STOP_LOSS_PCT",
+    "ENV_EMA_SCALPING_TAKE_PROFIT_PCT",
+    "ENV_BOTRAGRAM_PROFILE",
     "ENV_ACTIVE_EXCHANGE",
     "ENV_BINANCE_API_KEY",
     "ENV_BINANCE_API_SECRET",
+    "ENV_BINANCE_MARKET_TYPE",
     "ENV_BINANCE_TESTNET",
     "ENV_BITGET_API_KEY",
     "ENV_BITGET_API_SECRET",
@@ -66,6 +70,13 @@ ENV_TELEGRAM_CHAT_ID: str = "TELEGRAM_CHAT_ID"
 # =============================================================================
 ENV_TRADE_MODE: str = "TRADE_MODE"
 ENV_LOG_LEVEL: str = "LOG_LEVEL"
+ENV_BOTRAGRAM_PROFILE: str = "BOTRAGRAM_PROFILE"
+
+# =============================================================================
+# Constants — Risk
+# =============================================================================
+ENV_EMA_SCALPING_STOP_LOSS_PCT: str = "EMA_SCALPING_STOP_LOSS_PCT"
+ENV_EMA_SCALPING_TAKE_PROFIT_PCT: str = "EMA_SCALPING_TAKE_PROFIT_PCT"
 
 # =============================================================================
 # Constants — Exchange
@@ -77,6 +88,7 @@ ENV_ACTIVE_EXCHANGE: str = "ACTIVE_EXCHANGE"
 # =============================================================================
 ENV_BINANCE_API_KEY: str = "BINANCE_API_KEY"
 ENV_BINANCE_API_SECRET: str = "BINANCE_API_SECRET"
+ENV_BINANCE_MARKET_TYPE: str = "BINANCE_MARKET_TYPE"
 ENV_BINANCE_TESTNET: str = "BINANCE_TESTNET"
 
 # =============================================================================

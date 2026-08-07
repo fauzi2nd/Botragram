@@ -24,6 +24,10 @@ __all__ = [
     "BINANCE_TESTNET_REST_BASE_URL",
     "BINANCE_WEBSOCKET_BASE_URL",
     "BINANCE_TESTNET_WEBSOCKET_BASE_URL",
+    "BINANCE_FUTURES_REST_BASE_URL",
+    "BINANCE_FUTURES_TESTNET_REST_BASE_URL",
+    "BINANCE_FUTURES_WEBSOCKET_BASE_URL",
+    "BINANCE_FUTURES_TESTNET_WEBSOCKET_BASE_URL",
 ]
 
 # =============================================================================
@@ -54,3 +58,10 @@ BINANCE_REST_BASE_URL: str = "https://api.binance.com"
 BINANCE_TESTNET_REST_BASE_URL: str = "https://testnet.binance.vision"
 BINANCE_WEBSOCKET_BASE_URL: str = "wss://stream.binance.com:9443"
 BINANCE_TESTNET_WEBSOCKET_BASE_URL: str = "wss://stream.testnet.binance.vision"
+
+BINANCE_FUTURES_REST_BASE_URL: str = "https://fapi.binance.com"
+BINANCE_FUTURES_TESTNET_REST_BASE_URL: str = "https://demo-fapi.binance.com"
+BINANCE_FUTURES_WEBSOCKET_BASE_URL: str = "wss://fstream.binance.com/market"
+BINANCE_FUTURES_TESTNET_WEBSOCKET_BASE_URL: str = (
+    "wss://demo-fstream.binance.com/market"
+)

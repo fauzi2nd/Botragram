@@ -23,7 +23,7 @@ from decimal import Decimal
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import PositionSide
+from botragram.enums import Interval, PositionSide, StrategyType
 
 __all__ = [
     "Position",
@@ -56,3 +56,6 @@ class Position:
 
     stop_loss: Decimal | None = None
     take_profit: Decimal | None = None
+    interval: Interval | None = None
+    strategy_type: StrategyType | None = None
+    protection_step: int = 0

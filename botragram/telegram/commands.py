@@ -24,7 +24,7 @@ from typing import Final
 # =============================================================================
 # Third Party
 # =============================================================================
-from telegram import Update
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 # =============================================================================
@@ -32,9 +32,14 @@ from telegram.ext import ContextTypes
 # =============================================================================
 from botragram.constants.telegram import (
     DEFAULT_PARSE_MODE,
+    MENU_ACTIVITY,
     MENU_BALANCE,
+    MENU_CONFIGURATION,
+    MENU_DASHBOARD,
     MENU_EXCHANGE,
     MENU_HISTORY,
+    MENU_HOME,
+    MENU_INTERVAL,
     MENU_MARKET,
     MENU_ORDERS,
     MENU_PAUSE,
@@ -46,21 +51,36 @@ from botragram.constants.telegram import (
     MENU_STRATEGY,
     MENU_STREAM,
     MENU_TEST,
+    MENU_TRADING,
 )
 from botragram.models import Order, Trade
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
-from botragram.telegram.keyboards import get_exchange_keyboard, get_main_menu_keyboard
+from botragram.telegram.keyboards import (
+    get_activity_menu_keyboard,
+    get_configuration_menu_keyboard,
+    get_dashboard_menu_keyboard,
+    get_exchange_keyboard,
+    get_interval_keyboard,
+    get_main_menu_keyboard,
+    get_market_keyboard,
+    get_strategy_keyboard,
+    get_stream_keyboard,
+    get_trading_menu_keyboard,
+)
 from botragram.telegram.messages import (
     get_balance_message,
     get_exchange_message,
     get_history_message,
+    get_interval_message,
     get_market_message,
+    get_navigation_message,
     get_orders_message,
     get_positions_message,
     get_resume_message,
     get_runtime_pause_message,
     get_settings_message,
+    get_startup_configuration_message,
     get_status_message,
     get_strategy_message,
     get_stream_message,
@@ -91,6 +111,34 @@ def _get_context(context: ContextTypes.DEFAULT_TYPE) -> BotContext:
     return BotContext()
 
 
+def _get_runtime_symbol(context: BotContext) -> str:
+    """Return the actively selected runtime symbol."""
+    control = context.runtime_control
+    return control.symbol if control is not None else context.symbol
+
+
+def _get_runtime_strategy(context: BotContext) -> str:
+    """Return the actively selected runtime strategy name."""
+    control = context.runtime_control
+    return control.strategy_type.value if control is not None else context.strategy_name
+
+
+def _get_startup_configuration_message(context: BotContext) -> str:
+    """Return the current startup checklist for Telegram."""
+    control = context.runtime_control
+
+    if control is None:
+        return ""
+
+    return get_startup_configuration_message(
+        exchange=context.exchange_type,
+        symbol=control.symbol,
+        interval=control.interval.value,
+        strategy=control.strategy_type.value,
+        missing_requirements=control.get_missing_startup_requirements(),
+    )
+
+
 async def _reply_data_unavailable(update: Update) -> None:
     """Return a truthful transient query failure response."""
     if update.message is not None:
@@ -98,6 +146,24 @@ async def _reply_data_unavailable(update: Update) -> None:
             _DATA_UNAVAILABLE_MESSAGE,
             parse_mode=DEFAULT_PARSE_MODE,
         )
+
+
+async def _show_navigation(
+    *,
+    update: Update,
+    title: str,
+    description: str,
+    keyboard: ReplyKeyboardMarkup,
+) -> None:
+    """Switch the persistent keyboard to one compact navigation level."""
+    if update.message is None:
+        return
+
+    await update.message.reply_text(
+        get_navigation_message(title=title, description=description),
+        parse_mode=DEFAULT_PARSE_MODE,
+        reply_markup=keyboard,
+    )
 
 
 # =============================================================================
@@ -117,7 +183,12 @@ async def start_command(
         if not is_authorized_update(update=update, context=context):
             return
 
+        ctx = _get_context(context)
+        checklist = _get_startup_configuration_message(ctx)
         msg = get_welcome_message()
+
+        if checklist:
+            msg = f"{msg}\n\n{checklist}"
         kb = get_main_menu_keyboard()
         await update.message.reply_text(
             msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=kb
@@ -141,15 +212,14 @@ async def status_command(
         ctx = _get_context(context)
         last_price = ctx.last_price
         available_balance: Decimal | None = None
-        open_position_count: int | None = None
+        positions = ctx.positions
         provider = ctx.query_provider
 
         if provider is not None:
             try:
-                positions = await provider.get_positions()
+                positions = tuple(await provider.get_positions())
                 last_price = await provider.get_last_price()
                 available_balance = await provider.get_available_balance()
-                open_position_count = len(positions)
             except Exception:
                 logger.exception("Telegram status query failed")
                 await _reply_data_unavailable(update)
@@ -158,14 +228,31 @@ async def status_command(
         msg = get_status_message(
             is_running=ctx.is_running,
             trade_mode=ctx.trade_mode,
-            symbol=ctx.symbol,
+            symbol=_get_runtime_symbol(ctx),
             last_price=last_price,
             available_balance=available_balance,
-            open_position_count=open_position_count,
+            open_position_count=len(positions),
             is_paused=(
                 ctx.runtime_control.is_paused
                 if ctx.runtime_control is not None
                 else False
+            ),
+            exchange_type=ctx.exchange_type,
+            market_type=ctx.market_type,
+            strategy_name=_get_runtime_strategy(ctx),
+            interval=(
+                ctx.runtime_control.interval.value
+                if ctx.runtime_control is not None
+                else None
+            ),
+            stream_active=(
+                ctx.runtime_control.stream_enabled
+                if ctx.runtime_control is not None
+                else None
+            ),
+            total_unrealized_pnl=sum(
+                (position.unrealized_pnl for position in positions),
+                start=Decimal("0"),
             ),
         )
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
@@ -217,7 +304,7 @@ async def settings_command(
         ctx = _get_context(context)
         msg = get_settings_message(
             exchange_type=ctx.exchange_type,
-            strategy_name=ctx.strategy_name,
+            strategy_name=_get_runtime_strategy(ctx),
             trade_mode=ctx.trade_mode,
         )
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
@@ -238,7 +325,7 @@ async def exchange_command(
             return
 
         ctx = _get_context(context)
-        msg = get_exchange_message(ctx.exchange_type)
+        msg = get_exchange_message(ctx.exchange_type, ctx.market_type)
         kb = get_exchange_keyboard(ctx.exchange_type)
         await update.message.reply_text(
             msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=kb
@@ -264,8 +351,13 @@ async def market_command(
                 await _reply_data_unavailable(update)
                 return
 
-        msg = get_market_message(ctx.symbol, last_price)
-        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+        symbol = _get_runtime_symbol(ctx)
+        msg = get_market_message(symbol, last_price)
+        await update.message.reply_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_market_keyboard(symbol),
+        )
 
 
 async def orders_command(
@@ -352,8 +444,36 @@ async def strategy_command(
         ctx = _get_context(context)
         fast_period = 9
         slow_period = 21
-        msg = get_strategy_message(ctx.strategy_name, fast_period, slow_period)
-        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+        strategy_name = _get_runtime_strategy(ctx)
+        msg = get_strategy_message(strategy_name, fast_period, slow_period)
+        await update.message.reply_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_strategy_keyboard(strategy_name),
+        )
+
+
+async def interval_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Show the runtime candle-interval selector."""
+    if update.message:
+        if not is_authorized_update(update=update, context=context):
+            return
+
+        ctx = _get_context(context)
+        control = ctx.runtime_control
+
+        if control is None:
+            await _reply_data_unavailable(update)
+            return
+
+        await update.message.reply_text(
+            get_interval_message(control.interval.value),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_interval_keyboard(control.interval.value),
+        )
 
 
 async def stream_command(
@@ -364,8 +484,33 @@ async def stream_command(
         if not is_authorized_update(update=update, context=context):
             return
 
-        msg = get_stream_message()
-        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+        ctx = _get_context(context)
+        provider = ctx.query_provider
+        transport_connected = (
+            provider.is_stream_transport_connected() if provider is not None else False
+        )
+        subscription_active = (
+            ctx.runtime_control.stream_enabled
+            if ctx.runtime_control is not None
+            else False
+        )
+        first_tick_received = False
+
+        if ctx.runtime_control is not None and subscription_active:
+            first_tick_received = (
+                "first stream tick"
+                not in ctx.runtime_control.get_missing_startup_requirements()
+            )
+        msg = get_stream_message(
+            transport_connected=transport_connected,
+            subscription_active=subscription_active,
+            first_tick_received=first_tick_received,
+        )
+        await update.message.reply_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_stream_keyboard(),
+        )
 
 
 async def start_bot_command(
@@ -383,7 +528,11 @@ async def start_bot_command(
             await _reply_data_unavailable(update)
             return
 
-        msg = get_resume_message(changed=control.resume())
+        try:
+            msg = get_resume_message(changed=control.resume())
+        except RuntimeError:
+            checklist = _get_startup_configuration_message(ctx)
+            msg = f"⚠️ <b>Trading belum dapat dimulai.</b>\n\n{checklist}"
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
 
@@ -435,7 +584,42 @@ async def menu_message_handler(
         return
 
     action = update.message.text
-    if action == MENU_STATUS:
+    if action == MENU_DASHBOARD:
+        await _show_navigation(
+            update=update,
+            title="Dashboard",
+            description="Pantau runtime, market, balance, dan posisi aktif.",
+            keyboard=get_dashboard_menu_keyboard(),
+        )
+    elif action == MENU_TRADING:
+        await _show_navigation(
+            update=update,
+            title="Trading Control",
+            description="Kelola stream dan status trading dari satu tempat.",
+            keyboard=get_trading_menu_keyboard(),
+        )
+    elif action == MENU_CONFIGURATION:
+        await _show_navigation(
+            update=update,
+            title="Configuration",
+            description="Atur exchange, market, strategy, dan interval.",
+            keyboard=get_configuration_menu_keyboard(),
+        )
+    elif action == MENU_ACTIVITY:
+        await _show_navigation(
+            update=update,
+            title="Activity",
+            description="Tinjau order, riwayat trade, dan diagnostic test.",
+            keyboard=get_activity_menu_keyboard(),
+        )
+    elif action == MENU_HOME:
+        await _show_navigation(
+            update=update,
+            title="Botragram Home",
+            description="Pilih kategori sesuai pekerjaan yang ingin dilakukan.",
+            keyboard=get_main_menu_keyboard(),
+        )
+    elif action == MENU_STATUS:
         await status_command(update, context)
     elif action == MENU_POSITIONS:
         await positions_command(update, context)
@@ -453,6 +637,8 @@ async def menu_message_handler(
         await exchange_command(update, context)
     elif action == MENU_STRATEGY:
         await strategy_command(update, context)
+    elif action == MENU_INTERVAL:
+        await interval_command(update, context)
     elif action == MENU_STREAM:
         await stream_command(update, context)
     elif action == MENU_START:
@@ -463,6 +649,7 @@ async def menu_message_handler(
         await test_command(update, context)
     elif action == MENU_STOP:
         await update.message.reply_text(
-            "❌ <b>Trading Bot has been stopped.</b>",
+            "ℹ️ <b>Gunakan Pause Bot untuk menghentikan trading dengan aman.</b>",
             parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_trading_menu_keyboard(),
         )

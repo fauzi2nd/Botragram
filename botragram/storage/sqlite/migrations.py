@@ -290,6 +290,23 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ADD COLUMN take_profit TEXT;
         """,
     ),
+    _Migration(
+        version=7,
+        script="""
+        ALTER TABLE positions
+        ADD COLUMN interval TEXT;
+
+        ALTER TABLE positions
+        ADD COLUMN strategy_type TEXT;
+        """,
+    ),
+    _Migration(
+        version=8,
+        script="""
+        ALTER TABLE positions
+        ADD COLUMN protection_step INTEGER NOT NULL DEFAULT 0;
+        """,
+    ),
 )
 
 

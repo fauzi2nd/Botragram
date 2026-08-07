@@ -126,6 +126,7 @@ class TradingService:
                 initial_balance=account_balance_override,
                 order_type=order_type,
                 price=price,
+                interval=interval,
             )
 
         has_position = await self.position_service.has_position(

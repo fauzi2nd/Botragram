@@ -152,6 +152,8 @@ WAJIB ditinjau sebelum file baru dibuat.
 - Configuration model WAJIB immutable dengan
   `@dataclass(slots=True, kw_only=True, frozen=True)`.
 - Environment variable hanya dibaca melalui `EnvironmentProvider`.
+- Jika file `.env` tersedia, nilainya WAJIB mengalahkan process environment
+  warisan terminal agar profile dan network tidak berubah secara diam-diam.
 - `SettingsManager` adalah satu-satunya tempat untuk membentuk dan memvalidasi
   aggregate `Settings` dari environment.
 - Module selain application layer DILARANG memanggil `os.getenv()`.
@@ -161,6 +163,9 @@ WAJIB ditinjau sebelum file baru dibuat.
 - Kombinasi konfigurasi lintas field, seperti live mode tanpa credential, WAJIB
   divalidasi sebelum resource dibuat.
 - Default harus aman: paper trading dan testnet lebih diutamakan.
+- Credential mainnet dan testnet WAJIB berada pada file profile terpisah.
+  Profile yang dipilih WAJIB cocok dengan flag endpoint exchange; fallback
+  lintas profile DILARANG.
 - `.env.example` hanya berisi placeholder dan WAJIB diperbarui saat environment
   variable publik bertambah atau berubah.
 
@@ -390,6 +395,39 @@ data yang belum dinormalisasi tanpa batas ukuran.
   lengkap.
 - Request non-idempotent WAJIB mempertimbangkan duplicate submission saat retry.
 - Testnet dan live endpoint harus ditentukan dari validated settings.
+- Product family seperti Spot dan Futures WAJIB dipilih melalui validated enum;
+  DILARANG menyimpulkan product dari URL, credential, atau bentuk payload.
+- Spot dan Futures yang memiliki endpoint atau semantik posisi berbeda WAJIB
+  memakai high-level client terpisah. Transport dan mapper hanya boleh dipakai
+  bersama ketika kontraknya memang identik.
+- Order penutup posisi Futures WAJIB membawa semantik pengurangan exposure
+  (`reduceOnly`, `closePosition`, atau padanan vendor) dan memiliki contract test.
+- Startup dengan posisi live WAJIB menyinkronkan posisi dari exchange, lalu
+  memverifikasi SL dan TP sebelum runtime dapat resume. Recovery DILARANG membuat
+  ulang leg proteksi yang sudah aktif dan mencakup quantity posisi.
+- Kegagalan sinkronisasi atau verifikasi proteksi live WAJIB fail-closed: trading
+  tetap paused dan alasan kegagalan harus masuk log.
+- Metadata symbol, interval, dan strategy yang diperlukan untuk melanjutkan
+  posisi paper WAJIB dipersistensikan; restart DILARANG diam-diam mengganti
+  strategy posisi dengan default lain.
+- Strategy dengan horizon trading berbeda WAJIB dapat memiliki exit risk profile
+  sendiri. Nilai SL/TP DILARANG diasumsikan cocok untuk semua timeframe tanpa
+  regression test dan evaluasi paper/backtest.
+- Trailing atau stepped stop WAJIB memakai progress harga Entry→TP, bersifat
+  monotonik, menyimpan step secara persistent, dan hanya mengubah order ketika
+  threshold baru dilewati. Persentase UPnL yang berubah karena leverage DILARANG
+  menjadi sumber progress.
+- Penggantian stop live WAJIB memastikan stop baru aktif sebelum membatalkan stop
+  lama. Retry WAJIB idempoten dan dibatasi agar kegagalan tidak membanjiri API.
+- Simulasi PAPER yang memakai market stream WAJIB mengeksekusi SL/TP dari tick
+  stream dan menyinkronkan eksekusi dengan trading cycle untuk mencegah close
+  ganda.
+- Dukungan one-way/hedge mode WAJIB dinyatakan eksplisit. Client DILARANG menutup
+  posisi ambigu dengan memilih salah satu side secara diam-diam.
+- Perubahan symbol atau strategy saat runtime hanya boleh dilakukan ketika
+  trading dijeda, tidak ada posisi terbuka, dan stream symbol lama sudah mati.
+- Status stream WAJIB membedakan transport WebSocket yang siap dari subscription
+  ticker/candle yang benar-benar aktif.
 - Fitur yang belum didukung WAJIB menghasilkan `NotImplementedError` atau error
   konfigurasi yang jelas, bukan hasil palsu.
 
@@ -569,6 +607,9 @@ Bagian ini mendokumentasikan struktur nyata repository, bukan rencana folder
 masa depan. Perbarui bagian ini pada perubahan yang menambah, memindahkan, atau
 menghapus package/module utama.
 
+`PROJECT_STRUCTURE.md` adalah referensi kanonik struktur repository. Ringkasan
+di bawah WAJIB tetap konsisten dengannya.
+
 ```text
 Botragram/
 |-- botragram/
@@ -583,6 +624,7 @@ Botragram/
 |   |   |-- settings_manager.py
 |   |   |-- shutdown.py
 |   |   |-- startup.py
+|   |   |-- terminal_monitor.py        # Rich status/stream/log dashboard
 |   |   `-- trading_runner.py
 |   |-- config/
 |   |   |-- __init__.py
@@ -637,6 +679,12 @@ Botragram/
 |   |   |   |-- rest.py
 |   |   |   `-- stream.py
 |   |   |-- binance/
+|   |   |   |-- __init__.py
+|   |   |   |-- client.py
+|   |   |   |-- futures_client.py
+|   |   |   |-- mapper.py
+|   |   |   |-- rest.py
+|   |   |   `-- stream.py
 |   |   |-- bitget/
 |   |   |-- bybit/
 |   |   `-- okx/
@@ -696,7 +744,9 @@ Botragram/
 |   |   |-- market_service.py
 |   |   |-- order_service.py
 |   |   |-- paper_trading_service.py
+|   |   |-- position_protection_manager.py
 |   |   |-- position_service.py
+|   |   |-- runtime_recovery_service.py
 |   |   |-- runtime_reporter.py
 |   |   |-- strategy_service.py
 |   |   `-- trading_service.py
@@ -749,8 +799,11 @@ Botragram/
 |-- data/                         # SQLite runtime; isi diabaikan Git
 |-- logs/                         # Log runtime; isi diabaikan Git
 |-- .env.example
+|-- .env.mainnet.example
+|-- .env.testnet.example
 |-- .gitignore
 |-- DEVELOPMENT_GUIDE.md
+|-- PROJECT_STRUCTURE.md
 |-- README.md
 |-- main.py
 |-- pyproject.toml
@@ -759,8 +812,9 @@ Botragram/
 
 Catatan struktur:
 
-- Folder vendor exchange memiliki pola file yang sama: `client.py`, `mapper.py`,
-  `rest.py`, dan `stream.py`.
+- Folder vendor exchange minimal memiliki `client.py`, `mapper.py`, `rest.py`,
+  dan `stream.py`. Product dengan semantik berbeda menggunakan client tambahan
+  yang dinamai eksplisit, misalnya `futures_client.py`.
 - `<domain_enum>.py`, `<domain_exception>.py`, dan `<entity_repository>.py` adalah
   singkatan dokumentasi untuk kumpulan module sejenis yang sudah ada; bukan nama
   file literal.

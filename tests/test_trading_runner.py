@@ -17,6 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -30,8 +31,24 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.app import TradingRunner, TradingRuntimeControl
-from botragram.enums import Interval, OrderType, SignalType, TradeMode
-from botragram.models import Signal, TradingDecision, TradingResult
+from botragram.enums import (
+    Interval,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    SignalType,
+    StrategyType,
+    TradeMode,
+)
+from botragram.models import (
+    Order,
+    PositionSize,
+    RiskMetrics,
+    RiskResult,
+    Signal,
+    TradingDecision,
+    TradingResult,
+)
 
 # =============================================================================
 # Constants
@@ -139,6 +156,76 @@ def _create_result(
     )
 
 
+def _create_executed_result() -> TradingResult:
+    """Create an executed long entry with complete risk context."""
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100"),
+        confidence=Decimal("0.8"),
+        strategy_name="test_strategy",
+        generated_at=_NOW,
+        reason="Fast EMA crossed above slow EMA with positive momentum",
+    )
+    risk_result = RiskResult(
+        approved=True,
+        position=PositionSize(
+            quantity=Decimal("0.5"),
+            notional=Decimal("50"),
+            leverage=1,
+        ),
+        metrics=RiskMetrics(
+            entry_price=Decimal("100"),
+            stop_loss=Decimal("98"),
+            take_profit=Decimal("104"),
+            risk_amount=Decimal("1"),
+            reward_amount=Decimal("2"),
+            risk_reward_ratio=Decimal("2"),
+        ),
+    )
+    decision = TradingDecision(
+        should_execute=True,
+        signal=signal,
+        risk_result=risk_result,
+    )
+    order = Order(
+        order_id="paper-order-1",
+        symbol=signal.symbol,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=risk_result.position.quantity,
+        executed_quantity=risk_result.position.quantity,
+        price=signal.price,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    return TradingResult(
+        executed=True,
+        decision=decision,
+        order=order,
+    )
+
+
+def _complete_startup_configuration(
+    control: TradingRuntimeControl,
+    *,
+    resume: bool = True,
+) -> TradingRuntimeControl:
+    """Complete the Telegram startup gate for continuous-runner tests."""
+    control.confirm_exchange(control.exchange_type)
+    control.select_symbol(control.symbol)
+    control.select_interval(control.interval)
+    control.select_strategy(control.strategy_type)
+    control.set_stream_enabled(True)
+    control.record_stream_tick(price=Decimal("100"))
+
+    if resume:
+        control.resume()
+
+    return control
+
+
 # =============================================================================
 # Configuration and Safety Tests
 # =============================================================================
@@ -197,6 +284,118 @@ async def _run_live_cycle_test() -> None:
     assert runner.order_submission_enabled
 
 
+def test_runner_logs_executed_position_reason_and_risk(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Expose successful position direction, reason, SL, TP, and risk."""
+    runner = TradingRunner(
+        executor=FakeTradingCycleExecutor(result=_create_executed_result()),
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+    )
+
+    with caplog.at_level(logging.INFO, logger="botragram.app.trading_runner"):
+        asyncio.run(runner.run_once())
+
+    assert "position=LONG" in caplog.text
+    assert "reason=Fast EMA crossed above slow EMA" in caplog.text
+    assert "risk_amount=1" in caplog.text
+    assert "stop_loss=98" in caplog.text
+    assert "take_profit=104" in caplog.text
+
+
+def test_runtime_selection_requires_pause_and_changes_future_cycles() -> None:
+    """Verify Telegram-style selection safely changes the next runner cycle."""
+    asyncio.run(_run_runtime_selection_test())
+
+
+def test_default_cycle_cadence_follows_telegram_interval_selection() -> None:
+    """Use the latest runtime interval rather than the startup interval."""
+    control = TradingRuntimeControl(interval=Interval.M15)
+    runner = TradingRunner(
+        executor=FakeTradingCycleExecutor(result=_create_result()),
+        symbol="BTCUSDT",
+        interval=Interval.M15,
+        runtime_control=control,
+    )
+
+    assert runner.effective_cycle_interval_seconds == 900.0
+
+    control.select_interval(Interval.M1)
+
+    assert runner.effective_cycle_interval_seconds == 60.0
+
+
+async def _run_runtime_selection_test() -> None:
+    """Pause, select a market and strategy, then execute the new selection."""
+    executor = FakeTradingCycleExecutor(result=_create_result())
+    control = TradingRuntimeControl()
+    selected_strategies: list[StrategyType] = []
+    control.bind_strategy_selector(selected_strategies.append)
+    runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M15,
+        runtime_control=control,
+    )
+
+    control.pause()
+    assert control.select_symbol("ethusdt")
+    assert control.select_interval(Interval.M5)
+    assert control.select_strategy(StrategyType.SUPERTREND)
+    control.confirm_exchange(control.exchange_type)
+    control.set_stream_enabled(True)
+    control.record_stream_tick(price=Decimal("100"))
+    control.resume()
+    await runner.run_once()
+
+    assert executor.calls[0].symbol == "ETHUSDT"
+    assert executor.calls[0].interval is Interval.M5
+    assert selected_strategies == [StrategyType.SUPERTREND]
+
+
+def test_runtime_selection_is_rejected_while_trading_is_active() -> None:
+    """Verify an active cycle configuration cannot be changed concurrently."""
+    control = _complete_startup_configuration(TradingRuntimeControl())
+
+    with pytest.raises(RuntimeError, match="Pause trading"):
+        control.select_symbol("ETHUSDT")
+
+
+def test_runtime_start_requires_complete_telegram_configuration() -> None:
+    """Reject startup until selections, subscription, and first tick are ready."""
+    control = TradingRuntimeControl()
+
+    assert control.is_paused
+    assert control.get_missing_startup_requirements() == (
+        "exchange",
+        "symbol",
+        "interval",
+        "strategy",
+        "stream subscription",
+    )
+
+    with pytest.raises(RuntimeError, match="Startup configuration incomplete"):
+        control.resume()
+
+    _complete_startup_configuration(control)
+
+    assert not control.is_paused
+    assert not control.get_missing_startup_requirements()
+
+
+def test_runtime_selection_waits_for_current_cycle_after_pause() -> None:
+    """Verify pausing does not mutate settings owned by an executing cycle."""
+    control = TradingRuntimeControl()
+    control.begin_cycle()
+    control.pause()
+
+    with pytest.raises(RuntimeError, match="cycle to finish"):
+        control.select_symbol("ETHUSDT")
+
+    control.end_cycle()
+
+
 @pytest.mark.parametrize(
     ("symbol", "candle_limit", "cycle_interval_seconds", "message"),
     (
@@ -253,6 +452,7 @@ async def _run_graceful_stop_test() -> None:
         symbol="BTCUSDT",
         interval=Interval.M15,
         cycle_interval_seconds=60.0,
+        runtime_control=_complete_startup_configuration(TradingRuntimeControl()),
     )
     task = asyncio.create_task(runner.run())
     await executor.execution_started.wait()
@@ -264,6 +464,38 @@ async def _run_graceful_stop_test() -> None:
     assert not runner.is_running
 
 
+def test_runner_logs_periodic_heartbeat(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Verify a healthy waiting runtime remains visibly alive in the terminal."""
+    asyncio.run(_run_heartbeat_test(caplog=caplog))
+
+
+async def _run_heartbeat_test(
+    *,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Run long enough to emit one heartbeat before graceful shutdown."""
+    executor = FakeTradingCycleExecutor(result=_create_result())
+    runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M15,
+        cycle_interval_seconds=60,
+        heartbeat_interval_seconds=0.01,
+        runtime_control=_complete_startup_configuration(TradingRuntimeControl()),
+    )
+
+    with caplog.at_level(logging.INFO, logger="botragram.app.trading_runner"):
+        task = asyncio.create_task(runner.run())
+        await executor.execution_started.wait()
+        await asyncio.sleep(0.03)
+        runner.stop()
+        await asyncio.wait_for(task, timeout=1.0)
+
+    assert "Runtime heartbeat" in caplog.text
+
+
 def test_runner_waits_while_paused_then_resumes_without_restart() -> None:
     """Verify cooperative pause blocks cycles until the controller resumes."""
     asyncio.run(_run_pause_resume_test())
@@ -272,8 +504,10 @@ def test_runner_waits_while_paused_then_resumes_without_restart() -> None:
 async def _run_pause_resume_test() -> None:
     """Pause before startup, resume one cycle, and stop normally."""
     executor = FakeTradingCycleExecutor(result=_create_result())
-    control = TradingRuntimeControl()
-    control.pause()
+    control = _complete_startup_configuration(
+        TradingRuntimeControl(),
+        resume=False,
+    )
     runner = TradingRunner(
         executor=executor,
         symbol="BTCUSDT",
@@ -338,6 +572,7 @@ async def _run_cycle_failure_test() -> None:
         executor=executor,
         symbol="BTCUSDT",
         interval=Interval.M15,
+        runtime_control=_complete_startup_configuration(TradingRuntimeControl()),
     )
 
     with pytest.raises(RuntimeError, match="exchange unavailable"):
@@ -364,6 +599,7 @@ async def _run_transient_recovery_test() -> None:
         interval=Interval.M15,
         maximum_consecutive_failures=2,
         failure_retry_delay_seconds=0.01,
+        runtime_control=_complete_startup_configuration(TradingRuntimeControl()),
     )
     task = asyncio.create_task(runner.run())
     await asyncio.wait_for(executor.execution_succeeded.wait(), timeout=1.0)
@@ -388,6 +624,7 @@ async def _run_cancellation_test() -> None:
         symbol="BTCUSDT",
         interval=Interval.M15,
         cycle_interval_seconds=60.0,
+        runtime_control=_complete_startup_configuration(TradingRuntimeControl()),
     )
     task = asyncio.create_task(runner.run())
     await executor.execution_started.wait()

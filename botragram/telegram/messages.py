@@ -24,6 +24,7 @@ from html import escape
 # Local Imports
 # =============================================================================
 from botragram.constants.app import APP_NAME, APP_VERSION
+from botragram.enums import MarketType
 from botragram.models import Order, Position, Trade
 from botragram.utils.formatter import format_currency
 
@@ -32,7 +33,9 @@ __all__ = [
     "get_exchange_message",
     "get_exchange_switched_message",
     "get_history_message",
+    "get_interval_message",
     "get_market_message",
+    "get_navigation_message",
     "get_orders_message",
     "get_paper_entry_message",
     "get_paper_exit_message",
@@ -47,6 +50,7 @@ __all__ = [
     "get_stop_message",
     "get_strategy_message",
     "get_stream_message",
+    "get_startup_configuration_message",
     "get_test_message",
     "get_welcome_message",
 ]
@@ -66,6 +70,15 @@ def get_welcome_message() -> str:
     )
 
 
+def get_navigation_message(*, title: str, description: str) -> str:
+    """Return one concise submenu introduction."""
+    return (
+        f"🧭 <b>{escape(title)}</b>\n\n"
+        f"{escape(description)}\n\n"
+        "Pilih aksi dari menu ringkas di bawah."
+    )
+
+
 def get_status_message(
     is_running: bool,
     trade_mode: str,
@@ -74,27 +87,53 @@ def get_status_message(
     available_balance: Decimal | None = None,
     open_position_count: int | None = None,
     is_paused: bool = False,
+    exchange_type: str | None = None,
+    market_type: MarketType | None = None,
+    strategy_name: str | None = None,
+    interval: str | None = None,
+    stream_active: bool | None = None,
+    total_unrealized_pnl: Decimal | None = None,
 ) -> str:
-    """Return current application and market status."""
+    """Return a compact application, market, and portfolio control center."""
     if is_running and is_paused:
         state = "🟡 PAUSED"
     else:
         state = "🟢 RUNNING" if is_running else "🔴 STOPPED"
+    if stream_active is None:
+        stream = "⚪ UNKNOWN"
+    else:
+        stream = "🟢 LIVE" if stream_active else "⚪ OFFLINE"
+    market = market_type.value.upper() if market_type is not None else "-"
+    exchange = exchange_type.upper() if exchange_type else "-"
+    strategy = strategy_name or "-"
+    candle_interval = interval or "-"
     lines = [
-        f"📊 <b>{APP_NAME} Status</b>\n\n"
-        f"<b>State:</b> {state}\n"
-        f"<b>Mode:</b> {escape(trade_mode)}\n"
-        f"<b>Symbol:</b> {escape(symbol)}\n"
-        f"<b>Last Price:</b> {format_currency(last_price, symbol='USDT')}"
+        f"📊 <b>{APP_NAME.upper()} CONTROL CENTER</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"{state}  ·  <b>{escape(trade_mode.upper())}</b>\n"
+        f"🏦 {escape(exchange)} · {escape(market)}\n"
+        f"📈 <b>{escape(symbol)}</b> · {escape(candle_interval)}\n"
+        f"🧠 {escape(strategy)}\n"
+        f"📡 Stream: {stream}\n\n"
+        "<b>MARKET &amp; PORTFOLIO</b>\n"
+        f"Price   <code>{format_currency(last_price, symbol='USDT')}</code>"
     ]
 
     if available_balance is not None:
         lines.append(
-            f"\n<b>Available:</b> {format_currency(available_balance, symbol='USDT')}"
+            "\nBalance <code>"
+            f"{format_currency(available_balance, symbol='USDT')}</code>"
         )
 
     if open_position_count is not None:
         lines.append(f"\n<b>Open Positions:</b> {open_position_count}")
+
+    if total_unrealized_pnl is not None:
+        pnl_icon = "🟢" if total_unrealized_pnl >= 0 else "🔴"
+        lines.append(
+            f"\n{pnl_icon} <b>Unrealized PnL:</b> "
+            f"{format_currency(total_unrealized_pnl, symbol='USDT')}"
+        )
 
     return "".join(lines)
 
@@ -106,13 +145,22 @@ def get_positions_message(
     if not positions:
         return "ℹ️ <b>Tidak ada posisi aktif.</b>"
 
-    lines: list[str] = ["💼 <b>Posisi Aktif:</b>\n"]
+    lines: list[str] = [
+        f"💼 <b>ACTIVE POSITIONS · {len(positions)}</b>\n━━━━━━━━━━━━━━━━━━"
+    ]
 
     for position in positions:
+        side_icon = "🟢" if position.side.value == "long" else "🔴"
         lines.append(
-            f"• <b>{escape(position.symbol)}</b> ({position.side.value}): "
-            f"Qty={position.quantity}, Entry={position.entry_price}, "
-            f"PnL={format_currency(position.unrealized_pnl, symbol='USDT')}"
+            f"\n{side_icon} <b>{escape(position.symbol)}</b> · "
+            f"{position.side.value.upper()} · {position.leverage}x\n"
+            f"Qty={position.quantity}\n"
+            f"Entry / Mark: {_format_optional_price(position.entry_price)} / "
+            f"{_format_optional_price(position.current_price)}\n"
+            f"SL / TP: {_format_optional_price(position.stop_loss)} / "
+            f"{_format_optional_price(position.take_profit)}\n"
+            f"PnL={format_currency(position.unrealized_pnl, symbol='USDT')} · "
+            f"SL+ Step {position.protection_step}"
         )
 
     return "\n".join(lines)
@@ -134,21 +182,24 @@ def get_settings_message(
 
 def get_exchange_message(
     current_exchange: str,
+    market_type: MarketType = MarketType.SPOT,
 ) -> str:
     """Return the exchange selection message."""
     exchange_name = current_exchange.strip().upper()
+    market_name = escape(market_type.value.title())
     exchange_info: dict[str, str] = {
         "BYBIT": "🟡 <b>Bybit</b> — Derivatives &amp; Spot",
-        "BINANCE": "🟠 <b>Binance</b> — Spot Exchange",
+        "BINANCE": f"🟠 <b>Binance</b> — {market_name} Exchange",
         "OKX": "⚫ <b>OKX</b> — Advanced Trading Platform",
         "BITGET": "🔵 <b>Bitget</b> — Copy Trading Exchange",
     }
     description = exchange_info.get(exchange_name, escape(exchange_name))
 
     return (
-        "🔄 <b>Pemilihan Exchange</b>\n\n"
+        "🔄 <b>Konfirmasi Exchange</b>\n\n"
         f"<b>Aktif:</b> {description}\n\n"
-        "Pilih exchange yang ingin digunakan:"
+        "Konfirmasikan connector aktif. Mengganti exchange memerlukan profile "
+        "environment lain dan restart aplikasi."
     )
 
 
@@ -297,9 +348,66 @@ def get_strategy_message(
     )
 
 
-def get_stream_message() -> str:
-    """Return streaming status placeholder."""
-    return "📡 <b>Stream</b>\n\nStatus streaming belum tersedia."
+def get_interval_message(interval: str) -> str:
+    """Return the current runtime candle interval."""
+    return (
+        "⏱️ <b>Candle Interval</b>\n\n"
+        f"<b>Active Interval:</b> {escape(interval)}\n\n"
+        "Pilih interval yang akan digunakan pada siklus trading."
+    )
+
+
+def get_stream_message(
+    *,
+    transport_connected: bool,
+    subscription_active: bool,
+    first_tick_received: bool,
+) -> str:
+    """Return distinct WebSocket transport and subscription states."""
+    transport = "READY" if transport_connected else "DISCONNECTED"
+    subscription = "ACTIVE" if subscription_active else "INACTIVE"
+    first_tick = "RECEIVED" if first_tick_received else "WAITING"
+    return (
+        "📡 <b>Market Stream</b>\n\n"
+        f"<b>WebSocket Transport:</b> {transport}\n"
+        f"<b>Market Subscription:</b> {subscription}\n"
+        f"<b>First Tick:</b> {first_tick}\n\n"
+        "Trading hanya dapat dimulai setelah subscription aktif dan tick "
+        "pertama diterima."
+    )
+
+
+def get_startup_configuration_message(
+    *,
+    exchange: str,
+    symbol: str,
+    interval: str,
+    strategy: str,
+    missing_requirements: Sequence[str],
+) -> str:
+    """Return the Telegram-owned startup checklist."""
+    missing = frozenset(missing_requirements)
+
+    def _marker(requirement: str) -> str:
+        return "⬜" if requirement in missing else "✅"
+
+    first_tick_marker = (
+        "⬜"
+        if "stream subscription" in missing or "first stream tick" in missing
+        else "✅"
+    )
+
+    return (
+        "🧭 <b>Startup Configuration</b>\n\n"
+        f"{_marker('exchange')} Exchange: {escape(exchange.upper())}\n"
+        f"{_marker('symbol')} Symbol: {escape(symbol)}\n"
+        f"{_marker('interval')} Interval: {escape(interval)}\n"
+        f"{_marker('strategy')} Strategy: {escape(strategy)}\n"
+        f"{_marker('stream subscription')} Stream subscription\n"
+        f"{first_tick_marker} First stream tick\n\n"
+        "Pilih konfigurasi dari menu Telegram secara berurutan, aktifkan "
+        "Stream, lalu tekan Start Bot."
+    )
 
 
 def get_start_message(

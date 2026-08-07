@@ -17,7 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 # =============================================================================
@@ -74,9 +74,32 @@ class PositionService:
         normalized_symbol = (
             self._normalize_symbol(symbol) if symbol is not None else None
         )
+        stored_positions = (
+            tuple(await self.position_repository.get_all())
+            if normalized_symbol is None
+            else tuple(
+                position
+                for position in (
+                    await self.position_repository.get_by_symbol(
+                        symbol=normalized_symbol,
+                    ),
+                )
+                if position is not None
+            )
+        )
+        stored_by_symbol = {
+            position.symbol.upper(): position for position in stored_positions
+        }
 
-        positions = await self.position_engine.get_positions(
+        exchange_positions = await self.position_engine.get_positions(
             symbol=normalized_symbol,
+        )
+        positions = tuple(
+            self._merge_local_metadata(
+                exchange_position=position,
+                stored_position=stored_by_symbol.get(position.symbol.upper()),
+            )
+            for position in exchange_positions
         )
 
         if normalized_symbol is not None:
@@ -104,6 +127,30 @@ class PositionService:
             )
 
         return positions
+
+    @staticmethod
+    def _merge_local_metadata(
+        *,
+        exchange_position: Position,
+        stored_position: Position | None,
+    ) -> Position:
+        """Preserve metadata absent from an exchange position snapshot."""
+        if stored_position is None:
+            return exchange_position
+
+        return replace(
+            exchange_position,
+            stop_loss=exchange_position.stop_loss or stored_position.stop_loss,
+            take_profit=(exchange_position.take_profit or stored_position.take_profit),
+            interval=exchange_position.interval or stored_position.interval,
+            strategy_type=(
+                exchange_position.strategy_type or stored_position.strategy_type
+            ),
+            protection_step=max(
+                exchange_position.protection_step,
+                stored_position.protection_step,
+            ),
+        )
 
     async def get(
         self,

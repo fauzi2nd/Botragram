@@ -16,13 +16,14 @@ from __future__ import annotations
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.exchange_type import ExchangeType
+from botragram.enums import ExchangeType, MarketType
 from botragram.exchanges.base import (
     BaseExchangeClient,
     BaseRestClient,
     BaseStreamClient,
 )
 from botragram.exchanges.binance.client import BinanceExchangeClient
+from botragram.exchanges.binance.futures_client import BinanceFuturesExchangeClient
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.exchanges.binance.stream import BinanceStreamClient
@@ -77,6 +78,7 @@ class ExchangeFactory:
         *,
         exchange_type: ExchangeType,
         rest_client: BaseRestClient,
+        market_type: MarketType = MarketType.SPOT,
     ) -> BaseExchangeClient:
         """Create a high-level exchange client.
 
@@ -98,10 +100,15 @@ class ExchangeFactory:
                         "Binance exchange client requires BinanceRestClient"
                     )
 
-                return BinanceExchangeClient(
-                    rest=rest_client,
-                    mapper=BinanceExchangeMapper(),
-                )
+                mapper = BinanceExchangeMapper()
+
+                if market_type is MarketType.FUTURES:
+                    return BinanceFuturesExchangeClient(
+                        rest=rest_client,
+                        mapper=mapper,
+                    )
+
+                return BinanceExchangeClient(rest=rest_client, mapper=mapper)
             case _:
                 raise ExchangeFactory._unsupported_exchange(exchange_type)
 
@@ -140,6 +147,7 @@ class ExchangeFactory:
         websocket_base_url: str,
         api_key: str = "",
         api_secret: str = "",
+        market_type: MarketType = MarketType.SPOT,
     ) -> tuple[BaseExchangeClient, BaseStreamClient]:
         """Create matching REST-backed and streaming exchange clients.
 
@@ -162,6 +170,7 @@ class ExchangeFactory:
         exchange_client = ExchangeFactory.create_exchange_client(
             exchange_type=exchange_type,
             rest_client=rest_client,
+            market_type=market_type,
         )
         stream_client = ExchangeFactory.create_stream_client(
             exchange_type=exchange_type,

@@ -64,6 +64,27 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             can_withdraw=self._to_bool(payload.get("canWithdraw")),
         )
 
+    def map_futures_account(
+        self,
+        payload: ExchangePayload,
+    ) -> Account:
+        """Map a Binance USD(S)-M Futures account payload."""
+        raw_assets = self._require_list_field(
+            payload,
+            key="assets",
+        )
+        balances = tuple(
+            self._map_futures_balance(self._require_mapping(item))
+            for item in raw_assets
+        )
+
+        return Account(
+            balances=balances,
+            can_trade=self._to_bool(payload.get("canTrade")),
+            can_deposit=False,
+            can_withdraw=False,
+        )
+
     def map_ticker(
         self,
         payload: ExchangePayload,
@@ -181,6 +202,48 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             ),
         )
 
+    def map_algo_order(
+        self,
+        payload: ExchangePayload,
+    ) -> Order:
+        """Map a Binance Futures conditional algo order payload."""
+        created_at_value = payload.get(
+            "createTime",
+            payload.get("time", payload.get("transactTime")),
+        )
+        created_at = self._to_datetime(created_at_value)
+        updated_at_value = payload.get("updateTime", created_at_value)
+
+        return Order(
+            order_id=self._to_string(payload.get("algoId", payload.get("orderId"))),
+            symbol=self._to_string(payload.get("symbol")),
+            side=OrderSide(self._to_string(payload.get("side"))),
+            order_type=OrderType(
+                self._to_string(payload.get("orderType", payload.get("type"))).lower(),
+            ),
+            status=OrderStatus(
+                self._to_string(
+                    payload.get("algoStatus", payload.get("status"))
+                ).lower(),
+            ),
+            quantity=self._to_decimal(payload.get("quantity", payload.get("origQty"))),
+            executed_quantity=self._to_decimal(
+                payload.get("actualQuantity", payload.get("executedQty"))
+            ),
+            price=self._to_optional_decimal(
+                payload.get("algoPrice", payload.get("price"))
+            ),
+            stop_price=self._to_optional_decimal(
+                payload.get("triggerPrice", payload.get("stopPrice"))
+            ),
+            created_at=created_at,
+            updated_at=(
+                self._to_datetime(updated_at_value)
+                if updated_at_value is not None
+                else created_at
+            ),
+        )
+
     def map_position(
         self,
         payload: ExchangePayload,
@@ -244,6 +307,22 @@ class BinanceExchangeMapper(BaseExchangeMapper):
         )
 
     @staticmethod
+    def _map_futures_balance(
+        payload: ExchangePayload,
+    ) -> Balance:
+        """Map one collateral asset from a Futures account payload."""
+        wallet_balance = BinanceExchangeMapper._to_decimal(payload.get("walletBalance"))
+        available_balance = BinanceExchangeMapper._to_decimal(
+            payload.get("availableBalance")
+        )
+
+        return Balance(
+            asset=BinanceExchangeMapper._to_string(payload.get("asset")),
+            free=available_balance,
+            locked=max(wallet_balance - available_balance, Decimal("0")),
+        )
+
+    @staticmethod
     def _resolve_position_side(
         *,
         raw_side: object,
@@ -253,7 +332,7 @@ class BinanceExchangeMapper(BaseExchangeMapper):
         side_value = BinanceExchangeMapper._to_string(raw_side)
 
         if side_value in {"LONG", "SHORT"}:
-            return PositionSide(side_value)
+            return PositionSide(side_value.lower())
 
         if quantity < Decimal("0"):
             return PositionSide.SHORT

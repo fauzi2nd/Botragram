@@ -17,6 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
@@ -28,6 +29,10 @@ from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.config import Settings
 from botragram.config.exchange_settings import ExchangeSettings
 from botragram.constants import (
+    BINANCE_FUTURES_REST_BASE_URL,
+    BINANCE_FUTURES_TESTNET_REST_BASE_URL,
+    BINANCE_FUTURES_TESTNET_WEBSOCKET_BASE_URL,
+    BINANCE_FUTURES_WEBSOCKET_BASE_URL,
     BINANCE_REST_BASE_URL,
     BINANCE_TESTNET_REST_BASE_URL,
     BINANCE_TESTNET_WEBSOCKET_BASE_URL,
@@ -41,7 +46,7 @@ from botragram.engine import (
     SignalEngine,
     TradingEngine,
 )
-from botragram.enums import ExchangeType
+from botragram.enums import ExchangeType, MarketType, StrategyType, TradeMode
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.exchanges.factory import ExchangeFactory
 from botragram.repositories import (
@@ -57,7 +62,9 @@ from botragram.services import (
     MarketService,
     OrderService,
     PaperTradingService,
+    PositionProtectionManager,
     PositionService,
+    RuntimeRecoveryService,
     RuntimeReporter,
     StrategyService,
 )
@@ -74,7 +81,7 @@ from botragram.storage.sqlite import (
 from botragram.strategies.factory import StrategyFactory
 from botragram.telegram import TelegramBot
 from botragram.telegram.context import BotContext
-from botragram.telegram.query_service import TelegramQueryService
+from botragram.telegram.query_service import MarketTickListener, TelegramQueryService
 
 __all__ = [
     "DependencyProvider",
@@ -108,18 +115,22 @@ class DependencyProvider:
         "_order_repository",
         "_order_service",
         "_paper_trading_service",
+        "_pnl_engine",
         "_position_engine",
+        "_position_protection_manager",
         "_position_repository",
         "_position_service",
         "_risk_engine",
         "_runtime_control",
         "_runtime_reporter",
+        "_runtime_recovery_service",
         "_settings",
         "_signal_engine",
         "_signal_repository",
         "_strategy_service",
         "_stream_client",
         "_telegram_bot",
+        "_telegram_query_service",
         "_trade_repository",
         "_trading_engine",
         "_trading_service",
@@ -152,13 +163,21 @@ class DependencyProvider:
             if settings is not None
             else Settings(exchange=ExchangeSettings(exchange=ExchangeType.BINANCE))
         )
-        self._runtime_control = TradingRuntimeControl()
+        self._runtime_control = TradingRuntimeControl(
+            exchange_type=self._settings.exchange.exchange,
+            market_type=self._settings.exchange.market_type,
+            symbol=self._settings.market.symbol,
+            interval=self._settings.market.interval,
+            strategy_type=self._settings.strategy.strategy_type,
+        )
         self._database: SQLiteDatabase | None = None
         self._exchange_client: BaseExchangeClient | None = None
         self._stream_client: BaseStreamClient | None = None
         self._telegram_bot: TelegramBot | None = None
+        self._telegram_query_service: TelegramQueryService | None = None
         self._health_service: HealthService | None = None
         self._runtime_reporter: RuntimeReporter | None = None
+        self._runtime_recovery_service: RuntimeRecoveryService | None = None
 
         self._candle_repository: CandleRepository | None = None
         self._signal_repository: SignalRepository | None = None
@@ -168,9 +187,11 @@ class DependencyProvider:
 
         self._signal_engine: SignalEngine | None = None
         self._risk_engine: RiskEngine | None = None
+        self._pnl_engine: PnLEngine | None = None
         self._trading_engine: TradingEngine | None = None
         self._order_engine: OrderEngine | None = None
         self._position_engine: PositionEngine | None = None
+        self._position_protection_manager: PositionProtectionManager | None = None
 
         self._market_service: MarketService | None = None
         self._strategy_service: StrategyService | None = None
@@ -208,12 +229,12 @@ class DependencyProvider:
 
         database = SQLiteDatabase(database_path=self._database_path)
         _LOGGER.info(
-            "Dependency initialization starting",
-            extra={
-                "database_path": str(self._database_path),
-                "exchange": self._settings.exchange.exchange.value,
-                "testnet": self._settings.exchange.testnet,
-            },
+            "Dependency initialization starting: database=%s exchange=%s "
+            "market_type=%s testnet=%s",
+            self._database_path,
+            self._settings.exchange.exchange.value,
+            self._settings.exchange.market_type.value,
+            self._settings.exchange.testnet,
         )
 
         try:
@@ -224,6 +245,9 @@ class DependencyProvider:
             self._build_repositories(database=database)
             await self._build_exchange_dependencies()
             self._build_engines()
+            self.runtime_control.bind_strategy_selector(
+                self._select_runtime_strategy,
+            )
             self._telegram_bot = TelegramBot(settings=self._settings.telegram)
             self._build_services()
             self._health_service = HealthService(
@@ -238,6 +262,18 @@ class DependencyProvider:
                 trade_mode=self._settings.app.trade_mode,
                 symbol=self._settings.market.symbol,
             )
+            self._position_protection_manager = PositionProtectionManager(
+                trade_mode=self._settings.app.trade_mode,
+                position_repository=self.position_repository,
+                exchange_client=self.exchange_client,
+            )
+            tick_listeners: tuple[MarketTickListener, ...] = (
+                self.position_protection_manager,
+            )
+
+            if self._settings.app.trade_mode is TradeMode.PAPER:
+                tick_listeners += (self.paper_trading_service,)
+
             query_service = TelegramQueryService(
                 symbol=self._settings.market.symbol,
                 market_service=self.market_service,
@@ -245,6 +281,21 @@ class DependencyProvider:
                 position_repository=self.position_repository,
                 trade_repository=self.trade_repository,
                 order_repository=self.order_repository,
+                runtime_control=self.runtime_control,
+                tick_listeners=tick_listeners,
+            )
+            self._telegram_query_service = query_service
+            self._runtime_recovery_service = RuntimeRecoveryService(
+                trade_mode=self._settings.app.trade_mode,
+                market_type=self._settings.exchange.market_type,
+                runtime_control=self.runtime_control,
+                stream_controller=query_service,
+                position_service=self.position_service,
+                position_repository=self.position_repository,
+                signal_repository=self.signal_repository,
+                candle_repository=self.candle_repository,
+                exchange_client=self.exchange_client,
+                risk_engine=self.risk_engine,
             )
             await self.telegram_bot.sync_context(
                 context=BotContext(
@@ -275,6 +326,7 @@ class DependencyProvider:
         exchange_client = self._exchange_client
         stream_client = self._stream_client
         telegram_bot = self._telegram_bot
+        telegram_query_service = self._telegram_query_service
         database = self._database
 
         self._clear_dependencies()
@@ -285,15 +337,19 @@ class DependencyProvider:
                 await telegram_bot.stop()
         finally:
             try:
-                if stream_client is not None:
-                    await stream_client.close()
+                if telegram_query_service is not None:
+                    await telegram_query_service.close()
             finally:
                 try:
-                    if exchange_client is not None:
-                        await exchange_client.close()
+                    if stream_client is not None:
+                        await stream_client.close()
                 finally:
-                    if database is not None:
-                        await database.close()
+                    try:
+                        if exchange_client is not None:
+                            await exchange_client.close()
+                    finally:
+                        if database is not None:
+                            await database.close()
 
         _LOGGER.info("Dependencies shut down")
 
@@ -356,6 +412,11 @@ class DependencyProvider:
         return self._require(self._runtime_reporter)
 
     @property
+    def runtime_recovery_service(self) -> RuntimeRecoveryService:
+        """Return the active-position startup recovery service."""
+        return self._require(self._runtime_recovery_service)
+
+    @property
     def signal_engine(self) -> SignalEngine:
         """Return the configured signal engine."""
         return self._require(self._signal_engine)
@@ -364,6 +425,11 @@ class DependencyProvider:
     def risk_engine(self) -> RiskEngine:
         """Return the configured risk engine."""
         return self._require(self._risk_engine)
+
+    @property
+    def pnl_engine(self) -> PnLEngine:
+        """Return the configured profit-and-loss engine."""
+        return self._require(self._pnl_engine)
 
     @property
     def trading_engine(self) -> TradingEngine:
@@ -399,6 +465,11 @@ class DependencyProvider:
     def position_service(self) -> PositionService:
         """Return the configured position service."""
         return self._require(self._position_service)
+
+    @property
+    def position_protection_manager(self) -> PositionProtectionManager:
+        """Return the stream-driven active-position protection manager."""
+        return self._require(self._position_protection_manager)
 
     @property
     def paper_trading_service(self) -> PaperTradingService:
@@ -442,6 +513,7 @@ class DependencyProvider:
 
         rest_base_url, websocket_base_url = self._get_binance_urls(
             testnet=exchange.testnet,
+            market_type=exchange.market_type,
         )
         exchange_client, stream_client = ExchangeFactory.create(
             exchange_type=exchange.exchange,
@@ -449,12 +521,19 @@ class DependencyProvider:
             websocket_base_url=websocket_base_url,
             api_key=exchange.api_key,
             api_secret=exchange.api_secret,
+            market_type=exchange.market_type,
         )
         self._exchange_client = exchange_client
         self._stream_client = stream_client
 
+        _LOGGER.info(
+            "Exchange connection starting: exchange=%s market_type=%s",
+            exchange.exchange.value,
+            exchange.market_type.value,
+        )
         await exchange_client.connect()
         await stream_client.connect()
+        _LOGGER.info("Exchange REST and WebSocket transports are ready")
 
     def _build_engines(self) -> None:
         """Construct engines from configured strategies and exchange clients."""
@@ -463,9 +542,24 @@ class DependencyProvider:
             strategy=StrategyFactory.create(settings=self._settings.strategy),
         )
         self._risk_engine = RiskEngine(settings=self._settings.risk)
+        self._pnl_engine = PnLEngine()
         self._trading_engine = TradingEngine(risk_engine=self.risk_engine)
         self._order_engine = OrderEngine(exchange_client=exchange_client)
         self._position_engine = PositionEngine(exchange_client=exchange_client)
+
+    def _select_runtime_strategy(self, strategy_type: StrategyType) -> None:
+        """Replace the active signal strategy using validated base settings."""
+        strategy_settings = replace(
+            self._settings.strategy,
+            strategy_type=strategy_type,
+        )
+        self.signal_engine.strategy = StrategyFactory.create(
+            settings=strategy_settings,
+        )
+        _LOGGER.info(
+            "Runtime strategy changed: strategy=%s",
+            strategy_type.value,
+        )
 
     def _build_services(self) -> None:
         """Construct services from repositories, engines, and clients."""
@@ -493,7 +587,7 @@ class DependencyProvider:
             trade_repository=self.trade_repository,
             position_repository=self.position_repository,
             trading_engine=self.trading_engine,
-            pnl_engine=PnLEngine(),
+            pnl_engine=self.pnl_engine,
             notification_publisher=self.telegram_bot,
             quote_asset=self._settings.market.quote_asset,
         )
@@ -512,8 +606,21 @@ class DependencyProvider:
     def _get_binance_urls(
         *,
         testnet: bool,
+        market_type: MarketType,
     ) -> tuple[str, str]:
         """Return REST and WebSocket URLs for the selected Binance network."""
+        if market_type is MarketType.FUTURES:
+            if testnet:
+                return (
+                    BINANCE_FUTURES_TESTNET_REST_BASE_URL,
+                    BINANCE_FUTURES_TESTNET_WEBSOCKET_BASE_URL,
+                )
+
+            return (
+                BINANCE_FUTURES_REST_BASE_URL,
+                BINANCE_FUTURES_WEBSOCKET_BASE_URL,
+            )
+
         if testnet:
             return (
                 BINANCE_TESTNET_REST_BASE_URL,
@@ -542,13 +649,17 @@ class DependencyProvider:
         self._exchange_client = None
         self._stream_client = None
         self._telegram_bot = None
+        self._telegram_query_service = None
         self._health_service = None
         self._runtime_reporter = None
+        self._runtime_recovery_service = None
         self._signal_engine = None
         self._risk_engine = None
+        self._pnl_engine = None
         self._trading_engine = None
         self._order_engine = None
         self._position_engine = None
+        self._position_protection_manager = None
         self._market_service = None
         self._strategy_service = None
         self._order_service = None

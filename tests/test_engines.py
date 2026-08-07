@@ -29,7 +29,7 @@ import pytest
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine import PnLEngine, PortfolioEngine, RiskEngine, TradingEngine
-from botragram.enums import PositionSide, SignalType
+from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.models import Position, Signal
 
 # =============================================================================
@@ -45,6 +45,7 @@ def _create_signal(
     *,
     signal_type: SignalType = SignalType.BUY,
     price: Decimal = Decimal("100"),
+    strategy_name: str = "test_strategy",
 ) -> Signal:
     """Create an immutable signal fixture."""
     return Signal(
@@ -52,7 +53,7 @@ def _create_signal(
         signal_type=signal_type,
         price=price,
         confidence=Decimal("0.8"),
-        strategy_name="test_strategy",
+        strategy_name=strategy_name,
         generated_at=_NOW,
     )
 
@@ -118,6 +119,22 @@ def test_risk_engine_caps_position_at_configured_notional() -> None:
     assert result.position.notional == Decimal("500")
     assert result.position.quantity == Decimal("5")
     assert result.metrics.risk_amount == Decimal("10.00")
+
+
+def test_risk_engine_uses_dedicated_ema_scalping_exit_profile() -> None:
+    """Keep short-horizon EMA exits independent from global swing defaults."""
+    engine = RiskEngine(settings=RiskSettings())
+
+    result = engine.evaluate(
+        signal=_create_signal(
+            strategy_name=StrategyType.EMA_SCALPING.value,
+        ),
+        account_balance=Decimal("1000"),
+    )
+
+    assert result.metrics.stop_loss == Decimal("99.500")
+    assert result.metrics.take_profit == Decimal("101.00")
+    assert result.metrics.risk_reward_ratio == Decimal("2")
 
 
 @pytest.mark.parametrize(

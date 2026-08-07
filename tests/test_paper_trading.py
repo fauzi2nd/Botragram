@@ -129,8 +129,8 @@ async def _run_open_position_test() -> None:
     assert position is not None
     assert position.side is PositionSide.LONG
     assert position.entry_price == Decimal("100.0500")
-    assert position.stop_loss == Decimal("98.00")
-    assert position.take_profit == Decimal("104.00")
+    assert position.stop_loss == Decimal("98.049000")
+    assert position.take_profit == Decimal("104.052000")
     assert trades[0].fee == Decimal("1.0005000")
     assert balance == Decimal("8998.4995000")
 
@@ -259,7 +259,7 @@ async def _run_sqlite_position_metadata_test() -> None:
             await repository.save(position=position)
             stored_position = await repository.get_by_symbol(symbol="BTCUSDT")
 
-            assert version == 6
+            assert version == 8
             assert stored_position == position
         finally:
             await database.close()

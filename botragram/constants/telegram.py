@@ -21,6 +21,10 @@ __all__ = [
     "CMD_POSITIONS",
     "CMD_STOP",
     "CMD_SETTINGS",
+    "MENU_ACTIVITY",
+    "MENU_CONFIGURATION",
+    "MENU_DASHBOARD",
+    "MENU_HOME",
     "MENU_STATUS",
     "MENU_POSITIONS",
     "MENU_MARKET",
@@ -29,12 +33,16 @@ __all__ = [
     "MENU_HISTORY",
     "MENU_SETTINGS",
     "MENU_EXCHANGE",
+    "MENU_INTERVAL",
     "MENU_STRATEGY",
     "MENU_STREAM",
     "MENU_START",
     "MENU_PAUSE",
     "MENU_TEST",
     "MENU_STOP",
+    "MENU_TRADING",
+    "TELEGRAM_MARKET_SYMBOLS",
+    "TELEGRAM_INTERVALS",
 ]
 
 # =============================================================================
@@ -54,6 +62,12 @@ CMD_POSITIONS: str = "positions"
 CMD_STOP: str = "stop"
 CMD_SETTINGS: str = "settings"
 
+MENU_DASHBOARD: str = "📊 Dashboard"
+MENU_TRADING: str = "🤖 Trading"
+MENU_CONFIGURATION: str = "⚙️ Configuration"
+MENU_ACTIVITY: str = "🗂 Activity"
+MENU_HOME: str = "🏠 Home"
+
 # =============================================================================
 # Main Menu
 # =============================================================================
@@ -66,6 +80,7 @@ MENU_BALANCE: str = "💰 Balance"
 MENU_HISTORY: str = "📜 History"
 MENU_SETTINGS: str = "⚙️ Settings"
 MENU_EXCHANGE: str = "🔄 Exchange"
+MENU_INTERVAL: str = "⏱️ Interval"
 MENU_STRATEGY: str = "🧠 Strategy"
 MENU_STREAM: str = "📡 Stream"
 
@@ -73,3 +88,24 @@ MENU_START: str = "▶️ Start Bot"
 MENU_PAUSE: str = "⏸️ Pause Bot"
 MENU_TEST: str = "🧪 Test"
 MENU_STOP: str = "⏹️ Stop Bot"
+
+# Runtime-selectable markets deliberately use one quote asset so balance and
+# risk calculations remain comparable across selections.
+TELEGRAM_MARKET_SYMBOLS: tuple[str, ...] = (
+    "BTCUSDT",
+    "ETHUSDT",
+    "BNBUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+)
+
+TELEGRAM_INTERVALS: tuple[str, ...] = (
+    "1m",
+    "3m",
+    "5m",
+    "15m",
+    "30m",
+    "1h",
+    "4h",
+    "1d",
+)

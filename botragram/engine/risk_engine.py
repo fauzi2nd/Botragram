@@ -23,7 +23,7 @@ from decimal import Decimal
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
-from botragram.enums import SignalType
+from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.models import PositionSize, RiskMetrics, RiskResult, Signal
 
 __all__ = [
@@ -49,6 +49,34 @@ class RiskEngine:
     """Evaluate trading signals and calculate position sizing."""
 
     settings: RiskSettings
+
+    def calculate_protection_levels(
+        self,
+        *,
+        side: PositionSide,
+        entry_price: Decimal,
+        strategy_type: StrategyType | None = None,
+    ) -> tuple[Decimal, Decimal]:
+        """Calculate configured stop-loss and take-profit for a position."""
+        if entry_price <= _DECIMAL_ZERO:
+            raise ValueError("Position entry price must be greater than zero")
+
+        signal_type = SignalType.BUY if side is PositionSide.LONG else SignalType.SELL
+        stop_loss_pct, take_profit_pct = self._resolve_exit_rates(
+            strategy_type=strategy_type,
+        )
+        return (
+            self._calculate_stop_loss(
+                signal_type=signal_type,
+                entry_price=entry_price,
+                stop_loss_pct=stop_loss_pct,
+            ),
+            self._calculate_take_profit(
+                signal_type=signal_type,
+                entry_price=entry_price,
+                take_profit_pct=take_profit_pct,
+            ),
+        )
 
     def evaluate(
         self,
@@ -88,13 +116,19 @@ class RiskEngine:
                 reason="Maximum account drawdown reached",
             )
 
+        strategy_type = self._resolve_strategy_type(signal.strategy_name)
+        stop_loss_pct, take_profit_pct = self._resolve_exit_rates(
+            strategy_type=strategy_type,
+        )
         stop_loss = self._calculate_stop_loss(
             signal_type=signal.signal_type,
             entry_price=signal.price,
+            stop_loss_pct=stop_loss_pct,
         )
         take_profit = self._calculate_take_profit(
             signal_type=signal.signal_type,
             entry_price=signal.price,
+            take_profit_pct=take_profit_pct,
         )
 
         risk_per_unit = abs(signal.price - stop_loss)
@@ -162,9 +196,10 @@ class RiskEngine:
         *,
         signal_type: SignalType,
         entry_price: Decimal,
+        stop_loss_pct: Decimal,
     ) -> Decimal:
         """Calculate stop-loss price."""
-        distance = entry_price * self.settings.stop_loss_pct
+        distance = entry_price * stop_loss_pct
 
         if signal_type is SignalType.BUY:
             return entry_price - distance
@@ -176,9 +211,10 @@ class RiskEngine:
         *,
         signal_type: SignalType,
         entry_price: Decimal,
+        take_profit_pct: Decimal,
     ) -> Decimal:
         """Calculate take-profit price."""
-        distance = entry_price * self.settings.take_profit_pct
+        distance = entry_price * take_profit_pct
 
         if signal_type is SignalType.BUY:
             return entry_price + distance
@@ -209,3 +245,25 @@ class RiskEngine:
             ),
             reason=reason,
         )
+
+    def _resolve_exit_rates(
+        self,
+        *,
+        strategy_type: StrategyType | None,
+    ) -> tuple[Decimal, Decimal]:
+        """Return the configured exit ratios for a strategy."""
+        if strategy_type is StrategyType.EMA_SCALPING:
+            return (
+                self.settings.ema_scalping_stop_loss_pct,
+                self.settings.ema_scalping_take_profit_pct,
+            )
+
+        return self.settings.stop_loss_pct, self.settings.take_profit_pct
+
+    @staticmethod
+    def _resolve_strategy_type(strategy_name: str) -> StrategyType | None:
+        """Resolve a known strategy name without rejecting custom strategies."""
+        try:
+            return StrategyType(strategy_name)
+        except ValueError:
+            return None

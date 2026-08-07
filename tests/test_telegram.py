@@ -23,6 +23,7 @@ from decimal import Decimal
 # Local Imports
 # =============================================================================
 from botragram.enums import (
+    MarketType,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -31,10 +32,15 @@ from botragram.enums import (
 from botragram.models import Order, Position, Trade
 from botragram.telegram.context import BotContext
 from botragram.telegram.keyboards import (
+    get_activity_menu_keyboard,
+    get_configuration_menu_keyboard,
+    get_dashboard_menu_keyboard,
     get_exchange_keyboard,
     get_main_menu_keyboard,
+    get_trading_menu_keyboard,
 )
 from botragram.telegram.messages import (
+    get_exchange_message,
     get_orders_message,
     get_paper_entry_message,
     get_paper_exit_message,
@@ -84,6 +90,15 @@ def test_status_and_settings_messages_escape_external_text() -> None:
     assert "EMA&amp;RSI" in settings
 
 
+def test_exchange_message_uses_the_active_market_type() -> None:
+    """Describe Binance Futures without a stale hardcoded Spot label."""
+    message = get_exchange_message("BINANCE", MarketType.FUTURES)
+
+    assert "Binance" in message
+    assert "Futures Exchange" in message
+    assert "Spot Exchange" not in message
+
+
 def test_positions_message_uses_current_domain_model() -> None:
     """Verify positions are rendered from immutable Position models."""
     position = Position(
@@ -101,7 +116,7 @@ def test_positions_message_uses_current_domain_model() -> None:
     message = get_positions_message((position,))
 
     assert "BTCUSDT" in message
-    assert "long" in message
+    assert "LONG" in message
     assert "Qty=2" in message
     assert "PnL=20.00 USDT" in message
     assert "Tidak ada posisi" in get_positions_message(())
@@ -201,6 +216,7 @@ def test_bot_context_has_safe_binance_paper_defaults() -> None:
     assert not context.is_running
     assert context.trade_mode == "PAPER"
     assert context.exchange_type == "BINANCE"
+    assert context.market_type is MarketType.SPOT
     assert context.positions == ()
 
 
@@ -209,14 +225,23 @@ def test_main_menu_and_exchange_keyboard_have_stable_actions() -> None:
     main_menu = get_main_menu_keyboard()
     exchange_menu = get_exchange_keyboard("BINANCE")
 
-    assert len(main_menu.keyboard) == 7
+    submenu_keyboards = (
+        get_dashboard_menu_keyboard(),
+        get_trading_menu_keyboard(),
+        get_configuration_menu_keyboard(),
+        get_activity_menu_keyboard(),
+    )
+
+    assert len(main_menu.keyboard) == 2
+    assert all(len(keyboard.keyboard) <= 4 for keyboard in submenu_keyboards)
+    assert all(
+        any(button.text == "🏠 Home" for row in keyboard.keyboard for button in row)
+        for keyboard in submenu_keyboards
+    )
     callback_data = {
         button.callback_data for row in exchange_menu.inline_keyboard for button in row
     }
     assert callback_data == {
         "cb_back_main",
         "cb_exchange_binance",
-        "cb_exchange_bitget",
-        "cb_exchange_bybit",
-        "cb_exchange_okx",
     }

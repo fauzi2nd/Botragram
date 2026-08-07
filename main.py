@@ -28,6 +28,7 @@ from botragram.app import (
     ApplicationLifecycle,
     DependencyProvider,
     SettingsManager,
+    TerminalMonitor,
     TradingRunner,
 )
 from botragram.config import Settings
@@ -53,20 +54,38 @@ async def _run_trading(
     settings: Settings,
 ) -> None:
     """Build and run trading orchestration after resources are initialized."""
-    minimum_candles = dependency_provider.signal_engine.strategy.minimum_candles
-    runner = TradingRunner(
-        executor=dependency_provider.trading_service,
-        symbol=settings.market.symbol,
-        interval=settings.market.interval,
-        trade_mode=settings.app.trade_mode,
-        candle_limit=max(100, minimum_candles),
-        cycle_interval_seconds=float(settings.market.interval.seconds),
+    terminal_monitor = TerminalMonitor(
         runtime_control=dependency_provider.runtime_control,
-        runtime_observer=dependency_provider.runtime_reporter,
-        maximum_consecutive_failures=3,
-        failure_retry_delay_seconds=5.0,
+        paper_balance_provider=dependency_provider.paper_trading_service,
+        live_balance_provider=dependency_provider.account_service,
+        position_provider=dependency_provider.position_repository,
+        pnl_engine=dependency_provider.pnl_engine,
+        trade_mode=settings.app.trade_mode,
+        quote_asset=settings.market.quote_asset,
     )
-    await runner.run()
+    monitor_task = asyncio.create_task(
+        terminal_monitor.run(),
+        name="botragram-terminal-monitor",
+    )
+
+    try:
+        await dependency_provider.runtime_recovery_service.recover()
+        minimum_candles = dependency_provider.signal_engine.strategy.minimum_candles
+        runner = TradingRunner(
+            executor=dependency_provider.trading_service,
+            symbol=dependency_provider.runtime_control.symbol,
+            interval=dependency_provider.runtime_control.interval,
+            trade_mode=settings.app.trade_mode,
+            candle_limit=max(100, minimum_candles),
+            runtime_control=dependency_provider.runtime_control,
+            runtime_observer=dependency_provider.runtime_reporter,
+            maximum_consecutive_failures=3,
+            failure_retry_delay_seconds=5.0,
+        )
+        await runner.run()
+    finally:
+        terminal_monitor.stop()
+        await asyncio.gather(monitor_task, return_exceptions=True)
 
 
 async def main() -> None:
@@ -76,13 +95,15 @@ async def main() -> None:
 
     try:
         _LOGGER.info(
-            "Application configuration loaded",
-            extra={
-                "environment": settings.app.environment.value,
-                "exchange": settings.exchange.exchange.value,
-                "testnet": settings.exchange.testnet,
-                "trade_mode": settings.app.trade_mode.value,
-            },
+            "Configuration loaded: environment=%s exchange=%s market_type=%s "
+            "testnet=%s trade_mode=%s symbol=%s strategy=%s",
+            settings.app.environment.value,
+            settings.exchange.exchange.value,
+            settings.exchange.market_type.value,
+            settings.exchange.testnet,
+            settings.app.trade_mode.value,
+            settings.market.symbol,
+            settings.strategy.strategy_type.value,
         )
         dependency_provider = DependencyProvider(
             database_path=settings.app.database_path,

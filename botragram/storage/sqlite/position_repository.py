@@ -25,7 +25,7 @@ from typing import Final
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import PositionSide
+from botragram.enums import Interval, PositionSide, StrategyType
 from botragram.models import Position
 from botragram.repositories import PositionRepository
 from botragram.storage.sqlite.database import SQLiteDatabase
@@ -58,10 +58,13 @@ INSERT INTO positions (
     opened_at,
     updated_at,
     stop_loss,
-    take_profit
+    take_profit,
+    interval,
+    strategy_type,
+    protection_step
 )
 VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT (
     symbol
@@ -76,7 +79,10 @@ DO UPDATE SET
     opened_at = excluded.opened_at,
     updated_at = excluded.updated_at,
     stop_loss = excluded.stop_loss,
-    take_profit = excluded.take_profit;
+    take_profit = excluded.take_profit,
+    interval = excluded.interval,
+    strategy_type = excluded.strategy_type,
+    protection_step = excluded.protection_step;
 """
 
 _UPDATE_POSITION_SQL: Final[str] = """
@@ -91,7 +97,10 @@ SET
     opened_at = ?,
     updated_at = ?,
     stop_loss = ?,
-    take_profit = ?
+    take_profit = ?,
+    interval = ?,
+    strategy_type = ?,
+    protection_step = ?
 WHERE symbol = ?;
 """
 
@@ -107,7 +116,10 @@ SELECT
     opened_at,
     updated_at,
     stop_loss,
-    take_profit
+    take_profit,
+    interval,
+    strategy_type,
+    protection_step
 FROM positions
 """
 
@@ -178,6 +190,9 @@ type PositionParameters = tuple[
     str,
     str | None,
     str | None,
+    str | None,
+    str | None,
+    int,
 ]
 
 type PositionUpdateParameters = tuple[
@@ -191,6 +206,9 @@ type PositionUpdateParameters = tuple[
     str,
     str | None,
     str | None,
+    str | None,
+    str | None,
+    int,
     str,
 ]
 
@@ -371,6 +389,13 @@ class SQLitePositionRepository(PositionRepository):
             ),
             cls._optional_decimal_to_text(position.stop_loss),
             cls._optional_decimal_to_text(position.take_profit),
+            position.interval.value if position.interval is not None else None,
+            (
+                position.strategy_type.value
+                if position.strategy_type is not None
+                else None
+            ),
+            position.protection_step,
         )
 
     @classmethod
@@ -396,6 +421,13 @@ class SQLitePositionRepository(PositionRepository):
             ),
             cls._optional_decimal_to_text(position.stop_loss),
             cls._optional_decimal_to_text(position.take_profit),
+            position.interval.value if position.interval is not None else None,
+            (
+                position.strategy_type.value
+                if position.strategy_type is not None
+                else None
+            ),
+            position.protection_step,
             cls._normalize_symbol(position.symbol),
         )
 
@@ -452,7 +484,39 @@ class SQLitePositionRepository(PositionRepository):
                 row,
                 column="take_profit",
             ),
+            interval=cls._get_optional_enum(
+                row,
+                column="interval",
+                enum_type=Interval,
+            ),
+            strategy_type=cls._get_optional_enum(
+                row,
+                column="strategy_type",
+                enum_type=StrategyType,
+            ),
+            protection_step=cls._get_integer(
+                row,
+                column="protection_step",
+            ),
         )
+
+    @staticmethod
+    def _get_optional_enum[EnumValue: (Interval, StrategyType)](
+        row: Row,
+        *,
+        column: str,
+        enum_type: type[EnumValue],
+    ) -> EnumValue | None:
+        """Return an optional supported enum from a nullable text column."""
+        value: object = row[column]
+
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            raise TypeError(f"SQLite column {column!r} must contain text or null")
+
+        return enum_type(value)
 
     @staticmethod
     def _normalize_symbol(

@@ -36,7 +36,6 @@ __all__ = [
 @dataclass(
     slots=True,
     kw_only=True,
-    frozen=True,
 )
 class SignalEngine:
     """Generate trading signals using the configured strategy."""

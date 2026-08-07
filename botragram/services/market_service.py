@@ -48,6 +48,11 @@ class MarketService:
     stream_client: BaseStreamClient
     candle_repository: CandleRepository
 
+    @property
+    def is_stream_connected(self) -> bool:
+        """Return whether the WebSocket transport session is ready."""
+        return self.stream_client.is_connected
+
     async def get_ticker(
         self,
         *,

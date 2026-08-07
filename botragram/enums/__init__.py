@@ -21,6 +21,7 @@ from botragram.enums.ai_model_type import AiModelType
 from botragram.enums.ai_provider import AiProvider
 from botragram.enums.base import BaseEnum
 from botragram.enums.environment import Environment
+from botragram.enums.environment_profile import EnvironmentProfile
 from botragram.enums.exchange_type import ExchangeType
 from botragram.enums.indicator_type import IndicatorType
 from botragram.enums.interval import Interval
@@ -52,6 +53,7 @@ __all__ = [
     "AiModelType",
     # Environment
     "Environment",
+    "EnvironmentProfile",
     # Exchange
     "ExchangeType",
     "MarketType",

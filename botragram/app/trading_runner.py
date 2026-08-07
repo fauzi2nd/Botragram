@@ -27,7 +27,7 @@ from botragram.app.runtime_control import TradingRuntimeControl
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import Interval, OrderType, TradeMode
+from botragram.enums import Interval, OrderType, SignalType, TradeMode
 from botragram.models import TradingResult
 
 __all__ = [
@@ -40,8 +40,9 @@ __all__ = [
 # Constants
 # =============================================================================
 _DEFAULT_CANDLE_LIMIT: Final[int] = 100
-_DEFAULT_CYCLE_INTERVAL_SECONDS: Final[float] = 60.0
 _DEFAULT_PAPER_ACCOUNT_BALANCE: Final[Decimal] = Decimal("10000")
+_DEFAULT_HEARTBEAT_INTERVAL_SECONDS: Final[float] = 30.0
+_RESULT_REASON_UNAVAILABLE: Final[str] = "No reason provided"
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
@@ -109,7 +110,7 @@ class TradingRunner:
     interval: Interval
     trade_mode: TradeMode = TradeMode.PAPER
     candle_limit: int = _DEFAULT_CANDLE_LIMIT
-    cycle_interval_seconds: float = _DEFAULT_CYCLE_INTERVAL_SECONDS
+    cycle_interval_seconds: float | None = None
     paper_account_balance: Decimal = _DEFAULT_PAPER_ACCOUNT_BALANCE
     runtime_control: TradingRuntimeControl = field(
         default_factory=TradingRuntimeControl,
@@ -117,6 +118,7 @@ class TradingRunner:
     runtime_observer: TradingRuntimeObserver | None = None
     maximum_consecutive_failures: int = 1
     failure_retry_delay_seconds: float = 5.0
+    heartbeat_interval_seconds: float = _DEFAULT_HEARTBEAT_INTERVAL_SECONDS
 
     _running: bool = field(default=False, init=False)
     _stop_event: asyncio.Event = field(
@@ -132,10 +134,12 @@ class TradingRunner:
         if not self.symbol:
             raise ValueError("Trading runner symbol must not be empty")
 
+        self.runtime_control.symbol = self.symbol
+
         if self.candle_limit <= 0:
             raise ValueError("Trading runner candle limit must be greater than zero")
 
-        if self.cycle_interval_seconds <= 0:
+        if self.cycle_interval_seconds is not None and self.cycle_interval_seconds <= 0:
             raise ValueError("Trading runner cycle interval must be greater than zero")
 
         if self.paper_account_balance <= 0:
@@ -147,6 +151,9 @@ class TradingRunner:
         if self.failure_retry_delay_seconds <= 0:
             raise ValueError("Failure retry delay must be greater than zero")
 
+        if self.heartbeat_interval_seconds <= 0:
+            raise ValueError("Heartbeat interval must be greater than zero")
+
     @property
     def is_running(self) -> bool:
         """Return whether the continuous runtime loop is active."""
@@ -157,19 +164,43 @@ class TradingRunner:
         """Return whether this runtime may submit exchange orders."""
         return self.trade_mode is TradeMode.LIVE
 
+    @property
+    def effective_cycle_interval_seconds(self) -> float:
+        """Return the fixed override or current Telegram interval cadence."""
+        configured_interval = self.cycle_interval_seconds
+
+        if configured_interval is not None:
+            return configured_interval
+
+        return float(self.runtime_control.interval.seconds)
+
     async def run_once(self) -> TradingResult:
         """Execute one configured trading cycle."""
         live_trading = self.order_submission_enabled
-        result = await self.executor.execute(
-            symbol=self.symbol,
-            interval=self.interval,
-            candle_limit=self.candle_limit,
-            account_balance_override=(
-                None if live_trading else self.paper_account_balance
-            ),
-            synchronize_position=live_trading,
-            submit_order=live_trading,
+        self.symbol = self.runtime_control.symbol
+        self.interval = self.runtime_control.interval
+        _LOGGER.info(
+            "Trading cycle started: symbol=%s interval=%s cadence_seconds=%s",
+            self.symbol,
+            self.interval.value,
+            self.effective_cycle_interval_seconds,
         )
+        self.runtime_control.begin_cycle()
+
+        try:
+            result = await self.executor.execute(
+                symbol=self.symbol,
+                interval=self.interval,
+                candle_limit=self.candle_limit,
+                account_balance_override=(
+                    None if live_trading else self.paper_account_balance
+                ),
+                synchronize_position=live_trading,
+                submit_order=live_trading,
+            )
+        finally:
+            self.runtime_control.end_cycle()
+
         self._log_result(result=result)
 
         return result
@@ -188,6 +219,8 @@ class TradingRunner:
 
         self._running = True
         self._stop_event.clear()
+        self.symbol = self.runtime_control.symbol
+        self.interval = self.runtime_control.interval
         _LOGGER.info(
             "Trading runner started: symbol=%s interval=%s mode=%s "
             "candle_limit=%d cycle_interval_seconds=%s",
@@ -195,7 +228,12 @@ class TradingRunner:
             self.interval.value,
             self.trade_mode.value,
             self.candle_limit,
-            self.cycle_interval_seconds,
+            self.effective_cycle_interval_seconds,
+        )
+
+        heartbeat_task = asyncio.create_task(
+            self._heartbeat_loop(),
+            name="botragram-runtime-heartbeat",
         )
 
         try:
@@ -241,6 +279,8 @@ class TradingRunner:
             _LOGGER.info("Trading runner cancellation requested")
             raise
         finally:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
             self._running = False
             await self._notify_stopped()
             _LOGGER.info("Trading runner stopped")
@@ -251,7 +291,9 @@ class TradingRunner:
 
     async def _wait_for_next_cycle(self) -> None:
         """Wait for the next cycle while remaining immediately stoppable."""
-        await self._wait_for_delay(delay_seconds=self.cycle_interval_seconds)
+        await self._wait_for_delay(
+            delay_seconds=self.effective_cycle_interval_seconds,
+        )
 
     async def _wait_for_delay(self, *, delay_seconds: float) -> None:
         """Wait for a configured delay while remaining immediately stoppable."""
@@ -262,6 +304,24 @@ class TradingRunner:
             )
         except TimeoutError:
             return
+
+    async def _heartbeat_loop(self) -> None:
+        """Log periodic liveness while the runtime remains active."""
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self.heartbeat_interval_seconds,
+                )
+            except TimeoutError:
+                state = "PAUSED" if self.runtime_control.is_paused else "RUNNING"
+                _LOGGER.info(
+                    "Runtime heartbeat: state=%s symbol=%s strategy=%s stream=%s",
+                    state,
+                    self.runtime_control.symbol,
+                    self.runtime_control.strategy_type.value,
+                    "ON" if self.runtime_control.stream_enabled else "OFF",
+                )
 
     async def _notify_started(self) -> None:
         """Notify the optional observer without affecting runtime startup."""
@@ -322,12 +382,26 @@ class TradingRunner:
 
     def _log_result(self, *, result: TradingResult) -> None:
         """Log a safe summary without credentials or sensitive payloads."""
+        reason = self._get_result_reason(result=result)
+
         if result.executed:
             order_id = result.order.order_id if result.order is not None else "unknown"
+            risk_result = result.decision.risk_result
+            risk_amount = risk_result.metrics.risk_amount if risk_result else None
+            stop_loss = risk_result.metrics.stop_loss if risk_result else None
+            take_profit = risk_result.metrics.take_profit if risk_result else None
             _LOGGER.info(
-                "Trading cycle submitted an order: symbol=%s order_id=%s",
+                "Trading cycle submitted an order: symbol=%s order_id=%s "
+                "position=%s reason=%s risk_amount=%s stop_loss=%s take_profit=%s",
                 self.symbol,
                 order_id,
+                self._get_position_action(
+                    signal_type=result.decision.signal.signal_type,
+                ),
+                reason,
+                self._format_optional_decimal(risk_amount),
+                self._format_optional_decimal(stop_loss),
+                self._format_optional_decimal(take_profit),
             )
             return
 
@@ -337,12 +411,42 @@ class TradingRunner:
                 "mode=%s reason=%s",
                 self.symbol,
                 self.trade_mode.value,
-                result.reason,
+                reason,
             )
             return
 
         _LOGGER.info(
             "Trading cycle completed without execution: symbol=%s reason=%s",
             self.symbol,
-            result.reason,
+            reason,
         )
+
+    @staticmethod
+    def _get_result_reason(*, result: TradingResult) -> str:
+        """Return the most specific workflow or strategy reason available."""
+        return (
+            result.reason
+            or result.decision.reason
+            or result.decision.signal.reason
+            or _RESULT_REASON_UNAVAILABLE
+        )
+
+    @staticmethod
+    def _get_position_action(*, signal_type: SignalType) -> str:
+        """Return the position action represented by a strategy signal."""
+        match signal_type:
+            case SignalType.BUY:
+                return "LONG"
+            case SignalType.SELL:
+                return "SHORT"
+            case SignalType.CLOSE_LONG:
+                return "CLOSE_LONG"
+            case SignalType.CLOSE_SHORT:
+                return "CLOSE_SHORT"
+            case SignalType.HOLD:
+                return "NONE"
+
+    @staticmethod
+    def _format_optional_decimal(value: Decimal | None) -> str:
+        """Format optional numeric order context for plain-text logging."""
+        return format(value, "f") if value is not None else "N/A"

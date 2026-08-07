@@ -22,7 +22,7 @@ from dataclasses import dataclass
 # Local Imports
 # =============================================================================
 from botragram.constants import DEFAULT_MAX_RETRIES, DEFAULT_REQUEST_TIMEOUT_SECONDS
-from botragram.enums import ExchangeType
+from botragram.enums import ExchangeType, MarketType
 
 __all__ = [
     "ExchangeSettings",
@@ -41,6 +41,7 @@ class ExchangeSettings:
     """Settings for crypto exchange API connection."""
 
     exchange: ExchangeType = ExchangeType.BINANCE
+    market_type: MarketType = MarketType.SPOT
     api_key: str = ""
     api_secret: str = ""
     passphrase: str = ""

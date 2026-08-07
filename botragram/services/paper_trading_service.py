@@ -10,20 +10,23 @@ Python:
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Final, Protocol
 from uuid import NAMESPACE_URL, uuid5
 
 from botragram.engine import PnLEngine, TradingEngine
 from botragram.enums import (
+    Interval,
     NotificationType,
     OrderSide,
     OrderStatus,
     OrderType,
     PositionSide,
     SignalType,
+    StrategyType,
 )
 from botragram.models import (
     Notification,
@@ -31,6 +34,7 @@ from botragram.models import (
     Position,
     RiskResult,
     Signal,
+    Ticker,
     Trade,
     TradingDecision,
     TradingResult,
@@ -78,6 +82,12 @@ class PaperTradingService:
     initial_balance: Decimal = _DEFAULT_INITIAL_BALANCE
     fee_rate: Decimal = _DEFAULT_FEE_RATE
     slippage_rate: Decimal = _DEFAULT_SLIPPAGE_RATE
+    _execution_lock: asyncio.Lock = field(
+        default_factory=asyncio.Lock,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         """Validate immutable simulation settings."""
@@ -105,8 +115,79 @@ class PaperTradingService:
         initial_balance: Decimal | None = None,
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
+        interval: Interval | None = None,
     ) -> TradingResult:
         """Evaluate and simulate one signal against the persisted portfolio."""
+        async with self._execution_lock:
+            return await self._execute_unlocked(
+                signal=signal,
+                current_drawdown_pct=current_drawdown_pct,
+                initial_balance=initial_balance,
+                order_type=order_type,
+                price=price,
+                interval=interval,
+            )
+
+    async def on_market_tick(self, *, ticker: Ticker) -> None:
+        """Close a paper position immediately when streamed SL or TP is hit."""
+        async with self._execution_lock:
+            position = await self.position_repository.get_by_symbol(
+                symbol=ticker.symbol,
+            )
+
+            if position is None:
+                return
+
+            signal = Signal(
+                symbol=ticker.symbol,
+                signal_type=SignalType.HOLD,
+                price=ticker.last_price,
+                confidence=_DECIMAL_ZERO,
+                strategy_name=(
+                    position.strategy_type.value
+                    if position.strategy_type is not None
+                    else "paper_stream_protection"
+                ),
+                generated_at=ticker.timestamp,
+                reason="Paper stream protection check",
+            )
+            marked_position = replace(
+                position,
+                current_price=ticker.last_price,
+                unrealized_pnl=self.pnl_engine.calculate_unrealized(
+                    position=position,
+                    current_price=ticker.last_price,
+                ),
+                updated_at=ticker.timestamp,
+            )
+            close_reason = self._close_reason(
+                position=marked_position,
+                signal=signal,
+            )
+
+            if close_reason is None:
+                return
+
+            await self._close_position(
+                signal=signal,
+                position=marked_position,
+                close_reason=close_reason,
+                initial_balance=self.initial_balance,
+                order_type=OrderType.MARKET,
+                price=ticker.last_price,
+            )
+
+    async def _execute_unlocked(
+        self,
+        *,
+        signal: Signal,
+        current_drawdown_pct: Decimal,
+        initial_balance: Decimal | None,
+        order_type: OrderType,
+        price: Decimal | None,
+        interval: Interval | None,
+    ) -> TradingResult:
+        """Execute one paper action while the caller owns the execution lock."""
         starting_balance = (
             self.initial_balance if initial_balance is None else initial_balance
         )
@@ -169,6 +250,7 @@ class PaperTradingService:
             available_balance=available_balance,
             order_type=order_type,
             price=price,
+            interval=interval,
         )
 
     async def get_available_balance(
@@ -217,6 +299,7 @@ class PaperTradingService:
         available_balance: Decimal,
         order_type: OrderType,
         price: Decimal | None,
+        interval: Interval | None,
     ) -> TradingResult:
         """Create a simulated entry fill and active position."""
         order_side, position_side = self._entry_sides(signal.signal_type)
@@ -260,6 +343,13 @@ class PaperTradingService:
             realized_pnl=None,
             action="trade",
         )
+        stop_loss, take_profit = (
+            self.trading_engine.risk_engine.calculate_protection_levels(
+                side=position_side,
+                entry_price=fill_price,
+                strategy_type=self._resolve_strategy_type(signal.strategy_name),
+            )
+        )
         position = Position(
             symbol=signal.symbol,
             side=position_side,
@@ -270,8 +360,10 @@ class PaperTradingService:
             leverage=risk_result.position.leverage,
             opened_at=signal.generated_at,
             updated_at=signal.generated_at,
-            stop_loss=risk_result.metrics.stop_loss,
-            take_profit=risk_result.metrics.take_profit,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            interval=interval,
+            strategy_type=self._resolve_strategy_type(signal.strategy_name),
         )
 
         await self.order_repository.save(order=order)
@@ -442,6 +534,14 @@ class PaperTradingService:
             created_at=signal.generated_at,
             updated_at=signal.generated_at,
         )
+
+    @staticmethod
+    def _resolve_strategy_type(strategy_name: str) -> StrategyType | None:
+        """Resolve known runtime strategies while preserving custom signals."""
+        try:
+            return StrategyType(strategy_name)
+        except ValueError:
+            return None
 
     def _create_trade(
         self,

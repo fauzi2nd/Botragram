@@ -164,6 +164,25 @@ class BaseExchangeClient(ABC):
     ) -> Sequence[Order]:
         """Return currently open orders."""
 
+    @abstractmethod
+    async def get_open_protection_orders(
+        self,
+        *,
+        symbol: str | None = None,
+    ) -> Sequence[Order]:
+        """Return currently open conditional protection orders."""
+
+    @abstractmethod
+    async def ensure_stop_loss_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        stop_loss: Decimal,
+    ) -> Order:
+        """Ensure one matching stop-loss is active and remove older duplicates."""
+
     # =========================================================================
     # Positions
     # =========================================================================

@@ -13,6 +13,7 @@ dependencies = [
     "aiosqlite",
     "python-dotenv",
     "python-telegram-bot",
+    "rich==15.0.0",
 ]
 
 [project.optional-dependencies]

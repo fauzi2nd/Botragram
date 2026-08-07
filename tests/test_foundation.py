@@ -35,7 +35,14 @@ from botragram.config import Settings
 from botragram.config.app_settings import AppSettings
 from botragram.config.exchange_settings import ExchangeSettings
 from botragram.config.market_settings import MarketSettings
-from botragram.enums import Environment, ExchangeType, LogLevel, TradeMode
+from botragram.enums import (
+    Environment,
+    EnvironmentProfile,
+    ExchangeType,
+    LogLevel,
+    MarketType,
+    TradeMode,
+)
 from botragram.utils.datetime import (
     current_utc_timestamp_ms,
     format_utc_datetime,
@@ -58,12 +65,16 @@ _ENVIRONMENT_KEYS = (
     "AI_PROVIDER",
     "BINANCE_API_KEY",
     "BINANCE_API_SECRET",
+    "BINANCE_MARKET_TYPE",
     "BINANCE_TESTNET",
+    "BOTRAGRAM_PROFILE",
     "BOTRAGRAM_EXCHANGE_API_KEY",
     "BOTRAGRAM_EXCHANGE_API_SECRET",
     "BOTRAGRAM_LOG_LEVEL",
     "BOTRAGRAM_TELEGRAM_TOKEN",
     "BOTRAGRAM_TRADE_MODE",
+    "EMA_SCALPING_STOP_LOSS_PCT",
+    "EMA_SCALPING_TAKE_PROFIT_PCT",
     "GEMINI_API_KEY",
     "LOG_LEVEL",
     "OPENAI_API_KEY",
@@ -83,12 +94,22 @@ def _create_environment_provider(
     temporary_path: Path,
 ) -> EnvironmentProvider:
     """Create an isolated environment provider without loading project dotenv."""
-    for key in _ENVIRONMENT_KEYS:
-        monkeypatch.delenv(key, raising=False)
+    _clear_environment(monkeypatch)
 
     return EnvironmentProvider(
         env_path=str(temporary_path / "missing.env"),
     )
+
+
+def _clear_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove configuration values while preserving test cleanup."""
+    for key in _ENVIRONMENT_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+
+def _write_environment_file(path: Path, content: str) -> None:
+    """Write one isolated dotenv test fixture."""
+    path.write_text(content, encoding="utf-8")
 
 
 # =============================================================================
@@ -175,6 +196,157 @@ def test_environment_provider_rejects_an_unknown_boolean(
         provider.get_binance_testnet()
 
 
+def test_settings_manager_loads_ema_scalping_risk_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Load exact strategy exit ratios from the shared environment profile."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("EMA_SCALPING_STOP_LOSS_PCT", "0.004")
+    monkeypatch.setenv("EMA_SCALPING_TAKE_PROFIT_PCT", "0.009")
+
+    settings = SettingsManager(environment_provider=provider).load_risk_settings()
+
+    assert settings.ema_scalping_stop_loss_pct == Decimal("0.004")
+    assert settings.ema_scalping_take_profit_pct == Decimal("0.009")
+
+
+@pytest.mark.parametrize(
+    ("profile", "testnet", "expected_api_key"),
+    (
+        (EnvironmentProfile.TESTNET, True, "testnet-key"),
+        (EnvironmentProfile.MAINNET, False, "mainnet-key"),
+    ),
+)
+def test_environment_provider_loads_isolated_credential_profile(
+    profile: EnvironmentProfile,
+    testnet: bool,
+    expected_api_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify the selected profile overrides base exchange credentials."""
+    _clear_environment(monkeypatch)
+    base_path = tmp_path / ".env"
+    profile_path = tmp_path / f".env.{profile.value}"
+    _write_environment_file(
+        base_path,
+        "\n".join(
+            (
+                f"BOTRAGRAM_PROFILE={profile.value}",
+                "BINANCE_API_KEY=base-key",
+                "BINANCE_API_SECRET=base-secret",
+            )
+        ),
+    )
+    _write_environment_file(
+        profile_path,
+        "\n".join(
+            (
+                f"BINANCE_API_KEY={expected_api_key}",
+                "BINANCE_API_SECRET=profile-secret",
+                f"BINANCE_TESTNET={str(testnet).lower()}",
+            )
+        ),
+    )
+
+    provider = EnvironmentProvider(env_path=str(base_path), override=True)
+
+    assert provider.profile is profile
+    assert provider.profile_path == str(profile_path)
+    assert provider.get_binance_api_key() == expected_api_key
+    assert provider.get_binance_api_secret() == "profile-secret"
+    assert provider.get_binance_testnet() is testnet
+
+
+def test_dotenv_overrides_stale_terminal_configuration_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Prevent inherited terminal values from changing the selected profile."""
+    _clear_environment(monkeypatch)
+    monkeypatch.setenv("BOTRAGRAM_PROFILE", "testnet")
+    monkeypatch.setenv("BINANCE_MARKET_TYPE", "spot")
+    base_path = tmp_path / ".env"
+    _write_environment_file(
+        base_path,
+        "\n".join(
+            (
+                "BOTRAGRAM_PROFILE=mainnet",
+                "BINANCE_MARKET_TYPE=futures",
+            )
+        ),
+    )
+    _write_environment_file(
+        tmp_path / ".env.mainnet",
+        "\n".join(
+            (
+                "BINANCE_API_KEY=mainnet-key",
+                "BINANCE_API_SECRET=mainnet-secret",
+                "BINANCE_TESTNET=false",
+            )
+        ),
+    )
+
+    provider = EnvironmentProvider(env_path=str(base_path))
+
+    assert provider.profile is EnvironmentProfile.MAINNET
+    assert provider.get_binance_market_type() == "FUTURES"
+    assert not provider.get_binance_testnet()
+
+
+def test_environment_provider_rejects_unknown_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify an unknown credential profile cannot select a dotenv file."""
+    _clear_environment(monkeypatch)
+    base_path = tmp_path / ".env"
+    _write_environment_file(base_path, "BOTRAGRAM_PROFILE=staging")
+
+    with pytest.raises(ValueError, match="BOTRAGRAM_PROFILE"):
+        EnvironmentProvider(env_path=str(base_path), override=True)
+
+
+def test_environment_provider_requires_selected_profile_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify an explicitly selected profile cannot fall back to base keys."""
+    _clear_environment(monkeypatch)
+    base_path = tmp_path / ".env"
+    _write_environment_file(base_path, "BOTRAGRAM_PROFILE=testnet")
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        EnvironmentProvider(env_path=str(base_path), override=True)
+
+
+def test_environment_provider_rejects_profile_network_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify a mainnet profile cannot target a testnet endpoint."""
+    _clear_environment(monkeypatch)
+    base_path = tmp_path / ".env"
+    _write_environment_file(base_path, "BOTRAGRAM_PROFILE=mainnet")
+    _write_environment_file(
+        tmp_path / ".env.mainnet",
+        "\n".join(
+            (
+                "BINANCE_API_KEY=mainnet-key",
+                "BINANCE_API_SECRET=mainnet-secret",
+                "BINANCE_TESTNET=true",
+            )
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requires BINANCE_TESTNET=false"):
+        EnvironmentProvider(env_path=str(base_path), override=True)
+
+
 def test_settings_manager_builds_complete_settings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -186,6 +358,7 @@ def test_settings_manager_builds_complete_settings(
     )
     monkeypatch.setenv("ACTIVE_EXCHANGE", "binance")
     monkeypatch.setenv("BINANCE_TESTNET", "false")
+    monkeypatch.setenv("BINANCE_MARKET_TYPE", "futures")
     monkeypatch.setenv("LOG_LEVEL", "warning")
     monkeypatch.setenv("TELEGRAM_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
@@ -194,6 +367,7 @@ def test_settings_manager_builds_complete_settings(
     settings = SettingsManager(environment_provider=provider).load()
 
     assert settings.exchange.exchange is ExchangeType.BINANCE
+    assert settings.exchange.market_type is MarketType.FUTURES
     assert settings.exchange.is_live
     assert settings.logging.level is LogLevel.WARNING
     assert settings.app.trade_mode is TradeMode.PAPER
@@ -214,6 +388,22 @@ def test_settings_manager_rejects_unknown_exchange(
     settings_manager = SettingsManager(environment_provider=provider)
 
     with pytest.raises(ValueError, match="ACTIVE_EXCHANGE"):
+        settings_manager.load()
+
+
+def test_settings_manager_rejects_unknown_binance_market_type(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify an unknown Binance product cannot silently select Spot."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("BINANCE_MARKET_TYPE", "margin")
+    settings_manager = SettingsManager(environment_provider=provider)
+
+    with pytest.raises(ValueError, match="BINANCE_MARKET_TYPE"):
         settings_manager.load()
 
 

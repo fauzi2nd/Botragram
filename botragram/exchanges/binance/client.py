@@ -396,6 +396,29 @@ class BinanceExchangeClient(BaseExchangeClient):
 
         return orders
 
+    async def get_open_protection_orders(
+        self,
+        *,
+        symbol: str | None = None,
+    ) -> Sequence[Order]:
+        """Return Spot protection orders when dedicated OCO support exists."""
+        del symbol
+        return ()
+
+    async def ensure_stop_loss_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        stop_loss: Decimal,
+    ) -> Order:
+        """Reject unsupported Spot stop replacement until OCO is implemented."""
+        del symbol, side, quantity, stop_loss
+        raise NotImplementedError(
+            "Binance Spot stop replacement requires dedicated OCO support"
+        )
+
     # =========================================================================
     # Positions
     # =========================================================================

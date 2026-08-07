@@ -13,6 +13,8 @@ Python:
 # =============================================================================
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+
 # =============================================================================
 # Local Imports
 # =============================================================================
@@ -26,7 +28,7 @@ from botragram.config.risk_settings import RiskSettings
 from botragram.config.settings import Settings
 from botragram.config.strategy_settings import StrategySettings
 from botragram.config.telegram_settings import TelegramSettings
-from botragram.enums import ExchangeType, LogLevel, TradeMode
+from botragram.enums import ExchangeType, LogLevel, MarketType, TradeMode
 
 __all__ = [
     "SettingsManager",
@@ -100,8 +102,14 @@ class SettingsManager:
 
         match exchange:
             case ExchangeType.BINANCE:
+                market_type = self._parse_enum(
+                    enum_type=MarketType,
+                    raw_value=environment.get_binance_market_type(),
+                    setting_name="BINANCE_MARKET_TYPE",
+                )
                 return ExchangeSettings(
                     exchange=exchange,
+                    market_type=market_type,
                     api_key=environment.get_binance_api_key(),
                     api_secret=environment.get_binance_api_secret(),
                     testnet=environment.get_binance_testnet(),
@@ -147,8 +155,18 @@ class SettingsManager:
         return MarketSettings()
 
     def load_risk_settings(self) -> RiskSettings:
-        """Load risk settings using their configured defaults."""
-        return RiskSettings()
+        """Load validated strategy-specific risk settings."""
+        environment = self._environment_provider
+        return RiskSettings(
+            ema_scalping_stop_loss_pct=self._parse_decimal(
+                raw_value=environment.get_ema_scalping_stop_loss_pct(),
+                setting_name="EMA_SCALPING_STOP_LOSS_PCT",
+            ),
+            ema_scalping_take_profit_pct=self._parse_decimal(
+                raw_value=environment.get_ema_scalping_take_profit_pct(),
+                setting_name="EMA_SCALPING_TAKE_PROFIT_PCT",
+            ),
+        )
 
     def load_strategy_settings(self) -> StrategySettings:
         """Load strategy settings using their configured defaults."""
@@ -225,7 +243,7 @@ class SettingsManager:
 
     @staticmethod
     def _parse_enum[
-        EnumValue: (ExchangeType, LogLevel, TradeMode),
+        EnumValue: (ExchangeType, LogLevel, MarketType, TradeMode),
     ](
         *,
         enum_type: type[EnumValue],
@@ -255,3 +273,18 @@ class SettingsManager:
             raise ValueError(
                 "Environment variable 'TELEGRAM_CHAT_ID' must be an integer"
             ) from error
+
+    @staticmethod
+    def _parse_decimal(*, raw_value: str, setting_name: str) -> Decimal:
+        """Parse an exact finite decimal environment ratio."""
+        try:
+            value = Decimal(raw_value)
+        except InvalidOperation as error:
+            raise ValueError(
+                f"Environment variable {setting_name!r} must be a decimal"
+            ) from error
+
+        if not value.is_finite():
+            raise ValueError(f"Environment variable {setting_name!r} must be finite")
+
+        return value

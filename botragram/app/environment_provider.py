@@ -17,11 +17,12 @@ from __future__ import annotations
 # Standard Library
 # =============================================================================
 import os
+from pathlib import Path
 
 # =============================================================================
 # Third-Party Imports
 # =============================================================================
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 # =============================================================================
 # Local Imports
@@ -32,14 +33,18 @@ from botragram.constants.env import (
     ENV_AI_PROVIDER,
     ENV_BINANCE_API_KEY,
     ENV_BINANCE_API_SECRET,
+    ENV_BINANCE_MARKET_TYPE,
     ENV_BINANCE_TESTNET,
     ENV_BITGET_API_KEY,
     ENV_BITGET_API_SECRET,
     ENV_BITGET_PASSPHRASE,
     ENV_BITGET_TESTNET,
+    ENV_BOTRAGRAM_PROFILE,
     ENV_BYBIT_API_KEY,
     ENV_BYBIT_API_SECRET,
     ENV_BYBIT_TESTNET,
+    ENV_EMA_SCALPING_STOP_LOSS_PCT,
+    ENV_EMA_SCALPING_TAKE_PROFIT_PCT,
     ENV_EXCHANGE_API_KEY_LEGACY,
     ENV_EXCHANGE_API_SECRET_LEGACY,
     ENV_GEMINI_API_KEY,
@@ -57,6 +62,7 @@ from botragram.constants.env import (
     ENV_TRADE_MODE,
     ENV_TRADE_MODE_LEGACY,
 )
+from botragram.enums import EnvironmentProfile
 
 __all__ = [
     "EnvironmentProvider",
@@ -84,6 +90,14 @@ _FALSE_VALUES = frozenset(
     }
 )
 
+_PROFILE_REQUIRED_KEYS = frozenset(
+    {
+        ENV_BINANCE_API_KEY,
+        ENV_BINANCE_API_SECRET,
+        ENV_BINANCE_TESTNET,
+    }
+)
+
 
 # =============================================================================
 # Environment Provider
@@ -91,20 +105,25 @@ _FALSE_VALUES = frozenset(
 class EnvironmentProvider:
     """Provide normalized access to Botragram environment variables."""
 
-    __slots__ = ("_env_path",)
+    __slots__ = (
+        "_env_path",
+        "_profile",
+        "_profile_path",
+    )
 
     def __init__(
         self,
         env_path: str = ".env",
         *,
-        override: bool = False,
+        override: bool = True,
     ) -> None:
         """Load environment variables from a dotenv file.
 
         Args:
             env_path: Path to the dotenv file.
-            override: Whether dotenv values override existing environment
-                variables.
+            override: Whether dotenv values override inherited process
+                variables. Enabled by default so local configuration is
+                deterministic.
         """
         normalized_path = env_path.strip()
 
@@ -112,16 +131,29 @@ class EnvironmentProvider:
             raise ValueError("Environment file path must not be empty")
 
         self._env_path = normalized_path
+        self._profile: EnvironmentProfile | None = None
+        self._profile_path: str | None = None
 
         load_dotenv(
             dotenv_path=self._env_path,
             override=override,
         )
+        self._load_environment_profile()
 
     @property
     def env_path(self) -> str:
         """Return the configured dotenv file path."""
         return self._env_path
+
+    @property
+    def profile(self) -> EnvironmentProfile | None:
+        """Return the selected credential environment profile."""
+        return self._profile
+
+    @property
+    def profile_path(self) -> str | None:
+        """Return the selected credential profile path."""
+        return self._profile_path
 
     @staticmethod
     def _get_var(
@@ -167,7 +199,19 @@ class EnvironmentProvider:
         if not raw_value:
             return default
 
-        normalized = raw_value.casefold()
+        return cls._parse_bool_value(
+            key=key,
+            raw_value=raw_value,
+        )
+
+    @staticmethod
+    def _parse_bool_value(
+        *,
+        key: str,
+        raw_value: str,
+    ) -> bool:
+        """Parse a strict boolean environment value."""
+        normalized = raw_value.strip().casefold()
 
         if normalized in _TRUE_VALUES:
             return True
@@ -180,6 +224,90 @@ class EnvironmentProvider:
             f"{sorted(_TRUE_VALUES | _FALSE_VALUES)!r}, "
             f"not {raw_value!r}"
         )
+
+    def _load_environment_profile(self) -> None:
+        """Load and validate an explicitly selected credential profile."""
+        raw_profile = self._get_var(ENV_BOTRAGRAM_PROFILE)
+
+        if not raw_profile:
+            return
+
+        profile = self._parse_profile(raw_profile)
+        profile_path = self._build_profile_path(profile)
+        profile_values = self._read_profile_values(profile_path)
+        self._validate_profile_network(
+            profile=profile,
+            profile_values=profile_values,
+        )
+        load_dotenv(
+            dotenv_path=profile_path,
+            override=True,
+        )
+        self._profile = profile
+        self._profile_path = str(profile_path)
+
+    @staticmethod
+    def _parse_profile(raw_profile: str) -> EnvironmentProfile:
+        """Parse a supported credential environment profile."""
+        try:
+            return EnvironmentProfile(raw_profile.casefold())
+        except ValueError as error:
+            supported = tuple(profile.value for profile in EnvironmentProfile)
+            raise ValueError(
+                f"Environment variable {ENV_BOTRAGRAM_PROFILE!r} must be one "
+                f"of {supported!r}, not {raw_profile!r}"
+            ) from error
+
+    def _build_profile_path(self, profile: EnvironmentProfile) -> Path:
+        """Build the credential profile path beside the base dotenv file."""
+        base_path = Path(self._env_path)
+        return base_path.with_name(f"{base_path.name}.{profile.value}")
+
+    @staticmethod
+    def _read_profile_values(profile_path: Path) -> dict[str, str | None]:
+        """Read a credential profile and require its safety fields."""
+        if not profile_path.is_file():
+            raise FileNotFoundError(
+                f"Credential environment profile does not exist: {profile_path}"
+            )
+
+        values = dict(dotenv_values(profile_path))
+        missing_keys = sorted(_PROFILE_REQUIRED_KEYS - values.keys())
+
+        if missing_keys:
+            raise ValueError(
+                f"Credential environment profile {profile_path} is missing "
+                f"required keys: {missing_keys!r}"
+            )
+
+        return values
+
+    @classmethod
+    def _validate_profile_network(
+        cls,
+        *,
+        profile: EnvironmentProfile,
+        profile_values: dict[str, str | None],
+    ) -> None:
+        """Require the selected profile to match its Binance network flag."""
+        raw_testnet = profile_values[ENV_BINANCE_TESTNET]
+
+        if raw_testnet is None:
+            raise ValueError(
+                f"Environment variable {ENV_BINANCE_TESTNET!r} must not be empty"
+            )
+
+        is_testnet = cls._parse_bool_value(
+            key=ENV_BINANCE_TESTNET,
+            raw_value=raw_testnet,
+        )
+        expected_testnet = profile is EnvironmentProfile.TESTNET
+
+        if is_testnet is not expected_testnet:
+            raise ValueError(
+                f"Credential profile {profile.value!r} requires "
+                f"{ENV_BINANCE_TESTNET}={str(expected_testnet).lower()}"
+            )
 
     # -------------------------------------------------------------------------
     # AI
@@ -257,6 +385,20 @@ class EnvironmentProvider:
             default="INFO",
         ).upper()
 
+    def get_ema_scalping_stop_loss_pct(self) -> str:
+        """Return the EMA scalping stop-loss ratio."""
+        return self._get_var(
+            ENV_EMA_SCALPING_STOP_LOSS_PCT,
+            default="0.005",
+        )
+
+    def get_ema_scalping_take_profit_pct(self) -> str:
+        """Return the EMA scalping take-profit ratio."""
+        return self._get_var(
+            ENV_EMA_SCALPING_TAKE_PROFIT_PCT,
+            default="0.01",
+        )
+
     def get_active_exchange(self) -> str:
         """Return the configured active exchange."""
         return self._get_var(
@@ -281,6 +423,13 @@ class EnvironmentProvider:
             ENV_BINANCE_API_SECRET,
             ENV_EXCHANGE_API_SECRET_LEGACY,
         )
+
+    def get_binance_market_type(self) -> str:
+        """Return the selected Binance product family."""
+        return self._get_var(
+            ENV_BINANCE_MARKET_TYPE,
+            default="SPOT",
+        ).upper()
 
     def get_binance_testnet(self) -> bool:
         """Return whether Binance testnet mode is enabled."""

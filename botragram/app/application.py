@@ -77,12 +77,10 @@ class Application:
 
         self._running = True
         _LOGGER.info(
-            "Application starting",
-            extra={
-                "app_name": self.settings.app.app_name,
-                "app_version": self.settings.app.app_version,
-                "trade_mode": self.settings.app.trade_mode.value,
-            },
+            "Application starting: name=%s version=%s trade_mode=%s",
+            self.settings.app.app_name,
+            self.settings.app.app_version,
+            self.settings.app.trade_mode.value,
         )
 
         try:
