@@ -18,31 +18,40 @@ from __future__ import annotations
 # =============================================================================
 import logging
 from decimal import Decimal
+from html import escape
 from typing import Final
 
 # =============================================================================
 # Third-Party Imports
 # =============================================================================
-from telegram import Update
+from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.constants.telegram import DEFAULT_PARSE_MODE, TELEGRAM_MARKET_SYMBOLS
-from botragram.enums import ExchangeType, Interval, StrategyType
+from botragram.constants.telegram import DEFAULT_PARSE_MODE
+from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.telegram.access import is_authorized_update
-from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
+from botragram.telegram.context import (
+    BOT_CONTEXT_KEY,
+    MARKET_SEARCH_PENDING_KEY,
+    BotContext,
+    BotRuntimeControl,
+)
 from botragram.telegram.keyboards import (
     get_exchange_keyboard,
     get_interval_keyboard,
     get_market_keyboard,
+    get_market_search_keyboard,
     get_strategy_keyboard,
     get_stream_keyboard,
 )
 from botragram.telegram.messages import (
     get_exchange_message,
     get_interval_message,
+    get_market_message,
+    get_market_search_prompt_message,
     get_positions_message,
     get_settings_message,
     get_status_message,
@@ -68,9 +77,10 @@ _EXCHANGE_CALLBACKS: Final[frozenset[str]] = frozenset(
     }
 )
 _MARKET_CALLBACK_PREFIX: Final[str] = "cb_market_"
+_MARKET_PAGE_CALLBACK_PREFIX: Final[str] = "cb_market_page_"
 _INTERVAL_CALLBACK_PREFIX: Final[str] = "cb_interval_"
 _STRATEGY_CALLBACK_PREFIX: Final[str] = "cb_strategy_"
-_SUPPORTED_MARKETS: Final[frozenset[str]] = frozenset(TELEGRAM_MARKET_SYMBOLS)
+_PRODUCT_CALLBACK_PREFIX: Final[str] = "cb_product_"
 
 
 # =============================================================================
@@ -100,6 +110,70 @@ async def _has_open_positions(bot_context: BotContext) -> bool:
     except Exception:
         _LOGGER.exception("Runtime configuration position check failed")
         return True
+
+
+async def _get_trading_symbols(bot_context: BotContext) -> tuple[str, ...] | None:
+    """Return exchange-supported symbols and log transient lookup failures."""
+    provider = bot_context.query_provider
+
+    if provider is None:
+        return None
+
+    try:
+        return tuple(await provider.get_trading_symbols())
+    except Exception:
+        _LOGGER.exception("Telegram market-symbol query failed")
+        return None
+
+
+async def _get_last_price(bot_context: BotContext) -> Decimal:
+    """Return the provider's latest price without trusting stale context state."""
+    provider = bot_context.query_provider
+
+    if provider is None:
+        return bot_context.last_price
+
+    try:
+        last_price = await provider.get_last_price()
+    except Exception:
+        _LOGGER.exception("Telegram market-price query failed")
+        return bot_context.last_price
+
+    bot_context.last_price = last_price
+    return last_price
+
+
+def _is_confirmed(
+    control: BotRuntimeControl | None,
+    requirement: str,
+) -> bool:
+    """Return whether Telegram explicitly confirmed one startup selection."""
+    return (
+        control is not None
+        and requirement not in control.get_missing_configuration_requirements()
+    )
+
+
+def _get_exchange_markup(bot_context: BotContext) -> InlineKeyboardMarkup:
+    """Return exchange buttons whose checks reflect confirmation state."""
+    control = bot_context.runtime_control
+    return get_exchange_keyboard(
+        bot_context.exchange_type,
+        bot_context.market_type,
+        exchange_confirmed=_is_confirmed(control, "exchange"),
+        market_type_confirmed=_is_confirmed(control, "market type"),
+    )
+
+
+def _get_exchange_configuration_message(bot_context: BotContext) -> str:
+    """Return exchange text whose values reflect confirmation state."""
+    control = bot_context.runtime_control
+    return get_exchange_message(
+        bot_context.exchange_type,
+        bot_context.market_type,
+        exchange_confirmed=_is_confirmed(control, "exchange"),
+        market_type_confirmed=_is_confirmed(control, "market type"),
+    )
 
 
 # =============================================================================
@@ -170,6 +244,11 @@ async def handle_callback_query(
                 (position.unrealized_pnl for position in positions),
                 start=Decimal("0"),
             ),
+            missing_configuration_requirements=(
+                bot_context.runtime_control.get_missing_configuration_requirements()
+                if bot_context.runtime_control is not None
+                else ("exchange", "market type", "symbol", "interval", "strategy")
+            ),
         )
         await query.edit_message_text(message, parse_mode=DEFAULT_PARSE_MODE)
     elif data == "cb_positions":
@@ -205,12 +284,9 @@ async def handle_callback_query(
         )
     elif data == "cb_exchange":
         await query.edit_message_text(
-            get_exchange_message(
-                bot_context.exchange_type,
-                bot_context.market_type,
-            ),
+            _get_exchange_configuration_message(bot_context),
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_exchange_keyboard(bot_context.exchange_type),
+            reply_markup=_get_exchange_markup(bot_context),
         )
     elif data in _EXCHANGE_CALLBACKS:
         control = bot_context.runtime_control
@@ -225,7 +301,7 @@ async def handle_callback_query(
             await query.edit_message_text(
                 "⚠️ <b>Exchange tidak didukung.</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_exchange_keyboard(bot_context.exchange_type),
+                reply_markup=_get_exchange_markup(bot_context),
             )
             return
 
@@ -233,31 +309,130 @@ async def handle_callback_query(
             changed = control.confirm_exchange(exchange_type)
         except RuntimeError as error:
             await query.edit_message_text(
-                f"⚠️ <b>{error}</b>",
+                f"⚠️ <b>{escape(str(error))}</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_exchange_keyboard(bot_context.exchange_type),
+                reply_markup=_get_exchange_markup(bot_context),
             )
             return
 
         status = "dikonfirmasi" if changed else "sudah dikonfirmasi"
         await query.edit_message_text(
-            get_exchange_message(
-                bot_context.exchange_type,
-                bot_context.market_type,
-            )
+            _get_exchange_configuration_message(bot_context)
             + f"\n\nExchange {status} untuk sesi ini.",
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_exchange_keyboard(bot_context.exchange_type),
+            reply_markup=_get_exchange_markup(bot_context),
+        )
+    elif data.startswith(_PRODUCT_CALLBACK_PREFIX):
+        raw_market_type = data.removeprefix(_PRODUCT_CALLBACK_PREFIX)
+        switcher = bot_context.market_type_switcher
+
+        try:
+            market_type = MarketType(raw_market_type)
+        except ValueError:
+            market_type = None
+
+        if switcher is None or market_type is None:
+            await query.edit_message_text(
+                "⚠️ <b>Perpindahan Spot/Futures tidak tersedia.</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=_get_exchange_markup(bot_context),
+            )
+            return
+
+        try:
+            changed = await switcher.prepare(market_type=market_type)
+        except Exception as error:
+            _LOGGER.exception("Telegram market-type switch validation failed")
+            await query.edit_message_text(
+                f"⚠️ <b>{escape(str(error))}</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=_get_exchange_markup(bot_context),
+            )
+            return
+
+        if not changed:
+            await query.edit_message_text(
+                _get_exchange_configuration_message(bot_context)
+                + "\n\nProduct tersebut sudah aktif.",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=_get_exchange_markup(bot_context),
+            )
+            return
+
+        await query.edit_message_text(
+            "🔄 <b>Perpindahan connector dimulai.</b>\n\n"
+            f"Target: <b>Binance {market_type.value.title()}</b>\n"
+            "Botragram akan tersambung kembali secara otomatis.",
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
+        switcher.commit(market_type=market_type)
+    elif data == "cb_market_noop":
+        return
+    elif data == "cb_market_search":
+        chat_data = context.chat_data
+        if chat_data is None:
+            await query.edit_message_text(
+                "⚠️ <b>Market search tidak tersedia untuk chat ini.</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+
+        chat_data[MARKET_SEARCH_PENDING_KEY] = True
+        await query.edit_message_text(
+            get_market_search_prompt_message(),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_market_search_keyboard(
+                bot_context.symbol,
+                (),
+            ),
+        )
+    elif data.startswith(_MARKET_PAGE_CALLBACK_PREFIX):
+        control = bot_context.runtime_control
+        symbols = await _get_trading_symbols(bot_context)
+
+        try:
+            page = int(data.removeprefix(_MARKET_PAGE_CALLBACK_PREFIX))
+        except ValueError:
+            page = 0
+
+        if control is None or symbols is None:
+            await query.edit_message_text(
+                "⚠️ <b>Daftar market sementara tidak tersedia.</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+
+        await query.edit_message_text(
+            get_market_message(
+                control.symbol,
+                await _get_last_price(bot_context),
+                confirmed=_is_confirmed(control, "symbol"),
+            ),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_market_keyboard(
+                control.symbol,
+                symbols,
+                page=page,
+                confirmed=_is_confirmed(control, "symbol"),
+            ),
         )
     elif data.startswith(_MARKET_CALLBACK_PREFIX):
         symbol = data.removeprefix(_MARKET_CALLBACK_PREFIX).upper()
         control = bot_context.runtime_control
+        symbols = await _get_trading_symbols(bot_context)
 
-        if symbol not in _SUPPORTED_MARKETS or control is None:
+        if control is None or symbols is None or symbol not in symbols:
+            active_symbol = (
+                control.symbol if control is not None else bot_context.symbol
+            )
             await query.edit_message_text(
                 "⚠️ <b>Market tidak didukung.</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_market_keyboard(bot_context.symbol),
+                reply_markup=get_market_keyboard(
+                    active_symbol,
+                    (active_symbol,),
+                    confirmed=_is_confirmed(control, "symbol"),
+                ),
             )
             return
 
@@ -265,7 +440,11 @@ async def handle_callback_query(
             await query.edit_message_text(
                 "⚠️ <b>Tutup semua posisi sebelum mengganti market.</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_market_keyboard(control.symbol),
+                reply_markup=get_market_keyboard(
+                    control.symbol,
+                    symbols,
+                    confirmed=_is_confirmed(control, "symbol"),
+                ),
             )
             return
 
@@ -273,18 +452,32 @@ async def handle_callback_query(
             changed = control.select_symbol(symbol)
         except RuntimeError as error:
             await query.edit_message_text(
-                f"⚠️ <b>{error}</b>",
+                f"⚠️ <b>{escape(str(error))}</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_market_keyboard(control.symbol),
+                reply_markup=get_market_keyboard(
+                    control.symbol,
+                    symbols,
+                    confirmed=_is_confirmed(control, "symbol"),
+                ),
             )
             return
 
         bot_context.symbol = control.symbol
         status = "dipilih" if changed else "sudah aktif"
+        last_price = await _get_last_price(bot_context)
         await query.edit_message_text(
-            f"📈 <b>{control.symbol}</b> {status} untuk siklus berikutnya.",
+            get_market_message(
+                control.symbol,
+                last_price,
+                confirmed=_is_confirmed(control, "symbol"),
+            )
+            + f"\n\n<b>{status.title()}</b> untuk siklus berikutnya.",
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_market_keyboard(control.symbol),
+            reply_markup=get_market_keyboard(
+                control.symbol,
+                symbols,
+                confirmed=_is_confirmed(control, "symbol"),
+            ),
         )
     elif data.startswith(_STRATEGY_CALLBACK_PREFIX):
         raw_strategy = data.removeprefix(_STRATEGY_CALLBACK_PREFIX)
@@ -296,7 +489,10 @@ async def handle_callback_query(
             await query.edit_message_text(
                 "⚠️ <b>Strategy tidak didukung.</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_strategy_keyboard(bot_context.strategy_name),
+                reply_markup=get_strategy_keyboard(
+                    bot_context.strategy_name,
+                    confirmed=_is_confirmed(control, "strategy"),
+                ),
             )
             return
 
@@ -313,7 +509,10 @@ async def handle_callback_query(
             await query.edit_message_text(
                 "⚠️ <b>Tutup semua posisi sebelum mengganti strategy.</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_strategy_keyboard(control.strategy_type.value),
+                reply_markup=get_strategy_keyboard(
+                    control.strategy_type.value,
+                    confirmed=_is_confirmed(control, "strategy"),
+                ),
             )
             return
 
@@ -321,19 +520,30 @@ async def handle_callback_query(
             changed = control.select_strategy(strategy_type)
         except RuntimeError as error:
             await query.edit_message_text(
-                f"⚠️ <b>{error}</b>",
+                f"⚠️ <b>{escape(str(error))}</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_strategy_keyboard(control.strategy_type.value),
+                reply_markup=get_strategy_keyboard(
+                    control.strategy_type.value,
+                    confirmed=_is_confirmed(control, "strategy"),
+                ),
             )
             return
 
         bot_context.strategy_name = control.strategy_type.value
         status = "dipilih" if changed else "sudah aktif"
         await query.edit_message_text(
-            get_strategy_message(control.strategy_type.value, 9, 21)
+            get_strategy_message(
+                control.strategy_type.value,
+                9,
+                21,
+                confirmed=_is_confirmed(control, "strategy"),
+            )
             + f"\n\nStrategy {status} untuk siklus berikutnya.",
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_strategy_keyboard(control.strategy_type.value),
+            reply_markup=get_strategy_keyboard(
+                control.strategy_type.value,
+                confirmed=_is_confirmed(control, "strategy"),
+            ),
         )
     elif data.startswith(_INTERVAL_CALLBACK_PREFIX):
         raw_interval = data.removeprefix(_INTERVAL_CALLBACK_PREFIX)
@@ -355,7 +565,10 @@ async def handle_callback_query(
             await query.edit_message_text(
                 "⚠️ <b>Tutup semua posisi sebelum mengganti interval.</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_interval_keyboard(control.interval.value),
+                reply_markup=get_interval_keyboard(
+                    control.interval.value,
+                    confirmed=_is_confirmed(control, "interval"),
+                ),
             )
             return
 
@@ -363,18 +576,27 @@ async def handle_callback_query(
             changed = control.select_interval(interval)
         except RuntimeError as error:
             await query.edit_message_text(
-                f"⚠️ <b>{error}</b>",
+                f"⚠️ <b>{escape(str(error))}</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_interval_keyboard(control.interval.value),
+                reply_markup=get_interval_keyboard(
+                    control.interval.value,
+                    confirmed=_is_confirmed(control, "interval"),
+                ),
             )
             return
 
         status = "dipilih" if changed else "sudah aktif"
         await query.edit_message_text(
-            get_interval_message(control.interval.value)
+            get_interval_message(
+                control.interval.value,
+                confirmed=_is_confirmed(control, "interval"),
+            )
             + f"\n\nInterval {status} untuk siklus berikutnya.",
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_interval_keyboard(control.interval.value),
+            reply_markup=get_interval_keyboard(
+                control.interval.value,
+                confirmed=_is_confirmed(control, "interval"),
+            ),
         )
     elif data in {"cb_stream_start", "cb_stream_stop", "cb_stream_refresh"}:
         provider = bot_context.query_provider
@@ -401,6 +623,7 @@ async def handle_callback_query(
                 return
 
             await provider.start_market_stream()
+            await provider.wait_for_first_stream_tick()
         elif data == "cb_stream_stop":
             await provider.stop_market_stream()
 
@@ -411,11 +634,15 @@ async def handle_callback_query(
             and control is not None
             and "first stream tick" not in control.get_missing_startup_requirements()
         )
+        stream_last_price = (
+            await _get_last_price(bot_context) if subscription_active else None
+        )
         await query.edit_message_text(
             get_stream_message(
                 transport_connected=transport_connected,
                 subscription_active=subscription_active,
                 first_tick_received=first_tick_received,
+                last_price=stream_last_price,
             ),
             parse_mode=DEFAULT_PARSE_MODE,
             reply_markup=get_stream_keyboard(),

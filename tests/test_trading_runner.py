@@ -214,6 +214,7 @@ def _complete_startup_configuration(
 ) -> TradingRuntimeControl:
     """Complete the Telegram startup gate for continuous-runner tests."""
     control.confirm_exchange(control.exchange_type)
+    control.confirm_market_type(control.market_type)
     control.select_symbol(control.symbol)
     control.select_interval(control.interval)
     control.select_strategy(control.strategy_type)
@@ -344,6 +345,7 @@ async def _run_runtime_selection_test() -> None:
     assert control.select_interval(Interval.M5)
     assert control.select_strategy(StrategyType.SUPERTREND)
     control.confirm_exchange(control.exchange_type)
+    control.confirm_market_type(control.market_type)
     control.set_stream_enabled(True)
     control.record_stream_tick(price=Decimal("100"))
     control.resume()
@@ -369,6 +371,7 @@ def test_runtime_start_requires_complete_telegram_configuration() -> None:
     assert control.is_paused
     assert control.get_missing_startup_requirements() == (
         "exchange",
+        "market type",
         "symbol",
         "interval",
         "strategy",

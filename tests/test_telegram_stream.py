@@ -23,6 +23,7 @@ class FakeStreamMarketService:
     """Yield one ticker and remain subscribed until cancelled."""
 
     ticker_published: asyncio.Event = field(default_factory=asyncio.Event)
+    trading_symbol_calls: int = 0
     unsubscribe_calls: list[str] = field(default_factory=list[str])
 
     @property
@@ -33,6 +34,12 @@ class FakeStreamMarketService:
     async def get_ticker(self, *, symbol: str) -> Ticker:
         """Return a deterministic fallback ticker."""
         return _create_ticker(symbol=symbol, price=Decimal("99"))
+
+    async def get_trading_symbols(self, *, quote_asset: str) -> tuple[str, ...]:
+        """Return deterministic active symbols for query caching."""
+        assert quote_asset == "USDT"
+        self.trading_symbol_calls += 1
+        return ("BTCUSDT", "ETHUSDT")
 
     async def stream_ticker(self, *, symbol: str) -> AsyncIterator[Ticker]:
         """Yield one streamed ticker and wait indefinitely."""
@@ -105,11 +112,15 @@ async def _run_stream_lifecycle_test() -> None:
     )
 
     assert await service.start_market_stream()
+    assert await service.wait_for_first_stream_tick(timeout_seconds=1.0)
     await asyncio.wait_for(market_service.ticker_published.wait(), timeout=1.0)
 
     assert runtime_control.stream_enabled
     assert runtime_control.stream_prices == [Decimal("101")]
     assert await service.get_last_price() == Decimal("101")
+    assert tuple(await service.get_trading_symbols()) == ("BTCUSDT", "ETHUSDT")
+    assert tuple(await service.get_trading_symbols()) == ("BTCUSDT", "ETHUSDT")
+    assert market_service.trading_symbol_calls == 1
     assert await service.stop_market_stream()
     assert not runtime_control.stream_enabled
     assert market_service.unsubscribe_calls == ["BTCUSDT"]

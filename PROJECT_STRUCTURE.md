@@ -33,10 +33,12 @@ Botragram/
 botragram/
 |-- __init__.py
 |-- app/
+|   |-- backtest_command.py  # Isolated backtest CLI composition dan report
 |   |-- application.py
 |   |-- dependency_provider.py
 |   |-- environment_provider.py
 |   |-- lifecycle.py
+|   |-- market_type_switch.py # Guarded Spot/Futures soft-restart coordination
 |   |-- runtime_control.py
 |   |-- settings_manager.py
 |   |-- shutdown.py
@@ -67,6 +69,7 @@ botragram/
 |   |-- telegram.py
 |   `-- time.py
 |-- engine/
+|   |-- backtest_engine.py   # Deterministic candle replay through PAPER path
 |   |-- order_engine.py
 |   |-- pnl_engine.py
 |   |-- portfolio_engine.py
@@ -99,9 +102,11 @@ botragram/
 |   |-- volatility/
 |   `-- volume/
 |-- models/                    # Immutable domain/data models
+|   `-- backtest.py            # Backtest request, trade, metrics, dan result
 |-- repositories/              # Persistence interfaces
 |-- services/
 |   |-- account_service.py
+|   |-- backtest_service.py   # Paginated historical candle orchestration
 |   |-- health_service.py
 |   |-- market_service.py
 |   |-- order_service.py
@@ -157,6 +162,7 @@ tests/
 |   |-- __init__.py
 |   `-- *.py
 `-- test_*.py                 # Automated unit/integration/contract tests
+    termasuk test_backtest.py untuk replay, ambiguity, pagination, dan CLI
 ```
 
 Automated tests DILARANG menggunakan network atau credential nyata. Script

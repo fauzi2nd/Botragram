@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import cast
 
-from telegram import ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from botragram.app import TradingRuntimeControl
@@ -17,8 +17,9 @@ from botragram.constants.telegram import (
     MENU_CONFIGURATION,
     MENU_DASHBOARD,
     MENU_HOME,
+    MENU_MARKET_OVERVIEW,
 )
-from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
+from botragram.enums import MarketType, OrderSide, OrderStatus, OrderType, PositionSide
 from botragram.models import Order, Position, Trade
 from botragram.telegram.access import is_chat_allowed
 from botragram.telegram.callbacks import handle_callback_query
@@ -108,6 +109,7 @@ class FakeContext:
     """Minimal callback context with shared bot data."""
 
     bot_data: dict[str, object]
+    chat_data: dict[str, object] = field(default_factory=dict[str, object])
 
 
 @dataclass(slots=True, kw_only=True)
@@ -123,6 +125,10 @@ class FakeQueryProvider:
     async def get_positions(self) -> Sequence[Position]:
         """Return active positions."""
         return self.positions
+
+    async def get_trading_symbols(self) -> Sequence[str]:
+        """Return exchange-backed symbols used by market callbacks."""
+        return ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 
     async def get_available_balance(self) -> Decimal:
         """Return current paper balance."""
@@ -148,9 +154,34 @@ class FakeQueryProvider:
         """Pretend to start a test market subscription."""
         return True
 
+    async def wait_for_first_stream_tick(
+        self,
+        *,
+        timeout_seconds: float = 5.0,
+    ) -> bool:
+        """Pretend the first stream tick arrives within the timeout."""
+        return timeout_seconds > 0
+
     async def stop_market_stream(self) -> bool:
         """Pretend to stop a test market subscription."""
         return True
+
+
+@dataclass(slots=True)
+class FakeMarketTypeSwitcher:
+    """Record staged and committed Telegram product selections."""
+
+    prepared: list[MarketType] = field(default_factory=list[MarketType])
+    committed: list[MarketType] = field(default_factory=list[MarketType])
+
+    async def prepare(self, *, market_type: MarketType) -> bool:
+        """Record a prepared target and require a connector change."""
+        self.prepared.append(market_type)
+        return True
+
+    def commit(self, *, market_type: MarketType) -> None:
+        """Record the target committed after Telegram acknowledgement."""
+        self.committed.append(market_type)
 
 
 def _create_position() -> Position:
@@ -211,6 +242,130 @@ def test_menu_navigation_switches_between_compact_levels() -> None:
     asyncio.run(_run_menu_navigation_test())
 
 
+def test_unconfirmed_status_hides_runtime_defaults() -> None:
+    """Keep status consistent with unconfirmed configuration screens."""
+    asyncio.run(_run_unconfirmed_status_test())
+
+
+def test_market_search_returns_selectable_exchange_symbols() -> None:
+    """Search the exchange catalog from the integrated market workflow."""
+    asyncio.run(_run_market_search_test())
+
+
+def test_dashboard_market_is_read_only_before_configuration() -> None:
+    """Keep Dashboard monitoring separate from market selection."""
+    asyncio.run(_run_market_overview_test())
+
+
+async def _run_unconfirmed_status_test() -> None:
+    """Render account data without presenting defaults as selections."""
+    provider = FakeQueryProvider(
+        positions=(),
+        trades=(),
+        orders=(),
+        balance=Decimal("10000"),
+        last_price=Decimal("65000"),
+    )
+    message = FakeMessage()
+    update = cast(
+        Update,
+        FakeUpdate(message=message, effective_chat=FakeChat(id=_ALLOWED_CHAT_ID)),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: BotContext(
+                    query_provider=provider,
+                    runtime_control=TradingRuntimeControl(),
+                ),
+            }
+        ),
+    )
+
+    await status_command(update, context)
+
+    assert "Setup: <b>0/5 · INCOMPLETE</b>" in message.replies[0]
+    assert "BELUM DIPILIH" not in message.replies[0]
+    assert "BTCUSDT" not in message.replies[0]
+    assert "ema_cross" not in message.replies[0]
+    assert "Price   <code>WAITING</code>" in message.replies[0]
+    assert "10000.00 USDT" in message.replies[0]
+
+
+async def _run_market_overview_test() -> None:
+    """Open Dashboard market data without exposing selector buttons."""
+    message = FakeMessage(text=MENU_MARKET_OVERVIEW)
+    update = cast(
+        Update,
+        FakeUpdate(message=message, effective_chat=FakeChat(id=_ALLOWED_CHAT_ID)),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: BotContext(runtime_control=TradingRuntimeControl()),
+            }
+        ),
+    )
+
+    await menu_message_handler(update, context)
+
+    assert "Market belum dikonfigurasi" in message.replies[-1]
+    assert "Configuration → Select Market" in message.replies[-1]
+    assert message.reply_markups[-1] is None
+
+
+async def _run_market_search_test() -> None:
+    """Open search, submit a keyword, and expose matching symbol callbacks."""
+    provider = FakeQueryProvider(
+        positions=(),
+        trades=(),
+        orders=(),
+        balance=Decimal("10000"),
+        last_price=Decimal("0"),
+    )
+    query = FakeCallbackQuery(data="cb_market_search")
+    message = FakeMessage(text="ETH")
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=message,
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+    fake_context = FakeContext(
+        bot_data={
+            ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+            BOT_CONTEXT_KEY: BotContext(
+                query_provider=provider,
+                runtime_control=TradingRuntimeControl(),
+            ),
+        }
+    )
+    context = cast(ContextTypes.DEFAULT_TYPE, fake_context)
+
+    await handle_callback_query(update, context)
+    message_update = cast(
+        Update,
+        FakeUpdate(message=message, effective_chat=FakeChat(id=_ALLOWED_CHAT_ID)),
+    )
+    await menu_message_handler(message_update, context)
+
+    assert "Ketik symbol" in query.replies[-1]
+    assert "Keyword: <code>ETH</code>" in message.replies[-1]
+    markup = message.reply_markups[-1]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    callbacks = {
+        button.callback_data for row in markup.inline_keyboard for button in row
+    }
+    assert "cb_market_ethusdt" in callbacks
+    assert "cb_market_search" in callbacks
+
+
 async def _run_menu_navigation_test() -> None:
     """Exercise category and home reply-keyboard navigation."""
     message = FakeMessage(text=MENU_DASHBOARD)
@@ -252,6 +407,7 @@ async def _run_dynamic_command_test() -> None:
     """Invoke dynamic commands through Telegram-compatible test doubles."""
     runtime_control = TradingRuntimeControl()
     runtime_control.confirm_exchange(runtime_control.exchange_type)
+    runtime_control.confirm_market_type(runtime_control.market_type)
     runtime_control.select_symbol(runtime_control.symbol)
     runtime_control.select_interval(runtime_control.interval)
     runtime_control.select_strategy(runtime_control.strategy_type)
@@ -320,6 +476,43 @@ def test_open_position_allows_current_startup_values_to_be_reconfirmed() -> None
     asyncio.run(_run_open_position_startup_recovery_test())
 
 
+def test_telegram_can_request_a_futures_soft_restart() -> None:
+    """Acknowledge the selected product before committing its restart."""
+    asyncio.run(_run_market_type_switch_callback_test())
+
+
+async def _run_market_type_switch_callback_test() -> None:
+    """Select Futures through the exchange configuration callback."""
+    switcher = FakeMarketTypeSwitcher()
+    query = FakeCallbackQuery(data="cb_product_futures")
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=FakeMessage(),
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: BotContext(
+                    runtime_control=TradingRuntimeControl(),
+                    market_type_switcher=switcher,
+                ),
+            }
+        ),
+    )
+
+    await handle_callback_query(update, context)
+
+    assert switcher.prepared == [MarketType.FUTURES]
+    assert switcher.committed == [MarketType.FUTURES]
+    assert "Binance Futures" in query.replies[-1]
+
+
 async def _run_open_position_startup_recovery_test() -> None:
     """Confirm active selections and retain guards for different values."""
     runtime_control = TradingRuntimeControl()
@@ -362,7 +555,10 @@ async def _run_open_position_startup_recovery_test() -> None:
         query.data = callback_data
         await handle_callback_query(update, context)
 
-    assert runtime_control.get_missing_configuration_requirements() == ("exchange",)
+    assert runtime_control.get_missing_configuration_requirements() == (
+        "exchange",
+        "market type",
+    )
     assert not any("Tutup semua posisi" in reply for reply in query.replies)
 
     blocked_callbacks = (
@@ -380,8 +576,10 @@ async def _run_open_position_startup_recovery_test() -> None:
     assert runtime_control.symbol == "BTCUSDT"
     assert runtime_control.strategy_type.value == "ema_cross"
     assert runtime_control.interval.value == "15m"
+    assert "110.00 USDT" in query.replies[0]
 
     runtime_control.confirm_exchange(runtime_control.exchange_type)
+    runtime_control.confirm_market_type(runtime_control.market_type)
     runtime_control.set_stream_enabled(True)
     runtime_control.record_stream_tick(price=Decimal("110"))
 
@@ -421,6 +619,9 @@ async def _run_incomplete_startup_gate_test() -> None:
     assert len(message.replies) == 1
     assert "Trading belum dapat dimulai" in message.replies[0]
     assert "Startup Configuration" in message.replies[0]
+    assert message.replies[0].count("BELUM DIPILIH") == 5
+    assert "BTCUSDT" not in message.replies[0]
+    assert "ema_cross" not in message.replies[0]
 
 
 async def _run_unauthorized_command_test() -> None:

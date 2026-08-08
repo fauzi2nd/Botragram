@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
+from time import monotonic
 from typing import Final, Protocol
 
 from botragram.models import Order, Position, Ticker, Trade
@@ -16,6 +17,8 @@ __all__ = ["MarketTickListener", "TelegramQueryService"]
 
 
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
+_SYMBOL_CACHE_SECONDS: Final[float] = 300.0
+_FIRST_TICK_TIMEOUT_SECONDS: Final[float] = 5.0
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
@@ -24,6 +27,14 @@ class MarketTickerProvider(Protocol):
 
     async def get_ticker(self, *, symbol: str) -> Ticker:
         """Return a normalized ticker."""
+        ...
+
+    async def get_trading_symbols(
+        self,
+        *,
+        quote_asset: str,
+    ) -> Sequence[str]:
+        """Return active symbols for one quote asset."""
         ...
 
     @property
@@ -83,6 +94,7 @@ class TelegramQueryService:
     position_repository: PositionRepository
     trade_repository: TradeRepository
     order_repository: OrderRepository
+    quote_asset: str = "USDT"
     runtime_control: RuntimeSymbolProvider | None = None
     tick_listeners: tuple[MarketTickListener, ...] = ()
     _stream_task: asyncio.Task[None] | None = field(
@@ -92,6 +104,13 @@ class TelegramQueryService:
     )
     _stream_symbol: str | None = field(default=None, init=False)
     _last_stream_price: Decimal = field(default=_DECIMAL_ZERO, init=False)
+    _first_tick_event: asyncio.Event = field(
+        default_factory=asyncio.Event,
+        init=False,
+        repr=False,
+    )
+    _trading_symbols: tuple[str, ...] = field(default=(), init=False, repr=False)
+    _symbols_expire_monotonic: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Normalize the configured trading symbol."""
@@ -100,11 +119,39 @@ class TelegramQueryService:
         if not normalized_symbol:
             raise ValueError("Telegram query symbol must not be empty")
 
+        normalized_quote_asset = self.quote_asset.strip().upper()
+
+        if not normalized_quote_asset:
+            raise ValueError("Telegram quote asset must not be empty")
+
         self.symbol = normalized_symbol
+        self.quote_asset = normalized_quote_asset
 
     async def get_positions(self) -> Sequence[Position]:
         """Return all persisted active paper positions."""
         return await self.position_repository.get_open_positions()
+
+    async def get_trading_symbols(self) -> Sequence[str]:
+        """Return cached exchange-supported symbols for the quote asset."""
+        now = monotonic()
+
+        if self._trading_symbols and now < self._symbols_expire_monotonic:
+            return self._trading_symbols
+
+        symbols = tuple(
+            await self.market_service.get_trading_symbols(
+                quote_asset=self.quote_asset,
+            )
+        )
+
+        if not symbols:
+            raise RuntimeError(
+                f"Exchange returned no active {self.quote_asset} trading symbols"
+            )
+
+        self._trading_symbols = symbols
+        self._symbols_expire_monotonic = now + _SYMBOL_CACHE_SECONDS
+        return symbols
 
     async def get_available_balance(self) -> Decimal:
         """Return reconstructed free paper balance."""
@@ -174,6 +221,8 @@ class TelegramQueryService:
             else self.symbol
         )
         self._stream_symbol = symbol
+        self._last_stream_price = _DECIMAL_ZERO
+        self._first_tick_event.clear()
         self._stream_task = asyncio.create_task(
             self._consume_market_stream(symbol=symbol),
             name=f"telegram-market-stream:{symbol}",
@@ -183,6 +232,31 @@ class TelegramQueryService:
             self.runtime_control.set_stream_enabled(True)
 
         _LOGGER.info("Telegram market stream started: symbol=%s", symbol)
+        return True
+
+    async def wait_for_first_stream_tick(
+        self,
+        *,
+        timeout_seconds: float = _FIRST_TICK_TIMEOUT_SECONDS,
+    ) -> bool:
+        """Wait briefly for the active subscription's first validated tick."""
+        if timeout_seconds <= 0:
+            raise ValueError("First-tick timeout must be greater than zero")
+
+        task = self._stream_task
+
+        if task is None or task.done():
+            return False
+
+        if self._first_tick_event.is_set():
+            return True
+
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                await self._first_tick_event.wait()
+        except TimeoutError:
+            return False
+
         return True
 
     async def stop_market_stream(self) -> bool:
@@ -219,6 +293,7 @@ class TelegramQueryService:
         try:
             async for ticker in self.market_service.stream_ticker(symbol=symbol):
                 self._last_stream_price = ticker.last_price
+                self._first_tick_event.set()
 
                 if self.runtime_control is not None:
                     self.runtime_control.record_stream_tick(

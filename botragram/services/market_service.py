@@ -70,6 +70,21 @@ class MarketService:
             symbol=self._normalize_symbol(symbol),
         )
 
+    async def get_trading_symbols(
+        self,
+        *,
+        quote_asset: str,
+    ) -> Sequence[str]:
+        """Return exchange-supported active symbols for one quote asset."""
+        normalized_quote_asset = quote_asset.strip().upper()
+
+        if not normalized_quote_asset:
+            raise ValueError("Quote asset must not be empty")
+
+        return await self.exchange_client.get_trading_symbols(
+            quote_asset=normalized_quote_asset,
+        )
+
     async def get_candles(
         self,
         *,

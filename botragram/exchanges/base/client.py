@@ -71,6 +71,14 @@ class BaseExchangeClient(ABC):
         """Return the latest ticker for a trading symbol."""
 
     @abstractmethod
+    async def get_trading_symbols(
+        self,
+        *,
+        quote_asset: str,
+    ) -> Sequence[str]:
+        """Return active trading symbols for one quote asset."""
+
+    @abstractmethod
     async def get_candles(
         self,
         *,

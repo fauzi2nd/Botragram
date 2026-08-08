@@ -247,6 +247,46 @@ def test_mapper_maps_futures_collateral_account() -> None:
 
 
 @pytest.mark.asyncio
+async def test_futures_client_lists_active_usdt_perpetual_symbols() -> None:
+    """Exclude inactive, dated, and differently quoted Futures contracts."""
+    rest = RecordingBinanceRestClient()
+    rest.get_responses["/fapi/v1/exchangeInfo"] = {
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "status": "TRADING",
+                "quoteAsset": "USDT",
+                "contractType": "PERPETUAL",
+            },
+            {
+                "symbol": "ETHUSDT_260925",
+                "status": "TRADING",
+                "quoteAsset": "USDT",
+                "contractType": "CURRENT_QUARTER",
+            },
+            {
+                "symbol": "OLDUSDT",
+                "status": "SETTLING",
+                "quoteAsset": "USDT",
+                "contractType": "PERPETUAL",
+            },
+            {
+                "symbol": "BTCUSDC",
+                "status": "TRADING",
+                "quoteAsset": "USDC",
+                "contractType": "PERPETUAL",
+            },
+        ]
+    }
+    client = _create_client(rest)
+
+    symbols = await client.get_trading_symbols(quote_asset="usdt")
+
+    assert symbols == ("BTCUSDT",)
+    assert rest.requests == [("GET", "/fapi/v1/exchangeInfo", None, False)]
+
+
+@pytest.mark.asyncio
 async def test_futures_client_creates_limit_order() -> None:
     """Verify Futures limit orders use the fapi endpoint and GTC."""
     rest = RecordingBinanceRestClient()

@@ -30,14 +30,17 @@ from botragram.models import Order, Position, Trade
 __all__ = [
     "ALLOWED_CHAT_IDS_KEY",
     "BOT_CONTEXT_KEY",
+    "MARKET_SEARCH_PENDING_KEY",
     "BotContext",
     "BotQueryProvider",
+    "BotMarketTypeSwitcher",
     "BotRuntimeControl",
 ]
 
 
 BOT_CONTEXT_KEY: Final[str] = "bot_context"
 ALLOWED_CHAT_IDS_KEY: Final[str] = "allowed_chat_ids"
+MARKET_SEARCH_PENDING_KEY: Final[str] = "market_search_pending"
 
 
 class BotQueryProvider(Protocol):
@@ -45,6 +48,10 @@ class BotQueryProvider(Protocol):
 
     async def get_positions(self) -> Sequence[Position]:
         """Return active positions."""
+        ...
+
+    async def get_trading_symbols(self) -> Sequence[str]:
+        """Return exchange-supported active market symbols."""
         ...
 
     async def get_available_balance(self) -> Decimal:
@@ -71,8 +78,28 @@ class BotQueryProvider(Protocol):
         """Start ticker subscription for the selected symbol."""
         ...
 
+    async def wait_for_first_stream_tick(
+        self,
+        *,
+        timeout_seconds: float = 5.0,
+    ) -> bool:
+        """Wait briefly for the active subscription's first tick."""
+        ...
+
     async def stop_market_stream(self) -> bool:
         """Stop the active ticker subscription."""
+        ...
+
+
+class BotMarketTypeSwitcher(Protocol):
+    """Stage and commit safe exchange product restarts."""
+
+    async def prepare(self, *, market_type: MarketType) -> bool:
+        """Validate and stage a Spot or Futures switch."""
+        ...
+
+    def commit(self, *, market_type: MarketType) -> None:
+        """Commit a prepared switch after its Telegram acknowledgement."""
         ...
 
 
@@ -161,6 +188,7 @@ class BotContext:
     positions: tuple[Position, ...] = ()
     query_provider: BotQueryProvider | None = None
     runtime_control: BotRuntimeControl | None = None
+    market_type_switcher: BotMarketTypeSwitcher | None = None
 
     @property
     def market_type(self) -> MarketType:

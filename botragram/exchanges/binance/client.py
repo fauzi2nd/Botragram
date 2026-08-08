@@ -55,6 +55,7 @@ type RequestParams = dict[str, RequestValue]
 # Endpoints
 # =============================================================================
 _PING_ENDPOINT = "/api/v3/ping"
+_EXCHANGE_INFO_ENDPOINT = "/api/v3/exchangeInfo"
 _ACCOUNT_ENDPOINT = "/api/v3/account"
 _TICKER_ENDPOINT = "/api/v3/ticker/24hr"
 _CANDLES_ENDPOINT = "/api/v3/klines"
@@ -146,6 +147,17 @@ class BinanceExchangeClient(BaseExchangeClient):
 
         return self._mapper.map_ticker(
             self._require_mapping(payload),
+        )
+
+    async def get_trading_symbols(
+        self,
+        *,
+        quote_asset: str,
+    ) -> Sequence[str]:
+        """Return active Binance Spot symbols for one quote asset."""
+        return await self._get_trading_symbols(
+            endpoint=_EXCHANGE_INFO_ENDPOINT,
+            quote_asset=quote_asset,
         )
 
     async def get_candles(
@@ -467,6 +479,49 @@ class BinanceExchangeClient(BaseExchangeClient):
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    async def _get_trading_symbols(
+        self,
+        *,
+        endpoint: str,
+        quote_asset: str,
+        contract_type: str | None = None,
+    ) -> tuple[str, ...]:
+        """Read and validate exchange-info symbols at the vendor boundary."""
+        normalized_quote_asset = quote_asset.strip().upper()
+
+        if not normalized_quote_asset:
+            raise ValueError("Quote asset must not be empty")
+
+        payload = self._require_mapping(await self._rest.get(endpoint))
+        raw_symbols = self._require_sequence(payload.get("symbols"))
+        symbols: list[str] = []
+
+        for raw_symbol in raw_symbols:
+            symbol_info = self._require_mapping(raw_symbol)
+            symbol = symbol_info.get("symbol")
+            status = symbol_info.get("status")
+            raw_quote_asset = symbol_info.get("quoteAsset")
+
+            if (
+                not isinstance(symbol, str)
+                or not isinstance(status, str)
+                or not isinstance(raw_quote_asset, str)
+            ):
+                raise ValueError("Binance exchange info contains invalid symbol data")
+
+            if status != "TRADING" or raw_quote_asset.upper() != normalized_quote_asset:
+                continue
+
+            if contract_type is not None:
+                raw_contract_type = symbol_info.get("contractType")
+
+                if raw_contract_type != contract_type:
+                    continue
+
+            symbols.append(symbol.upper())
+
+        return tuple(sorted(set(symbols)))
 
     @staticmethod
     def _normalize_symbol(

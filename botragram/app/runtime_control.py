@@ -37,6 +37,7 @@ class TradingRuntimeControl:
     strategy_type: StrategyType = StrategyType.EMA_CROSS
     stream_enabled: bool = False
     _exchange_confirmed: bool = field(default=False, init=False, repr=False)
+    _market_type_confirmed: bool = field(default=False, init=False, repr=False)
     _symbol_confirmed: bool = field(default=False, init=False, repr=False)
     _interval_confirmed: bool = field(default=False, init=False, repr=False)
     _strategy_confirmed: bool = field(default=False, init=False, repr=False)
@@ -107,6 +108,24 @@ class TradingRuntimeControl:
         self._exchange_confirmed = True
         return changed
 
+    def require_configuration_change_allowed(self) -> None:
+        """Raise when runtime state cannot safely change connector settings."""
+        self._require_paused_configuration()
+
+    def confirm_market_type(self, market_type: MarketType) -> bool:
+        """Confirm the product family loaded by the active connector."""
+        if market_type is not self.market_type:
+            raise RuntimeError(
+                "Requested market type does not match the active connector"
+            )
+
+        if self._market_type_confirmed:
+            return False
+
+        self._require_paused_configuration()
+        self._market_type_confirmed = True
+        return True
+
     def select_symbol(self, symbol: str) -> bool:
         """Select the symbol used by future cycles while paused."""
         self._require_paused_configuration()
@@ -170,6 +189,7 @@ class TradingRuntimeControl:
     ) -> None:
         """Restore a persisted position configuration while startup is paused."""
         self.confirm_exchange(self.exchange_type)
+        self.confirm_market_type(self.market_type)
         self.select_symbol(symbol)
         self.select_interval(interval)
         self.select_strategy(strategy_type)
@@ -188,6 +208,9 @@ class TradingRuntimeControl:
 
         if not self._exchange_confirmed:
             missing.append("exchange")
+
+        if not self._market_type_confirmed:
+            missing.append("market type")
 
         if not self._symbol_confirmed:
             missing.append("symbol")

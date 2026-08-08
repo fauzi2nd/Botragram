@@ -170,6 +170,7 @@ async def _run_position_lifecycle_test() -> None:
     )
     close_result = await fixture.service.execute(signal=close_signal)
     final_balance = await fixture.service.get_available_balance()
+    realized_pnl = await fixture.service.get_realized_pnl()
 
     assert close_result.executed
     assert "take-profit" in close_result.reason
@@ -177,6 +178,7 @@ async def _run_position_lifecycle_test() -> None:
     assert await fixture.orders.count() == 2
     assert await fixture.trades.count() == 2
     assert final_balance == Decimal("10046.9250250")
+    assert realized_pnl == Decimal("46.9250250")
     assert len(publisher.notifications) == 2
     assert "Paper Entry" in publisher.notifications[0].message
     assert "Paper Exit" in publisher.notifications[1].message

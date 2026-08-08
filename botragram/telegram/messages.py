@@ -35,6 +35,9 @@ __all__ = [
     "get_history_message",
     "get_interval_message",
     "get_market_message",
+    "get_market_overview_message",
+    "get_market_search_prompt_message",
+    "get_market_search_results_message",
     "get_navigation_message",
     "get_orders_message",
     "get_paper_entry_message",
@@ -93,8 +96,13 @@ def get_status_message(
     interval: str | None = None,
     stream_active: bool | None = None,
     total_unrealized_pnl: Decimal | None = None,
+    missing_configuration_requirements: Sequence[str] = (),
 ) -> str:
     """Return a compact application, market, and portfolio control center."""
+    configuration_requirements = frozenset(
+        {"exchange", "market type", "symbol", "interval", "strategy"}
+    )
+    missing = frozenset(missing_configuration_requirements) & configuration_requirements
     if is_running and is_paused:
         state = "🟡 PAUSED"
     else:
@@ -103,20 +111,51 @@ def get_status_message(
         stream = "⚪ UNKNOWN"
     else:
         stream = "🟢 LIVE" if stream_active else "⚪ OFFLINE"
-    market = market_type.value.upper() if market_type is not None else "-"
-    exchange = exchange_type.upper() if exchange_type else "-"
-    strategy = strategy_name or "-"
-    candle_interval = interval or "-"
+    market = (
+        market_type.value.upper()
+        if market_type is not None and "market type" not in missing
+        else "BELUM DIPILIH"
+    )
+    exchange = (
+        exchange_type.upper()
+        if exchange_type and "exchange" not in missing
+        else "BELUM DIPILIH"
+    )
+    selected_symbol = symbol if "symbol" not in missing else "BELUM DIPILIH"
+    strategy = (
+        strategy_name
+        if strategy_name and "strategy" not in missing
+        else "BELUM DIPILIH"
+    )
+    candle_interval = (
+        interval if interval and "interval" not in missing else "BELUM DIPILIH"
+    )
+    price = (
+        format_currency(last_price, symbol="USDT")
+        if "symbol" not in missing and last_price > 0
+        else "WAITING"
+    )
+    if missing:
+        configured_count = len(configuration_requirements) - len(missing)
+        configuration_summary = (
+            f"🧭 Setup: <b>{configured_count}/5 · INCOMPLETE</b>\n"
+            "ℹ️ Lanjutkan melalui menu Configuration\n"
+        )
+    else:
+        configuration_summary = (
+            f"🏦 {escape(exchange)} · {escape(market)}\n"
+            f"📈 <b>{escape(selected_symbol)}</b> · "
+            f"{escape(candle_interval)}\n"
+            f"🧠 {escape(strategy)}\n"
+        )
     lines = [
         f"📊 <b>{APP_NAME.upper()} CONTROL CENTER</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
         f"{state}  ·  <b>{escape(trade_mode.upper())}</b>\n"
-        f"🏦 {escape(exchange)} · {escape(market)}\n"
-        f"📈 <b>{escape(symbol)}</b> · {escape(candle_interval)}\n"
-        f"🧠 {escape(strategy)}\n"
+        f"{configuration_summary}"
         f"📡 Stream: {stream}\n\n"
         "<b>MARKET &amp; PORTFOLIO</b>\n"
-        f"Price   <code>{format_currency(last_price, symbol='USDT')}</code>"
+        f"Price   <code>{price}</code>"
     ]
 
     if available_balance is not None:
@@ -183,23 +222,33 @@ def get_settings_message(
 def get_exchange_message(
     current_exchange: str,
     market_type: MarketType = MarketType.SPOT,
+    *,
+    exchange_confirmed: bool = False,
+    market_type_confirmed: bool = False,
 ) -> str:
     """Return the exchange selection message."""
     exchange_name = current_exchange.strip().upper()
-    market_name = escape(market_type.value.title())
     exchange_info: dict[str, str] = {
-        "BYBIT": "🟡 <b>Bybit</b> — Derivatives &amp; Spot",
-        "BINANCE": f"🟠 <b>Binance</b> — {market_name} Exchange",
-        "OKX": "⚫ <b>OKX</b> — Advanced Trading Platform",
-        "BITGET": "🔵 <b>Bitget</b> — Copy Trading Exchange",
+        "BYBIT": "🟡 <b>Bybit</b>",
+        "BINANCE": "🟠 <b>Binance</b>",
+        "OKX": "⚫ <b>OKX</b>",
+        "BITGET": "🔵 <b>Bitget</b>",
     }
-    description = exchange_info.get(exchange_name, escape(exchange_name))
+    exchange = (
+        exchange_info.get(exchange_name, escape(exchange_name))
+        if exchange_confirmed
+        else "Belum dipilih"
+    )
+    product = (
+        escape(market_type.value.title()) if market_type_confirmed else "Belum dipilih"
+    )
 
     return (
-        "🔄 <b>Konfirmasi Exchange</b>\n\n"
-        f"<b>Aktif:</b> {description}\n\n"
-        "Konfirmasikan connector aktif. Mengganti exchange memerlukan profile "
-        "environment lain dan restart aplikasi."
+        "🔄 <b>Exchange &amp; Product</b>\n\n"
+        f"<b>Exchange:</b> {exchange}\n"
+        f"<b>Product:</b> {product}\n\n"
+        "Pilih Spot atau Futures. Botragram akan menutup connector lama dan "
+        "melakukan soft restart otomatis setelah pemeriksaan keamanan."
     )
 
 
@@ -216,13 +265,69 @@ def get_exchange_switched_message(
 def get_market_message(
     symbol: str,
     last_price: Decimal,
+    *,
+    confirmed: bool = False,
 ) -> str:
     """Return current market summary."""
+    selected_symbol = escape(symbol) if confirmed else "Belum dipilih"
+    price = (
+        format_currency(last_price, symbol="USDT")
+        if confirmed and last_price > 0
+        else "WAITING"
+    )
     return (
         "📈 <b>Market Data</b>\n\n"
-        f"<b>Symbol:</b> {escape(symbol)}\n"
-        f"<b>Last Price:</b> {format_currency(last_price, symbol='USDT')}\n\n"
+        f"<b>Symbol:</b> {selected_symbol}\n"
+        f"<b>Last Price:</b> {price}\n\n"
         "Data pasar diperbarui dari exchange aktif."
+    )
+
+
+def get_market_overview_message(
+    *,
+    symbol: str,
+    last_price: Decimal,
+    confirmed: bool,
+) -> str:
+    """Return a read-only market summary for the Dashboard menu."""
+    if not confirmed:
+        return (
+            "📈 <b>Market Overview</b>\n\n"
+            "🧭 Market belum dikonfigurasi.\n\n"
+            "Buka <b>Configuration → Select Market</b> untuk memilih symbol."
+        )
+
+    return get_market_message(symbol, last_price, confirmed=True)
+
+
+def get_market_search_prompt_message() -> str:
+    """Return instructions for an exchange-symbol search."""
+    return (
+        "🔎 <b>Search Market</b>\n\n"
+        "Ketik symbol atau kode koin yang ingin dicari.\n"
+        "Contoh: <code>BTC</code>, <code>ETH</code>, atau <code>SOLUSDT</code>."
+    )
+
+
+def get_market_search_results_message(
+    *,
+    keyword: str,
+    result_count: int,
+    total_matches: int,
+) -> str:
+    """Return a concise exchange-symbol search summary."""
+    if total_matches == 0:
+        return (
+            "🔎 <b>Market Search</b>\n\n"
+            f"Tidak ada symbol yang cocok dengan <code>{escape(keyword)}</code>.\n"
+            "Coba kode koin lain."
+        )
+
+    return (
+        "🔎 <b>Market Search</b>\n\n"
+        f"Keyword: <code>{escape(keyword)}</code>\n"
+        f"Menampilkan {result_count} dari {total_matches} hasil.\n\n"
+        "Pilih symbol yang ingin digunakan."
     )
 
 
@@ -338,21 +443,31 @@ def get_strategy_message(
     strategy_name: str,
     fast_period: int,
     slow_period: int,
+    *,
+    confirmed: bool = False,
 ) -> str:
     """Return current strategy details."""
+    if not confirmed:
+        return (
+            "🧠 <b>Strategy</b>\n\n"
+            "<b>Strategy:</b> Belum dipilih\n\n"
+            "Pilih strategy yang akan digunakan pada siklus trading."
+        )
+
     return (
         "🧠 <b>Strategy</b>\n\n"
-        f"<b>Active Strategy:</b> {escape(strategy_name)}\n"
+        f"<b>Strategy:</b> {escape(strategy_name)}\n"
         f"<b>Fast EMA period:</b> {fast_period}\n"
         f"<b>Slow EMA period:</b> {slow_period}"
     )
 
 
-def get_interval_message(interval: str) -> str:
+def get_interval_message(interval: str, *, confirmed: bool = False) -> str:
     """Return the current runtime candle interval."""
+    selected_interval = escape(interval) if confirmed else "Belum dipilih"
     return (
         "⏱️ <b>Candle Interval</b>\n\n"
-        f"<b>Active Interval:</b> {escape(interval)}\n\n"
+        f"<b>Interval:</b> {selected_interval}\n\n"
         "Pilih interval yang akan digunakan pada siklus trading."
     )
 
@@ -362,16 +477,23 @@ def get_stream_message(
     transport_connected: bool,
     subscription_active: bool,
     first_tick_received: bool,
+    last_price: Decimal | None = None,
 ) -> str:
     """Return distinct WebSocket transport and subscription states."""
     transport = "READY" if transport_connected else "DISCONNECTED"
     subscription = "ACTIVE" if subscription_active else "INACTIVE"
     first_tick = "RECEIVED" if first_tick_received else "WAITING"
+    price = (
+        format_currency(last_price, symbol="USDT")
+        if last_price is not None and last_price > 0
+        else "WAITING"
+    )
     return (
         "📡 <b>Market Stream</b>\n\n"
         f"<b>WebSocket Transport:</b> {transport}\n"
         f"<b>Market Subscription:</b> {subscription}\n"
         f"<b>First Tick:</b> {first_tick}\n\n"
+        f"<b>Last Price:</b> {price}\n\n"
         "Trading hanya dapat dimulai setelah subscription aktif dan tick "
         "pertama diterima."
     )
@@ -380,6 +502,7 @@ def get_stream_message(
 def get_startup_configuration_message(
     *,
     exchange: str,
+    market_type: str,
     symbol: str,
     interval: str,
     strategy: str,
@@ -391,6 +514,9 @@ def get_startup_configuration_message(
     def _marker(requirement: str) -> str:
         return "⬜" if requirement in missing else "✅"
 
+    def _selection(requirement: str, value: str) -> str:
+        return "BELUM DIPILIH" if requirement in missing else escape(value)
+
     first_tick_marker = (
         "⬜"
         if "stream subscription" in missing or "first stream tick" in missing
@@ -399,10 +525,13 @@ def get_startup_configuration_message(
 
     return (
         "🧭 <b>Startup Configuration</b>\n\n"
-        f"{_marker('exchange')} Exchange: {escape(exchange.upper())}\n"
-        f"{_marker('symbol')} Symbol: {escape(symbol)}\n"
-        f"{_marker('interval')} Interval: {escape(interval)}\n"
-        f"{_marker('strategy')} Strategy: {escape(strategy)}\n"
+        f"{_marker('exchange')} Exchange: "
+        f"{_selection('exchange', exchange.upper())}\n"
+        f"{_marker('market type')} Product: "
+        f"{_selection('market type', market_type.upper())}\n"
+        f"{_marker('symbol')} Symbol: {_selection('symbol', symbol)}\n"
+        f"{_marker('interval')} Interval: {_selection('interval', interval)}\n"
+        f"{_marker('strategy')} Strategy: {_selection('strategy', strategy)}\n"
         f"{_marker('stream subscription')} Stream subscription\n"
         f"{first_tick_marker} First stream tick\n\n"
         "Pilih konfigurasi dari menu Telegram secara berurutan, aktifkan "

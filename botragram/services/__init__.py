@@ -4,6 +4,7 @@ from botragram.services.market_service import MarketService
 from botragram.services.order_service import OrderService
 from botragram.services.paper_trading_service import (
     NotificationPublisher,
+    PaperPortfolioSnapshot,
     PaperTradingService,
 )
 from botragram.services.position_protection_manager import PositionProtectionManager
@@ -20,6 +21,7 @@ __all__ = [
     "MarketService",
     "NotificationPublisher",
     "OrderService",
+    "PaperPortfolioSnapshot",
     "PaperTradingService",
     "PositionService",
     "PositionProtectionManager",

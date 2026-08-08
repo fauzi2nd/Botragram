@@ -21,6 +21,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
+from botragram.app.market_type_switch import (
+    MarketTypeSwitchService,
+    RuntimeRestartCoordinator,
+)
 from botragram.app.runtime_control import TradingRuntimeControl
 
 # =============================================================================
@@ -111,6 +115,7 @@ class DependencyProvider:
         "_health_service",
         "_initialized",
         "_market_service",
+        "_market_type_switch_service",
         "_order_engine",
         "_order_repository",
         "_order_service",
@@ -122,6 +127,7 @@ class DependencyProvider:
         "_position_service",
         "_risk_engine",
         "_runtime_control",
+        "_restart_coordinator",
         "_runtime_reporter",
         "_runtime_recovery_service",
         "_settings",
@@ -141,6 +147,8 @@ class DependencyProvider:
         *,
         database_path: str | Path,
         settings: Settings | None = None,
+        restart_coordinator: RuntimeRestartCoordinator | None = None,
+        market_type_confirmed: bool = False,
     ) -> None:
         """Initialize the application dependency provider.
 
@@ -148,6 +156,8 @@ class DependencyProvider:
             database_path: SQLite database file path.
             settings: Immutable application configuration. Defaults preserve
                 the existing repository-only construction API.
+            restart_coordinator: Optional process-level soft-restart coordinator.
+            market_type_confirmed: Whether Telegram selected the loaded product.
 
         Raises:
             ValueError: If the database path is empty.
@@ -169,6 +179,15 @@ class DependencyProvider:
             symbol=self._settings.market.symbol,
             interval=self._settings.market.interval,
             strategy_type=self._settings.strategy.strategy_type,
+        )
+        if market_type_confirmed:
+            self._runtime_control.confirm_market_type(
+                self._settings.exchange.market_type
+            )
+        self._restart_coordinator = (
+            restart_coordinator
+            if restart_coordinator is not None
+            else RuntimeRestartCoordinator()
         )
         self._database: SQLiteDatabase | None = None
         self._exchange_client: BaseExchangeClient | None = None
@@ -194,6 +213,7 @@ class DependencyProvider:
         self._position_protection_manager: PositionProtectionManager | None = None
 
         self._market_service: MarketService | None = None
+        self._market_type_switch_service: MarketTypeSwitchService | None = None
         self._strategy_service: StrategyService | None = None
         self._order_service: OrderService | None = None
         self._paper_trading_service: PaperTradingService | None = None
@@ -220,6 +240,11 @@ class DependencyProvider:
     def runtime_control(self) -> TradingRuntimeControl:
         """Return the process-wide cooperative trading runtime controller."""
         return self._runtime_control
+
+    @property
+    def restart_coordinator(self) -> RuntimeRestartCoordinator:
+        """Return the process-level connector restart coordinator."""
+        return self._restart_coordinator
 
     async def initialize(self) -> None:
         """Initialize repositories, exchange clients, engines, and services."""
@@ -281,6 +306,7 @@ class DependencyProvider:
                 position_repository=self.position_repository,
                 trade_repository=self.trade_repository,
                 order_repository=self.order_repository,
+                quote_asset=self._settings.market.quote_asset,
                 runtime_control=self.runtime_control,
                 tick_listeners=tick_listeners,
             )
@@ -297,6 +323,13 @@ class DependencyProvider:
                 exchange_client=self.exchange_client,
                 risk_engine=self.risk_engine,
             )
+            self._market_type_switch_service = MarketTypeSwitchService(
+                trade_mode=self._settings.app.trade_mode,
+                runtime_control=self.runtime_control,
+                position_repository=self.position_repository,
+                position_service=self.position_service,
+                restart_coordinator=self.restart_coordinator,
+            )
             await self.telegram_bot.sync_context(
                 context=BotContext(
                     is_running=True,
@@ -306,6 +339,7 @@ class DependencyProvider:
                     exchange_type=self._settings.exchange.exchange.value,
                     query_provider=query_service,
                     runtime_control=self.runtime_control,
+                    market_type_switcher=self.market_type_switch_service,
                 )
             )
             try:
@@ -450,6 +484,11 @@ class DependencyProvider:
     def market_service(self) -> MarketService:
         """Return the configured market service."""
         return self._require(self._market_service)
+
+    @property
+    def market_type_switch_service(self) -> MarketTypeSwitchService:
+        """Return the guarded Telegram product-switch service."""
+        return self._require(self._market_type_switch_service)
 
     @property
     def strategy_service(self) -> StrategyService:
@@ -661,6 +700,7 @@ class DependencyProvider:
         self._position_engine = None
         self._position_protection_manager = None
         self._market_service = None
+        self._market_type_switch_service = None
         self._strategy_service = None
         self._order_service = None
         self._position_service = None

@@ -23,11 +23,13 @@ from botragram.engine.position_engine import PositionEngine
 from botragram.engine.risk_engine import RiskEngine
 from botragram.engine.signal_engine import SignalEngine
 from botragram.engine.trading_engine import TradingEngine
+from botragram.engine.backtest_engine import BacktestEngine
 
 # =============================================================================
 # Exports
 # =============================================================================
 __all__ = [
+    "BacktestEngine",
     "OrderEngine",
     "PnLEngine",
     "PortfolioEngine",

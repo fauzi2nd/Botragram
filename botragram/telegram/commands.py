@@ -41,6 +41,7 @@ from botragram.constants.telegram import (
     MENU_HOME,
     MENU_INTERVAL,
     MENU_MARKET,
+    MENU_MARKET_OVERVIEW,
     MENU_ORDERS,
     MENU_PAUSE,
     MENU_POSITIONS,
@@ -55,7 +56,11 @@ from botragram.constants.telegram import (
 )
 from botragram.models import Order, Trade
 from botragram.telegram.access import is_authorized_update
-from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
+from botragram.telegram.context import (
+    BOT_CONTEXT_KEY,
+    MARKET_SEARCH_PENDING_KEY,
+    BotContext,
+)
 from botragram.telegram.keyboards import (
     get_activity_menu_keyboard,
     get_configuration_menu_keyboard,
@@ -64,6 +69,7 @@ from botragram.telegram.keyboards import (
     get_interval_keyboard,
     get_main_menu_keyboard,
     get_market_keyboard,
+    get_market_search_keyboard,
     get_strategy_keyboard,
     get_stream_keyboard,
     get_trading_menu_keyboard,
@@ -74,6 +80,8 @@ from botragram.telegram.messages import (
     get_history_message,
     get_interval_message,
     get_market_message,
+    get_market_overview_message,
+    get_market_search_results_message,
     get_navigation_message,
     get_orders_message,
     get_positions_message,
@@ -91,6 +99,32 @@ from botragram.telegram.messages import (
 logger: Final[logging.Logger] = logging.getLogger(__name__)
 _HISTORY_LIMIT: Final[int] = 10
 _ORDER_LIMIT: Final[int] = 10
+_MARKET_SEARCH_RESULT_LIMIT: Final[int] = 10
+_MENU_ACTIONS: Final[frozenset[str]] = frozenset(
+    {
+        MENU_ACTIVITY,
+        MENU_BALANCE,
+        MENU_CONFIGURATION,
+        MENU_DASHBOARD,
+        MENU_EXCHANGE,
+        MENU_HISTORY,
+        MENU_HOME,
+        MENU_INTERVAL,
+        MENU_MARKET,
+        MENU_MARKET_OVERVIEW,
+        MENU_ORDERS,
+        MENU_PAUSE,
+        MENU_POSITIONS,
+        MENU_SETTINGS,
+        MENU_START,
+        MENU_STATUS,
+        MENU_STOP,
+        MENU_STRATEGY,
+        MENU_STREAM,
+        MENU_TEST,
+        MENU_TRADING,
+    }
+)
 _DATA_UNAVAILABLE_MESSAGE: Final[str] = (
     "⚠️ <b>Data sementara tidak tersedia.</b> Silakan coba lagi."
 )
@@ -123,6 +157,24 @@ def _get_runtime_strategy(context: BotContext) -> str:
     return control.strategy_type.value if control is not None else context.strategy_name
 
 
+def _is_runtime_confirmed(context: BotContext, requirement: str) -> bool:
+    """Return whether Telegram confirmed one runtime selection."""
+    control = context.runtime_control
+    return (
+        control is not None
+        and requirement not in control.get_missing_configuration_requirements()
+    )
+
+
+def _get_missing_configuration_requirements(context: BotContext) -> tuple[str, ...]:
+    """Return unconfirmed Telegram configuration fields."""
+    control = context.runtime_control
+    if control is None:
+        return ("exchange", "market type", "symbol", "interval", "strategy")
+
+    return control.get_missing_configuration_requirements()
+
+
 def _get_startup_configuration_message(context: BotContext) -> str:
     """Return the current startup checklist for Telegram."""
     control = context.runtime_control
@@ -132,6 +184,7 @@ def _get_startup_configuration_message(context: BotContext) -> str:
 
     return get_startup_configuration_message(
         exchange=context.exchange_type,
+        market_type=control.market_type.value,
         symbol=control.symbol,
         interval=control.interval.value,
         strategy=control.strategy_type.value,
@@ -146,6 +199,63 @@ async def _reply_data_unavailable(update: Update) -> None:
             _DATA_UNAVAILABLE_MESSAGE,
             parse_mode=DEFAULT_PARSE_MODE,
         )
+
+
+async def _reply_market_search_results(
+    *,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    keyword: str,
+) -> None:
+    """Search exchange symbols and return compact selectable results."""
+    if update.message is None:
+        return
+
+    normalized_keyword = keyword.strip().upper()
+    if not normalized_keyword or not normalized_keyword.isalnum():
+        await update.message.reply_text(
+            "⚠️ <b>Gunakan huruf dan angka saja.</b> Contoh: BTC atau BTCUSDT.",
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
+        return
+
+    bot_context = _get_context(context)
+    provider = bot_context.query_provider
+    if provider is None:
+        await _reply_data_unavailable(update)
+        return
+
+    try:
+        symbols = tuple(await provider.get_trading_symbols())
+    except Exception:
+        logger.exception("Telegram market search failed")
+        await _reply_data_unavailable(update)
+        return
+
+    all_matches = tuple(
+        sorted(
+            (symbol for symbol in symbols if normalized_keyword in symbol.upper()),
+            key=lambda symbol: (
+                not symbol.upper().startswith(normalized_keyword),
+                len(symbol),
+                symbol,
+            ),
+        )
+    )
+    results = all_matches[:_MARKET_SEARCH_RESULT_LIMIT]
+    await update.message.reply_text(
+        get_market_search_results_message(
+            keyword=normalized_keyword,
+            result_count=len(results),
+            total_matches=len(all_matches),
+        ),
+        parse_mode=DEFAULT_PARSE_MODE,
+        reply_markup=get_market_search_keyboard(
+            _get_runtime_symbol(bot_context),
+            results,
+            confirmed=_is_runtime_confirmed(bot_context, "symbol"),
+        ),
+    )
 
 
 async def _show_navigation(
@@ -254,6 +364,9 @@ async def status_command(
                 (position.unrealized_pnl for position in positions),
                 start=Decimal("0"),
             ),
+            missing_configuration_requirements=(
+                _get_missing_configuration_requirements(ctx)
+            ),
         )
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
@@ -325,8 +438,20 @@ async def exchange_command(
             return
 
         ctx = _get_context(context)
-        msg = get_exchange_message(ctx.exchange_type, ctx.market_type)
-        kb = get_exchange_keyboard(ctx.exchange_type)
+        exchange_confirmed = _is_runtime_confirmed(ctx, "exchange")
+        market_type_confirmed = _is_runtime_confirmed(ctx, "market type")
+        msg = get_exchange_message(
+            ctx.exchange_type,
+            ctx.market_type,
+            exchange_confirmed=exchange_confirmed,
+            market_type_confirmed=market_type_confirmed,
+        )
+        kb = get_exchange_keyboard(
+            ctx.exchange_type,
+            ctx.market_type,
+            exchange_confirmed=exchange_confirmed,
+            market_type_confirmed=market_type_confirmed,
+        )
         await update.message.reply_text(
             msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=kb
         )
@@ -342,22 +467,70 @@ async def market_command(
 
         ctx = _get_context(context)
         last_price = ctx.last_price
+        symbols: tuple[str, ...]
 
         if ctx.query_provider is not None:
             try:
                 last_price = await ctx.query_provider.get_last_price()
+                symbols = tuple(await ctx.query_provider.get_trading_symbols())
             except Exception:
                 logger.exception("Telegram market query failed")
                 await _reply_data_unavailable(update)
                 return
+        else:
+            await _reply_data_unavailable(update)
+            return
 
         symbol = _get_runtime_symbol(ctx)
-        msg = get_market_message(symbol, last_price)
+        ctx.last_price = last_price
+        msg = get_market_message(
+            symbol,
+            last_price,
+            confirmed=_is_runtime_confirmed(ctx, "symbol"),
+        )
         await update.message.reply_text(
             msg,
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_market_keyboard(symbol),
+            reply_markup=get_market_keyboard(
+                symbol,
+                symbols,
+                confirmed=_is_runtime_confirmed(ctx, "symbol"),
+            ),
         )
+
+
+async def market_overview_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Show read-only market data without configuration controls."""
+    if update.message is None:
+        return
+    if not is_authorized_update(update=update, context=context):
+        return
+
+    bot_context = _get_context(context)
+    symbol = _get_runtime_symbol(bot_context)
+    confirmed = _is_runtime_confirmed(bot_context, "symbol")
+    last_price = bot_context.last_price
+    provider = bot_context.query_provider
+
+    if provider is not None and confirmed:
+        try:
+            last_price = await provider.get_last_price()
+        except Exception:
+            logger.exception("Telegram market overview query failed")
+            await _reply_data_unavailable(update)
+            return
+
+    await update.message.reply_text(
+        get_market_overview_message(
+            symbol=symbol,
+            last_price=last_price,
+            confirmed=confirmed,
+        ),
+        parse_mode=DEFAULT_PARSE_MODE,
+    )
 
 
 async def orders_command(
@@ -445,11 +618,19 @@ async def strategy_command(
         fast_period = 9
         slow_period = 21
         strategy_name = _get_runtime_strategy(ctx)
-        msg = get_strategy_message(strategy_name, fast_period, slow_period)
+        msg = get_strategy_message(
+            strategy_name,
+            fast_period,
+            slow_period,
+            confirmed=_is_runtime_confirmed(ctx, "strategy"),
+        )
         await update.message.reply_text(
             msg,
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_strategy_keyboard(strategy_name),
+            reply_markup=get_strategy_keyboard(
+                strategy_name,
+                confirmed=_is_runtime_confirmed(ctx, "strategy"),
+            ),
         )
 
 
@@ -470,9 +651,15 @@ async def interval_command(
             return
 
         await update.message.reply_text(
-            get_interval_message(control.interval.value),
+            get_interval_message(
+                control.interval.value,
+                confirmed=_is_runtime_confirmed(ctx, "interval"),
+            ),
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_interval_keyboard(control.interval.value),
+            reply_markup=get_interval_keyboard(
+                control.interval.value,
+                confirmed=_is_runtime_confirmed(ctx, "interval"),
+            ),
         )
 
 
@@ -495,16 +682,23 @@ async def stream_command(
             else False
         )
         first_tick_received = False
+        last_price: Decimal | None = None
 
         if ctx.runtime_control is not None and subscription_active:
             first_tick_received = (
                 "first stream tick"
                 not in ctx.runtime_control.get_missing_startup_requirements()
             )
+            if provider is not None:
+                try:
+                    last_price = await provider.get_last_price()
+                except Exception:
+                    logger.exception("Telegram stream price query failed")
         msg = get_stream_message(
             transport_connected=transport_connected,
             subscription_active=subscription_active,
             first_tick_received=first_tick_received,
+            last_price=last_price,
         )
         await update.message.reply_text(
             msg,
@@ -583,7 +777,24 @@ async def menu_message_handler(
     if not is_authorized_update(update=update, context=context):
         return
 
-    action = update.message.text
+    action = update.message.text or ""
+    chat_data = context.chat_data
+    search_pending = bool(
+        chat_data is not None and chat_data.get(MARKET_SEARCH_PENDING_KEY) is True
+    )
+    if search_pending:
+        is_menu_action = action in _MENU_ACTIONS
+        is_valid_keyword = bool(action.strip()) and action.strip().isalnum()
+        if chat_data is not None and (is_menu_action or is_valid_keyword):
+            chat_data.pop(MARKET_SEARCH_PENDING_KEY, None)
+        if not is_menu_action:
+            await _reply_market_search_results(
+                update=update,
+                context=context,
+                keyword=action,
+            )
+            return
+
     if action == MENU_DASHBOARD:
         await _show_navigation(
             update=update,
@@ -623,6 +834,8 @@ async def menu_message_handler(
         await status_command(update, context)
     elif action == MENU_POSITIONS:
         await positions_command(update, context)
+    elif action == MENU_MARKET_OVERVIEW:
+        await market_overview_command(update, context)
     elif action == MENU_MARKET:
         await market_command(update, context)
     elif action == MENU_ORDERS:

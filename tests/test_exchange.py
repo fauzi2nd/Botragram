@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import asyncio
 from datetime import timezone
 from decimal import Decimal
 
@@ -35,11 +36,48 @@ from botragram.enums import (
     OrderType,
     PositionSide,
 )
+from botragram.exchanges.base.rest import (
+    JsonResponse,
+    QueryParams,
+    RequestHeaders,
+)
 from botragram.exchanges.binance.client import BinanceExchangeClient
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.exchanges.binance.stream import BinanceStreamClient
 from botragram.exchanges.factory import ExchangeFactory
+
+
+class ExchangeInfoRestClient(BinanceRestClient):
+    """Return deterministic public exchange metadata."""
+
+    __slots__ = ("requested_path",)
+
+    def __init__(self) -> None:
+        """Initialize an isolated metadata transport."""
+        super().__init__(base_url="https://example.test")
+        self.requested_path = ""
+
+    async def get(
+        self,
+        path: str,
+        *,
+        params: QueryParams | None = None,
+        headers: RequestHeaders | None = None,
+        authenticated: bool = False,
+    ) -> JsonResponse:
+        """Return mixed symbols so the client must filter them."""
+        del params, headers
+        assert not authenticated
+        self.requested_path = path
+        return {
+            "symbols": [
+                {"symbol": "ETHUSDT", "status": "TRADING", "quoteAsset": "USDT"},
+                {"symbol": "BTCUSDT", "status": "TRADING", "quoteAsset": "USDT"},
+                {"symbol": "OLDUSDT", "status": "BREAK", "quoteAsset": "USDT"},
+                {"symbol": "ETHBTC", "status": "TRADING", "quoteAsset": "BTC"},
+            ]
+        }
 
 
 # =============================================================================
@@ -87,6 +125,17 @@ def test_exchange_factory_accepts_a_binance_transport_subclass() -> None:
         ),
         BinanceExchangeClient,
     )
+
+
+def test_binance_spot_reads_active_symbols_from_exchange_info() -> None:
+    """Return sorted active USDT symbols instead of a local fixed list."""
+    rest = ExchangeInfoRestClient()
+    client = BinanceExchangeClient(rest=rest, mapper=BinanceExchangeMapper())
+
+    symbols = asyncio.run(client.get_trading_symbols(quote_asset="usdt"))
+
+    assert symbols == ("BTCUSDT", "ETHUSDT")
+    assert rest.requested_path == "/api/v3/exchangeInfo"
 
 
 # =============================================================================

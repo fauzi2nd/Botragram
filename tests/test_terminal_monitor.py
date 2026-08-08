@@ -37,6 +37,7 @@ from botragram.app import TerminalMonitor, TradingRuntimeControl
 from botragram.engine import PnLEngine
 from botragram.enums import PositionSide, TradeMode
 from botragram.models import Position
+from botragram.services import PaperPortfolioSnapshot
 
 
 # =============================================================================
@@ -47,12 +48,16 @@ class FakePaperBalanceProvider:
     """Return a deterministic paper balance and count reads."""
 
     balance: Decimal
+    realized_pnl: Decimal = Decimal("0")
     calls: int = 0
 
-    async def get_available_balance(self) -> Decimal:
-        """Return the configured paper balance."""
+    async def get_portfolio_snapshot(self) -> PaperPortfolioSnapshot:
+        """Return the configured paper portfolio metrics."""
         self.calls += 1
-        return self.balance
+        return PaperPortfolioSnapshot(
+            available_balance=self.balance,
+            realized_pnl=self.realized_pnl,
+        )
 
 
 @dataclass(slots=True, kw_only=True)
@@ -181,6 +186,10 @@ async def _run_terminal_snapshot_test() -> None:
     lines: list[str] = []
     monitor = _create_monitor(
         runtime_control=control,
+        paper_balance=FakePaperBalanceProvider(
+            balance=Decimal("10000"),
+            realized_pnl=Decimal("46.925025"),
+        ),
         positions=(_create_position(),),
         output=lines,
     )
@@ -191,6 +200,7 @@ async def _run_terminal_snapshot_test() -> None:
     assert status.balance == Decimal("10000")
     assert status.position_count == 1
     assert status.unrealized_pnl == Decimal("20")
+    assert status.realized_pnl == Decimal("46.925025")
     assert status.stream.enabled
     assert status.stream.event_count == 1
     assert status.stream_age_ms is not None
@@ -198,6 +208,7 @@ async def _run_terminal_snapshot_test() -> None:
     assert "balance=10,000.00 USDT" in line
     assert "positions=1" in line
     assert "pnl=+20.00 USDT" in line
+    assert "realized=+46.93 USDT" in line
     assert "stream=ON price=110" in line
     assert "age=" in line
     assert lines == [line]
@@ -248,6 +259,8 @@ async def _run_rich_dashboard_render_test() -> None:
     assert "Risk @ SL" in rendered
     assert "4.00 USDT" in rendered
     assert "98.00000000 / 104.00000000" in rendered
+    assert "Realized PnL" in rendered
+    assert "+0.00 USDT" in rendered
 
 
 def test_terminal_monitor_caches_live_balance_reads() -> None:
@@ -272,6 +285,8 @@ async def _run_live_balance_cache_test() -> None:
     assert second.balance == Decimal("321.50")
     assert live_balance.calls == 1
     assert paper_balance.calls == 0
+    assert first.realized_pnl is None
+    assert second.realized_pnl is None
 
 
 # =============================================================================

@@ -13,6 +13,29 @@ Botragram is a Python-based trading bot project scaffolded from the development 
    `BINANCE_MARKET_TYPE=FUTURES`.
 7. Run the application: `python main.py`.
 
+## Backtest
+
+Backtest berjalan terpisah dari runtime Telegram dan memakai candle publik
+Binance Mainnet. Perintah ini tidak membaca posisi runtime, tidak menyalakan
+WebSocket, dan tidak mengirim order. Contoh:
+
+```powershell
+python main.py backtest --market-type futures --symbol BTCUSDT `
+  --interval 1m --strategy ema_scalping `
+  --start 2025-01-01 --end 2025-01-07 --balance 100
+```
+
+Tanggal tanpa jam ditafsirkan sebagai rentang hari inklusif dalam UTC. Candle
+diproses satu per satu tanpa melihat candle berikutnya. Jika satu candle
+menyentuh SL dan TP sekaligus, backtest memakai asumsi konservatif: SL diproses
+lebih dahulu. Fee, slippage, sizing, leverage, serta baseline SL/TP memakai
+konfigurasi PAPER yang sama; notional dibatasi oleh saldo backtest. Stepped SL+
+belum disimulasikan dan ditampilkan sebagai warning pada report.
+
+Report terminal menampilkan saldo awal/akhir, net PnL, return, drawdown, fee,
+jumlah long/short, win rate, profit factor, dan maksimal 50 trade terakhir.
+Gunakan `python main.py backtest --help` untuk daftar pilihan lengkap.
+
 Credential profiles are isolated:
 
 - `BOTRAGRAM_PROFILE=TESTNET` loads `.env.testnet` and requires
@@ -39,12 +62,14 @@ strategy and account configuration. The Futures position-closing workflow
 currently requires Binance one-way position mode.
 
 The same `BINANCE_API_KEY` and `BINANCE_API_SECRET` pair is used for both Spot
-and Futures. Enable the required Binance API permissions for the selected
-product before using live trading.
+and Futures. Enable the required Binance API permissions for both products
+before switching them during live operation.
 
 Trading selalu dimulai dalam state `CONFIGURING`. Melalui Telegram, konfirmasikan
-exchange aktif lalu pilih market USDT, candle interval, dan strategy. Setelah itu
-aktifkan Stream dan tunggu tick pertama sebelum menekan `Start Bot`. Perubahan
+exchange aktif lalu pilih product Spot/Futures, market USDT, candle interval, dan
+strategy. Nilai awal dari `.env` hanya menjadi default dan tidak ditandai sudah
+dipilih. Setelah itu aktifkan Stream dan tunggu tick pertama sebelum menekan
+`Start Bot`. Perubahan
 runtime hanya diterima saat trading paused, stream berhenti, dan tidak ada posisi
 terbuka. Exchange yang ditampilkan Telegram adalah connector yang sudah dimuat
 oleh environment profile; menggantinya memerlukan profile lain dan restart.
@@ -53,6 +78,26 @@ menu Home hanya berisi Dashboard, Trading, Configuration, dan Activity. Setiap
 submenu memiliki maksimal empat baris serta tombol Home. Dashboard Status
 merangkum runtime, exchange product, strategy, interval, stream, balance, posisi,
 dan unrealized PnL dalam satu control center.
+Sebelum konfigurasi lengkap, Status menampilkan progres setup ringkas dan
+`WAITING`, bukan deretan nilai default internal dari `.env`.
+
+Produk Binance Spot/Futures dapat dipilih dari menu Exchange tanpa mengubah
+`.env`. Pergantian hanya diterima ketika trading paused, cycle tidak berjalan,
+stream mati, dan tidak ada posisi aktif. Botragram kemudian menutup connector
+lama dan melakukan soft restart internal menggunakan profile serta credential
+yang sama. `BINANCE_MARKET_TYPE` tetap menjadi pilihan awal saat proses pertama
+kali dijalankan.
+
+Dashboard menyediakan `Market Overview` khusus monitoring tanpa tombol pemilihan.
+Pemilihan symbol hanya tersedia melalui `Configuration -> Select Market`.
+Selector tersebut mengambil simbol aktif langsung dari metadata exchange dan menyimpan
+hasilnya selama lima menit. Binance Spot menampilkan pair berstatus `TRADING`
+dengan quote asset runtime (default `USDT`); Binance Futures juga membatasi hasil
+ke kontrak perpetual. Simbol ditampilkan 10 per halaman agar menu tetap ringkas.
+Tombol Search pada menu Market menerima kode koin atau symbol seperti `BTC`,
+`ETH`, atau `SOLUSDT`, lalu menampilkan maksimal 10 hasil exchange yang dapat
+dipilih langsung.
+
 Cadence trading cycle mengikuti interval runtime terbaru: interval `1m` menunggu
 60 detik setelah satu cycle selesai sebelum menjalankan cycle berikutnya.
 
@@ -89,7 +134,8 @@ Pada LIVE Futures, stop pengganti harus terverifikasi aktif sebelum stop lama
 yang cocok dibatalkan.
 
 Terminal menggunakan dashboard Rich dengan panel status/portfolio, market stream,
-dan log. Dashboard membaca balance, posisi, PnL, serta telemetry tick lokal tanpa
-menambahkan polling harga per refresh. Tick WebSocket tetap diproses event-driven;
+dan log. Dashboard membaca balance, posisi, realized/unrealized PnL, serta
+telemetry tick lokal tanpa menambahkan polling harga per refresh. Tick WebSocket
+tetap diproses event-driven;
 refresh tampilan 4 kali per detik hanya mengatur kecepatan visual. Rotating log
 tetap menyimpan riwayat diagnostik lengkap secara terpisah.

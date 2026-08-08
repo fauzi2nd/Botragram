@@ -49,7 +49,11 @@ from botragram.telegram.messages import (
     get_paper_exit_message,
 )
 
-__all__ = ["NotificationPublisher", "PaperTradingService"]
+__all__ = [
+    "NotificationPublisher",
+    "PaperPortfolioSnapshot",
+    "PaperTradingService",
+]
 
 
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
@@ -66,6 +70,14 @@ class NotificationPublisher(Protocol):
     async def publish(self, *, notification: Notification) -> None:
         """Publish one notification."""
         ...
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class PaperPortfolioSnapshot:
+    """Immutable reconstructed paper portfolio metrics."""
+
+    available_balance: Decimal
+    realized_pnl: Decimal
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -259,6 +271,17 @@ class PaperTradingService:
         initial_balance: Decimal | None = None,
     ) -> Decimal:
         """Reconstruct free balance from persisted trades and open positions."""
+        snapshot = await self.get_portfolio_snapshot(
+            initial_balance=initial_balance,
+        )
+        return snapshot.available_balance
+
+    async def get_portfolio_snapshot(
+        self,
+        *,
+        initial_balance: Decimal | None = None,
+    ) -> PaperPortfolioSnapshot:
+        """Reconstruct available balance and realized PnL in one read path."""
         starting_balance = (
             self.initial_balance if initial_balance is None else initial_balance
         )
@@ -266,19 +289,7 @@ class PaperTradingService:
         if starting_balance <= _DECIMAL_ZERO:
             raise ValueError("Paper initial balance must be greater than zero")
 
-        realized_pnl = _DECIMAL_ZERO
-        trade_count = await self.trade_repository.count()
-
-        if trade_count:
-            trades = await self.trade_repository.get_latest(limit=trade_count)
-            realized_pnl = sum(
-                (
-                    trade.realized_pnl
-                    for trade in trades
-                    if trade.realized_pnl is not None
-                ),
-                start=_DECIMAL_ZERO,
-            )
+        realized_pnl = await self.get_realized_pnl()
 
         reserved_balance = sum(
             (
@@ -288,7 +299,23 @@ class PaperTradingService:
             start=_DECIMAL_ZERO,
         )
 
-        return starting_balance + realized_pnl - reserved_balance
+        return PaperPortfolioSnapshot(
+            available_balance=starting_balance + realized_pnl - reserved_balance,
+            realized_pnl=realized_pnl,
+        )
+
+    async def get_realized_pnl(self) -> Decimal:
+        """Return cumulative net realized PnL from persisted closing trades."""
+        trade_count = await self.trade_repository.count()
+
+        if trade_count == 0:
+            return _DECIMAL_ZERO
+
+        trades = await self.trade_repository.get_latest(limit=trade_count)
+        return sum(
+            (trade.realized_pnl for trade in trades if trade.realized_pnl is not None),
+            start=_DECIMAL_ZERO,
+        )
 
     async def _open_position(
         self,

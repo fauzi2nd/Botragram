@@ -18,6 +18,8 @@ from __future__ import annotations
 # =============================================================================
 import asyncio
 import logging
+import sys
+from dataclasses import replace
 from typing import Final
 
 # =============================================================================
@@ -27,9 +29,15 @@ from botragram.app import (
     Application,
     ApplicationLifecycle,
     DependencyProvider,
+    RuntimeRestartCoordinator,
     SettingsManager,
     TerminalMonitor,
     TradingRunner,
+    format_backtest_report,
+    is_backtest_command,
+    parse_backtest_request,
+    run_backtest_command,
+    run_until_restart,
 )
 from botragram.config import Settings
 from botragram.utils.logger import configure_logging, shutdown_logging
@@ -52,6 +60,7 @@ async def _run_trading(
     *,
     dependency_provider: DependencyProvider,
     settings: Settings,
+    restart_coordinator: RuntimeRestartCoordinator,
 ) -> None:
     """Build and run trading orchestration after resources are initialized."""
     terminal_monitor = TerminalMonitor(
@@ -82,7 +91,10 @@ async def _run_trading(
             maximum_consecutive_failures=3,
             failure_retry_delay_seconds=5.0,
         )
-        await runner.run()
+        await run_until_restart(
+            runner=runner,
+            restart_coordinator=restart_coordinator,
+        )
     finally:
         terminal_monitor.stop()
         await asyncio.gather(monitor_task, return_exceptions=True)
@@ -90,7 +102,21 @@ async def _run_trading(
 
 async def main() -> None:
     """Build and run the Botragram application."""
-    settings = SettingsManager().load()
+    settings_manager = SettingsManager()
+    settings = settings_manager.load()
+    arguments = tuple(sys.argv[1:])
+    if is_backtest_command(arguments):
+        request = parse_backtest_request(arguments=arguments)
+        configure_logging(settings=settings.logging)
+        try:
+            result = await run_backtest_command(settings=settings, request=request)
+            print(format_backtest_report(result=result))
+        finally:
+            shutdown_logging()
+        return
+
+    restart_coordinator = RuntimeRestartCoordinator()
+    market_type_confirmed = False
     configure_logging(settings=settings.logging)
 
     try:
@@ -105,22 +131,44 @@ async def main() -> None:
             settings.market.symbol,
             settings.strategy.strategy_type.value,
         )
-        dependency_provider = DependencyProvider(
-            database_path=settings.app.database_path,
-            settings=settings,
-        )
-        lifecycle = ApplicationLifecycle(
-            dependency_provider=dependency_provider,
-        )
-        application = Application(
-            settings=settings,
-            lifecycle=lifecycle,
-            runner=lambda: _run_trading(
-                dependency_provider=dependency_provider,
+        while True:
+            dependency_provider = DependencyProvider(
+                database_path=settings.app.database_path,
                 settings=settings,
-            ),
-        )
-        await application.run()
+                restart_coordinator=restart_coordinator,
+                market_type_confirmed=market_type_confirmed,
+            )
+            lifecycle = ApplicationLifecycle(
+                dependency_provider=dependency_provider,
+            )
+            application = Application(
+                settings=settings,
+                lifecycle=lifecycle,
+                runner=lambda: _run_trading(
+                    dependency_provider=dependency_provider,
+                    settings=settings,
+                    restart_coordinator=restart_coordinator,
+                ),
+            )
+            await application.run()
+            requested_market_type = restart_coordinator.consume()
+
+            if requested_market_type is None:
+                break
+
+            settings = replace(
+                settings,
+                exchange=replace(
+                    settings.exchange,
+                    market_type=requested_market_type,
+                ),
+            )
+            settings_manager.validate(settings=settings)
+            market_type_confirmed = True
+            _LOGGER.info(
+                "Application restarting with Binance market type: %s",
+                requested_market_type.value,
+            )
     finally:
         shutdown_logging()
 

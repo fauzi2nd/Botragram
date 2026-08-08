@@ -28,6 +28,7 @@ type RequestValue = str | int | float | bool
 type RequestParams = dict[str, RequestValue]
 
 _PING_ENDPOINT = "/fapi/v1/ping"
+_EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
 _ACCOUNT_ENDPOINT = "/fapi/v3/account"
 _TICKER_ENDPOINT = "/fapi/v1/ticker/24hr"
 _CANDLES_ENDPOINT = "/fapi/v1/klines"
@@ -89,6 +90,18 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             params={"symbol": self._normalize_symbol(symbol)},
         )
         return self._mapper.map_ticker(self._require_mapping(payload))
+
+    async def get_trading_symbols(
+        self,
+        *,
+        quote_asset: str,
+    ) -> Sequence[str]:
+        """Return active Binance USD-M perpetual symbols."""
+        return await self._get_trading_symbols(
+            endpoint=_EXCHANGE_INFO_ENDPOINT,
+            quote_asset=quote_asset,
+            contract_type="PERPETUAL",
+        )
 
     async def get_candles(
         self,

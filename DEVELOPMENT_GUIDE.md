@@ -519,6 +519,11 @@ Aturan test:
 Manual script di `tests/manual/` WAJIB aman secara default, menggunakan testnet,
 dan tidak boleh melakukan trade live tanpa konfirmasi eksplisit.
 
+Backtest WAJIB terisolasi dari state runtime dan DILARANG mengirim order.
+Replay candle harus kronologis tanpa lookahead, memakai pagination yang bounded,
+dan mendokumentasikan kebijakan ketika SL dan TP tersentuh pada candle yang sama.
+Perbedaan fitur terhadap PAPER/LIVE runtime WAJIB muncul sebagai warning report.
+
 ---
 
 ## 19. Quality Gates
@@ -617,9 +622,11 @@ Botragram/
 |   |-- app/
 |   |   |-- __init__.py
 |   |   |-- application.py
+|   |   |-- backtest_command.py       # Backtest CLI composition dan report
 |   |   |-- dependency_provider.py
 |   |   |-- environment_provider.py
 |   |   |-- lifecycle.py
+|   |   |-- market_type_switch.py     # Guarded Spot/Futures soft restart
 |   |   |-- runtime_control.py
 |   |   |-- settings_manager.py
 |   |   |-- shutdown.py
@@ -653,6 +660,7 @@ Botragram/
 |   |   `-- time.py
 |   |-- engine/
 |   |   |-- __init__.py
+|   |   |-- backtest_engine.py
 |   |   |-- order_engine.py
 |   |   |-- pnl_engine.py
 |   |   |-- portfolio_engine.py
@@ -720,6 +728,7 @@ Botragram/
 |   |-- models/
 |   |   |-- __init__.py
 |   |   |-- account.py
+|   |   |-- backtest.py
 |   |   |-- balance.py
 |   |   |-- candle.py
 |   |   |-- notification.py
@@ -740,6 +749,7 @@ Botragram/
 |   |-- services/
 |   |   |-- __init__.py
 |   |   |-- account_service.py
+|   |   |-- backtest_service.py
 |   |   |-- health_service.py
 |   |   |-- market_service.py
 |   |   |-- order_service.py

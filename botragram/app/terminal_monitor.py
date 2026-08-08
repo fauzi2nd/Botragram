@@ -47,6 +47,7 @@ from botragram.app.runtime_control import (
 from botragram.engine import PnLEngine
 from botragram.enums import TradeMode
 from botragram.models import Position
+from botragram.services.paper_trading_service import PaperPortfolioSnapshot
 
 __all__ = [
     "DashboardLogEntry",
@@ -73,10 +74,10 @@ _APPLICATION_LOGGER_NAME: Final[str] = "botragram"
 # Monitoring Contracts
 # =============================================================================
 class PaperBalanceProvider(Protocol):
-    """Read reconstructed paper balance."""
+    """Read reconstructed paper portfolio metrics."""
 
-    async def get_available_balance(self) -> Decimal:
-        """Return available paper balance."""
+    async def get_portfolio_snapshot(self) -> PaperPortfolioSnapshot:
+        """Return reconstructed paper balance and realized PnL."""
         ...
 
 
@@ -114,6 +115,7 @@ class TerminalStatus:
     stream_rate: float
     stream_age_ms: int | None
     missing_startup_requirements: tuple[str, ...]
+    realized_pnl: Decimal | None = None
     positions: tuple[Position, ...] = ()
 
 
@@ -271,7 +273,9 @@ class TerminalMonitor:
         sample_time = monotonic()
         stream = self.runtime_control.get_stream_telemetry()
         positions = tuple(await self.position_provider.get_open_positions())
-        balance = await self._get_balance(sample_time=sample_time)
+        balance, realized_pnl = await self._get_portfolio_metrics(
+            sample_time=sample_time,
+        )
         stream_rate = self._calculate_stream_rate(
             stream=stream,
             sample_time=sample_time,
@@ -294,6 +298,7 @@ class TerminalMonitor:
             missing_startup_requirements=(
                 self.runtime_control.get_missing_startup_requirements()
             ),
+            realized_pnl=realized_pnl,
             positions=positions,
         )
 
@@ -301,7 +306,7 @@ class TerminalMonitor:
         """Build the three-panel Rich dashboard for one monitoring snapshot."""
         layout = Layout(name="root")
         layout.split_column(
-            Layout(name="summary", size=15),
+            Layout(name="summary", size=16),
             Layout(name="logs", minimum_size=8),
         )
         layout["summary"].split_row(
@@ -315,23 +320,28 @@ class TerminalMonitor:
         """Request graceful terminal-monitor shutdown."""
         self._stop_event.set()
 
-    async def _get_balance(self, *, sample_time: float) -> Decimal:
-        """Return paper balance or a bounded-refresh exchange balance."""
+    async def _get_portfolio_metrics(
+        self,
+        *,
+        sample_time: float,
+    ) -> tuple[Decimal, Decimal | None]:
+        """Return balance and an authoritative realized PnL when available."""
         if self.trade_mode is TradeMode.PAPER:
-            return await self.paper_balance_provider.get_available_balance()
+            snapshot = await self.paper_balance_provider.get_portfolio_snapshot()
+            return snapshot.available_balance, snapshot.realized_pnl
 
         cached_balance = self._cached_live_balance
         cache_age = sample_time - self._last_balance_refresh_monotonic
 
         if cached_balance is not None and cache_age < self.live_balance_refresh_seconds:
-            return cached_balance
+            return cached_balance, None
 
         balance = await self.live_balance_provider.get_free_balance(
             asset=self.quote_asset,
         )
         self._cached_live_balance = balance
         self._last_balance_refresh_monotonic = sample_time
-        return balance
+        return balance, None
 
     def _calculate_unrealized_pnl(
         self,
@@ -409,7 +419,8 @@ class TerminalMonitor:
             f"strategy={self.runtime_control.strategy_type.value} | "
             f"balance={status.balance:,.2f} {self.quote_asset} "
             f"positions={status.position_count} "
-            f"pnl={status.unrealized_pnl:+,.2f} {self.quote_asset} | "
+            f"pnl={status.unrealized_pnl:+,.2f} {self.quote_asset} "
+            f"realized={self._format_realized_pnl(status.realized_pnl)} | "
             f"stream={stream_state} price={price} "
             f"rate={status.stream_rate:.1f}/s age={age} "
             f"events={status.stream.event_count}"
@@ -423,6 +434,11 @@ class TerminalMonitor:
         state = self._get_runtime_state(status)
         missing = ", ".join(status.missing_startup_requirements) or "READY"
         pnl_style = "green" if status.unrealized_pnl >= 0 else "red"
+        realized_style = (
+            "green"
+            if status.realized_pnl is not None and status.realized_pnl >= 0
+            else "red"
+        )
         table.add_row("Runtime", Text(state, style=self._get_state_style(state)))
         table.add_row(
             "Exchange",
@@ -440,6 +456,13 @@ class TerminalMonitor:
             Text(
                 f"{status.unrealized_pnl:+,.2f} {self.quote_asset}",
                 style=pnl_style,
+            ),
+        )
+        table.add_row(
+            "Realized PnL",
+            Text(
+                self._format_realized_pnl(status.realized_pnl),
+                style=realized_style if status.realized_pnl is not None else "dim",
             ),
         )
         table.add_row("Startup Gate", missing)
@@ -529,6 +552,13 @@ class TerminalMonitor:
     def _format_optional_price(price: Decimal | None) -> str:
         """Format an optional portfolio protection price."""
         return f"{price:,.8f}" if price is not None else "-"
+
+    def _format_realized_pnl(self, realized_pnl: Decimal | None) -> str:
+        """Format realized PnL without inventing unavailable LIVE history."""
+        if realized_pnl is None:
+            return "N/A"
+
+        return f"{realized_pnl:+,.2f} {self.quote_asset}"
 
     def _build_stream_panel(self, status: TerminalStatus) -> Panel:
         """Build locally observed high-frequency stream telemetry."""

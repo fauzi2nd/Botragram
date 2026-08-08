@@ -28,6 +28,7 @@ __all__ = [
     "MENU_STATUS",
     "MENU_POSITIONS",
     "MENU_MARKET",
+    "MENU_MARKET_OVERVIEW",
     "MENU_ORDERS",
     "MENU_BALANCE",
     "MENU_HISTORY",
@@ -74,7 +75,8 @@ MENU_HOME: str = "🏠 Home"
 
 MENU_STATUS: str = "📊 Status"
 MENU_POSITIONS: str = "📋 Positions"
-MENU_MARKET: str = "📈 Market"
+MENU_MARKET: str = "🔎 Select Market"
+MENU_MARKET_OVERVIEW: str = "📈 Market Overview"
 MENU_ORDERS: str = "📑 Orders"
 MENU_BALANCE: str = "💰 Balance"
 MENU_HISTORY: str = "📜 History"
