@@ -17,13 +17,13 @@ from __future__ import annotations
 # Local Imports
 # =============================================================================
 from botragram.models.account import Account
-from botragram.models.balance import Balance
 from botragram.models.backtest import (
     BacktestMetrics,
     BacktestRequest,
     BacktestResult,
     BacktestTrade,
 )
+from botragram.models.balance import Balance
 from botragram.models.candle import Candle
 from botragram.models.notification import Notification
 from botragram.models.order import Order

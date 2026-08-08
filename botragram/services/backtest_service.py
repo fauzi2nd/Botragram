@@ -116,6 +116,5 @@ class BacktestService:
             cursor = next_cursor
 
         return tuple(
-            candles_by_time[open_time]
-            for open_time in sorted(candles_by_time)
+            candles_by_time[open_time] for open_time in sorted(candles_by_time)
         )

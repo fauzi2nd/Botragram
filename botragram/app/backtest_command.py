@@ -270,9 +270,7 @@ def _build_backtest_risk_settings(
     execution_multiplier = Decimal("1") + request.slippage_rate
     fee_multiplier = Decimal("1") + request.fee_rate * leverage
     affordable_notional = (
-        request.initial_balance
-        * leverage
-        / (execution_multiplier * fee_multiplier)
+        request.initial_balance * leverage / (execution_multiplier * fee_multiplier)
     )
     return replace(
         settings.risk,

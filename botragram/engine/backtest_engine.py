@@ -361,9 +361,7 @@ class BacktestEngine:
             max_drawdown_pct=max_drawdown * _DECIMAL_HUNDRED,
             total_fees=sum((fill.fee for fill in fills), start=_DECIMAL_ZERO),
             long_trades=sum(1 for trade in trades if trade.side is PositionSide.LONG),
-            short_trades=sum(
-                1 for trade in trades if trade.side is PositionSide.SHORT
-            ),
+            short_trades=sum(1 for trade in trades if trade.side is PositionSide.SHORT),
         )
 
     def _validate_candles(
