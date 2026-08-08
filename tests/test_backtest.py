@@ -27,7 +27,7 @@ from decimal import Decimal
 # =============================================================================
 from botragram.app.backtest_command import parse_backtest_request
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine import BacktestEngine
+from botragram.engine.backtest_engine import BacktestEngine
 from botragram.enums import (
     Interval,
     MarketType,

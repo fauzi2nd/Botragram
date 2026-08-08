@@ -29,7 +29,7 @@ from typing import Final
 from botragram.config import Settings
 from botragram.config.risk_settings import RiskSettings
 from botragram.constants import BINANCE_FUTURES_REST_BASE_URL, BINANCE_REST_BASE_URL
-from botragram.engine import BacktestEngine
+from botragram.engine.backtest_engine import BacktestEngine
 from botragram.enums import Interval, MarketType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.models import BacktestRequest, BacktestResult

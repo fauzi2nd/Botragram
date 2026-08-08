@@ -16,7 +16,6 @@ from __future__ import annotations
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.engine.backtest_engine import BacktestEngine
 from botragram.engine.order_engine import OrderEngine
 from botragram.engine.pnl_engine import PnLEngine
 from botragram.engine.portfolio_engine import PortfolioEngine
@@ -29,7 +28,6 @@ from botragram.engine.trading_engine import TradingEngine
 # Exports
 # =============================================================================
 __all__ = [
-    "BacktestEngine",
     "OrderEngine",
     "PnLEngine",
     "PortfolioEngine",

@@ -17,12 +17,6 @@ from __future__ import annotations
 # Local Imports
 # =============================================================================
 from botragram.app.application import Application
-from botragram.app.backtest_command import (
-    format_backtest_report,
-    is_backtest_command,
-    parse_backtest_request,
-    run_backtest_command,
-)
 from botragram.app.dependency_provider import DependencyProvider
 from botragram.app.lifecycle import ApplicationLifecycle
 from botragram.app.market_type_switch import (
@@ -50,11 +44,7 @@ __all__ = [
     "TradingCycleExecutor",
     "TradingRunner",
     "TradingRuntimeControl",
-    "format_backtest_report",
-    "is_backtest_command",
-    "parse_backtest_request",
     "run_until_restart",
-    "run_backtest_command",
     "shutdown_application",
     "startup_application",
 ]
