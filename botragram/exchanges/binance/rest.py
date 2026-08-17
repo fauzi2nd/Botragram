@@ -142,6 +142,7 @@ class BinanceRestClient(BaseRestClient):
             params=params,
             headers=headers,
             authenticated=authenticated,
+            retryable=True,
         )
 
     async def post(
@@ -161,6 +162,7 @@ class BinanceRestClient(BaseRestClient):
             data=data,
             headers=headers,
             authenticated=authenticated,
+            retryable=False,
         )
 
     async def delete(
@@ -178,6 +180,7 @@ class BinanceRestClient(BaseRestClient):
             params=params,
             headers=headers,
             authenticated=authenticated,
+            retryable=False,
         )
 
     async def close(self) -> None:
@@ -198,22 +201,24 @@ class BinanceRestClient(BaseRestClient):
         data: JsonObject | None = None,
         headers: RequestHeaders | None = None,
         authenticated: bool = False,
+        retryable: bool,
     ) -> JsonResponse:
-        """Send a Binance REST request with retry handling."""
-        request_params = self._prepare_params(
-            params,
-            authenticated=authenticated,
-        )
-        request_headers = self._prepare_headers(
-            headers,
-            authenticated=authenticated,
-        )
+        """Send a Binance REST request using an explicit retry policy."""
         url = self._build_url(path)
+        maximum_attempts = self._max_retries if retryable else 1
 
         last_error: BaseException | None = None
 
-        for attempt in range(1, self._max_retries + 1):
+        for attempt in range(1, maximum_attempts + 1):
             try:
+                request_params = self._prepare_params(
+                    params,
+                    authenticated=authenticated,
+                )
+                request_headers = self._prepare_headers(
+                    headers,
+                    authenticated=authenticated,
+                )
                 session = self._get_session()
 
                 async with session.request(
@@ -240,7 +245,7 @@ class BinanceRestClient(BaseRestClient):
             except (aiohttp.ClientError, TimeoutError, RuntimeError) as error:
                 last_error = error
 
-                if attempt >= self._max_retries:
+                if attempt >= maximum_attempts:
                     raise
 
                 delay = self._retry_delay_seconds * attempt
