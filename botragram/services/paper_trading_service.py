@@ -244,6 +244,7 @@ class PaperTradingService:
             signal=signal,
             account_balance=available_balance,
             has_open_position=False,
+            open_positions=await self.position_repository.get_open_positions(),
             current_drawdown_pct=current_drawdown_pct,
         )
 
