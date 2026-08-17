@@ -31,6 +31,9 @@ from botragram.storage.memory.position_repository import (
 from botragram.storage.memory.signal_repository import (
     MemorySignalRepository,
 )
+from botragram.storage.memory.submission_attempt_repository import (
+    MemorySubmissionAttemptRepository,
+)
 from botragram.storage.memory.trade_repository import (
     MemoryTradeRepository,
 )
@@ -41,5 +44,6 @@ __all__ = [
     "MemoryOrderRepository",
     "MemoryPositionRepository",
     "MemorySignalRepository",
+    "MemorySubmissionAttemptRepository",
     "MemoryTradeRepository",
 ]

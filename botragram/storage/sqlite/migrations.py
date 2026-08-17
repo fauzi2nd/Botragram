@@ -307,6 +307,23 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ADD COLUMN protection_step INTEGER NOT NULL DEFAULT 0;
         """,
     ),
+    _Migration(
+        version=9,
+        script="""
+        ALTER TABLE orders ADD COLUMN client_order_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_orders_client_order_id
+        ON orders (client_order_id);
+        CREATE TABLE IF NOT EXISTS submission_attempts (
+            client_order_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, side TEXT NOT NULL,
+            order_type TEXT NOT NULL, quantity TEXT NOT NULL,
+            signal_generated_at TEXT NOT NULL, interval TEXT NOT NULL,
+            strategy_type TEXT, status TEXT NOT NULL, exchange_order_id TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_submission_attempts_unresolved
+        ON submission_attempts (status, created_at);
+        """,
+    ),
 )
 
 

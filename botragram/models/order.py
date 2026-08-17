@@ -56,3 +56,4 @@ class Order:
 
     price: Decimal | None = None
     stop_price: Decimal | None = None
+    client_order_id: str | None = None

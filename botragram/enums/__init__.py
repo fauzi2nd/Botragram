@@ -39,6 +39,7 @@ from botragram.enums.position_side import PositionSide
 from botragram.enums.position_status import PositionStatus
 from botragram.enums.signal_type import SignalType
 from botragram.enums.strategy_type import StrategyType
+from botragram.enums.submission_attempt_status import SubmissionAttemptStatus
 from botragram.enums.telegram_state import TelegramState
 from botragram.enums.time_in_force import TimeInForce
 from botragram.enums.trade_mode import TradeMode
@@ -78,6 +79,7 @@ __all__ = [
     "PositionStatus",
     "SignalType",
     "StrategyType",
+    "SubmissionAttemptStatus",
     # Application
     "NotificationType",
     "TelegramState",

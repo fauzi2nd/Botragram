@@ -103,7 +103,7 @@ botragram/
 |   `-- volume/
 |-- models/                    # Immutable domain/data models
 |   `-- backtest.py            # Backtest request, trade, metrics, dan result
-|-- repositories/              # Persistence interfaces
+|-- repositories/              # Persistence interfaces, including submission attempts
 |-- services/
 |   |-- account_service.py
 |   |-- autonomous_paper_execution_service.py # Ranked PAPER candidate execution

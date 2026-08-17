@@ -66,10 +66,11 @@ INSERT INTO orders (
     created_at,
     updated_at,
     price,
-    stop_price
+    stop_price,
+    client_order_id
 )
 VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT (
     symbol,
@@ -84,7 +85,8 @@ DO UPDATE SET
     created_at = excluded.created_at,
     updated_at = excluded.updated_at,
     price = excluded.price,
-    stop_price = excluded.stop_price;
+    stop_price = excluded.stop_price,
+    client_order_id = excluded.client_order_id;
 """
 
 _SELECT_ORDER_COLUMNS: Final[str] = """
@@ -99,7 +101,8 @@ SELECT
     created_at,
     updated_at,
     price,
-    stop_price
+    stop_price,
+    client_order_id
 FROM orders
 """
 
@@ -171,6 +174,7 @@ type OrderParameters = tuple[
     str,
     str,
     str,
+    str | None,
     str | None,
     str | None,
 ]
@@ -435,6 +439,7 @@ class SQLiteOrderRepository(OrderRepository):
             ),
             cls._optional_decimal_to_text(order.price),
             cls._optional_decimal_to_text(order.stop_price),
+            order.client_order_id,
         )
 
     @classmethod
@@ -493,6 +498,10 @@ class SQLiteOrderRepository(OrderRepository):
             stop_price=cls._get_optional_decimal(
                 row,
                 column="stop_price",
+            ),
+            client_order_id=cls._get_optional_string(
+                row,
+                column="client_order_id",
             ),
         )
 

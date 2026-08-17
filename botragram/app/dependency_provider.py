@@ -72,6 +72,7 @@ from botragram.repositories import (
     OrderRepository,
     PositionRepository,
     SignalRepository,
+    SubmissionAttemptRepository,
     TradeRepository,
 )
 from botragram.services import (
@@ -101,6 +102,7 @@ from botragram.storage.sqlite import (
     SQLiteOrderRepository,
     SQLitePositionRepository,
     SQLiteSignalRepository,
+    SQLiteSubmissionAttemptRepository,
     SQLiteTradeRepository,
 )
 from botragram.strategies.factory import StrategyFactory
@@ -162,6 +164,7 @@ class DependencyProvider:
         "_settings",
         "_signal_engine",
         "_signal_repository",
+        "_submission_attempt_repository",
         "_strategy_service",
         "_stream_client",
         "_telegram_bot",
@@ -237,6 +240,7 @@ class DependencyProvider:
             ExecutionAuthorizationRepository | None
         ) = None
         self._signal_repository: SignalRepository | None = None
+        self._submission_attempt_repository: SubmissionAttemptRepository | None = None
         self._order_repository: OrderRepository | None = None
         self._trade_repository: TradeRepository | None = None
         self._position_repository: PositionRepository | None = None
@@ -469,6 +473,11 @@ class DependencyProvider:
         """Return the configured position repository."""
         return self._require(self._position_repository)
 
+    @property
+    def submission_attempt_repository(self) -> SubmissionAttemptRepository:
+        """Return durable LIVE submission-attempt storage."""
+        return self._require(self._submission_attempt_repository)
+
     # =========================================================================
     # Exchange, Engine, and Service Dependencies
     # =========================================================================
@@ -632,6 +641,9 @@ class DependencyProvider:
         """Construct SQLite repository implementations."""
         self._candle_repository = SQLiteCandleRepository(database=database)
         self._signal_repository = SQLiteSignalRepository(database=database)
+        self._submission_attempt_repository = SQLiteSubmissionAttemptRepository(
+            database=database
+        )
         self._order_repository = SQLiteOrderRepository(database=database)
         self._trade_repository = SQLiteTradeRepository(database=database)
         self._position_repository = SQLitePositionRepository(database=database)
@@ -735,6 +747,7 @@ class DependencyProvider:
             position_service=self.position_service,
             protection_service=self.live_position_protection_service,
             runtime_control=self.runtime_control,
+            submission_attempt_repository=self.submission_attempt_repository,
         )
         self._paper_trading_service = PaperTradingService(
             order_repository=self.order_repository,
@@ -855,6 +868,7 @@ class DependencyProvider:
         self._execution_authorization_service = None
         self._human_confirmed_paper_execution_service = None
         self._signal_repository = None
+        self._submission_attempt_repository = None
         self._order_repository = None
         self._trade_repository = None
         self._position_repository = None

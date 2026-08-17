@@ -5,18 +5,29 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final, Protocol
+from uuid import uuid4
 
 from botragram.app.runtime_control import TradingRuntimeControl
-from botragram.enums import Interval, MarketType, OrderType, StrategyType
-from botragram.models import Order, Position, RiskResult, Signal
+from botragram.enums import (
+    Interval,
+    MarketType,
+    OrderSide,
+    OrderType,
+    StrategyType,
+    SubmissionAttemptStatus,
+)
+from botragram.models import Order, Position, RiskResult, Signal, SubmissionAttempt
+from botragram.repositories import SubmissionAttemptRepository
 
 __all__ = ["LiveFuturesEntryService"]
 
 
 _DECIMAL_ZERO = Decimal("0")
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+_CLIENT_ORDER_ID_PREFIX: Final[str] = "btg-"
 
 
 class LiveOrderSubmission(Protocol):
@@ -29,6 +40,7 @@ class LiveOrderSubmission(Protocol):
         risk_result: RiskResult,
         order_type: OrderType,
         price: Decimal | None,
+        client_order_id: str | None = None,
     ) -> Order:
         """Submit and persist one exchange order."""
         ...
@@ -63,6 +75,7 @@ class LiveFuturesEntryService:
     position_service: LivePositionSynchronization
     protection_service: LiveProtectionReconciliation
     runtime_control: TradingRuntimeControl
+    submission_attempt_repository: SubmissionAttemptRepository
 
     async def execute(
         self,
@@ -79,7 +92,27 @@ class LiveFuturesEntryService:
         protection gate closes is unsafe and propagates to the runtime boundary.
         """
         self._validate_entry(order_type=order_type)
+        if await self.submission_attempt_repository.get_unresolved():
+            raise RuntimeError("An unresolved LIVE submission attempt blocks entry")
         self.runtime_control.set_position_protection_ready(False)
+        client_order_id = f"{_CLIENT_ORDER_ID_PREFIX}{uuid4().hex}"
+        now = datetime.now(UTC)
+        attempt = SubmissionAttempt(
+            client_order_id=client_order_id,
+            symbol=signal.symbol,
+            side=(
+                OrderSide.BUY if signal.signal_type.value == "buy" else OrderSide.SELL
+            ),
+            order_type=order_type,
+            quantity=risk_result.position.quantity,
+            signal_generated_at=signal.generated_at,
+            interval=interval,
+            strategy_type=self._resolve_strategy_type(signal.strategy_name),
+            status=SubmissionAttemptStatus.PREPARED,
+            created_at=now,
+            updated_at=now,
+        )
+        await self.submission_attempt_repository.save(attempt=attempt)
         _LOGGER.info(
             "Live Futures entry submission started: symbol=%s signal=%s",
             signal.symbol,
@@ -92,12 +125,38 @@ class LiveFuturesEntryService:
                 risk_result=risk_result,
                 order_type=order_type,
                 price=price,
+                client_order_id=client_order_id,
             )
-            _LOGGER.info(
-                "Live Futures entry acknowledged: symbol=%s order_id=%s",
+            if order.client_order_id not in (None, client_order_id):
+                raise RuntimeError("Exchange returned a mismatched client order ID")
+            await self.submission_attempt_repository.save(
+                attempt=replace(
+                    attempt,
+                    status=SubmissionAttemptStatus.ACKNOWLEDGED,
+                    exchange_order_id=order.order_id,
+                    updated_at=datetime.now(UTC),
+                )
+            )
+        except asyncio.CancelledError:
+            await self._persist_unresolved_attempt(attempt=attempt)
+            _LOGGER.warning("Live Futures entry cancelled while protection is unsafe")
+            raise
+        except Exception:
+            await self._persist_unresolved_attempt(attempt=attempt)
+            _LOGGER.exception(
+                "Live Futures entry submission is unresolved; protection gate "
+                "remains closed: symbol=%s",
                 signal.symbol,
-                order.order_id,
             )
+            raise
+
+        _LOGGER.info(
+            "Live Futures entry acknowledged: symbol=%s order_id=%s",
+            signal.symbol,
+            order.order_id,
+        )
+
+        try:
             position = await self.position_service.get(
                 symbol=signal.symbol,
                 synchronize=True,
@@ -145,6 +204,23 @@ class LiveFuturesEntryService:
 
         if order_type is not OrderType.MARKET:
             raise ValueError("Protected LIVE entry currently supports MARKET orders")
+
+    async def _persist_unresolved_attempt(self, *, attempt: SubmissionAttempt) -> None:
+        """Retain a conservatively unresolved intent after an unsafe outcome."""
+        try:
+            await self.submission_attempt_repository.save(
+                attempt=replace(
+                    attempt,
+                    status=SubmissionAttemptStatus.UNRESOLVED,
+                    updated_at=datetime.now(UTC),
+                )
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Live Futures submission attempt remains prepared after "
+                "unresolved-state persistence failed: client_order_id=%s",
+                attempt.client_order_id,
+            )
 
     @staticmethod
     def _resolve_strategy_type(strategy_name: str) -> StrategyType | None:

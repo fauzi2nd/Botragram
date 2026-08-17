@@ -38,6 +38,7 @@ from botragram.models.risk import (
     RiskResult,
 )
 from botragram.models.signal import Signal
+from botragram.models.submission_attempt import SubmissionAttempt
 from botragram.models.ticker import Ticker
 from botragram.models.trade import Trade
 from botragram.models.trading import TradingDecision, TradingResult
@@ -62,6 +63,7 @@ __all__ = [
     "RiskMetrics",
     "RiskResult",
     "Signal",
+    "SubmissionAttempt",
     "Ticker",
     "Trade",
     "TradingDecision",

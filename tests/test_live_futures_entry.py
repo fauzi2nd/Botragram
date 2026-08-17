@@ -23,6 +23,7 @@ from botragram.enums import (
 from botragram.models import Order, Position, RiskMetrics, RiskResult, Signal
 from botragram.models.risk import PositionSize
 from botragram.services import LiveFuturesEntryService
+from botragram.storage.memory import MemorySubmissionAttemptRepository
 
 _NOW = datetime(2026, 8, 17, tzinfo=UTC)
 
@@ -157,6 +158,7 @@ def _service(
             position_service=position_service or FakePositionService(_position()),
             protection_service=protection_service or FakeProtectionService(),
             runtime_control=control,
+            submission_attempt_repository=MemorySubmissionAttemptRepository(),
         ),
         control,
     )

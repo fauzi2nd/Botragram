@@ -54,6 +54,7 @@ class OrderService:
         risk_result: RiskResult,
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
+        client_order_id: str | None = None,
     ) -> Order:
         """Submit and persist an approved trading order.
 
@@ -71,6 +72,7 @@ class OrderService:
             risk_result=risk_result,
             order_type=order_type,
             price=price,
+            client_order_id=client_order_id,
         )
 
         await self.order_repository.save(

@@ -251,6 +251,7 @@ class BinanceExchangeClient(BaseExchangeClient):
         order_type: OrderType,
         quantity: Decimal,
         price: Decimal | None = None,
+        client_order_id: str | None = None,
     ) -> Order:
         """Create a Binance Spot order."""
         if quantity <= 0:
@@ -262,6 +263,8 @@ class BinanceExchangeClient(BaseExchangeClient):
             "type": order_type.value.upper(),
             "quantity": self._format_decimal(quantity),
         }
+        if client_order_id is not None:
+            params["newClientOrderId"] = client_order_id
 
         if price is not None:
             if price <= 0:

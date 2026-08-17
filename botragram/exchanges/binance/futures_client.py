@@ -41,6 +41,7 @@ _POSITIONS_ENDPOINT = "/fapi/v3/positionRisk"
 
 _DEFAULT_TIME_IN_FORCE = "GTC"
 _SUPPORTED_ENTRY_ORDER_TYPES = frozenset({OrderType.MARKET, OrderType.LIMIT})
+_CLIENT_ORDER_ID_MAX_LENGTH = 36
 
 
 class BinanceFuturesExchangeClient(BinanceExchangeClient):
@@ -174,6 +175,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         order_type: OrderType,
         quantity: Decimal,
         price: Decimal | None = None,
+        client_order_id: str | None = None,
     ) -> Order:
         """Create a market or limit Futures entry order."""
         if order_type not in _SUPPORTED_ENTRY_ORDER_TYPES:
@@ -188,6 +190,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             order_type=order_type,
             quantity=quantity,
             price=price,
+            client_order_id=client_order_id,
         )
         return await self._post_order(params=params)
 
@@ -458,6 +461,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         order_type: OrderType,
         quantity: Decimal,
         price: Decimal | None,
+        client_order_id: str | None = None,
     ) -> RequestParams:
         """Build validated market or limit order parameters."""
         if quantity <= 0:
@@ -469,6 +473,10 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             "type": order_type.value.upper(),
             "quantity": self._format_decimal(quantity),
         }
+        if client_order_id is not None:
+            params["newClientOrderId"] = self._normalize_client_order_id(
+                client_order_id,
+            )
 
         if order_type is OrderType.LIMIT:
             if price is None or price <= 0:
@@ -493,6 +501,24 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             authenticated=True,
         )
         return self._mapper.map_order(self._require_mapping(payload))
+
+    @staticmethod
+    def _normalize_client_order_id(client_order_id: str) -> str:
+        """Validate the bounded vendor-compatible entry client identity."""
+        normalized = client_order_id.strip()
+
+        if not normalized:
+            raise ValueError("Client order identifier must not be empty")
+
+        if len(normalized) > _CLIENT_ORDER_ID_MAX_LENGTH:
+            raise ValueError("Client order identifier exceeds Binance length limit")
+
+        if not all(
+            character.isalnum() or character in "-_" for character in normalized
+        ):
+            raise ValueError("Client order identifier contains invalid characters")
+
+        return normalized
 
     async def _post_algo_order(
         self,

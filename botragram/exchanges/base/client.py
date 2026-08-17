@@ -112,6 +112,7 @@ class BaseExchangeClient(ABC):
         order_type: OrderType,
         quantity: Decimal,
         price: Decimal | None = None,
+        client_order_id: str | None = None,
     ) -> Order:
         """Create an entry or standard exchange order."""
 

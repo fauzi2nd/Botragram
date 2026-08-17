@@ -200,6 +200,7 @@ class BinanceExchangeMapper(BaseExchangeMapper):
                 if updated_at_value is not None
                 else created_at
             ),
+            client_order_id=self._to_optional_string(payload.get("clientOrderId")),
         )
 
     def map_algo_order(
@@ -242,6 +243,7 @@ class BinanceExchangeMapper(BaseExchangeMapper):
                 if updated_at_value is not None
                 else created_at
             ),
+            client_order_id=self._to_optional_string(payload.get("clientAlgoId")),
         )
 
     def map_position(
@@ -429,6 +431,15 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             return None
 
         return result
+
+    @staticmethod
+    def _to_optional_string(value: object) -> str | None:
+        """Convert an optional payload identifier into a non-empty string."""
+        if value is None:
+            return None
+
+        normalized = str(value).strip()
+        return normalized or None
 
     @staticmethod
     def _to_int(

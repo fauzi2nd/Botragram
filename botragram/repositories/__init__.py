@@ -23,6 +23,9 @@ from botragram.repositories.execution_authorization_repository import (
 from botragram.repositories.order_repository import OrderRepository
 from botragram.repositories.position_repository import PositionRepository
 from botragram.repositories.signal_repository import SignalRepository
+from botragram.repositories.submission_attempt_repository import (
+    SubmissionAttemptRepository,
+)
 from botragram.repositories.trade_repository import TradeRepository
 
 __all__ = [
@@ -32,4 +35,5 @@ __all__ = [
     "OrderRepository",
     "TradeRepository",
     "PositionRepository",
+    "SubmissionAttemptRepository",
 ]

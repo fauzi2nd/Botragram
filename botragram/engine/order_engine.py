@@ -57,6 +57,7 @@ class OrderEngine:
         risk_result: RiskResult,
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
+        client_order_id: str | None = None,
     ) -> Order:
         """Submit an approved trading signal as an exchange order.
 
@@ -85,6 +86,7 @@ class OrderEngine:
             order_type=order_type,
             quantity=risk_result.position.quantity,
             price=price,
+            client_order_id=client_order_id,
         )
 
     async def cancel(
