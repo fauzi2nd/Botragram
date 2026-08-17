@@ -143,13 +143,15 @@ jika satu sinyal entry dan satu interval candle cocok secara pasti dengan waktu
 posisi dibuka. Hasilnya disimpan untuk restart berikutnya; hasil yang ambigu
 membuat bot tetap paused dan tidak memakai default profile secara diam-diam.
 
-Pada mode `LIVE`, posisi selalu dibaca ulang dari exchange. Auto-resume hanya
-berlaku untuk satu posisi Binance Futures dan tetap terkunci sampai order
-`STOP_MARKET` serta `TAKE_PROFIT_MARKET` reduce-only terverifikasi. Proteksi yang
-sudah ada dipakai kembali; leg yang hilang saja yang dibuat. Jika sinkronisasi,
-pemasangan proteksi, atau tick pertama gagal, bot tetap paused dan terminal
-mencatat penyebabnya. Perilaku ini bukan pengganti pemantauan account dan order
-secara independen pada exchange.
+Pada mode `LIVE`, entry terlindungi saat ini hanya mendukung Binance Futures
+`MARKET`. Entry baru tidak dianggap berhasil sampai posisi aktual tersinkron,
+metadata tersimpan, dan order `STOP_MARKET` serta `TAKE_PROFIT_MARKET`
+reduce-only terverifikasi dari exchange. `LIMIT` LIVE ditolak sampai lifecycle
+fill asinkron dapat ditangani dengan aman. Auto-resume hanya berlaku untuk satu
+posisi Binance Futures dan memakai rekonsiliasi proteksi yang sama. Jika
+sinkronisasi, pemasangan proteksi, verifikasi, atau tick pertama gagal, bot
+tetap paused dan terminal mencatat penyebabnya. Perilaku ini bukan pengganti
+pemantauan account dan order secara independen pada exchange.
 
 Risk exit menggunakan profile strategy. Default global tetap SL `2%` dan TP
 `4%`, sedangkan `ema_scalping` memakai baseline paper SL `0.5%` dan TP `1%`.

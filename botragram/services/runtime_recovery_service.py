@@ -4,30 +4,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
-from decimal import Decimal
 from typing import Final, Protocol
 
 from botragram.app.runtime_control import TradingRuntimeControl
-from botragram.engine import RiskEngine
 from botragram.enums import (
     Interval,
     MarketType,
-    OrderSide,
-    OrderType,
     PositionSide,
     SignalType,
     StrategyType,
     TradeMode,
 )
-from botragram.exchanges.base import BaseExchangeClient
-from botragram.models import Order, Position
+from botragram.models import Position
 from botragram.repositories import (
     CandleRepository,
     PositionRepository,
     SignalRepository,
+)
+from botragram.services.live_position_protection_service import (
+    LivePositionProtectionService,
 )
 from botragram.services.position_service import PositionService
 
@@ -63,8 +60,7 @@ class RuntimeRecoveryService:
     position_repository: PositionRepository
     signal_repository: SignalRepository
     candle_repository: CandleRepository
-    exchange_client: BaseExchangeClient
-    risk_engine: RiskEngine
+    live_position_protection_service: LivePositionProtectionService
     first_tick_timeout_seconds: float = _FIRST_TICK_TIMEOUT_SECONDS
 
     def __post_init__(self) -> None:
@@ -117,7 +113,9 @@ class RuntimeRecoveryService:
             self.runtime_control.set_position_protection_ready(False)
 
             try:
-                position = await self._ensure_live_protection(position=position)
+                position = await self.live_position_protection_service.ensure(
+                    position=position,
+                )
             except Exception:
                 _LOGGER.exception(
                     "Live recovery blocked because SL/TP protection could not be "
@@ -162,7 +160,7 @@ class RuntimeRecoveryService:
     async def _synchronize_live_positions(
         self,
         *,
-        persisted_positions: Sequence[Position],
+        persisted_positions: tuple[Position, ...],
     ) -> tuple[Position, ...]:
         """Read live positions from the exchange and preserve local metadata."""
         previous_by_symbol = {
@@ -242,119 +240,11 @@ class RuntimeRecoveryService:
         )
         return restored
 
-    async def _ensure_live_protection(self, *, position: Position) -> Position:
-        """Reconcile one live position with exactly one SL and one TP order."""
-        protection_orders = await self.exchange_client.get_open_protection_orders(
-            symbol=position.symbol,
-        )
-        stop_order = self._find_protection_order(
-            orders=protection_orders,
-            position=position,
-            order_type=OrderType.STOP_MARKET,
-        )
-        take_profit_order = self._find_protection_order(
-            orders=protection_orders,
-            position=position,
-            order_type=OrderType.TAKE_PROFIT_MARKET,
-        )
-        calculated_stop, calculated_take_profit = (
-            self.risk_engine.calculate_protection_levels(
-                side=position.side,
-                entry_price=position.entry_price,
-                strategy_type=position.strategy_type,
-            )
-        )
-
-        if stop_order is None or take_profit_order is None:
-            await self.exchange_client.create_protection_orders(
-                symbol=position.symbol,
-                side=self._closing_side(position.side),
-                quantity=position.quantity,
-                stop_loss=calculated_stop if stop_order is None else None,
-                take_profit=(
-                    calculated_take_profit if take_profit_order is None else None
-                ),
-            )
-            protection_orders = await self.exchange_client.get_open_protection_orders(
-                symbol=position.symbol,
-            )
-            stop_order = self._find_protection_order(
-                orders=protection_orders,
-                position=position,
-                order_type=OrderType.STOP_MARKET,
-            )
-            take_profit_order = self._find_protection_order(
-                orders=protection_orders,
-                position=position,
-                order_type=OrderType.TAKE_PROFIT_MARKET,
-            )
-
-        if stop_order is None or take_profit_order is None:
-            raise RuntimeError("Exchange did not confirm both SL and TP orders")
-
-        if stop_order.stop_price is None or take_profit_order.stop_price is None:
-            raise RuntimeError("Exchange protection order is missing a trigger price")
-
-        protected = replace(
-            position,
-            stop_loss=stop_order.stop_price,
-            take_profit=take_profit_order.stop_price,
-        )
-        await self.position_repository.save(position=protected)
-        _LOGGER.info(
-            "Live position protection verified: symbol=%s stop_loss=%s take_profit=%s",
-            position.symbol,
-            protected.stop_loss,
-            protected.take_profit,
-        )
-        return protected
-
-    @staticmethod
-    def _find_protection_order(
-        *,
-        orders: Sequence[Order],
-        position: Position,
-        order_type: OrderType,
-    ) -> Order | None:
-        """Find a matching protection order and reject insufficient coverage."""
-        closing_side = RuntimeRecoveryService._closing_side(position.side)
-        matching: list[Order] = []
-
-        for order in orders:
-            if (
-                order.symbol.upper() != position.symbol.upper()
-                or order.side is not closing_side
-                or order.order_type is not order_type
-            ):
-                continue
-
-            if order.quantity < position.quantity:
-                raise RuntimeError(
-                    f"{order_type.value} quantity does not cover the live position"
-                )
-
-            if order.stop_price is not None:
-                matching.append(order)
-
-        if not matching:
-            return None
-
-        return (
-            max(matching, key=lambda order: order.stop_price or Decimal("0"))
-            if position.side is PositionSide.LONG
-            else min(matching, key=lambda order: order.stop_price or Decimal("0"))
-        )
-
     async def _wait_for_first_tick(self) -> None:
         """Wait until the restored stream has delivered one validated ticker."""
         async with asyncio.timeout(self.first_tick_timeout_seconds):
             while self.runtime_control.get_stream_telemetry().event_count == 0:
                 await asyncio.sleep(_FIRST_TICK_POLL_SECONDS)
-
-    @staticmethod
-    def _closing_side(side: PositionSide) -> OrderSide:
-        """Return the reduce-only order side for a position."""
-        return OrderSide.SELL if side is PositionSide.LONG else OrderSide.BUY
 
     @staticmethod
     def _require_interval(position: Position) -> Interval:

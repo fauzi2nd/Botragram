@@ -46,6 +46,8 @@ from botragram.services import (
     AutonomousPaperExecutionService,
     ExecutionAuthorizationService,
     HealthService,
+    LiveFuturesEntryService,
+    LivePositionProtectionService,
     PaperTradingService,
     RuntimeReporter,
     TradingService,
@@ -82,6 +84,18 @@ async def _run_application_dependency_smoke_test() -> None:
             assert isinstance(provider.stream_client, BaseStreamClient)
             assert isinstance(provider.trading_service, TradingService)
             assert isinstance(provider.paper_trading_service, PaperTradingService)
+            assert isinstance(
+                provider.live_position_protection_service,
+                LivePositionProtectionService,
+            )
+            assert isinstance(
+                provider.live_futures_entry_service,
+                LiveFuturesEntryService,
+            )
+            assert (
+                provider.live_futures_entry_service.protection_service
+                is provider.live_position_protection_service
+            )
             assert isinstance(
                 provider.autonomous_paper_execution_service,
                 AutonomousPaperExecutionService,
@@ -129,6 +143,9 @@ async def _run_application_dependency_smoke_test() -> None:
 
         with pytest.raises(RuntimeError, match="not been initialized"):
             _ = provider.execution_authorization_service
+
+        with pytest.raises(RuntimeError, match="not been initialized"):
+            _ = provider.live_futures_entry_service
 
 
 def test_provider_selects_paper_autonomous_executor() -> None:

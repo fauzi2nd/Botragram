@@ -24,9 +24,10 @@ from decimal import Decimal
 # Local Imports
 # =============================================================================
 from botragram.engine import TradingEngine
-from botragram.enums import Interval, OrderType
-from botragram.models import Position, TradingResult
+from botragram.enums import Interval, OrderType, TradeMode
+from botragram.models import Position, RiskResult, TradingDecision, TradingResult
 from botragram.services.account_service import AccountService
+from botragram.services.live_futures_entry_service import LiveFuturesEntryService
 from botragram.services.market_service import MarketService
 from botragram.services.order_service import OrderService
 from botragram.services.paper_trading_service import PaperTradingService
@@ -65,8 +66,10 @@ class TradingService:
     order_service: OrderService
     trading_engine: TradingEngine
     paper_trading_service: PaperTradingService | None = None
+    live_futures_entry_service: LiveFuturesEntryService | None = None
 
     balance_asset: str = _DEFAULT_BALANCE_ASSET
+    trade_mode: TradeMode = TradeMode.PAPER
 
     def __post_init__(self) -> None:
         """Normalize immutable service configuration."""
@@ -135,11 +138,15 @@ class TradingService:
                 interval=interval,
             )
 
-        portfolio_positions = open_positions
+        # LIVE entry must evaluate an authoritative portfolio snapshot directly
+        # before the protected entry boundary; caller snapshots are PAPER-only.
+        portfolio_positions = (
+            None if self.trade_mode is TradeMode.LIVE else open_positions
+        )
 
         if portfolio_positions is None:
             portfolio_positions = await self.position_service.get_all(
-                synchronize=synchronize_position,
+                synchronize=(self.trade_mode is TradeMode.LIVE or synchronize_position),
             )
 
         has_position = any(
@@ -148,7 +155,9 @@ class TradingService:
             for position in portfolio_positions
         )
 
-        balance = account_balance_override
+        balance = (
+            None if self.trade_mode is TradeMode.LIVE else account_balance_override
+        )
 
         if balance is None:
             balance = await self.account_service.get_free_balance(
@@ -179,14 +188,28 @@ class TradingService:
                 reason=_ORDER_SUBMISSION_DISABLED_REASON,
             )
 
-        risk_result = decision.risk_result
+        if self.trade_mode is TradeMode.LIVE:
+            live_entry_service = self.live_futures_entry_service
 
-        if risk_result is None:
-            raise RuntimeError(_APPROVED_DECISION_RISK_ERROR)
+            if live_entry_service is None:
+                raise RuntimeError("LIVE trading requires protected Futures entry")
+
+            order = await live_entry_service.execute(
+                signal=signal,
+                risk_result=self._require_risk_result(decision=decision),
+                interval=interval,
+                order_type=order_type,
+                price=price,
+            )
+            return TradingResult(
+                executed=True,
+                decision=decision,
+                order=order,
+            )
 
         order = await self.order_service.submit(
             signal=signal,
-            risk_result=risk_result,
+            risk_result=self._require_risk_result(decision=decision),
             order_type=order_type,
             price=price,
         )
@@ -196,6 +219,16 @@ class TradingService:
             decision=decision,
             order=order,
         )
+
+    @staticmethod
+    def _require_risk_result(*, decision: TradingDecision) -> RiskResult:
+        """Return an approved decision risk result with explicit narrowing."""
+        risk_result = decision.risk_result
+
+        if risk_result is None:
+            raise RuntimeError(_APPROVED_DECISION_RISK_ERROR)
+
+        return risk_result
 
     @staticmethod
     def _normalize_symbol(

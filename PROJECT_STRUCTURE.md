@@ -112,6 +112,8 @@ botragram/
 |   |-- health_service.py
 |   |-- human_confirmed_paper_execution_service.py # Discovery-to-approval orchestration
 |   |-- market_service.py
+|   |-- live_futures_entry_service.py # Protected Futures MARKET entry workflow
+|   |-- live_position_protection_service.py # Shared LIVE SL/TP reconciliation
 |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |-- order_service.py
 |   |-- paper_trading_service.py

@@ -80,6 +80,8 @@ from botragram.services import (
     ExecutionAuthorizationService,
     HealthService,
     HumanConfirmedPaperExecutionService,
+    LiveFuturesEntryService,
+    LivePositionProtectionService,
     MarketService,
     OpportunityDiscoveryService,
     OrderService,
@@ -136,6 +138,8 @@ class DependencyProvider:
         "_database_path",
         "_exchange_client",
         "_health_service",
+        "_live_futures_entry_service",
+        "_live_position_protection_service",
         "_initialized",
         "_market_service",
         "_market_type_switch_service",
@@ -221,6 +225,10 @@ class DependencyProvider:
         self._telegram_bot: TelegramBot | None = None
         self._telegram_query_service: TelegramQueryService | None = None
         self._health_service: HealthService | None = None
+        self._live_futures_entry_service: LiveFuturesEntryService | None = None
+        self._live_position_protection_service: LivePositionProtectionService | None = (
+            None
+        )
         self._runtime_reporter: RuntimeReporter | None = None
         self._runtime_recovery_service: RuntimeRecoveryService | None = None
 
@@ -361,8 +369,9 @@ class DependencyProvider:
                 position_repository=self.position_repository,
                 signal_repository=self.signal_repository,
                 candle_repository=self.candle_repository,
-                exchange_client=self.exchange_client,
-                risk_engine=self.risk_engine,
+                live_position_protection_service=(
+                    self.live_position_protection_service
+                ),
             )
             self._market_type_switch_service = MarketTypeSwitchService(
                 trade_mode=self._settings.app.trade_mode,
@@ -493,6 +502,16 @@ class DependencyProvider:
     def runtime_recovery_service(self) -> RuntimeRecoveryService:
         """Return the active-position startup recovery service."""
         return self._require(self._runtime_recovery_service)
+
+    @property
+    def live_position_protection_service(self) -> LivePositionProtectionService:
+        """Return the shared LIVE Futures protection reconciler."""
+        return self._require(self._live_position_protection_service)
+
+    @property
+    def live_futures_entry_service(self) -> LiveFuturesEntryService:
+        """Return the protected LIVE Futures entry workflow."""
+        return self._require(self._live_futures_entry_service)
 
     @property
     def signal_engine(self) -> SignalEngine:
@@ -705,6 +724,18 @@ class DependencyProvider:
             position_repository=self.position_repository,
         )
         self._account_service = AccountService(exchange_client=exchange_client)
+        self._live_position_protection_service = LivePositionProtectionService(
+            exchange_client=exchange_client,
+            position_repository=self.position_repository,
+            risk_engine=self.risk_engine,
+        )
+        self._live_futures_entry_service = LiveFuturesEntryService(
+            market_type=self._settings.exchange.market_type,
+            order_service=self.order_service,
+            position_service=self.position_service,
+            protection_service=self.live_position_protection_service,
+            runtime_control=self.runtime_control,
+        )
         self._paper_trading_service = PaperTradingService(
             order_repository=self.order_repository,
             trade_repository=self.trade_repository,
@@ -722,7 +753,9 @@ class DependencyProvider:
             order_service=self.order_service,
             trading_engine=self.trading_engine,
             paper_trading_service=self.paper_trading_service,
+            live_futures_entry_service=self.live_futures_entry_service,
             balance_asset=self._settings.market.quote_asset,
+            trade_mode=self._settings.app.trade_mode,
         )
         self._autonomous_paper_execution_service = AutonomousPaperExecutionService(
             discovery_service=self.opportunity_discovery_service,
@@ -830,6 +863,8 @@ class DependencyProvider:
         self._telegram_bot = None
         self._telegram_query_service = None
         self._health_service = None
+        self._live_futures_entry_service = None
+        self._live_position_protection_service = None
         self._runtime_reporter = None
         self._runtime_recovery_service = None
         self._signal_engine = None

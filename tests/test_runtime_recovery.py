@@ -28,7 +28,11 @@ from botragram.exchanges.binance.futures_client import (
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.models import Candle, Order, Position, Signal
-from botragram.services import PositionService, RuntimeRecoveryService
+from botragram.services import (
+    LivePositionProtectionService,
+    PositionService,
+    RuntimeRecoveryService,
+)
 from botragram.storage.memory import (
     MemoryCandleRepository,
     MemoryPositionRepository,
@@ -184,8 +188,11 @@ def _recovery_service(
         position_repository=repository,
         signal_repository=signal_repository or MemorySignalRepository(),
         candle_repository=candle_repository or MemoryCandleRepository(),
-        exchange_client=exchange,
-        risk_engine=RiskEngine(settings=RiskSettings()),
+        live_position_protection_service=LivePositionProtectionService(
+            exchange_client=exchange,
+            position_repository=repository,
+            risk_engine=RiskEngine(settings=RiskSettings()),
+        ),
         first_tick_timeout_seconds=0.1,
     )
     return service, control
@@ -296,3 +303,38 @@ async def test_live_recovery_creates_missing_protection_only_once() -> None:
     assert stored is not None
     assert stored.stop_loss == Decimal("64675.000")
     assert stored.take_profit == Decimal("65650.00")
+
+
+@pytest.mark.asyncio
+async def test_live_recovery_reconciles_only_missing_protection_leg() -> None:
+    """Reuse shared reconciliation when only take-profit coverage is absent."""
+    position = _position(include_metadata=True)
+    exchange = RecoveryExchangeClient(positions=(position,))
+    exchange.protection_orders.append(
+        Order(
+            order_id="existing-stop",
+            symbol=position.symbol,
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_MARKET,
+            status=OrderStatus.NEW,
+            quantity=position.quantity,
+            executed_quantity=Decimal("0"),
+            price=None,
+            stop_price=position.stop_loss,
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    service, _ = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=repository,
+    )
+
+    assert await service.recover()
+    assert exchange.create_calls == 1
+    assert len(exchange.protection_orders) == 2
+    assert exchange.protection_orders[0].order_type is OrderType.STOP_MARKET
+    assert exchange.protection_orders[1].order_type is OrderType.TAKE_PROFIT_MARKET

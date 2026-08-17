@@ -181,6 +181,10 @@ class PositionService:
 
         return await self.position_repository.get_all()
 
+    async def save(self, *, position: Position) -> None:
+        """Persist one authoritative position snapshot and its local metadata."""
+        await self.position_repository.save(position=position)
+
     async def has_position(
         self,
         *,
