@@ -35,6 +35,7 @@ from botragram.config import Settings
 from botragram.config.app_settings import AppSettings
 from botragram.config.exchange_settings import ExchangeSettings
 from botragram.config.market_settings import MarketSettings
+from botragram.config.risk_settings import RiskSettings
 from botragram.enums import (
     Environment,
     EnvironmentProfile,
@@ -143,6 +144,15 @@ def test_market_symbol_combines_configured_assets() -> None:
     settings = MarketSettings(base_asset="ETH", quote_asset="USDC")
 
     assert settings.symbol == "ETHUSDC"
+
+
+@pytest.mark.parametrize("maximum", (0, -1, True))
+def test_risk_settings_rejects_invalid_maximum_open_positions(
+    maximum: int,
+) -> None:
+    """Require a positive integer portfolio capacity."""
+    with pytest.raises(ValueError, match="Maximum open positions"):
+        RiskSettings(max_open_positions=maximum)
 
 
 # =============================================================================

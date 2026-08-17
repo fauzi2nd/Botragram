@@ -234,6 +234,151 @@ def test_trading_engine_blocks_hold_or_duplicate_position(
     assert reason in decision.reason
 
 
+@pytest.mark.parametrize(
+    ("open_positions", "maximum", "should_execute"),
+    (
+        ((), 2, True),
+        (
+            (
+                _create_position(
+                    symbol="ETHUSDT",
+                    side=PositionSide.LONG,
+                    quantity=Decimal("1"),
+                    entry_price=Decimal("100"),
+                    current_price=Decimal("100"),
+                    unrealized_pnl=Decimal("0"),
+                ),
+            ),
+            2,
+            True,
+        ),
+        (
+            (
+                _create_position(
+                    symbol="ETHUSDT",
+                    side=PositionSide.LONG,
+                    quantity=Decimal("1"),
+                    entry_price=Decimal("100"),
+                    current_price=Decimal("100"),
+                    unrealized_pnl=Decimal("0"),
+                ),
+                _create_position(
+                    symbol="SOLUSDT",
+                    side=PositionSide.SHORT,
+                    quantity=Decimal("1"),
+                    entry_price=Decimal("100"),
+                    current_price=Decimal("100"),
+                    unrealized_pnl=Decimal("0"),
+                ),
+            ),
+            2,
+            False,
+        ),
+    ),
+)
+def test_trading_engine_enforces_portfolio_capacity(
+    open_positions: tuple[Position, ...],
+    maximum: int,
+    should_execute: bool,
+) -> None:
+    """Allow candidates only while the portfolio remains below capacity."""
+    engine = TradingEngine(
+        risk_engine=RiskEngine(settings=RiskSettings(max_open_positions=maximum)),
+    )
+
+    decision = engine.evaluate(
+        signal=_create_signal(),
+        account_balance=Decimal("1000"),
+        has_open_position=False,
+        open_positions=open_positions,
+    )
+
+    assert decision.should_execute is should_execute
+
+    if not should_execute:
+        assert decision.risk_result is None
+        assert "Maximum open positions" in decision.reason
+
+
+def test_trading_engine_rejects_duplicate_symbol_from_portfolio_snapshot() -> None:
+    """Reject a duplicate even when a caller supplied a stale boolean flag."""
+    engine = TradingEngine(risk_engine=RiskEngine(settings=RiskSettings()))
+    positions = (
+        _create_position(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            quantity=Decimal("1"),
+            entry_price=Decimal("100"),
+            current_price=Decimal("100"),
+            unrealized_pnl=Decimal("0"),
+        ),
+    )
+
+    decision = engine.evaluate(
+        signal=_create_signal(),
+        account_balance=Decimal("1000"),
+        has_open_position=False,
+        open_positions=positions,
+    )
+
+    assert not decision.should_execute
+    assert decision.risk_result is None
+    assert "position already exists" in decision.reason
+
+
+def test_trading_engine_rejects_over_capacity_portfolio_safely() -> None:
+    """Reject invalid over-capacity snapshots without invoking trade-level risk."""
+    engine = TradingEngine(
+        risk_engine=RiskEngine(settings=RiskSettings(max_open_positions=1)),
+    )
+    positions = (
+        _create_position(
+            symbol="ETHUSDT",
+            side=PositionSide.LONG,
+            quantity=Decimal("1"),
+            entry_price=Decimal("100"),
+            current_price=Decimal("100"),
+            unrealized_pnl=Decimal("0"),
+        ),
+        _create_position(
+            symbol="SOLUSDT",
+            side=PositionSide.SHORT,
+            quantity=Decimal("1"),
+            entry_price=Decimal("100"),
+            current_price=Decimal("100"),
+            unrealized_pnl=Decimal("0"),
+        ),
+    )
+
+    decision = engine.evaluate(
+        signal=_create_signal(),
+        account_balance=Decimal("1000"),
+        has_open_position=False,
+        open_positions=positions,
+    )
+
+    assert not decision.should_execute
+    assert decision.risk_result is None
+    assert "Maximum open positions" in decision.reason
+
+
+def test_trading_engine_runs_trade_level_risk_after_portfolio_approval() -> None:
+    """Keep existing drawdown rejection after a portfolio gate approval."""
+    engine = TradingEngine(risk_engine=RiskEngine(settings=RiskSettings()))
+
+    decision = engine.evaluate(
+        signal=_create_signal(),
+        account_balance=Decimal("1000"),
+        has_open_position=False,
+        open_positions=(),
+        current_drawdown_pct=Decimal("0.10"),
+    )
+
+    assert not decision.should_execute
+    assert decision.risk_result is not None
+    assert "Maximum account drawdown" in decision.reason
+
+
 # =============================================================================
 # PnL Engine Tests
 # =============================================================================

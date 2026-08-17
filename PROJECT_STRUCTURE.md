@@ -109,6 +109,7 @@ botragram/
 |   |-- backtest_service.py   # Paginated historical candle orchestration
 |   |-- health_service.py
 |   |-- market_service.py
+|   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |-- order_service.py
 |   |-- paper_trading_service.py
 |   |-- position_protection_manager.py # Stream-driven stepped SL+

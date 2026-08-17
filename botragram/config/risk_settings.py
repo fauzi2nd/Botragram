@@ -37,6 +37,7 @@ class RiskSettings:
 
     # Position
     max_position_size_usdt: Decimal = Decimal("1000")
+    max_open_positions: int = 1
     leverage: int = 1
 
     # Risk
@@ -68,6 +69,9 @@ class RiskSettings:
 
         if self.leverage <= 0:
             raise ValueError("Risk leverage must be greater than zero")
+
+        if isinstance(self.max_open_positions, bool) or self.max_open_positions <= 0:
+            raise ValueError("Maximum open positions must be greater than zero")
 
         if self.max_position_size_usdt <= 0:
             raise ValueError("Maximum position size must be greater than zero")

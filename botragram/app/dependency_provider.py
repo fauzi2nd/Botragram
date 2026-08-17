@@ -45,6 +45,7 @@ from botragram.constants import (
 from botragram.engine import (
     OrderEngine,
     PnLEngine,
+    PortfolioEngine,
     PositionEngine,
     RiskEngine,
     SignalEngine,
@@ -64,6 +65,7 @@ from botragram.services import (
     AccountService,
     HealthService,
     MarketService,
+    OpportunityDiscoveryService,
     OrderService,
     PaperTradingService,
     PositionProtectionManager,
@@ -117,10 +119,12 @@ class DependencyProvider:
         "_market_service",
         "_market_type_switch_service",
         "_order_engine",
+        "_opportunity_discovery_service",
         "_order_repository",
         "_order_service",
         "_paper_trading_service",
         "_pnl_engine",
+        "_portfolio_engine",
         "_position_engine",
         "_position_protection_manager",
         "_position_repository",
@@ -207,12 +211,14 @@ class DependencyProvider:
         self._signal_engine: SignalEngine | None = None
         self._risk_engine: RiskEngine | None = None
         self._pnl_engine: PnLEngine | None = None
+        self._portfolio_engine: PortfolioEngine | None = None
         self._trading_engine: TradingEngine | None = None
         self._order_engine: OrderEngine | None = None
         self._position_engine: PositionEngine | None = None
         self._position_protection_manager: PositionProtectionManager | None = None
 
         self._market_service: MarketService | None = None
+        self._opportunity_discovery_service: OpportunityDiscoveryService | None = None
         self._market_type_switch_service: MarketTypeSwitchService | None = None
         self._strategy_service: StrategyService | None = None
         self._order_service: OrderService | None = None
@@ -466,6 +472,11 @@ class DependencyProvider:
         return self._require(self._pnl_engine)
 
     @property
+    def portfolio_engine(self) -> PortfolioEngine:
+        """Return the configured portfolio calculation engine."""
+        return self._require(self._portfolio_engine)
+
+    @property
     def trading_engine(self) -> TradingEngine:
         """Return the configured trading engine."""
         return self._require(self._trading_engine)
@@ -484,6 +495,11 @@ class DependencyProvider:
     def market_service(self) -> MarketService:
         """Return the configured market service."""
         return self._require(self._market_service)
+
+    @property
+    def opportunity_discovery_service(self) -> OpportunityDiscoveryService:
+        """Return the bounded market opportunity discovery service."""
+        return self._require(self._opportunity_discovery_service)
 
     @property
     def market_type_switch_service(self) -> MarketTypeSwitchService:
@@ -582,7 +598,11 @@ class DependencyProvider:
         )
         self._risk_engine = RiskEngine(settings=self._settings.risk)
         self._pnl_engine = PnLEngine()
-        self._trading_engine = TradingEngine(risk_engine=self.risk_engine)
+        self._portfolio_engine = PortfolioEngine()
+        self._trading_engine = TradingEngine(
+            risk_engine=self.risk_engine,
+            portfolio_engine=self.portfolio_engine,
+        )
         self._order_engine = OrderEngine(exchange_client=exchange_client)
         self._position_engine = PositionEngine(exchange_client=exchange_client)
 
@@ -611,6 +631,10 @@ class DependencyProvider:
         self._strategy_service = StrategyService(
             signal_engine=self.signal_engine,
             signal_repository=self.signal_repository,
+        )
+        self._opportunity_discovery_service = OpportunityDiscoveryService(
+            market_service=self.market_service,
+            strategy_service=self.strategy_service,
         )
         self._order_service = OrderService(
             order_engine=self.order_engine,
@@ -695,11 +719,13 @@ class DependencyProvider:
         self._signal_engine = None
         self._risk_engine = None
         self._pnl_engine = None
+        self._portfolio_engine = None
         self._trading_engine = None
         self._order_engine = None
         self._position_engine = None
         self._position_protection_manager = None
         self._market_service = None
+        self._opportunity_discovery_service = None
         self._market_type_switch_service = None
         self._strategy_service = None
         self._order_service = None

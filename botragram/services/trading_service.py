@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -24,7 +25,7 @@ from decimal import Decimal
 # =============================================================================
 from botragram.engine import TradingEngine
 from botragram.enums import Interval, OrderType
-from botragram.models import TradingResult
+from botragram.models import Position, TradingResult
 from botragram.services.account_service import AccountService
 from botragram.services.market_service import MarketService
 from botragram.services.order_service import OrderService
@@ -86,6 +87,7 @@ class TradingService:
         price: Decimal | None = None,
         account_balance_override: Decimal | None = None,
         synchronize_position: bool = True,
+        open_positions: Sequence[Position] | None = None,
         submit_order: bool = True,
     ) -> TradingResult:
         """Execute one complete trading cycle.
@@ -100,7 +102,11 @@ class TradingService:
             account_balance_override: Optional balance used instead of reading
                 the exchange account. Intended for paper-mode evaluation.
             synchronize_position: Whether to refresh the position from the
-                exchange before evaluating the signal.
+                exchange before loading a portfolio snapshot.
+            open_positions: Optional portfolio snapshot. When omitted, the
+                current portfolio is loaded once for this execution. A caller
+                processing ranked candidates can refresh or update a snapshot
+                between evaluations.
             submit_order: Whether an approved decision may reach the exchange.
                 Set this to false for paper trading.
         """
@@ -129,9 +135,17 @@ class TradingService:
                 interval=interval,
             )
 
-        has_position = await self.position_service.has_position(
-            symbol=normalized_symbol,
-            synchronize=synchronize_position,
+        portfolio_positions = open_positions
+
+        if portfolio_positions is None:
+            portfolio_positions = await self.position_service.get_all(
+                synchronize=synchronize_position,
+            )
+
+        has_position = any(
+            position.symbol.upper() == normalized_symbol
+            and position.quantity > _DECIMAL_ZERO
+            for position in portfolio_positions
         )
 
         balance = account_balance_override
@@ -145,6 +159,7 @@ class TradingService:
             signal=signal,
             account_balance=balance,
             has_open_position=has_position,
+            open_positions=portfolio_positions,
             current_drawdown_pct=current_drawdown_pct,
         )
 

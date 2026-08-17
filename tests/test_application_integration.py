@@ -69,6 +69,7 @@ async def _run_application_dependency_smoke_test() -> None:
             assert isinstance(provider.telegram_bot, TelegramBot)
             assert isinstance(provider.health_service, HealthService)
             assert isinstance(provider.runtime_reporter, RuntimeReporter)
+            assert provider.trading_engine.portfolio_engine is provider.portfolio_engine
             assert provider.trading_service.market_service is provider.market_service
             assert provider.trading_service.order_service is provider.order_service
             assert (
