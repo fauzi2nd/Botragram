@@ -20,11 +20,12 @@ import logging
 from decimal import Decimal
 from html import escape
 from typing import Final
+from uuid import UUID
 
 # =============================================================================
 # Third-Party Imports
 # =============================================================================
-from telegram import InlineKeyboardMarkup, Update
+from telegram import CallbackQuery, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 # =============================================================================
@@ -49,6 +50,7 @@ from botragram.telegram.keyboards import (
 )
 from botragram.telegram.messages import (
     get_exchange_message,
+    get_execution_authorization_outcome_message,
     get_interval_message,
     get_market_message,
     get_market_search_prompt_message,
@@ -81,6 +83,8 @@ _MARKET_PAGE_CALLBACK_PREFIX: Final[str] = "cb_market_page_"
 _INTERVAL_CALLBACK_PREFIX: Final[str] = "cb_interval_"
 _STRATEGY_CALLBACK_PREFIX: Final[str] = "cb_strategy_"
 _PRODUCT_CALLBACK_PREFIX: Final[str] = "cb_product_"
+_OPPORTUNITY_APPROVE_CALLBACK_PREFIX: Final[str] = "cb_opportunity_approve_"
+_OPPORTUNITY_REJECT_CALLBACK_PREFIX: Final[str] = "cb_opportunity_reject_"
 
 
 # =============================================================================
@@ -176,6 +180,83 @@ def _get_exchange_configuration_message(bot_context: BotContext) -> str:
     )
 
 
+def _get_authorization_identifier(
+    *,
+    callback_data: str,
+    prefix: str,
+) -> str | None:
+    """Return a canonical opaque authorization ID from one callback payload."""
+    identifier = callback_data.removeprefix(prefix).strip().lower()
+
+    try:
+        parsed_identifier = UUID(hex=identifier)
+    except ValueError:
+        return None
+
+    return parsed_identifier.hex if parsed_identifier.hex == identifier else None
+
+
+async def _handle_execution_authorization_callback(
+    *,
+    query: CallbackQuery,
+    bot_context: BotContext,
+    callback_data: str,
+) -> bool:
+    """Handle a PAPER authorization callback through the application boundary."""
+    if callback_data.startswith(_OPPORTUNITY_APPROVE_CALLBACK_PREFIX):
+        prefix = _OPPORTUNITY_APPROVE_CALLBACK_PREFIX
+        consume = "approve"
+    elif callback_data.startswith(_OPPORTUNITY_REJECT_CALLBACK_PREFIX):
+        prefix = _OPPORTUNITY_REJECT_CALLBACK_PREFIX
+        consume = "reject"
+    else:
+        return False
+
+    authorization_id = _get_authorization_identifier(
+        callback_data=callback_data,
+        prefix=prefix,
+    )
+    service = bot_context.execution_authorization_service
+
+    if authorization_id is None:
+        await query.edit_message_text(
+            "<b>Opportunity Unavailable</b>\n\nInvalid authorization reference.",
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
+        return True
+
+    if service is None:
+        await query.edit_message_text(
+            "<b>Opportunity Unavailable</b>\n\nAuthorization service is unavailable.",
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
+        return True
+
+    try:
+        outcome = (
+            await service.approve(authorization_id=authorization_id)
+            if consume == "approve"
+            else await service.reject(authorization_id=authorization_id)
+        )
+    except Exception:
+        _LOGGER.exception(
+            "Telegram execution authorization callback failed: action=%s",
+            consume,
+        )
+        await query.edit_message_text(
+            "<b>Opportunity Processing Failed</b>\n\nPlease request a fresh "
+            "opportunity.",
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
+        return True
+
+    await query.edit_message_text(
+        get_execution_authorization_outcome_message(outcome),
+        parse_mode=DEFAULT_PARSE_MODE,
+    )
+    return True
+
+
 # =============================================================================
 # Callback Handler
 # =============================================================================
@@ -192,6 +273,13 @@ async def handle_callback_query(
     await query.answer()
     data = query.data or ""
     bot_context = _get_context(context)
+
+    if await _handle_execution_authorization_callback(
+        query=query,
+        bot_context=bot_context,
+        callback_data=data,
+    ):
+        return
 
     if data in {"cb_status", "cb_back_main"}:
         last_price = bot_context.last_price

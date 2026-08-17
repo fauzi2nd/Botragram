@@ -29,13 +29,15 @@ from telegram.ext import ApplicationBuilder
 # Local Imports
 # =============================================================================
 from botragram.config.telegram_settings import TelegramSettings
-from botragram.models import Notification
+from botragram.models import ExecutionAuthorization, Notification
 from botragram.telegram.context import (
     ALLOWED_CHAT_IDS_KEY,
     BOT_CONTEXT_KEY,
     BotContext,
 )
 from botragram.telegram.handlers import register_handlers
+from botragram.telegram.keyboards import get_execution_authorization_keyboard
+from botragram.telegram.messages import get_execution_authorization_message
 
 __all__ = [
     "TelegramBot",
@@ -186,6 +188,50 @@ class TelegramBot:
                 _LOGGER.exception(
                     "Telegram notification delivery failed: title=%s chat_id=%d",
                     notification.title,
+                    chat_id,
+                )
+
+    async def publish_execution_authorization(
+        self,
+        *,
+        authorization: ExecutionAuthorization,
+    ) -> None:
+        """Publish one prepared PAPER authorization with confirmation controls."""
+        if (
+            not self._settings.enabled
+            or not self._settings.bot_token
+            or not self._settings.allowed_chat_ids
+        ):
+            return
+
+        app = self._app
+
+        if app is None:
+            _LOGGER.warning(
+                "Telegram authorization notification skipped because the bot is not "
+                "started: authorization_id=%s",
+                authorization.authorization_id,
+            )
+            return
+
+        message = get_execution_authorization_message(authorization)
+        reply_markup = get_execution_authorization_keyboard(
+            authorization.authorization_id,
+        )
+
+        for chat_id in self._settings.allowed_chat_ids:
+            try:
+                await app.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode=self._settings.parse_mode,
+                    reply_markup=reply_markup,
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Telegram authorization delivery failed: authorization_id=%s "
+                    "chat_id=%d",
+                    authorization.authorization_id,
                     chat_id,
                 )
 

@@ -61,6 +61,7 @@ from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.exchanges.factory import ExchangeFactory
 from botragram.repositories import (
     CandleRepository,
+    ExecutionAuthorizationRepository,
     OrderRepository,
     PositionRepository,
     SignalRepository,
@@ -69,6 +70,7 @@ from botragram.repositories import (
 from botragram.services import (
     AccountService,
     AutonomousPaperExecutionService,
+    ExecutionAuthorizationService,
     HealthService,
     MarketService,
     OpportunityDiscoveryService,
@@ -81,6 +83,7 @@ from botragram.services import (
     StrategyService,
 )
 from botragram.services.trading_service import TradingService
+from botragram.storage.memory import MemoryExecutionAuthorizationRepository
 from botragram.storage.sqlite import (
     SQLiteCandleRepository,
     SQLiteDatabase,
@@ -117,6 +120,8 @@ class DependencyProvider:
     __slots__ = (
         "_account_service",
         "_autonomous_paper_execution_service",
+        "_execution_authorization_repository",
+        "_execution_authorization_service",
         "_candle_repository",
         "_database",
         "_database_path",
@@ -211,6 +216,9 @@ class DependencyProvider:
         self._runtime_recovery_service: RuntimeRecoveryService | None = None
 
         self._candle_repository: CandleRepository | None = None
+        self._execution_authorization_repository: (
+            ExecutionAuthorizationRepository | None
+        ) = None
         self._signal_repository: SignalRepository | None = None
         self._order_repository: OrderRepository | None = None
         self._trade_repository: TradeRepository | None = None
@@ -238,6 +246,9 @@ class DependencyProvider:
         self._account_service: AccountService | None = None
         self._trading_service: TradingService | None = None
         self._trading_cycle_executor: TradingCycleExecutor | None = None
+        self._execution_authorization_service: ExecutionAuthorizationService | None = (
+            None
+        )
         self._initialized = False
 
     # =========================================================================
@@ -358,6 +369,9 @@ class DependencyProvider:
                     query_provider=query_service,
                     runtime_control=self.runtime_control,
                     market_type_switcher=self.market_type_switch_service,
+                    execution_authorization_service=(
+                        self._execution_authorization_service
+                    ),
                 )
             )
             try:
@@ -517,6 +531,11 @@ class DependencyProvider:
     def autonomous_paper_execution_service(self) -> AutonomousPaperExecutionService:
         """Return the configured autonomous PAPER execution service."""
         return self._require(self._autonomous_paper_execution_service)
+
+    @property
+    def execution_authorization_service(self) -> ExecutionAuthorizationService:
+        """Return the PAPER human execution authorization boundary."""
+        return self._require(self._execution_authorization_service)
 
     @property
     def market_type_switch_service(self) -> MarketTypeSwitchService:
@@ -690,6 +709,16 @@ class DependencyProvider:
             discovery_service=self.opportunity_discovery_service,
             paper_trading_service=self.paper_trading_service,
         )
+        if self._settings.app.trade_mode is TradeMode.PAPER:
+            self._execution_authorization_repository = (
+                MemoryExecutionAuthorizationRepository()
+            )
+            self._execution_authorization_service = ExecutionAuthorizationService(
+                authorization_repository=self._execution_authorization_repository,
+                paper_trading_service=self.paper_trading_service,
+                trade_mode=self._settings.app.trade_mode,
+                authorization_publisher=self.telegram_bot,
+            )
         self._trading_cycle_executor = self._build_trading_cycle_executor()
 
     def _build_trading_cycle_executor(self) -> TradingCycleExecutor:
@@ -750,6 +779,8 @@ class DependencyProvider:
     def _clear_dependencies(self) -> None:
         """Clear initialized dependencies before releasing resources."""
         self._candle_repository = None
+        self._execution_authorization_repository = None
+        self._execution_authorization_service = None
         self._signal_repository = None
         self._order_repository = None
         self._trade_repository = None

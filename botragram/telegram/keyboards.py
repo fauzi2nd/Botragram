@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 from collections.abc import Sequence
 from typing import Final
+from uuid import UUID
 
 # =============================================================================
 # Third Party
@@ -68,6 +69,7 @@ __all__ = [
     "get_market_search_keyboard",
     "get_strategy_keyboard",
     "get_stream_keyboard",
+    "get_execution_authorization_keyboard",
     "get_trading_menu_keyboard",
 ]
 
@@ -355,3 +357,39 @@ def get_stream_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("◀️ Back", callback_data="cb_back_main")],
         ]
     )
+
+
+def get_execution_authorization_keyboard(
+    authorization_id: str,
+) -> InlineKeyboardMarkup:
+    """Return PAPER approval controls for one opaque authorization identifier."""
+    normalized_identifier = _normalize_authorization_identifier(authorization_id)
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Approve PAPER",
+                    callback_data=f"cb_opportunity_approve_{normalized_identifier}",
+                ),
+                InlineKeyboardButton(
+                    "Reject",
+                    callback_data=f"cb_opportunity_reject_{normalized_identifier}",
+                ),
+            ]
+        ]
+    )
+
+
+def _normalize_authorization_identifier(authorization_id: str) -> str:
+    """Validate the fixed-width opaque identifier used in callback data."""
+    normalized_identifier = authorization_id.strip().lower()
+
+    try:
+        parsed_identifier = UUID(hex=normalized_identifier)
+    except ValueError as error:
+        raise ValueError("Execution authorization identifier must be a UUID") from error
+
+    if parsed_identifier.hex != normalized_identifier:
+        raise ValueError("Execution authorization identifier must be canonical")
+
+    return normalized_identifier

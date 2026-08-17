@@ -25,13 +25,20 @@ from typing import Final, Protocol
 # Local Imports
 # =============================================================================
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
-from botragram.models import Order, Position, Trade
+from botragram.models import (
+    ExecutionAuthorization,
+    ExecutionAuthorizationOutcome,
+    Order,
+    Position,
+    Trade,
+)
 
 __all__ = [
     "ALLOWED_CHAT_IDS_KEY",
     "BOT_CONTEXT_KEY",
     "MARKET_SEARCH_PENDING_KEY",
     "BotContext",
+    "BotExecutionAuthorizationProvider",
     "BotQueryProvider",
     "BotMarketTypeSwitcher",
     "BotRuntimeControl",
@@ -169,6 +176,34 @@ class BotRuntimeControl(Protocol):
         ...
 
 
+class BotExecutionAuthorizationProvider(Protocol):
+    """Consume prepared PAPER authorizations for Telegram callbacks."""
+
+    async def get(
+        self,
+        *,
+        authorization_id: str,
+    ) -> ExecutionAuthorization | None:
+        """Return one prepared authorization by opaque identifier."""
+        ...
+
+    async def approve(
+        self,
+        *,
+        authorization_id: str,
+    ) -> ExecutionAuthorizationOutcome:
+        """Approve and revalidate one prepared authorization."""
+        ...
+
+    async def reject(
+        self,
+        *,
+        authorization_id: str,
+    ) -> ExecutionAuthorizationOutcome:
+        """Reject one prepared authorization without execution."""
+        ...
+
+
 # =============================================================================
 # Bot Context
 # =============================================================================
@@ -189,6 +224,7 @@ class BotContext:
     query_provider: BotQueryProvider | None = None
     runtime_control: BotRuntimeControl | None = None
     market_type_switcher: BotMarketTypeSwitcher | None = None
+    execution_authorization_service: BotExecutionAuthorizationProvider | None = None
 
     @property
     def market_type(self) -> MarketType:

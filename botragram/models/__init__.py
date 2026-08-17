@@ -25,6 +25,10 @@ from botragram.models.backtest import (
 )
 from botragram.models.balance import Balance
 from botragram.models.candle import Candle
+from botragram.models.execution_authorization import (
+    ExecutionAuthorization,
+    ExecutionAuthorizationOutcome,
+)
 from botragram.models.notification import Notification
 from botragram.models.order import Order
 from botragram.models.position import Position
@@ -49,6 +53,8 @@ __all__ = [
     "BacktestResult",
     "BacktestTrade",
     "Candle",
+    "ExecutionAuthorization",
+    "ExecutionAuthorizationOutcome",
     "Notification",
     "Order",
     "Position",

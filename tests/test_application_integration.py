@@ -42,6 +42,7 @@ from botragram.enums import ExchangeType
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.services import (
     AutonomousPaperExecutionService,
+    ExecutionAuthorizationService,
     HealthService,
     PaperTradingService,
     RuntimeReporter,
@@ -84,6 +85,14 @@ async def _run_application_dependency_smoke_test() -> None:
                 AutonomousPaperExecutionService,
             )
             assert isinstance(
+                provider.execution_authorization_service,
+                ExecutionAuthorizationService,
+            )
+            assert (
+                provider.execution_authorization_service.authorization_publisher
+                is provider.telegram_bot
+            )
+            assert isinstance(
                 provider.trading_cycle_executor,
                 SingleSymbolTradingCycleExecutor,
             )
@@ -115,6 +124,9 @@ async def _run_application_dependency_smoke_test() -> None:
 
         with pytest.raises(RuntimeError, match="not been initialized"):
             _ = provider.autonomous_paper_execution_service
+
+        with pytest.raises(RuntimeError, match="not been initialized"):
+            _ = provider.execution_authorization_service
 
 
 def test_provider_selects_paper_autonomous_executor() -> None:

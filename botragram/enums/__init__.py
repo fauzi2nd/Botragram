@@ -19,6 +19,7 @@ from __future__ import annotations
 from botragram.enums.account_type import AccountType
 from botragram.enums.ai_model_type import AiModelType
 from botragram.enums.ai_provider import AiProvider
+from botragram.enums.authorization_status import AuthorizationStatus
 from botragram.enums.base import BaseEnum
 from botragram.enums.environment import Environment
 from botragram.enums.environment_profile import EnvironmentProfile
@@ -51,6 +52,7 @@ __all__ = [
     # AI
     "AiProvider",
     "AiModelType",
+    "AuthorizationStatus",
     # Environment
     "Environment",
     "EnvironmentProfile",

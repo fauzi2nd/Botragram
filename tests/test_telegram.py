@@ -24,19 +24,22 @@ from decimal import Decimal
 # =============================================================================
 from botragram.constants.telegram import MENU_MARKET, MENU_MARKET_OVERVIEW
 from botragram.enums import (
+    AuthorizationStatus,
     MarketType,
     OrderSide,
     OrderStatus,
     OrderType,
     PositionSide,
+    SignalType,
 )
-from botragram.models import Order, Position, Trade
+from botragram.models import ExecutionAuthorization, Order, Position, Signal, Trade
 from botragram.telegram.context import BotContext
 from botragram.telegram.keyboards import (
     get_activity_menu_keyboard,
     get_configuration_menu_keyboard,
     get_dashboard_menu_keyboard,
     get_exchange_keyboard,
+    get_execution_authorization_keyboard,
     get_interval_keyboard,
     get_main_menu_keyboard,
     get_market_keyboard,
@@ -45,6 +48,7 @@ from botragram.telegram.keyboards import (
 )
 from botragram.telegram.messages import (
     get_exchange_message,
+    get_execution_authorization_message,
     get_interval_message,
     get_market_message,
     get_orders_message,
@@ -285,6 +289,46 @@ def test_paper_notifications_include_portfolio_results_and_escape_reason() -> No
     assert "Realized PnL" in exit_message
     assert "19.58 USDT" in exit_message
     assert "&lt;triggered&gt;" in exit_message
+
+
+def test_execution_authorization_message_and_keyboard_are_paper_safe() -> None:
+    """Render immutable opportunity details and opaque callback identifiers only."""
+    authorization = ExecutionAuthorization(
+        authorization_id="12345678123456781234567812345678",
+        signal=Signal(
+            symbol="BTC&lt;USDT",
+            signal_type=SignalType.SELL,
+            price=Decimal("100"),
+            confidence=Decimal("0.875"),
+            strategy_name="strategy<script>",
+            generated_at=_NOW,
+            reason="reason & <note>",
+        ),
+        status=AuthorizationStatus.PENDING,
+        created_at=_NOW,
+        expires_at=_NOW.replace(minute=5),
+    )
+
+    message = get_execution_authorization_message(authorization)
+    keyboard = get_execution_authorization_keyboard(authorization.authorization_id)
+    callbacks = {
+        button.callback_data for row in keyboard.inline_keyboard for button in row
+    }
+
+    assert "PAPER" in message
+    assert "SHORT" in message
+    assert "87.50%" in message
+    assert "BTC&amp;lt;USDT" in message
+    assert "strategy&lt;script&gt;" in message
+    assert "reason &amp; &lt;note&gt;" in message
+    assert authorization.authorization_id not in message
+    assert callbacks == {
+        f"cb_opportunity_approve_{authorization.authorization_id}",
+        f"cb_opportunity_reject_{authorization.authorization_id}",
+    }
+    assert all(
+        isinstance(callback, str) and len(callback) <= 64 for callback in callbacks
+    )
 
 
 # =============================================================================

@@ -19,6 +19,9 @@ from __future__ import annotations
 from botragram.storage.memory.candle_repository import (
     MemoryCandleRepository,
 )
+from botragram.storage.memory.execution_authorization_repository import (
+    MemoryExecutionAuthorizationRepository,
+)
 from botragram.storage.memory.order_repository import (
     MemoryOrderRepository,
 )
@@ -34,6 +37,7 @@ from botragram.storage.memory.trade_repository import (
 
 __all__ = [
     "MemoryCandleRepository",
+    "MemoryExecutionAuthorizationRepository",
     "MemoryOrderRepository",
     "MemoryPositionRepository",
     "MemorySignalRepository",

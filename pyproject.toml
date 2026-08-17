@@ -43,7 +43,7 @@ exclude = [".venv"]
 pythonpath = ["."]
 testpaths = ["tests"]
 norecursedirs = ["manual"]
-addopts = ["--basetemp=.pytest-runtime"]
+addopts = "--basetemp=.pytest-runtime"
 cache_dir = ".cache/pytest-runtime/cache"
 
 [tool.ruff]

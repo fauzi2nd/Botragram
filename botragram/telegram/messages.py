@@ -24,8 +24,14 @@ from html import escape
 # Local Imports
 # =============================================================================
 from botragram.constants.app import APP_NAME, APP_VERSION
-from botragram.enums import MarketType
-from botragram.models import Order, Position, Trade
+from botragram.enums import AuthorizationStatus, MarketType, SignalType
+from botragram.models import (
+    ExecutionAuthorization,
+    ExecutionAuthorizationOutcome,
+    Order,
+    Position,
+    Trade,
+)
 from botragram.utils.formatter import format_currency
 
 __all__ = [
@@ -40,6 +46,8 @@ __all__ = [
     "get_market_search_results_message",
     "get_navigation_message",
     "get_orders_message",
+    "get_execution_authorization_message",
+    "get_execution_authorization_outcome_message",
     "get_paper_entry_message",
     "get_paper_exit_message",
     "get_pause_message",
@@ -403,6 +411,77 @@ def get_paper_exit_message(
         f"<b>Available Balance:</b> "
         f"{format_currency(available_balance, symbol='USDT')}\n"
         f"<b>Reason:</b> {escape(reason)}"
+    )
+
+
+def get_execution_authorization_message(
+    authorization: ExecutionAuthorization,
+) -> str:
+    """Render a prepared PAPER opportunity without recalculating trade data."""
+    signal = authorization.signal
+    intent = "LONG" if signal.signal_type is SignalType.BUY else "SHORT"
+    reason = f"\n<b>Signal Note:</b> {escape(signal.reason)}" if signal.reason else ""
+
+    return (
+        "<b>Paper Opportunity Approval</b>\n\n"
+        "<b>Environment:</b> PAPER\n"
+        f"<b>Status:</b> {escape(authorization.status.value.upper())}\n"
+        f"<b>Symbol:</b> {escape(signal.symbol)}\n"
+        f"<b>Intent:</b> {intent}\n"
+        f"<b>Strategy:</b> {escape(signal.strategy_name)}\n"
+        f"<b>Confidence:</b> {signal.confidence:.2%}\n"
+        f"<b>Reference Price:</b> {format_currency(signal.price, symbol='USDT')}\n"
+        f"<b>Generated:</b> {escape(signal.generated_at.isoformat())}\n"
+        f"<b>Expires:</b> {escape(authorization.expires_at.isoformat())}"
+        f"{reason}\n\n"
+        "Approve triggers final PAPER portfolio validation."
+    )
+
+
+def get_execution_authorization_outcome_message(
+    outcome: ExecutionAuthorizationOutcome,
+) -> str:
+    """Render one authorization outcome without exposing internal exceptions."""
+    authorization = outcome.authorization
+    result = outcome.trading_result
+
+    if result is not None and result.executed:
+        symbol = escape(result.decision.signal.symbol)
+        return (
+            "<b>Paper Opportunity Executed</b>\n\n"
+            f"<b>Symbol:</b> {symbol}\n"
+            "<b>Environment:</b> PAPER\n"
+            "Final portfolio validation passed."
+        )
+
+    if authorization is None:
+        return "<b>Opportunity Unavailable</b>\n\nAuthorization was not found."
+
+    if authorization.status is AuthorizationStatus.EXPIRED:
+        return "<b>Opportunity Expired</b>\n\nRequest a fresh opportunity."
+
+    if authorization.status is AuthorizationStatus.REJECTED:
+        return "<b>Opportunity Rejected</b>\n\nNo PAPER trade was submitted."
+
+    if authorization.status is AuthorizationStatus.APPROVED and result is None:
+        return (
+            "<b>Opportunity Already Processed</b>\n\n"
+            "No additional PAPER trade was submitted."
+        )
+
+    if result is not None:
+        reason = escape(
+            outcome.reason or result.reason or "Final validation rejected it"
+        )
+        return (
+            "<b>Paper Opportunity Not Executed</b>\n\n"
+            f"<b>Reason:</b> {reason}\n"
+            "No PAPER trade was submitted."
+        )
+
+    return (
+        "<b>Opportunity Already Processed</b>\n\n"
+        "No additional PAPER trade was submitted."
     )
 
 

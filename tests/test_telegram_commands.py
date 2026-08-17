@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import cast
 
+import pytest
 from telegram import InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
@@ -19,8 +20,25 @@ from botragram.constants.telegram import (
     MENU_HOME,
     MENU_MARKET_OVERVIEW,
 )
-from botragram.enums import MarketType, OrderSide, OrderStatus, OrderType, PositionSide
-from botragram.models import Order, Position, Trade
+from botragram.enums import (
+    AuthorizationStatus,
+    MarketType,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+    SignalType,
+)
+from botragram.models import (
+    ExecutionAuthorization,
+    ExecutionAuthorizationOutcome,
+    Order,
+    Position,
+    Signal,
+    Trade,
+    TradingDecision,
+    TradingResult,
+)
 from botragram.telegram.access import is_chat_allowed
 from botragram.telegram.callbacks import handle_callback_query
 from botragram.telegram.commands import (
@@ -184,6 +202,105 @@ class FakeMarketTypeSwitcher:
         self.committed.append(market_type)
 
 
+@dataclass(slots=True)
+class FakeExecutionAuthorizationService:
+    """Record Telegram calls at the application authorization boundary."""
+
+    authorization: ExecutionAuthorization
+    execution_count: int = 0
+    calls: list[str] = field(default_factory=list[str])
+    fail: bool = False
+    block: bool = False
+
+    async def get(
+        self,
+        *,
+        authorization_id: str,
+    ) -> ExecutionAuthorization | None:
+        """Return the configured authorization when its ID matches."""
+        return (
+            self.authorization
+            if authorization_id == self.authorization.authorization_id
+            else None
+        )
+
+    async def approve(
+        self,
+        *,
+        authorization_id: str,
+    ) -> ExecutionAuthorizationOutcome:
+        """Consume approval once and simulate the application's outcome."""
+        self.calls.append(f"approve:{authorization_id}")
+        if self.block:
+            await asyncio.Event().wait()
+        if self.fail:
+            raise RuntimeError("internal failure")
+        if authorization_id != self.authorization.authorization_id:
+            return ExecutionAuthorizationOutcome(
+                authorization=None,
+                trading_result=None,
+            )
+        if self.authorization.status is AuthorizationStatus.EXPIRED:
+            return ExecutionAuthorizationOutcome(
+                authorization=self.authorization,
+                trading_result=None,
+            )
+        if self.authorization.status is AuthorizationStatus.REJECTED:
+            return ExecutionAuthorizationOutcome(
+                authorization=self.authorization,
+                trading_result=None,
+            )
+        if self.execution_count:
+            return ExecutionAuthorizationOutcome(
+                authorization=ExecutionAuthorization(
+                    authorization_id=self.authorization.authorization_id,
+                    signal=self.authorization.signal,
+                    status=AuthorizationStatus.APPROVED,
+                    created_at=self.authorization.created_at,
+                    expires_at=self.authorization.expires_at,
+                ),
+                trading_result=None,
+            )
+        self.execution_count += 1
+        result = TradingResult(
+            executed=True,
+            decision=TradingDecision(
+                should_execute=True,
+                signal=self.authorization.signal,
+                risk_result=None,
+            ),
+            order=None,
+        )
+        return ExecutionAuthorizationOutcome(
+            authorization=self.authorization,
+            trading_result=result,
+        )
+
+    async def reject(
+        self,
+        *,
+        authorization_id: str,
+    ) -> ExecutionAuthorizationOutcome:
+        """Consume rejection without any execution side effect."""
+        self.calls.append(f"reject:{authorization_id}")
+        if authorization_id != self.authorization.authorization_id:
+            return ExecutionAuthorizationOutcome(
+                authorization=None,
+                trading_result=None,
+            )
+        self.authorization = ExecutionAuthorization(
+            authorization_id=self.authorization.authorization_id,
+            signal=self.authorization.signal,
+            status=AuthorizationStatus.REJECTED,
+            created_at=self.authorization.created_at,
+            expires_at=self.authorization.expires_at,
+        )
+        return ExecutionAuthorizationOutcome(
+            authorization=self.authorization,
+            trading_result=None,
+        )
+
+
 def _create_position() -> Position:
     """Create one active paper position."""
     return Position(
@@ -229,6 +346,190 @@ def _create_order() -> Order:
         price=Decimal("110"),
         created_at=_NOW,
         updated_at=_NOW,
+    )
+
+
+def _create_authorization(
+    *,
+    status: AuthorizationStatus = AuthorizationStatus.PENDING,
+) -> ExecutionAuthorization:
+    """Create one opaque PAPER authorization for callback tests."""
+    return ExecutionAuthorization(
+        authorization_id="12345678123456781234567812345678",
+        signal=Signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("100"),
+            confidence=Decimal("0.8"),
+            strategy_name="test",
+            generated_at=_NOW,
+        ),
+        status=status,
+        created_at=_NOW,
+        expires_at=_NOW.replace(minute=5),
+    )
+
+
+def test_opportunity_callbacks_delegate_only_to_authorization_boundary() -> None:
+    """Approve twice without allowing Telegram to duplicate PAPER execution."""
+    asyncio.run(_run_opportunity_approval_test())
+
+
+def test_opportunity_rejection_prevents_later_approval_execution() -> None:
+    """Keep rejection and subsequent approval within the application lifecycle."""
+    asyncio.run(_run_opportunity_rejection_test())
+
+
+def test_opportunity_callbacks_fail_safely_for_invalid_and_expired_ids() -> None:
+    """Render safe stale and malformed authorization callback results."""
+    asyncio.run(_run_opportunity_invalid_callback_test())
+
+
+def test_opportunity_callback_respects_access_and_propagates_cancellation() -> None:
+    """Ignore unauthorized updates and preserve application cancellation."""
+    asyncio.run(_run_opportunity_access_and_cancellation_test())
+
+
+async def _run_opportunity_approval_test() -> None:
+    """Deliver repeated approval callbacks to the same application boundary."""
+    service = FakeExecutionAuthorizationService(
+        authorization=_create_authorization(),
+    )
+    query = FakeCallbackQuery(
+        data=f"cb_opportunity_approve_{service.authorization.authorization_id}",
+    )
+    context = _callback_context(service=service)
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=FakeMessage(),
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+
+    await handle_callback_query(update, context)
+    await handle_callback_query(update, context)
+
+    assert service.execution_count == 1
+    assert len(service.calls) == 2
+    assert "Executed" in query.replies[0]
+    assert "Already Processed" in query.replies[1]
+
+
+async def _run_opportunity_rejection_test() -> None:
+    """Reject a pending authorization before attempting approval."""
+    service = FakeExecutionAuthorizationService(
+        authorization=_create_authorization(),
+    )
+    query = FakeCallbackQuery(
+        data=f"cb_opportunity_reject_{service.authorization.authorization_id}",
+    )
+    context = _callback_context(service=service)
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=FakeMessage(),
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+
+    await handle_callback_query(update, context)
+    query.data = f"cb_opportunity_approve_{service.authorization.authorization_id}"
+    await handle_callback_query(update, context)
+
+    assert service.execution_count == 0
+    assert "Rejected" in query.replies[0]
+    assert "Rejected" in query.replies[1]
+
+
+async def _run_opportunity_invalid_callback_test() -> None:
+    """Render malformed and expired authorizations without executing a signal."""
+    service = FakeExecutionAuthorizationService(
+        authorization=_create_authorization(status=AuthorizationStatus.EXPIRED),
+    )
+    query = FakeCallbackQuery(data="cb_opportunity_approve_invalid")
+    context = _callback_context(service=service)
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=FakeMessage(),
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+
+    await handle_callback_query(update, context)
+    query.data = f"cb_opportunity_approve_{service.authorization.authorization_id}"
+    await handle_callback_query(update, context)
+    query.data = "cb_opportunity_approve_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    await handle_callback_query(update, context)
+    service.fail = True
+    query.data = f"cb_opportunity_approve_{service.authorization.authorization_id}"
+    await handle_callback_query(update, context)
+
+    assert "Invalid authorization" in query.replies[0]
+    assert "Expired" in query.replies[1]
+    assert "Unavailable" in query.replies[2]
+    assert "Processing Failed" in query.replies[3]
+    assert service.execution_count == 0
+
+
+async def _run_opportunity_access_and_cancellation_test() -> None:
+    """Reject unauthorized access and preserve cancellation from the boundary."""
+    service = FakeExecutionAuthorizationService(
+        authorization=_create_authorization(),
+        block=True,
+    )
+    query = FakeCallbackQuery(
+        data=f"cb_opportunity_approve_{service.authorization.authorization_id}",
+    )
+    unauthorized_update = cast(
+        Update,
+        FakeUpdate(
+            message=FakeMessage(),
+            effective_chat=FakeChat(id=99999),
+            callback_query=query,
+        ),
+    )
+    context = _callback_context(service=service)
+
+    await handle_callback_query(unauthorized_update, context)
+    assert not service.calls
+    assert query.answer_count == 0
+
+    authorized_update = cast(
+        Update,
+        FakeUpdate(
+            message=FakeMessage(),
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+    task = asyncio.create_task(handle_callback_query(authorized_update, context))
+    await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+def _callback_context(
+    *,
+    service: FakeExecutionAuthorizationService,
+) -> ContextTypes.DEFAULT_TYPE:
+    """Build one authorized Telegram callback context for application fakes."""
+    return cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: BotContext(
+                    execution_authorization_service=service,
+                ),
+            }
+        ),
     )
 
 

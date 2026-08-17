@@ -108,6 +108,7 @@ botragram/
 |   |-- account_service.py
 |   |-- autonomous_paper_execution_service.py # Ranked PAPER candidate execution
 |   |-- backtest_service.py   # Paginated historical candle orchestration
+|   |-- execution_authorization_service.py # PAPER human-approval boundary
 |   |-- health_service.py
 |   |-- market_service.py
 |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
