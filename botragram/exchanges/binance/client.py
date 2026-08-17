@@ -383,6 +383,27 @@ class BinanceExchangeClient(BaseExchangeClient):
             self._require_mapping(payload),
         )
 
+    async def get_order_by_client_order_id(
+        self,
+        *,
+        symbol: str,
+        client_order_id: str,
+    ) -> Order:
+        """Return a Binance Spot order by its client-assigned identity."""
+        normalized_client_order_id = client_order_id.strip()
+        if not normalized_client_order_id:
+            raise ValueError("Client order identifier must not be empty")
+
+        payload = await self._rest.get(
+            _ORDER_ENDPOINT,
+            params={
+                "symbol": self._normalize_symbol(symbol),
+                "origClientOrderId": normalized_client_order_id,
+            },
+            authenticated=True,
+        )
+        return self._mapper.map_order(self._require_mapping(payload))
+
     async def get_open_orders(
         self,
         *,

@@ -105,6 +105,13 @@ class FakeOrderService:
             raise self.error
         return self.order
 
+    async def get_by_client_order_id(
+        self, *, symbol: str, client_order_id: str
+    ) -> Order:
+        """Reject unexpected reconciliation in Phase 5A success-path tests."""
+        del symbol, client_order_id
+        raise AssertionError("Unexpected order reconciliation")
+
 
 @dataclass(slots=True)
 class FakePositionService:

@@ -30,6 +30,9 @@ __all__ = [
     "ExchangeResponseError",
     "ExchangeWebSocketError",
     "ExchangeOrderError",
+    "ExchangeOrderNotFoundError",
+    "ExchangeOrderOutcomeUnknownError",
+    "ExchangeOrderRejectedError",
     "ExchangeInsufficientBalanceError",
     "ExchangeSymbolError",
 ]
@@ -68,6 +71,18 @@ class ExchangeWebSocketError(ExchangeError):
 
 class ExchangeOrderError(ExchangeError):
     """Raised when an exchange order operation fails."""
+
+
+class ExchangeOrderNotFoundError(ExchangeOrderError):
+    """Raised when an authoritative exchange order lookup has no result."""
+
+
+class ExchangeOrderOutcomeUnknownError(ExchangeOrderError):
+    """Raised when an entry mutation may have reached the exchange."""
+
+
+class ExchangeOrderRejectedError(ExchangeOrderError):
+    """Raised when an exchange explicitly rejects an entry mutation."""
 
 
 class ExchangeInsufficientBalanceError(ExchangeOrderError):

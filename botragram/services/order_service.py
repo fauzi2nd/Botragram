@@ -136,6 +136,20 @@ class OrderService:
 
         return order
 
+    async def get_by_client_order_id(
+        self,
+        *,
+        symbol: str,
+        client_order_id: str,
+    ) -> Order:
+        """Fetch and persist an exchange order by its client identity."""
+        order = await self.order_engine.get_by_client_order_id(
+            symbol=self._normalize_symbol(symbol),
+            client_order_id=self._normalize_client_order_id(client_order_id),
+        )
+        await self.order_repository.save(order=order)
+        return order
+
     async def get_stored(
         self,
         *,
@@ -210,3 +224,11 @@ class OrderService:
             raise ValueError("Order identifier must not be empty")
 
         return normalized_order_id
+
+    @staticmethod
+    def _normalize_client_order_id(client_order_id: str) -> str:
+        """Normalize and validate a client-assigned order identity."""
+        normalized_client_order_id = client_order_id.strip()
+        if not normalized_client_order_id:
+            raise ValueError("Client order identifier must not be empty")
+        return normalized_client_order_id

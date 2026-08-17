@@ -15,9 +15,15 @@ from botragram.enums import (
     Interval,
     MarketType,
     OrderSide,
+    OrderStatus,
     OrderType,
     StrategyType,
     SubmissionAttemptStatus,
+)
+from botragram.exceptions import (
+    ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
+    ExchangeOrderRejectedError,
 )
 from botragram.models import Order, Position, RiskResult, Signal, SubmissionAttempt
 from botragram.repositories import SubmissionAttemptRepository
@@ -28,6 +34,8 @@ __all__ = ["LiveFuturesEntryService"]
 _DECIMAL_ZERO = Decimal("0")
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _CLIENT_ORDER_ID_PREFIX: Final[str] = "btg-"
+_RECONCILIATION_MAX_ATTEMPTS: Final[int] = 2
+_RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
 
 
 class LiveOrderSubmission(Protocol):
@@ -43,6 +51,15 @@ class LiveOrderSubmission(Protocol):
         client_order_id: str | None = None,
     ) -> Order:
         """Submit and persist one exchange order."""
+        ...
+
+    async def get_by_client_order_id(
+        self,
+        *,
+        symbol: str,
+        client_order_id: str,
+    ) -> Order:
+        """Fetch and persist one exchange order by client identity."""
         ...
 
 
@@ -129,14 +146,21 @@ class LiveFuturesEntryService:
             )
             if order.client_order_id not in (None, client_order_id):
                 raise RuntimeError("Exchange returned a mismatched client order ID")
-            await self.submission_attempt_repository.save(
-                attempt=replace(
-                    attempt,
-                    status=SubmissionAttemptStatus.ACKNOWLEDGED,
-                    exchange_order_id=order.order_id,
-                    updated_at=datetime.now(UTC),
-                )
+        except ValueError:
+            await self._persist_attempt(
+                attempt=attempt,
+                status=SubmissionAttemptStatus.REJECTED,
             )
+            raise
+        except ExchangeOrderRejectedError:
+            await self._persist_attempt(
+                attempt=attempt,
+                status=SubmissionAttemptStatus.REJECTED,
+            )
+            raise
+        except ExchangeOrderOutcomeUnknownError:
+            await self._persist_unresolved_attempt(attempt=attempt)
+            order = await self._reconcile_ambiguous_submission(attempt=attempt)
         except asyncio.CancelledError:
             await self._persist_unresolved_attempt(attempt=attempt)
             _LOGGER.warning("Live Futures entry cancelled while protection is unsafe")
@@ -148,6 +172,16 @@ class LiveFuturesEntryService:
                 "remains closed: symbol=%s",
                 signal.symbol,
             )
+            raise
+
+        try:
+            await self._persist_attempt(
+                attempt=attempt,
+                status=SubmissionAttemptStatus.ACKNOWLEDGED,
+                exchange_order_id=order.order_id,
+            )
+        except Exception:
+            await self._persist_unresolved_attempt(attempt=attempt)
             raise
 
         _LOGGER.info(
@@ -205,22 +239,83 @@ class LiveFuturesEntryService:
         if order_type is not OrderType.MARKET:
             raise ValueError("Protected LIVE entry currently supports MARKET orders")
 
+    async def _reconcile_ambiguous_submission(
+        self,
+        *,
+        attempt: SubmissionAttempt,
+    ) -> Order:
+        """Resolve a single ambiguous entry using bounded GET-only lookup."""
+        for reconciliation_attempt in range(_RECONCILIATION_MAX_ATTEMPTS):
+            try:
+                order = await self.order_service.get_by_client_order_id(
+                    symbol=attempt.symbol,
+                    client_order_id=attempt.client_order_id,
+                )
+            except ExchangeOrderNotFoundError, ExchangeOrderOutcomeUnknownError:
+                if reconciliation_attempt + 1 >= _RECONCILIATION_MAX_ATTEMPTS:
+                    break
+                await asyncio.sleep(_RECONCILIATION_DELAY_SECONDS)
+                continue
+
+            if order.client_order_id != attempt.client_order_id:
+                raise RuntimeError(
+                    "Reconciled order returned a mismatched client order ID"
+                )
+
+            if order.status is OrderStatus.FILLED:
+                return order
+
+            if order.status in {
+                OrderStatus.CANCELED,
+                OrderStatus.EXPIRED,
+                OrderStatus.REJECTED,
+            }:
+                await self._persist_attempt(
+                    attempt=attempt,
+                    status=SubmissionAttemptStatus.REJECTED,
+                    exchange_order_id=order.order_id,
+                )
+                raise RuntimeError("Reconciled entry order was not executed")
+
+            raise RuntimeError("Reconciled entry order has an unsafe execution status")
+
+        raise RuntimeError("Ambiguous LIVE entry submission remains unresolved")
+
     async def _persist_unresolved_attempt(self, *, attempt: SubmissionAttempt) -> None:
         """Retain a conservatively unresolved intent after an unsafe outcome."""
+        await self._persist_attempt(
+            attempt=attempt,
+            status=SubmissionAttemptStatus.UNRESOLVED,
+            suppress_failure=True,
+        )
+
+    async def _persist_attempt(
+        self,
+        *,
+        attempt: SubmissionAttempt,
+        status: SubmissionAttemptStatus,
+        exchange_order_id: str | None = None,
+        suppress_failure: bool = False,
+    ) -> None:
+        """Persist one lifecycle transition without masking the primary failure."""
         try:
             await self.submission_attempt_repository.save(
                 attempt=replace(
                     attempt,
-                    status=SubmissionAttemptStatus.UNRESOLVED,
+                    status=status,
+                    exchange_order_id=exchange_order_id,
                     updated_at=datetime.now(UTC),
                 )
             )
         except Exception:
             _LOGGER.exception(
-                "Live Futures submission attempt remains prepared after "
-                "unresolved-state persistence failed: client_order_id=%s",
+                "Live Futures submission attempt transition failed: "
+                "client_order_id=%s status=%s",
                 attempt.client_order_id,
+                status.value,
             )
+            if not suppress_failure:
+                raise
 
     @staticmethod
     def _resolve_strategy_type(strategy_name: str) -> StrategyType | None:

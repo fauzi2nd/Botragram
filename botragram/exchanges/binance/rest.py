@@ -50,6 +50,7 @@ from botragram.exchanges.base.rest import (
 
 __all__ = [
     "BinanceRestClient",
+    "BinanceRestResponseError",
 ]
 
 
@@ -68,6 +69,19 @@ _API_KEY_HEADER: Final[str] = "X-MBX-APIKEY"
 _SIGNATURE_PARAMETER: Final[str] = "signature"
 _TIMESTAMP_PARAMETER: Final[str] = "timestamp"
 _RECV_WINDOW_PARAMETER: Final[str] = "recvWindow"
+
+
+class BinanceRestResponseError(RuntimeError):
+    """Retain structured Binance HTTP response metadata at the transport boundary."""
+
+    __slots__ = ("code", "status")
+
+    def __init__(self, *, status: int, payload: JsonResponse, message: str) -> None:
+        """Initialize one failed Binance response."""
+        super().__init__(message)
+        self.status = status
+        raw_code = payload.get("code") if isinstance(payload, Mapping) else None
+        self.code = raw_code if isinstance(raw_code, int) else None
 
 
 # =============================================================================
@@ -231,13 +245,15 @@ class BinanceRestClient(BaseRestClient):
                     payload = await self._read_response(response)
 
                     if response.status >= 400:
-                        raise RuntimeError(
-                            self._format_http_error(
+                        raise BinanceRestResponseError(
+                            status=response.status,
+                            payload=payload,
+                            message=self._format_http_error(
                                 method=method,
                                 url=url,
                                 status=response.status,
                                 payload=payload,
-                            )
+                            ),
                         )
 
                     return payload

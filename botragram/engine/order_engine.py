@@ -129,6 +129,18 @@ class OrderEngine:
             order_id=order_id,
         )
 
+    async def get_by_client_order_id(
+        self,
+        *,
+        symbol: str,
+        client_order_id: str,
+    ) -> Order:
+        """Return an exchange order by its client-assigned identity."""
+        return await self.exchange_client.get_order_by_client_order_id(
+            symbol=symbol,
+            client_order_id=client_order_id,
+        )
+
     def _validate_submission(
         self,
         *,

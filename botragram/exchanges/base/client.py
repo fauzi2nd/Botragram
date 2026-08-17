@@ -166,6 +166,15 @@ class BaseExchangeClient(ABC):
         """Return an order by its identifier."""
 
     @abstractmethod
+    async def get_order_by_client_order_id(
+        self,
+        *,
+        symbol: str,
+        client_order_id: str,
+    ) -> Order:
+        """Return an order by its vendor-neutral client identity."""
+
+    @abstractmethod
     async def get_open_orders(
         self,
         *,

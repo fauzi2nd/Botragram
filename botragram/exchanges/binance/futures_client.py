@@ -17,9 +17,14 @@ from decimal import Decimal
 import aiohttp
 
 from botragram.enums import Interval, OrderSide, OrderType, PositionSide
+from botragram.exceptions import (
+    ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
+    ExchangeOrderRejectedError,
+)
 from botragram.exchanges.binance.client import BinanceExchangeClient
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
-from botragram.exchanges.binance.rest import BinanceRestClient
+from botragram.exchanges.binance.rest import BinanceRestClient, BinanceRestResponseError
 from botragram.models import Account, Candle, Order, Position, Ticker, Trade
 
 __all__ = ["BinanceFuturesExchangeClient"]
@@ -42,6 +47,7 @@ _POSITIONS_ENDPOINT = "/fapi/v3/positionRisk"
 _DEFAULT_TIME_IN_FORCE = "GTC"
 _SUPPORTED_ENTRY_ORDER_TYPES = frozenset({OrderType.MARKET, OrderType.LIMIT})
 _CLIENT_ORDER_ID_MAX_LENGTH = 36
+_BINANCE_ORDER_NOT_FOUND_CODE = -2013
 
 
 class BinanceFuturesExchangeClient(BinanceExchangeClient):
@@ -290,6 +296,39 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         )
         return self._mapper.map_order(self._require_mapping(payload))
 
+    async def get_order_by_client_order_id(
+        self,
+        *,
+        symbol: str,
+        client_order_id: str,
+    ) -> Order:
+        """Return one Futures order using Binance's client-order lookup field."""
+        try:
+            payload = await self._rest.get(
+                _ORDER_ENDPOINT,
+                params={
+                    "symbol": self._normalize_symbol(symbol),
+                    "origClientOrderId": self._normalize_client_order_id(
+                        client_order_id,
+                    ),
+                },
+                authenticated=True,
+            )
+        except BinanceRestResponseError as error:
+            if error.status == 400 and error.code == _BINANCE_ORDER_NOT_FOUND_CODE:
+                raise ExchangeOrderNotFoundError(
+                    "Binance Futures order was not found"
+                ) from error
+            raise ExchangeOrderOutcomeUnknownError(
+                "Binance Futures order lookup did not complete"
+            ) from error
+        except (aiohttp.ClientError, TimeoutError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                "Binance Futures order lookup did not complete"
+            ) from error
+
+        return self._mapper.map_order(self._require_mapping(payload))
+
     async def get_open_orders(
         self,
         *,
@@ -495,11 +534,24 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         params: RequestParams,
     ) -> Order:
         """Submit and map one authenticated Futures order."""
-        payload = await self._rest.post(
-            _ORDER_ENDPOINT,
-            params=params,
-            authenticated=True,
-        )
+        try:
+            payload = await self._rest.post(
+                _ORDER_ENDPOINT,
+                params=params,
+                authenticated=True,
+            )
+        except BinanceRestResponseError as error:
+            if error.status == 400 and error.code is not None:
+                raise ExchangeOrderRejectedError(
+                    "Binance Futures explicitly rejected the entry order"
+                ) from error
+            raise ExchangeOrderOutcomeUnknownError(
+                "Binance Futures entry outcome is unknown"
+            ) from error
+        except (aiohttp.ClientError, TimeoutError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                "Binance Futures entry outcome is unknown"
+            ) from error
         return self._mapper.map_order(self._require_mapping(payload))
 
     @staticmethod

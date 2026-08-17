@@ -20,6 +20,11 @@ from botragram.enums import (
     SignalType,
     SubmissionAttemptStatus,
 )
+from botragram.exceptions import (
+    ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
+    ExchangeOrderRejectedError,
+)
 from botragram.models import (
     Order,
     Position,
@@ -142,8 +147,12 @@ class RecordingOrderService:
     error: BaseException | None = None
     returned_client_order_id: str | None = None
     echo_client_order_id: bool = False
+    reconcile_echo_client_order_id: bool = False
     calls: int = 0
     client_order_ids: list[str | None] = field(default_factory=list[str | None])
+    reconciled_orders: list[Order | BaseException] = field(
+        default_factory=list[Order | BaseException]
+    )
 
     async def submit(
         self,
@@ -168,6 +177,20 @@ class RecordingOrderService:
                 else self.returned_client_order_id
             )
         )
+
+    async def get_by_client_order_id(
+        self, *, symbol: str, client_order_id: str
+    ) -> Order:
+        """Return the next authoritative reconciliation response."""
+        del symbol
+        if self.reconciled_orders:
+            response = self.reconciled_orders.pop(0)
+            if isinstance(response, BaseException):
+                raise response
+            return response
+        if self.reconcile_echo_client_order_id:
+            return _order(client_order_id=client_order_id)
+        raise AssertionError("Unexpected order reconciliation")
 
 
 @dataclass(slots=True)
@@ -428,3 +451,97 @@ async def test_completed_attempts_generate_distinct_logical_client_ids() -> None
     assert (
         len({attempt.client_order_id for attempt in repository.attempts.values()}) == 2
     )
+
+
+@pytest.mark.asyncio
+async def test_known_rejection_is_terminal_without_reconciliation() -> None:
+    """Persist an explicit remote rejection without an authoritative read."""
+    events: list[str] = []
+    repository = RecordingSubmissionAttemptRepository(events=events)
+    orders = RecordingOrderService(
+        events=events,
+        error=ExchangeOrderRejectedError("rejected"),
+    )
+    service, _, _, _ = _service(repository=repository, order_service=orders)
+
+    with pytest.raises(ExchangeOrderRejectedError):
+        await _execute(service)
+
+    assert orders.calls == 1
+    assert (
+        next(iter(repository.attempts.values())).status
+        is SubmissionAttemptStatus.REJECTED
+    )
+    assert events == ["save:prepared", "submit", "save:rejected"]
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_submission_reconciles_using_the_original_client_id() -> None:
+    """Resolve a lost POST response through bounded GET-only lookup."""
+    events: list[str] = []
+    repository = RecordingSubmissionAttemptRepository(events=events)
+    orders = RecordingOrderService(
+        events=events,
+        error=ExchangeOrderOutcomeUnknownError("timeout"),
+        reconcile_echo_client_order_id=True,
+    )
+    service, control, _, _ = _service(repository=repository, order_service=orders)
+
+    order = await _execute(service)
+
+    attempt = next(iter(repository.attempts.values()))
+    assert orders.calls == 1
+    assert order.client_order_id == attempt.client_order_id
+    assert attempt.status is SubmissionAttemptStatus.ACKNOWLEDGED
+    assert attempt.exchange_order_id == "entry-1"
+    assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_submission_handles_delayed_order_visibility() -> None:
+    """Retry only the authoritative GET when the first read has no order yet."""
+    events: list[str] = []
+    repository = RecordingSubmissionAttemptRepository(events=events)
+    orders = RecordingOrderService(
+        events=events,
+        error=ExchangeOrderOutcomeUnknownError("timeout"),
+        reconcile_echo_client_order_id=True,
+        reconciled_orders=[ExchangeOrderNotFoundError("not found")],
+    )
+    service, _, _, _ = _service(repository=repository, order_service=orders)
+
+    await _execute(service)
+
+    assert orders.calls == 1
+    assert (
+        next(iter(repository.attempts.values())).status
+        is SubmissionAttemptStatus.ACKNOWLEDGED
+    )
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_exhaustion_remains_unresolved_and_blocks_entry() -> None:
+    """Leave unresolved state fail-closed without another entry POST."""
+    events: list[str] = []
+    repository = RecordingSubmissionAttemptRepository(events=events)
+    orders = RecordingOrderService(
+        events=events,
+        error=ExchangeOrderOutcomeUnknownError("timeout"),
+        reconciled_orders=[
+            ExchangeOrderNotFoundError("not found"),
+            ExchangeOrderNotFoundError("not found"),
+        ],
+    )
+    service, control, _, _ = _service(repository=repository, order_service=orders)
+
+    with pytest.raises(RuntimeError, match="remains unresolved"):
+        await _execute(service)
+    with pytest.raises(RuntimeError, match="unresolved"):
+        await _execute(service)
+
+    assert orders.calls == 1
+    assert (
+        next(iter(repository.attempts.values())).status
+        is SubmissionAttemptStatus.UNRESOLVED
+    )
+    assert "position protection" in control.get_missing_startup_requirements()

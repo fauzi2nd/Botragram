@@ -310,6 +310,35 @@ async def test_futures_client_creates_limit_order() -> None:
 
 
 @pytest.mark.asyncio
+async def test_futures_client_queries_order_by_exact_client_order_id() -> None:
+    """Use Binance's Futures client-order query parameter without a POST."""
+    rest = RecordingBinanceRestClient()
+    rest.get_responses["/fapi/v1/order"] = {
+        **_order_payload(),
+        "clientOrderId": "btg-00000000000000000000000000000000",
+    }
+    client = _create_client(rest)
+
+    order = await client.get_order_by_client_order_id(
+        symbol="btcusdt",
+        client_order_id="btg-00000000000000000000000000000000",
+    )
+
+    assert order.client_order_id == "btg-00000000000000000000000000000000"
+    assert rest.requests == [
+        (
+            "GET",
+            "/fapi/v1/order",
+            {
+                "symbol": "BTCUSDT",
+                "origClientOrderId": "btg-00000000000000000000000000000000",
+            },
+            True,
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_futures_client_creates_reduce_only_protection_orders() -> None:
     """Verify stop-loss and take-profit exits cannot increase exposure."""
     rest = RecordingBinanceRestClient()

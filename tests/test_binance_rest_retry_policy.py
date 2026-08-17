@@ -11,6 +11,10 @@ import pytest
 from aiohttp import web
 
 from botragram.enums import OrderSide, OrderType
+from botragram.exceptions import (
+    ExchangeOrderOutcomeUnknownError,
+    ExchangeOrderRejectedError,
+)
 from botragram.exchanges.binance.futures_client import (
     BinanceFuturesExchangeClient,
 )
@@ -100,7 +104,37 @@ async def test_futures_entry_post_timeout_is_single_attempt() -> None:
     client = BinanceFuturesExchangeClient(rest=rest, mapper=BinanceExchangeMapper())
 
     try:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(ExchangeOrderOutcomeUnknownError):
+            await client.create_order(
+                symbol="BTCUSDT",
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                quantity=Decimal("0.01"),
+            )
+    finally:
+        await rest.close()
+        await runner.cleanup()
+
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_futures_entry_post_explicit_rejection_is_typed() -> None:
+    """Translate Binance's explicit entry rejection at the Futures boundary."""
+    attempts = 0
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        """Return one Binance-defined invalid-order response."""
+        nonlocal attempts
+        attempts += 1
+        return web.json_response({"code": -2010, "msg": "rejected"}, status=400)
+
+    base_url, runner = await _start_server(handler)
+    rest = BinanceRestClient(base_url=base_url, api_key="key", api_secret="secret")
+    client = BinanceFuturesExchangeClient(rest=rest, mapper=BinanceExchangeMapper())
+
+    try:
+        with pytest.raises(ExchangeOrderRejectedError):
             await client.create_order(
                 symbol="BTCUSDT",
                 side=OrderSide.BUY,
