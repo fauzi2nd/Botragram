@@ -31,6 +31,7 @@ from botragram.app.startup import startup_application
 from botragram.app.terminal_monitor import TerminalMonitor, TerminalStatus
 from botragram.app.trading_runner import (
     AutonomousPaperTradingCycleExecutor,
+    HumanConfirmedPaperTradingCycleExecutor,
     SingleSymbolTradingCycleExecutor,
     TradingCycleExecutor,
     TradingRunner,
@@ -41,6 +42,7 @@ __all__ = [
     "ApplicationLifecycle",
     "AutonomousPaperTradingCycleExecutor",
     "DependencyProvider",
+    "HumanConfirmedPaperTradingCycleExecutor",
     "MarketStreamTelemetry",
     "MarketTypeSwitchService",
     "RuntimeRestartCoordinator",

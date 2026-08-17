@@ -48,6 +48,7 @@ from botragram.constants.env import (
     ENV_EMA_SCALPING_TAKE_PROFIT_PCT,
     ENV_EXCHANGE_API_KEY_LEGACY,
     ENV_EXCHANGE_API_SECRET_LEGACY,
+    ENV_EXECUTION_POLICY,
     ENV_GEMINI_API_KEY,
     ENV_LOG_LEVEL,
     ENV_LOG_LEVEL_LEGACY,
@@ -389,6 +390,10 @@ class EnvironmentProvider:
     def get_autonomous_execution_enabled(self) -> bool:
         """Return whether autonomous opportunity execution is enabled."""
         return self._get_bool(ENV_AUTONOMOUS_EXECUTION_ENABLED, default=False)
+
+    def get_execution_policy(self) -> str:
+        """Return the optional explicit runtime execution policy."""
+        return self._get_var(ENV_EXECUTION_POLICY)
 
     def get_ema_scalping_stop_loss_pct(self) -> str:
         """Return the EMA scalping stop-loss ratio."""

@@ -28,6 +28,7 @@ from botragram.app.market_type_switch import (
 from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.app.trading_runner import (
     AutonomousPaperTradingCycleExecutor,
+    HumanConfirmedPaperTradingCycleExecutor,
     SingleSymbolTradingCycleExecutor,
     TradingCycleExecutor,
 )
@@ -56,7 +57,13 @@ from botragram.engine import (
     SignalEngine,
     TradingEngine,
 )
-from botragram.enums import ExchangeType, MarketType, StrategyType, TradeMode
+from botragram.enums import (
+    ExchangeType,
+    ExecutionPolicy,
+    MarketType,
+    StrategyType,
+    TradeMode,
+)
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.exchanges.factory import ExchangeFactory
 from botragram.repositories import (
@@ -72,6 +79,7 @@ from botragram.services import (
     AutonomousPaperExecutionService,
     ExecutionAuthorizationService,
     HealthService,
+    HumanConfirmedPaperExecutionService,
     MarketService,
     OpportunityDiscoveryService,
     OrderService,
@@ -122,6 +130,7 @@ class DependencyProvider:
         "_autonomous_paper_execution_service",
         "_execution_authorization_repository",
         "_execution_authorization_service",
+        "_human_confirmed_paper_execution_service",
         "_candle_repository",
         "_database",
         "_database_path",
@@ -249,6 +258,9 @@ class DependencyProvider:
         self._execution_authorization_service: ExecutionAuthorizationService | None = (
             None
         )
+        self._human_confirmed_paper_execution_service: (
+            HumanConfirmedPaperExecutionService | None
+        ) = None
         self._initialized = False
 
     # =========================================================================
@@ -538,6 +550,13 @@ class DependencyProvider:
         return self._require(self._execution_authorization_service)
 
     @property
+    def human_confirmed_paper_execution_service(
+        self,
+    ) -> HumanConfirmedPaperExecutionService:
+        """Return the bounded human-confirmation discovery orchestration."""
+        return self._require(self._human_confirmed_paper_execution_service)
+
+    @property
     def market_type_switch_service(self) -> MarketTypeSwitchService:
         """Return the guarded Telegram product-switch service."""
         return self._require(self._market_type_switch_service)
@@ -719,15 +738,29 @@ class DependencyProvider:
                 trade_mode=self._settings.app.trade_mode,
                 authorization_publisher=self.telegram_bot,
             )
+            self._human_confirmed_paper_execution_service = (
+                HumanConfirmedPaperExecutionService(
+                    discovery_service=self.opportunity_discovery_service,
+                    authorization_service=self.execution_authorization_service,
+                )
+            )
         self._trading_cycle_executor = self._build_trading_cycle_executor()
 
     def _build_trading_cycle_executor(self) -> TradingCycleExecutor:
         """Select a validated runtime executor without embedding trading rules."""
-        if self._settings.app.autonomous_execution_enabled:
-            if self._settings.app.trade_mode is not TradeMode.PAPER:
-                raise ValueError("Autonomous execution is supported only in paper mode")
+        policy = self._settings.app.effective_execution_policy
 
-            market = self._settings.market
+        if policy is ExecutionPolicy.SINGLE_SYMBOL:
+            return SingleSymbolTradingCycleExecutor(
+                trading_service=self.trading_service,
+            )
+
+        if self._settings.app.trade_mode is not TradeMode.PAPER:
+            raise ValueError("Market-wide execution is supported only in paper mode")
+
+        market = self._settings.market
+
+        if policy is ExecutionPolicy.AUTONOMOUS_PAPER:
             return AutonomousPaperTradingCycleExecutor(
                 autonomous_execution_service=self.autonomous_paper_execution_service,
                 quote_asset=market.quote_asset,
@@ -735,9 +768,15 @@ class DependencyProvider:
                 top_n=market.discovery_top_n,
             )
 
-        return SingleSymbolTradingCycleExecutor(
-            trading_service=self.trading_service,
-        )
+        if policy is ExecutionPolicy.HUMAN_CONFIRMED_PAPER:
+            return HumanConfirmedPaperTradingCycleExecutor(
+                human_confirmation_service=self.human_confirmed_paper_execution_service,
+                quote_asset=market.quote_asset,
+                max_symbols=market.discovery_max_symbols,
+                top_n=market.discovery_top_n,
+            )
+
+        raise ValueError(f"Unsupported execution policy: {policy.value!r}")
 
     @staticmethod
     def _get_binance_urls(
@@ -781,6 +820,7 @@ class DependencyProvider:
         self._candle_repository = None
         self._execution_authorization_repository = None
         self._execution_authorization_service = None
+        self._human_confirmed_paper_execution_service = None
         self._signal_repository = None
         self._order_repository = None
         self._trade_repository = None

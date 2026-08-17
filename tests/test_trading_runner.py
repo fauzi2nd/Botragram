@@ -32,11 +32,13 @@ import pytest
 # =============================================================================
 from botragram.app import (
     AutonomousPaperTradingCycleExecutor,
+    HumanConfirmedPaperTradingCycleExecutor,
     SingleSymbolTradingCycleExecutor,
     TradingRunner,
     TradingRuntimeControl,
 )
 from botragram.enums import (
+    AuthorizationStatus,
     Interval,
     OrderSide,
     OrderStatus,
@@ -46,6 +48,7 @@ from botragram.enums import (
     TradeMode,
 )
 from botragram.models import (
+    ExecutionAuthorization,
     Order,
     PositionSize,
     RiskMetrics,
@@ -160,6 +163,31 @@ class FakeAutonomousExecutionService:
             )
         )
         return self.results
+
+
+@dataclass(slots=True, kw_only=True)
+class FakeHumanConfirmationService:
+    """Record confirmation discovery requests without executing candidates."""
+
+    authorizations: tuple[ExecutionAuthorization, ...]
+    calls: list[tuple[str, Interval, int, int, int]] = field(
+        default_factory=list[tuple[str, Interval, int, int, int]],
+    )
+
+    async def execute(
+        self,
+        *,
+        quote_asset: str,
+        interval: Interval,
+        candle_limit: int,
+        max_symbols: int,
+        top_n: int,
+    ) -> tuple[ExecutionAuthorization, ...]:
+        """Capture a confirmation request and return pending authorizations."""
+        self.calls.append(
+            (quote_asset, interval, candle_limit, max_symbols, top_n),
+        )
+        return self.authorizations
 
 
 @dataclass(slots=True, kw_only=True)
@@ -416,6 +444,42 @@ async def _run_autonomous_paper_cycle_test() -> None:
 def test_autonomous_executor_rejects_order_enabled_invocation() -> None:
     """Verify autonomous runtime execution cannot enable order submission."""
     asyncio.run(_run_autonomous_live_guard_test())
+
+
+def test_human_confirmation_executor_prepares_without_order_submission() -> None:
+    """Keep the runtime adapter separate from confirmation business logic."""
+    asyncio.run(_run_human_confirmation_cycle_test())
+
+
+async def _run_human_confirmation_cycle_test() -> None:
+    """Run one non-executing human-confirmation cycle through the runner."""
+    signal = _create_result(should_execute=True).decision.signal
+    authorization = ExecutionAuthorization(
+        authorization_id="12345678123456781234567812345678",
+        signal=signal,
+        status=AuthorizationStatus.PENDING,
+        created_at=_NOW,
+        expires_at=_NOW.replace(minute=5),
+    )
+    service = FakeHumanConfirmationService(authorizations=(authorization,))
+    runner = TradingRunner(
+        executor=HumanConfirmedPaperTradingCycleExecutor(
+            human_confirmation_service=service,
+            quote_asset="usdt",
+            max_symbols=7,
+            top_n=3,
+        ),
+        symbol="BTCUSDT",
+        interval=Interval.M15,
+        trade_mode=TradeMode.PAPER,
+    )
+
+    results = await runner.run_once()
+
+    assert service.calls == [("USDT", Interval.M15, 100, 7, 3)]
+    assert len(results) == 1
+    assert not results[0].executed
+    assert results[0].reason == "Pending human PAPER approval"
 
 
 async def _run_autonomous_live_guard_test() -> None:

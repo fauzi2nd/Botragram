@@ -6,6 +6,9 @@ from botragram.services.execution_authorization_service import (
     ExecutionAuthorizationService,
 )
 from botragram.services.health_service import HealthReport, HealthService
+from botragram.services.human_confirmed_paper_execution_service import (
+    HumanConfirmedPaperExecutionService,
+)
 from botragram.services.market_service import MarketService
 from botragram.services.opportunity_discovery_service import (
     OpportunityDiscoveryService,
@@ -29,6 +32,7 @@ __all__ = [
     "ExecutionAuthorizationService",
     "HealthReport",
     "HealthService",
+    "HumanConfirmedPaperExecutionService",
     "MarketService",
     "NotificationPublisher",
     "OpportunityDiscoveryService",

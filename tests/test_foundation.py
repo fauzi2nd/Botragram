@@ -40,6 +40,7 @@ from botragram.enums import (
     Environment,
     EnvironmentProfile,
     ExchangeType,
+    ExecutionPolicy,
     LogLevel,
     MarketType,
     TradeMode,
@@ -77,6 +78,7 @@ _ENVIRONMENT_KEYS = (
     "BOTRAGRAM_TRADE_MODE",
     "EMA_SCALPING_STOP_LOSS_PCT",
     "EMA_SCALPING_TAKE_PROFIT_PCT",
+    "EXECUTION_POLICY",
     "GEMINI_API_KEY",
     "LOG_LEVEL",
     "OPENAI_API_KEY",
@@ -256,6 +258,34 @@ def test_settings_manager_allows_paper_autonomous_execution(
 
     assert settings.app.trade_mode is TradeMode.PAPER
     assert settings.app.autonomous_execution_enabled
+
+
+def test_settings_manager_loads_explicit_human_confirmation_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Select PAPER human confirmation without changing the legacy default."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("EXECUTION_POLICY", "human_confirmed_paper")
+
+    settings = SettingsManager(environment_provider=provider).load()
+
+    assert settings.app.execution_policy is ExecutionPolicy.HUMAN_CONFIRMED_PAPER
+    assert (
+        settings.app.effective_execution_policy is ExecutionPolicy.HUMAN_CONFIRMED_PAPER
+    )
+
+
+def test_settings_validation_rejects_conflicting_legacy_and_human_policy() -> None:
+    """Fail closed when the legacy autonomous flag conflicts with confirmation."""
+    with pytest.raises(ValueError, match="conflicts"):
+        AppSettings(
+            execution_policy=ExecutionPolicy.HUMAN_CONFIRMED_PAPER,
+            autonomous_execution_enabled=True,
+        )
 
 
 def test_settings_manager_loads_ema_scalping_risk_profile(

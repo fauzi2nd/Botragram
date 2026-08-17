@@ -29,10 +29,11 @@ from botragram.app.runtime_control import TradingRuntimeControl
 # Local Imports
 # =============================================================================
 from botragram.enums import Interval, OrderType, SignalType, TradeMode
-from botragram.models import TradingResult
+from botragram.models import ExecutionAuthorization, TradingDecision, TradingResult
 
 __all__ = [
     "AutonomousPaperTradingCycleExecutor",
+    "HumanConfirmedPaperTradingCycleExecutor",
     "SingleSymbolTradingCycleExecutor",
     "TradingCycleExecutor",
     "TradingRunner",
@@ -106,6 +107,22 @@ class AutonomousPaperExecutionProvider(Protocol):
         initial_balance: Decimal | None = None,
     ) -> Sequence[TradingResult]:
         """Discover and execute ranked PAPER candidates."""
+        ...
+
+
+class HumanConfirmedPaperExecutionProvider(Protocol):
+    """Prepare bounded PAPER opportunities for explicit human approval."""
+
+    async def execute(
+        self,
+        *,
+        quote_asset: str,
+        interval: Interval,
+        candle_limit: int,
+        max_symbols: int,
+        top_n: int,
+    ) -> Sequence[ExecutionAuthorization]:
+        """Return newly prepared non-executed authorizations."""
         ...
 
 
@@ -219,6 +236,79 @@ class AutonomousPaperTradingCycleExecutor:
             max_symbols=self.max_symbols,
             top_n=self.top_n,
             initial_balance=account_balance_override,
+        )
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class HumanConfirmedPaperTradingCycleExecutor:
+    """Adapt confirmation discovery to a PAPER runtime cycle without execution."""
+
+    human_confirmation_service: HumanConfirmedPaperExecutionProvider
+    quote_asset: str
+    max_symbols: int
+    top_n: int
+
+    def __post_init__(self) -> None:
+        """Normalize and validate static confirmation-discovery inputs."""
+        normalized_quote_asset = self.quote_asset.strip().upper()
+
+        if not normalized_quote_asset:
+            raise ValueError("Human confirmation quote asset must not be empty")
+
+        if self.max_symbols <= 0:
+            raise ValueError("Human confirmation maximum symbols must be positive")
+
+        if self.top_n <= 0:
+            raise ValueError("Human confirmation top N must be positive")
+
+        object.__setattr__(self, "quote_asset", normalized_quote_asset)
+
+    async def execute(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        candle_limit: int,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
+    ) -> Sequence[TradingResult]:
+        """Prepare human approvals while structurally rejecting order submission."""
+        del (
+            symbol,
+            current_drawdown_pct,
+            order_type,
+            price,
+            account_balance_override,
+            synchronize_position,
+        )
+
+        if submit_order:
+            raise RuntimeError("Human-confirmed execution is restricted to paper mode")
+
+        authorizations = await self.human_confirmation_service.execute(
+            quote_asset=self.quote_asset,
+            interval=interval,
+            candle_limit=candle_limit,
+            max_symbols=self.max_symbols,
+            top_n=self.top_n,
+        )
+        return tuple(
+            TradingResult(
+                executed=False,
+                decision=TradingDecision(
+                    should_execute=False,
+                    signal=authorization.signal,
+                    risk_result=None,
+                    reason="Pending human PAPER approval",
+                ),
+                order=None,
+                reason="Pending human PAPER approval",
+            )
+            for authorization in authorizations
         )
 
 

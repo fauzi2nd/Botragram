@@ -121,6 +121,39 @@ class ExecutionAuthorizationService:
             authorization_id=authorization_id
         )
 
+    async def prepare_if_no_equivalent_pending(
+        self,
+        *,
+        signal: Signal,
+        now: datetime | None = None,
+    ) -> ExecutionAuthorization | None:
+        """Prepare and publish only when no equivalent opportunity is pending.
+
+        An equivalent pending candidate has the same symbol, entry direction,
+        and strategy. The repository performs this check atomically so repeated
+        confirmation cycles cannot flood the human approval channel.
+        """
+        if signal.signal_type not in _ACTIONABLE_SIGNAL_TYPES:
+            raise ValueError("Execution authorization requires a BUY or SELL signal")
+
+        created_at = self._resolve_now(now=now)
+        authorization = ExecutionAuthorization(
+            authorization_id=uuid4().hex,
+            signal=signal,
+            status=AuthorizationStatus.PENDING,
+            created_at=created_at,
+            expires_at=created_at + self.authorization_ttl,
+        )
+        created = await self.authorization_repository.create_if_no_equivalent_pending(
+            authorization=authorization,
+        )
+
+        if not created:
+            return None
+
+        await self._publish_prepared(authorization=authorization)
+        return authorization
+
     async def approve(
         self,
         *,

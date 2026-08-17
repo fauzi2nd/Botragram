@@ -28,7 +28,13 @@ from botragram.config.risk_settings import RiskSettings
 from botragram.config.settings import Settings
 from botragram.config.strategy_settings import StrategySettings
 from botragram.config.telegram_settings import TelegramSettings
-from botragram.enums import ExchangeType, LogLevel, MarketType, TradeMode
+from botragram.enums import (
+    ExchangeType,
+    ExecutionPolicy,
+    LogLevel,
+    MarketType,
+    TradeMode,
+)
 
 __all__ = [
     "SettingsManager",
@@ -83,6 +89,7 @@ class SettingsManager:
 
     def load_app_settings(self) -> AppSettings:
         """Load application settings from the environment."""
+        execution_policy = self._environment_provider.get_execution_policy()
         return AppSettings(
             trade_mode=self._parse_enum(
                 enum_type=TradeMode,
@@ -91,6 +98,15 @@ class SettingsManager:
             ),
             autonomous_execution_enabled=(
                 self._environment_provider.get_autonomous_execution_enabled()
+            ),
+            execution_policy=(
+                self._parse_enum(
+                    enum_type=ExecutionPolicy,
+                    raw_value=execution_policy,
+                    setting_name="EXECUTION_POLICY",
+                )
+                if execution_policy
+                else None
             ),
         )
 
@@ -222,10 +238,39 @@ class SettingsManager:
         if settings.app.trade_mode is TradeMode.LIVE and not has_api_key:
             raise ValueError("Live trading requires exchange API credentials")
 
-        if settings.app.autonomous_execution_enabled and (
-            settings.app.trade_mode is TradeMode.LIVE
+        policy = settings.app.effective_execution_policy
+        legacy_autonomous = settings.app.autonomous_execution_enabled
+
+        if (
+            settings.app.execution_policy is ExecutionPolicy.SINGLE_SYMBOL
+            and legacy_autonomous
         ):
-            raise ValueError("Autonomous execution is supported only in paper mode")
+            raise ValueError(
+                "AUTONOMOUS_EXECUTION_ENABLED conflicts with single-symbol "
+                "execution policy"
+            )
+
+        if (
+            settings.app.execution_policy is ExecutionPolicy.HUMAN_CONFIRMED_PAPER
+            and legacy_autonomous
+        ):
+            raise ValueError(
+                "AUTONOMOUS_EXECUTION_ENABLED conflicts with human-confirmed "
+                "execution policy"
+            )
+
+        if (
+            policy
+            in (
+                ExecutionPolicy.AUTONOMOUS_PAPER,
+                ExecutionPolicy.HUMAN_CONFIRMED_PAPER,
+            )
+            and settings.app.trade_mode is TradeMode.LIVE
+        ):
+            raise ValueError(
+                "Autonomous and human-confirmed execution are supported only "
+                "in paper mode"
+            )
 
         if settings.telegram.enabled and not settings.telegram.bot_token:
             raise ValueError("Enabled Telegram integration requires a bot token")
@@ -251,7 +296,7 @@ class SettingsManager:
 
     @staticmethod
     def _parse_enum[
-        EnumValue: (ExchangeType, LogLevel, MarketType, TradeMode),
+        EnumValue: (ExchangeType, ExecutionPolicy, LogLevel, MarketType, TradeMode),
     ](
         *,
         enum_type: type[EnumValue],

@@ -62,6 +62,37 @@ class MemoryExecutionAuthorizationRepository(
 
             self._authorizations[authorization.authorization_id] = authorization
 
+    async def create_if_no_equivalent_pending(
+        self,
+        *,
+        authorization: ExecutionAuthorization,
+    ) -> bool:
+        """Atomically store one authorization when no equivalent item is pending."""
+        if authorization.status is not AuthorizationStatus.PENDING:
+            raise ValueError("New execution authorization must be pending")
+
+        async with self._lock:
+            self._expire_and_prune(now=datetime.now(UTC))
+
+            if any(
+                existing.status is AuthorizationStatus.PENDING
+                and self._is_equivalent_candidate(
+                    first=existing,
+                    second=authorization,
+                )
+                for existing in self._authorizations.values()
+            ):
+                return False
+
+            if authorization.authorization_id in self._authorizations:
+                raise RuntimeError("Execution authorization identifier already exists")
+
+            if len(self._authorizations) >= self._maximum_authorizations:
+                raise RuntimeError("Execution authorization capacity reached")
+
+            self._authorizations[authorization.authorization_id] = authorization
+            return True
+
     async def get(self, *, authorization_id: str) -> ExecutionAuthorization | None:
         """Return one authorization without consuming it."""
         normalized_identifier = self._normalize_identifier(
@@ -148,3 +179,18 @@ class MemoryExecutionAuthorizationRepository(
 
         del self._authorizations[terminal_identifier]
         return True
+
+    @staticmethod
+    def _is_equivalent_candidate(
+        *,
+        first: ExecutionAuthorization,
+        second: ExecutionAuthorization,
+    ) -> bool:
+        """Compare the stable discovery identity used to suppress pending spam."""
+        first_signal = first.signal
+        second_signal = second.signal
+        return (
+            first_signal.symbol == second_signal.symbol
+            and first_signal.signal_type is second_signal.signal_type
+            and first_signal.strategy_name == second_signal.strategy_name
+        )

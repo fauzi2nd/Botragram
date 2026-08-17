@@ -33,12 +33,14 @@ from botragram.app import (
     ApplicationLifecycle,
     AutonomousPaperTradingCycleExecutor,
     DependencyProvider,
+    HumanConfirmedPaperTradingCycleExecutor,
+    SettingsManager,
     SingleSymbolTradingCycleExecutor,
 )
 from botragram.config import Settings
 from botragram.config.app_settings import AppSettings
 from botragram.config.exchange_settings import ExchangeSettings
-from botragram.enums import ExchangeType
+from botragram.enums import ExchangeType, ExecutionPolicy, TradeMode
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.services import (
     AutonomousPaperExecutionService,
@@ -161,3 +163,52 @@ async def _run_autonomous_provider_test() -> None:
 
         with pytest.raises(RuntimeError, match="not been initialized"):
             _ = provider.trading_cycle_executor
+
+
+def test_provider_selects_human_confirmed_paper_executor() -> None:
+    """Verify confirmation discovery wiring remains PAPER-only and resettable."""
+    asyncio.run(_run_human_confirmed_provider_test())
+
+
+async def _run_human_confirmed_provider_test() -> None:
+    """Build one provider with explicit human-confirmed PAPER policy."""
+    with TemporaryDirectory() as temporary_directory:
+        provider = DependencyProvider(
+            database_path=Path(temporary_directory) / "botragram.db",
+            settings=Settings(
+                app=AppSettings(
+                    execution_policy=ExecutionPolicy.HUMAN_CONFIRMED_PAPER,
+                ),
+                exchange=ExchangeSettings(exchange=ExchangeType.BINANCE),
+            ),
+        )
+
+        async with provider:
+            executor = provider.trading_cycle_executor
+
+            assert isinstance(executor, HumanConfirmedPaperTradingCycleExecutor)
+            assert (
+                executor.human_confirmation_service
+                is provider.human_confirmed_paper_execution_service
+            )
+
+        with pytest.raises(RuntimeError, match="not been initialized"):
+            _ = provider.human_confirmed_paper_execution_service
+
+
+def test_provider_rejects_live_human_confirmation_configuration() -> None:
+    """Keep human-confirmed discovery structurally unavailable in LIVE mode."""
+    settings = Settings(
+        app=AppSettings(
+            trade_mode=TradeMode.LIVE,
+            execution_policy=ExecutionPolicy.HUMAN_CONFIRMED_PAPER,
+        ),
+        exchange=ExchangeSettings(
+            exchange=ExchangeType.BINANCE,
+            api_key="key",
+            api_secret="secret",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="only in paper mode"):
+        SettingsManager.validate(settings=settings)

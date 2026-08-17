@@ -13,22 +13,39 @@ Botragram is a Python-based trading bot project scaffolded from the development 
    `BINANCE_MARKET_TYPE=FUTURES`.
 7. Run the application: `python main.py`.
 
-## Autonomous PAPER discovery
+## Market-wide PAPER discovery
 
-Autonomous opportunity execution is disabled by default. To enable the Phase 3
-PAPER-only cycle, set both values in `.env` and use Binance Futures for the
-perpetual market universe:
+Market-wide execution is disabled by default. The legacy
+`AUTONOMOUS_EXECUTION_ENABLED=true` setting still enables autonomous PAPER
+execution. New deployments should select an explicit `EXECUTION_POLICY`.
+
+For autonomous PAPER execution, use Binance Futures for the perpetual market
+universe:
 
 ```dotenv
 TRADE_MODE=PAPER
-AUTONOMOUS_EXECUTION_ENABLED=true
+EXECUTION_POLICY=autonomous_paper
 BINANCE_MARKET_TYPE=FUTURES
 ```
 
 The runtime discovers a bounded set of active USDT perpetual symbols, ranks
 actionable strategy signals, then attempts candidates sequentially through the
-PAPER simulation. It never submits an exchange order. `TRADE_MODE=LIVE` with
-`AUTONOMOUS_EXECUTION_ENABLED=true` is rejected during configuration loading.
+PAPER simulation. It never submits an exchange order.
+
+For human-confirmed PAPER opportunities, set:
+
+```dotenv
+TRADE_MODE=PAPER
+EXECUTION_POLICY=human_confirmed_paper
+BINANCE_MARKET_TYPE=FUTURES
+```
+
+This mode discovers and ranks candidates, creates bounded pending approvals,
+and sends them to the Telegram allow-list. It performs no PAPER execution until
+an allowed user presses Approve; final portfolio validation still occurs at
+approval time. Equivalent symbol/direction/strategy candidates are suppressed
+while an approval remains pending. Both market-wide policies are rejected in
+`TRADE_MODE=LIVE`.
 
 ## Backtest
 

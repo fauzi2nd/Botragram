@@ -24,6 +24,7 @@ from botragram.enums.base import BaseEnum
 from botragram.enums.environment import Environment
 from botragram.enums.environment_profile import EnvironmentProfile
 from botragram.enums.exchange_type import ExchangeType
+from botragram.enums.execution_policy import ExecutionPolicy
 from botragram.enums.indicator_type import IndicatorType
 from botragram.enums.interval import Interval
 from botragram.enums.leverage_mode import LeverageMode
@@ -56,6 +57,7 @@ __all__ = [
     # Environment
     "Environment",
     "EnvironmentProfile",
+    "ExecutionPolicy",
     # Exchange
     "ExchangeType",
     "MarketType",

@@ -110,6 +110,7 @@ botragram/
 |   |-- backtest_service.py   # Paginated historical candle orchestration
 |   |-- execution_authorization_service.py # PAPER human-approval boundary
 |   |-- health_service.py
+|   |-- human_confirmed_paper_execution_service.py # Discovery-to-approval orchestration
 |   |-- market_service.py
 |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |-- order_service.py

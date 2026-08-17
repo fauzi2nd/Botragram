@@ -29,6 +29,14 @@ class ExecutionAuthorizationRepository(ABC):
         """Store one pending authorization."""
 
     @abstractmethod
+    async def create_if_no_equivalent_pending(
+        self,
+        *,
+        authorization: ExecutionAuthorization,
+    ) -> bool:
+        """Atomically store one authorization only when its candidate is new."""
+
+    @abstractmethod
     async def get(self, *, authorization_id: str) -> ExecutionAuthorization | None:
         """Return one authorization by its opaque identifier."""
 
