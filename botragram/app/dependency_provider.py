@@ -26,6 +26,11 @@ from botragram.app.market_type_switch import (
     RuntimeRestartCoordinator,
 )
 from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.app.trading_runner import (
+    AutonomousPaperTradingCycleExecutor,
+    SingleSymbolTradingCycleExecutor,
+    TradingCycleExecutor,
+)
 
 # =============================================================================
 # Local Imports
@@ -63,6 +68,7 @@ from botragram.repositories import (
 )
 from botragram.services import (
     AccountService,
+    AutonomousPaperExecutionService,
     HealthService,
     MarketService,
     OpportunityDiscoveryService,
@@ -110,6 +116,7 @@ class DependencyProvider:
 
     __slots__ = (
         "_account_service",
+        "_autonomous_paper_execution_service",
         "_candle_repository",
         "_database",
         "_database_path",
@@ -143,6 +150,7 @@ class DependencyProvider:
         "_telegram_query_service",
         "_trade_repository",
         "_trading_engine",
+        "_trading_cycle_executor",
         "_trading_service",
     )
 
@@ -218,6 +226,9 @@ class DependencyProvider:
         self._position_protection_manager: PositionProtectionManager | None = None
 
         self._market_service: MarketService | None = None
+        self._autonomous_paper_execution_service: (
+            AutonomousPaperExecutionService | None
+        ) = None
         self._opportunity_discovery_service: OpportunityDiscoveryService | None = None
         self._market_type_switch_service: MarketTypeSwitchService | None = None
         self._strategy_service: StrategyService | None = None
@@ -226,6 +237,7 @@ class DependencyProvider:
         self._position_service: PositionService | None = None
         self._account_service: AccountService | None = None
         self._trading_service: TradingService | None = None
+        self._trading_cycle_executor: TradingCycleExecutor | None = None
         self._initialized = False
 
     # =========================================================================
@@ -502,6 +514,11 @@ class DependencyProvider:
         return self._require(self._opportunity_discovery_service)
 
     @property
+    def autonomous_paper_execution_service(self) -> AutonomousPaperExecutionService:
+        """Return the configured autonomous PAPER execution service."""
+        return self._require(self._autonomous_paper_execution_service)
+
+    @property
     def market_type_switch_service(self) -> MarketTypeSwitchService:
         """Return the guarded Telegram product-switch service."""
         return self._require(self._market_type_switch_service)
@@ -540,6 +557,11 @@ class DependencyProvider:
     def trading_service(self) -> TradingService:
         """Return the configured trading service."""
         return self._require(self._trading_service)
+
+    @property
+    def trading_cycle_executor(self) -> TradingCycleExecutor:
+        """Return the runtime-selected trading cycle executor."""
+        return self._require(self._trading_cycle_executor)
 
     # =========================================================================
     # Construction Helpers
@@ -664,6 +686,29 @@ class DependencyProvider:
             paper_trading_service=self.paper_trading_service,
             balance_asset=self._settings.market.quote_asset,
         )
+        self._autonomous_paper_execution_service = AutonomousPaperExecutionService(
+            discovery_service=self.opportunity_discovery_service,
+            paper_trading_service=self.paper_trading_service,
+        )
+        self._trading_cycle_executor = self._build_trading_cycle_executor()
+
+    def _build_trading_cycle_executor(self) -> TradingCycleExecutor:
+        """Select a validated runtime executor without embedding trading rules."""
+        if self._settings.app.autonomous_execution_enabled:
+            if self._settings.app.trade_mode is not TradeMode.PAPER:
+                raise ValueError("Autonomous execution is supported only in paper mode")
+
+            market = self._settings.market
+            return AutonomousPaperTradingCycleExecutor(
+                autonomous_execution_service=self.autonomous_paper_execution_service,
+                quote_asset=market.quote_asset,
+                max_symbols=market.discovery_max_symbols,
+                top_n=market.discovery_top_n,
+            )
+
+        return SingleSymbolTradingCycleExecutor(
+            trading_service=self.trading_service,
+        )
 
     @staticmethod
     def _get_binance_urls(
@@ -725,6 +770,7 @@ class DependencyProvider:
         self._position_engine = None
         self._position_protection_manager = None
         self._market_service = None
+        self._autonomous_paper_execution_service = None
         self._opportunity_discovery_service = None
         self._market_type_switch_service = None
         self._strategy_service = None
@@ -733,6 +779,7 @@ class DependencyProvider:
         self._account_service = None
         self._paper_trading_service = None
         self._trading_service = None
+        self._trading_cycle_executor = None
         self._database = None
         self._initialized = False
 

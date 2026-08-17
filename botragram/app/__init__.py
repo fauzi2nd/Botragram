@@ -29,16 +29,23 @@ from botragram.app.settings_manager import SettingsManager
 from botragram.app.shutdown import shutdown_application
 from botragram.app.startup import startup_application
 from botragram.app.terminal_monitor import TerminalMonitor, TerminalStatus
-from botragram.app.trading_runner import TradingCycleExecutor, TradingRunner
+from botragram.app.trading_runner import (
+    AutonomousPaperTradingCycleExecutor,
+    SingleSymbolTradingCycleExecutor,
+    TradingCycleExecutor,
+    TradingRunner,
+)
 
 __all__ = [
     "Application",
     "ApplicationLifecycle",
+    "AutonomousPaperTradingCycleExecutor",
     "DependencyProvider",
     "MarketStreamTelemetry",
     "MarketTypeSwitchService",
     "RuntimeRestartCoordinator",
     "SettingsManager",
+    "SingleSymbolTradingCycleExecutor",
     "TerminalMonitor",
     "TerminalStatus",
     "TradingCycleExecutor",

@@ -1,4 +1,7 @@
 from botragram.services.account_service import AccountService
+from botragram.services.autonomous_paper_execution_service import (
+    AutonomousPaperExecutionService,
+)
 from botragram.services.health_service import HealthReport, HealthService
 from botragram.services.market_service import MarketService
 from botragram.services.opportunity_discovery_service import (
@@ -19,6 +22,7 @@ from botragram.services.trading_service import TradingService
 
 __all__ = [
     "AccountService",
+    "AutonomousPaperExecutionService",
     "HealthReport",
     "HealthService",
     "MarketService",

@@ -45,6 +45,7 @@ class AppSettings:
     app_version: str = APP_VERSION
     environment: Environment = Environment.DEVELOPMENT
     trade_mode: TradeMode = TradeMode.PAPER
+    autonomous_execution_enabled: bool = False
     database_path: Path = Path("data") / "botragram.db"
 
     @property

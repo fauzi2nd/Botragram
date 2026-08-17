@@ -19,10 +19,18 @@ from __future__ import annotations
 from decimal import Decimal
 
 __all__ = [
+    "DEFAULT_DISCOVERY_MAX_SYMBOLS",
+    "DEFAULT_DISCOVERY_TOP_N",
     "DEFAULT_MAKER_FEE_RATE",
     "DEFAULT_TAKER_FEE_RATE",
     "DEFAULT_SLIPPAGE_RATE",
 ]
+
+# =============================================================================
+# Market Discovery
+# =============================================================================
+DEFAULT_DISCOVERY_MAX_SYMBOLS: int = 20
+DEFAULT_DISCOVERY_TOP_N: int = 5
 
 # =============================================================================
 # Trading Fees (fallback values)

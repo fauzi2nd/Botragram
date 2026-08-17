@@ -31,6 +31,7 @@ from botragram.constants.env import (
     ENV_ACTIVE_EXCHANGE,
     ENV_AI_MODEL,
     ENV_AI_PROVIDER,
+    ENV_AUTONOMOUS_EXECUTION_ENABLED,
     ENV_BINANCE_API_KEY,
     ENV_BINANCE_API_SECRET,
     ENV_BINANCE_MARKET_TYPE,
@@ -384,6 +385,10 @@ class EnvironmentProvider:
             ENV_LOG_LEVEL_LEGACY,
             default="INFO",
         ).upper()
+
+    def get_autonomous_execution_enabled(self) -> bool:
+        """Return whether autonomous opportunity execution is enabled."""
+        return self._get_bool(ENV_AUTONOMOUS_EXECUTION_ENABLED, default=False)
 
     def get_ema_scalping_stop_loss_pct(self) -> str:
         """Return the EMA scalping stop-loss ratio."""

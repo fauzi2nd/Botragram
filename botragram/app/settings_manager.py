@@ -89,6 +89,9 @@ class SettingsManager:
                 raw_value=self._environment_provider.get_trade_mode(),
                 setting_name="TRADE_MODE",
             ),
+            autonomous_execution_enabled=(
+                self._environment_provider.get_autonomous_execution_enabled()
+            ),
         )
 
     def load_exchange_settings(self) -> ExchangeSettings:
@@ -218,6 +221,11 @@ class SettingsManager:
 
         if settings.app.trade_mode is TradeMode.LIVE and not has_api_key:
             raise ValueError("Live trading requires exchange API credentials")
+
+        if settings.app.autonomous_execution_enabled and (
+            settings.app.trade_mode is TradeMode.LIVE
+        ):
+            raise ValueError("Autonomous execution is supported only in paper mode")
 
         if settings.telegram.enabled and not settings.telegram.bot_token:
             raise ValueError("Enabled Telegram integration requires a bot token")

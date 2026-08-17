@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final, Protocol
@@ -31,6 +32,8 @@ from botragram.enums import Interval, OrderType, SignalType, TradeMode
 from botragram.models import TradingResult
 
 __all__ = [
+    "AutonomousPaperTradingCycleExecutor",
+    "SingleSymbolTradingCycleExecutor",
     "TradingCycleExecutor",
     "TradingRunner",
 ]
@@ -50,7 +53,27 @@ _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 # Runtime Contracts
 # =============================================================================
 class TradingCycleExecutor(Protocol):
-    """Execute one complete trading workflow."""
+    """Execute one complete runtime trading cycle."""
+
+    async def execute(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        candle_limit: int,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
+    ) -> Sequence[TradingResult]:
+        """Execute and return all results produced by one runtime cycle."""
+        ...
+
+
+class SingleSymbolExecutionProvider(Protocol):
+    """Execute the existing single-symbol trading workflow."""
 
     async def execute(
         self,
@@ -65,7 +88,24 @@ class TradingCycleExecutor(Protocol):
         synchronize_position: bool = True,
         submit_order: bool = True,
     ) -> TradingResult:
-        """Execute and return one trading-cycle result."""
+        """Execute and return one single-symbol trading result."""
+        ...
+
+
+class AutonomousPaperExecutionProvider(Protocol):
+    """Execute a bounded autonomous PAPER opportunity cycle."""
+
+    async def execute(
+        self,
+        *,
+        quote_asset: str,
+        interval: Interval,
+        candle_limit: int,
+        max_symbols: int,
+        top_n: int,
+        initial_balance: Decimal | None = None,
+    ) -> Sequence[TradingResult]:
+        """Discover and execute ranked PAPER candidates."""
         ...
 
 
@@ -93,6 +133,93 @@ class TradingRuntimeObserver(Protocol):
     async def on_stopped(self) -> None:
         """Observe runtime shutdown."""
         ...
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class SingleSymbolTradingCycleExecutor:
+    """Adapt the established single-symbol service to the runtime contract."""
+
+    trading_service: SingleSymbolExecutionProvider
+
+    async def execute(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        candle_limit: int,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
+    ) -> Sequence[TradingResult]:
+        """Execute the existing single-symbol workflow as one cycle result."""
+        result = await self.trading_service.execute(
+            symbol=symbol,
+            interval=interval,
+            candle_limit=candle_limit,
+            current_drawdown_pct=current_drawdown_pct,
+            order_type=order_type,
+            price=price,
+            account_balance_override=account_balance_override,
+            synchronize_position=synchronize_position,
+            submit_order=submit_order,
+        )
+        return (result,)
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class AutonomousPaperTradingCycleExecutor:
+    """Adapt autonomous discovery to a runtime cycle with PAPER-only safety."""
+
+    autonomous_execution_service: AutonomousPaperExecutionProvider
+    quote_asset: str
+    max_symbols: int
+    top_n: int
+
+    def __post_init__(self) -> None:
+        """Normalize and validate static autonomous-discovery inputs."""
+        normalized_quote_asset = self.quote_asset.strip().upper()
+
+        if not normalized_quote_asset:
+            raise ValueError("Autonomous execution quote asset must not be empty")
+
+        if self.max_symbols <= 0:
+            raise ValueError("Autonomous execution maximum symbols must be positive")
+
+        if self.top_n <= 0:
+            raise ValueError("Autonomous execution top N must be positive")
+
+        object.__setattr__(self, "quote_asset", normalized_quote_asset)
+
+    async def execute(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        candle_limit: int,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
+    ) -> Sequence[TradingResult]:
+        """Execute one bounded PAPER discovery cycle without order submission."""
+        del symbol, current_drawdown_pct, order_type, price, synchronize_position
+
+        if submit_order:
+            raise RuntimeError("Autonomous execution is restricted to paper mode")
+
+        return await self.autonomous_execution_service.execute(
+            quote_asset=self.quote_asset,
+            interval=interval,
+            candle_limit=candle_limit,
+            max_symbols=self.max_symbols,
+            top_n=self.top_n,
+            initial_balance=account_balance_override,
+        )
 
 
 # =============================================================================
@@ -174,7 +301,7 @@ class TradingRunner:
 
         return float(self.runtime_control.interval.seconds)
 
-    async def run_once(self) -> TradingResult:
+    async def run_once(self) -> tuple[TradingResult, ...]:
         """Execute one configured trading cycle."""
         live_trading = self.order_submission_enabled
         self.symbol = self.runtime_control.symbol
@@ -188,22 +315,24 @@ class TradingRunner:
         self.runtime_control.begin_cycle()
 
         try:
-            result = await self.executor.execute(
-                symbol=self.symbol,
-                interval=self.interval,
-                candle_limit=self.candle_limit,
-                account_balance_override=(
-                    None if live_trading else self.paper_account_balance
-                ),
-                synchronize_position=live_trading,
-                submit_order=live_trading,
+            results = tuple(
+                await self.executor.execute(
+                    symbol=self.symbol,
+                    interval=self.interval,
+                    candle_limit=self.candle_limit,
+                    account_balance_override=(
+                        None if live_trading else self.paper_account_balance
+                    ),
+                    synchronize_position=live_trading,
+                    submit_order=live_trading,
+                )
             )
         finally:
             self.runtime_control.end_cycle()
 
-        self._log_result(result=result)
+        self._log_results(results=results)
 
-        return result
+        return results
 
     async def run(self) -> None:
         """Run trading cycles until stop is requested or the task is cancelled.
@@ -249,7 +378,7 @@ class TradingRunner:
                     break
 
                 try:
-                    result = await self.run_once()
+                    results = await self.run_once()
                 except Exception as error:
                     consecutive_failures += 1
                     _LOGGER.warning(
@@ -273,7 +402,7 @@ class TradingRunner:
                     continue
 
                 consecutive_failures = 0
-                await self._notify_cycle_completed(result=result)
+                await self._notify_cycle_completed(results=results)
                 await self._wait_for_next_cycle()
         except asyncio.CancelledError:
             _LOGGER.info("Trading runner cancellation requested")
@@ -335,7 +464,11 @@ class TradingRunner:
         except Exception:
             _LOGGER.exception("Trading runtime startup observer failed")
 
-    async def _notify_cycle_completed(self, *, result: TradingResult) -> None:
+    async def _notify_cycle_completed(
+        self,
+        *,
+        results: Sequence[TradingResult],
+    ) -> None:
         """Notify the optional observer about a successful cycle."""
         observer = self.runtime_observer
 
@@ -343,7 +476,8 @@ class TradingRunner:
             return
 
         try:
-            await observer.on_cycle_completed(result=result)
+            for result in results:
+                await observer.on_cycle_completed(result=result)
         except Exception:
             _LOGGER.exception("Trading runtime cycle observer failed")
 
@@ -380,8 +514,13 @@ class TradingRunner:
         except Exception:
             _LOGGER.exception("Trading runtime shutdown observer failed")
 
+    def _log_results(self, *, results: Sequence[TradingResult]) -> None:
+        """Log safe summaries without credentials or sensitive payloads."""
+        for result in results:
+            self._log_result(result=result)
+
     def _log_result(self, *, result: TradingResult) -> None:
-        """Log a safe summary without credentials or sensitive payloads."""
+        """Log one safe execution summary without sensitive payloads."""
         reason = self._get_result_reason(result=result)
 
         if result.executed:

@@ -62,6 +62,7 @@ from botragram.utils.validator import validate_positive_decimal, validate_symbol
 # =============================================================================
 _ENVIRONMENT_KEYS = (
     "ACTIVE_EXCHANGE",
+    "AUTONOMOUS_EXECUTION_ENABLED",
     "AI_MODEL",
     "AI_PROVIDER",
     "BINANCE_API_KEY",
@@ -121,6 +122,7 @@ def test_configuration_defaults_are_safe_and_immutable() -> None:
     settings = Settings()
 
     assert settings.app.trade_mode is TradeMode.PAPER
+    assert not settings.app.autonomous_execution_enabled
     assert settings.exchange.exchange is ExchangeType.BINANCE
     assert settings.exchange.testnet
     assert not settings.exchange.is_live
@@ -204,6 +206,56 @@ def test_environment_provider_rejects_an_unknown_boolean(
 
     with pytest.raises(ValueError, match="BINANCE_TESTNET"):
         provider.get_binance_testnet()
+
+
+def test_environment_provider_loads_autonomous_execution_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify autonomous execution defaults off and parses strict booleans."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+
+    assert not provider.get_autonomous_execution_enabled()
+
+    monkeypatch.setenv("AUTONOMOUS_EXECUTION_ENABLED", "true")
+
+    assert provider.get_autonomous_execution_enabled()
+
+
+def test_environment_provider_rejects_invalid_autonomous_execution_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify ambiguous autonomous execution values fail closed."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("AUTONOMOUS_EXECUTION_ENABLED", "sometimes")
+
+    with pytest.raises(ValueError, match="AUTONOMOUS_EXECUTION_ENABLED"):
+        provider.get_autonomous_execution_enabled()
+
+
+def test_settings_manager_allows_paper_autonomous_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify the safe PAPER configuration enables autonomous execution."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("TRADE_MODE", "paper")
+    monkeypatch.setenv("AUTONOMOUS_EXECUTION_ENABLED", "true")
+
+    settings = SettingsManager(environment_provider=provider).load()
+
+    assert settings.app.trade_mode is TradeMode.PAPER
+    assert settings.app.autonomous_execution_enabled
 
 
 def test_settings_manager_loads_ema_scalping_risk_profile(
@@ -438,6 +490,24 @@ def test_settings_validation_rejects_live_mode_without_credentials() -> None:
     )
 
     with pytest.raises(ValueError, match="Live trading requires"):
+        SettingsManager.validate(settings=settings)
+
+
+def test_settings_validation_rejects_autonomous_live_mode() -> None:
+    """Verify autonomous execution cannot be routed to live trading."""
+    settings = Settings(
+        app=AppSettings(
+            trade_mode=TradeMode.LIVE,
+            autonomous_execution_enabled=True,
+        ),
+        exchange=ExchangeSettings(
+            exchange=ExchangeType.BINANCE,
+            api_key="configured-key",
+            api_secret="configured-secret",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="only in paper mode"):
         SettingsManager.validate(settings=settings)
 
 

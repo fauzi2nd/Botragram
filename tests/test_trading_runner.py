@@ -30,7 +30,12 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app import TradingRunner, TradingRuntimeControl
+from botragram.app import (
+    AutonomousPaperTradingCycleExecutor,
+    SingleSymbolTradingCycleExecutor,
+    TradingRunner,
+    TradingRuntimeControl,
+)
 from botragram.enums import (
     Interval,
     OrderSide,
@@ -94,7 +99,7 @@ class FakeTradingCycleExecutor:
         account_balance_override: Decimal | None = None,
         synchronize_position: bool = True,
         submit_order: bool = True,
-    ) -> TradingResult:
+    ) -> tuple[TradingResult, ...]:
         """Capture one complete executor invocation."""
         del current_drawdown_pct, order_type, price
         self.calls.append(
@@ -121,7 +126,98 @@ class FakeTradingCycleExecutor:
             raise self.failure
 
         self.execution_succeeded.set()
+        return (self.result,)
+
+
+@dataclass(slots=True, kw_only=True)
+class FakeAutonomousExecutionService:
+    """Record autonomous cycle requests without market or order I/O."""
+
+    results: tuple[TradingResult, ...]
+    calls: list[tuple[str, Interval, int, int, int, Decimal | None]] = field(
+        default_factory=list[tuple[str, Interval, int, int, int, Decimal | None]],
+    )
+
+    async def execute(
+        self,
+        *,
+        quote_asset: str,
+        interval: Interval,
+        candle_limit: int,
+        max_symbols: int,
+        top_n: int,
+        initial_balance: Decimal | None = None,
+    ) -> tuple[TradingResult, ...]:
+        """Capture one autonomous execution request."""
+        self.calls.append(
+            (
+                quote_asset,
+                interval,
+                candle_limit,
+                max_symbols,
+                top_n,
+                initial_balance,
+            )
+        )
+        return self.results
+
+
+@dataclass(slots=True, kw_only=True)
+class FakeSingleSymbolTradingService:
+    """Return a single legacy trading result through the service boundary."""
+
+    result: TradingResult
+    calls: list[ExecutionCall] = field(default_factory=list[ExecutionCall])
+
+    async def execute(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        candle_limit: int,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
+    ) -> TradingResult:
+        """Capture one legacy single-symbol execution."""
+        del current_drawdown_pct, order_type, price
+        self.calls.append(
+            ExecutionCall(
+                symbol=symbol,
+                interval=interval,
+                candle_limit=candle_limit,
+                account_balance_override=account_balance_override,
+                synchronize_position=synchronize_position,
+                submit_order=submit_order,
+            )
+        )
         return self.result
+
+
+@dataclass(slots=True, kw_only=True)
+class BlockingAutonomousExecutionService:
+    """Block one autonomous cycle until its owning task is cancelled."""
+
+    execution_started: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def execute(
+        self,
+        *,
+        quote_asset: str,
+        interval: Interval,
+        candle_limit: int,
+        max_symbols: int,
+        top_n: int,
+        initial_balance: Decimal | None = None,
+    ) -> tuple[TradingResult, ...]:
+        """Wait indefinitely so the caller can verify cancellation propagation."""
+        del quote_asset, interval, candle_limit, max_symbols, top_n, initial_balance
+        self.execution_started.set()
+        await asyncio.Event().wait()
+        raise RuntimeError("Unreachable after autonomous cancellation")
 
 
 # =============================================================================
@@ -248,7 +344,7 @@ async def _run_paper_cycle_test() -> None:
 
     result = await runner.run_once()
 
-    assert result is executor.result
+    assert result == (executor.result,)
     assert executor.calls == [
         ExecutionCall(
             symbol="BTCUSDT",
@@ -283,6 +379,115 @@ async def _run_live_cycle_test() -> None:
     assert executor.calls[0].synchronize_position
     assert executor.calls[0].submit_order
     assert runner.order_submission_enabled
+
+
+def test_autonomous_paper_executor_receives_only_runtime_inputs() -> None:
+    """Verify the runner delegates autonomous cycles without discovery rules."""
+    asyncio.run(_run_autonomous_paper_cycle_test())
+
+
+async def _run_autonomous_paper_cycle_test() -> None:
+    """Run one PAPER autonomous cycle through the selected executor."""
+    expected = (_create_result(), _create_result())
+    service = FakeAutonomousExecutionService(results=expected)
+    runner = TradingRunner(
+        executor=AutonomousPaperTradingCycleExecutor(
+            autonomous_execution_service=service,
+            quote_asset="usdt",
+            max_symbols=7,
+            top_n=3,
+        ),
+        symbol="BTCUSDT",
+        interval=Interval.M5,
+        trade_mode=TradeMode.PAPER,
+        candle_limit=120,
+        paper_account_balance=Decimal("2500"),
+        runtime_control=TradingRuntimeControl(interval=Interval.M5),
+    )
+
+    results = await runner.run_once()
+
+    assert results == expected
+    assert service.calls == [
+        ("USDT", Interval.M5, 120, 7, 3, Decimal("2500")),
+    ]
+
+
+def test_autonomous_executor_rejects_order_enabled_invocation() -> None:
+    """Verify autonomous runtime execution cannot enable order submission."""
+    asyncio.run(_run_autonomous_live_guard_test())
+
+
+async def _run_autonomous_live_guard_test() -> None:
+    """Attempt an order-enabled autonomous cycle."""
+    service = FakeAutonomousExecutionService(results=())
+    executor = AutonomousPaperTradingCycleExecutor(
+        autonomous_execution_service=service,
+        quote_asset="USDT",
+        max_symbols=7,
+        top_n=3,
+    )
+
+    with pytest.raises(RuntimeError, match="restricted to paper mode"):
+        await executor.execute(
+            symbol="BTCUSDT",
+            interval=Interval.M15,
+            candle_limit=100,
+            submit_order=True,
+        )
+
+    assert service.calls == []
+
+
+def test_autonomous_runner_propagates_cancellation() -> None:
+    """Verify cancelling a runtime cycle cancels its autonomous execution."""
+    asyncio.run(_run_autonomous_cancellation_test())
+
+
+async def _run_autonomous_cancellation_test() -> None:
+    """Cancel an in-flight autonomous cycle."""
+    service = BlockingAutonomousExecutionService()
+    runner = TradingRunner(
+        executor=AutonomousPaperTradingCycleExecutor(
+            autonomous_execution_service=service,
+            quote_asset="USDT",
+            max_symbols=7,
+            top_n=3,
+        ),
+        symbol="BTCUSDT",
+        interval=Interval.M15,
+    )
+    task = asyncio.create_task(runner.run_once())
+    await service.execution_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not runner.runtime_control.cycle_in_progress
+
+
+def test_single_symbol_executor_preserves_existing_workflow() -> None:
+    """Verify the disabled autonomous path delegates to TradingService unchanged."""
+    asyncio.run(_run_single_symbol_executor_test())
+
+
+async def _run_single_symbol_executor_test() -> None:
+    """Execute the adapter over the original single-symbol fake."""
+    service = FakeSingleSymbolTradingService(result=_create_result())
+    executor = SingleSymbolTradingCycleExecutor(trading_service=service)
+
+    results = await executor.execute(
+        symbol="BTCUSDT",
+        interval=Interval.M15,
+        candle_limit=100,
+        account_balance_override=Decimal("10000"),
+        synchronize_position=False,
+        submit_order=False,
+    )
+
+    assert results == (service.result,)
+    assert service.calls[0].submit_order is False
 
 
 def test_runner_logs_executed_position_reason_and_risk(

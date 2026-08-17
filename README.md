@@ -13,6 +13,23 @@ Botragram is a Python-based trading bot project scaffolded from the development 
    `BINANCE_MARKET_TYPE=FUTURES`.
 7. Run the application: `python main.py`.
 
+## Autonomous PAPER discovery
+
+Autonomous opportunity execution is disabled by default. To enable the Phase 3
+PAPER-only cycle, set both values in `.env` and use Binance Futures for the
+perpetual market universe:
+
+```dotenv
+TRADE_MODE=PAPER
+AUTONOMOUS_EXECUTION_ENABLED=true
+BINANCE_MARKET_TYPE=FUTURES
+```
+
+The runtime discovers a bounded set of active USDT perpetual symbols, ranks
+actionable strategy signals, then attempts candidates sequentially through the
+PAPER simulation. It never submits an exchange order. `TRADE_MODE=LIVE` with
+`AUTONOMOUS_EXECUTION_ENABLED=true` is rejected during configuration loading.
+
 ## Backtest
 
 Backtest berjalan terpisah dari runtime Telegram dan memakai candle publik

@@ -64,6 +64,7 @@ class RecordingPublisher:
 def _create_fixture(
     *,
     initial_balance: Decimal = Decimal("10000"),
+    max_open_positions: int = 1,
     notification_publisher: NotificationPublisher | None = None,
 ) -> PaperFixture:
     """Create an isolated paper portfolio."""
@@ -75,7 +76,9 @@ def _create_fixture(
         trade_repository=trades,
         position_repository=positions,
         trading_engine=TradingEngine(
-            risk_engine=RiskEngine(settings=RiskSettings()),
+            risk_engine=RiskEngine(
+                settings=RiskSettings(max_open_positions=max_open_positions),
+            ),
         ),
         pnl_engine=PnLEngine(),
         notification_publisher=notification_publisher,
@@ -93,11 +96,12 @@ def _create_signal(
     *,
     signal_type: SignalType,
     price: Decimal,
+    symbol: str = "BTCUSDT",
     generated_at: datetime = _NOW,
 ) -> Signal:
     """Create a deterministic paper signal."""
     return Signal(
-        symbol="BTCUSDT",
+        symbol=symbol,
         signal_type=signal_type,
         price=price,
         confidence=Decimal("0.8"),
@@ -227,6 +231,126 @@ async def _run_insufficient_balance_test() -> None:
     assert "Insufficient paper balance" in result.reason
     assert await fixture.orders.count() == 0
     assert await fixture.positions.count() == 0
+
+
+def test_paper_service_allows_entries_below_portfolio_capacity() -> None:
+    """Allow distinct candidates while persisted capacity remains available."""
+    asyncio.run(_run_below_capacity_test())
+
+
+async def _run_below_capacity_test() -> None:
+    """Open two distinct PAPER positions under a two-position limit."""
+    fixture = _create_fixture(max_open_positions=2)
+    first_result = await fixture.service.execute(
+        signal=_create_signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("100"),
+        ),
+    )
+    second_result = await fixture.service.execute(
+        signal=_create_signal(
+            symbol="ETHUSDT",
+            signal_type=SignalType.SELL,
+            price=Decimal("100"),
+            generated_at=_NOW + timedelta(minutes=1),
+        ),
+    )
+
+    assert first_result.executed
+    assert second_result.executed
+    assert await fixture.positions.count() == 2
+
+
+def test_paper_service_blocks_second_candidate_when_one_slot_is_available() -> None:
+    """Make candidate two observe candidate one's persisted position."""
+    asyncio.run(_run_one_slot_capacity_test())
+
+
+async def _run_one_slot_capacity_test() -> None:
+    """Open one position, then reject a different candidate at capacity."""
+    fixture = _create_fixture(max_open_positions=1)
+    first_result = await fixture.service.execute(
+        signal=_create_signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("100"),
+        ),
+    )
+    second_result = await fixture.service.execute(
+        signal=_create_signal(
+            symbol="ETHUSDT",
+            signal_type=SignalType.SELL,
+            price=Decimal("100"),
+            generated_at=_NOW + timedelta(minutes=1),
+        ),
+    )
+
+    assert first_result.executed
+    assert not second_result.executed
+    assert second_result.reason == "Maximum open positions reached"
+    assert await fixture.orders.count() == 1
+    assert await fixture.positions.count() == 1
+
+
+def test_paper_service_blocks_a_duplicate_symbol_entry() -> None:
+    """Keep an existing symbol position authoritative over a new entry signal."""
+    asyncio.run(_run_duplicate_symbol_test())
+
+
+async def _run_duplicate_symbol_test() -> None:
+    """Attempt a second BUY signal for an already-open PAPER position."""
+    fixture = _create_fixture(max_open_positions=2)
+    first_result = await fixture.service.execute(
+        signal=_create_signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("100"),
+        ),
+    )
+    duplicate_result = await fixture.service.execute(
+        signal=_create_signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("101"),
+            generated_at=_NOW + timedelta(minutes=1),
+        ),
+    )
+
+    assert first_result.executed
+    assert not duplicate_result.executed
+    assert duplicate_result.reason == "Paper position remains open"
+    assert await fixture.orders.count() == 1
+    assert await fixture.positions.count() == 1
+
+
+def test_paper_service_serializes_concurrent_capacity_checks() -> None:
+    """Ensure concurrent candidates cannot both consume one persisted slot."""
+    asyncio.run(_run_concurrent_capacity_test())
+
+
+async def _run_concurrent_capacity_test() -> None:
+    """Submit two different candidates concurrently against one open slot."""
+    fixture = _create_fixture(max_open_positions=1)
+    first_signal = _create_signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100"),
+    )
+    second_signal = _create_signal(
+        symbol="ETHUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("100"),
+        generated_at=_NOW + timedelta(minutes=1),
+    )
+    results = await asyncio.gather(
+        fixture.service.execute(signal=first_signal),
+        fixture.service.execute(signal=second_signal),
+    )
+
+    assert sum(result.executed for result in results) == 1
+    assert await fixture.orders.count() == 1
+    assert await fixture.positions.count() == 1
 
 
 def test_sqlite_migration_persists_paper_exit_levels() -> None:

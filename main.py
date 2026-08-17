@@ -77,7 +77,7 @@ async def _run_trading(
         await dependency_provider.runtime_recovery_service.recover()
         minimum_candles = dependency_provider.signal_engine.strategy.minimum_candles
         runner = TradingRunner(
-            executor=dependency_provider.trading_service,
+            executor=dependency_provider.trading_cycle_executor,
             symbol=dependency_provider.runtime_control.symbol,
             interval=dependency_provider.runtime_control.interval,
             trade_mode=settings.app.trade_mode,

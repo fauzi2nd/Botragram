@@ -106,6 +106,7 @@ botragram/
 |-- repositories/              # Persistence interfaces
 |-- services/
 |   |-- account_service.py
+|   |-- autonomous_paper_execution_service.py # Ranked PAPER candidate execution
 |   |-- backtest_service.py   # Paginated historical candle orchestration
 |   |-- health_service.py
 |   |-- market_service.py
