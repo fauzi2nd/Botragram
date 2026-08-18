@@ -26,8 +26,10 @@ from html import escape
 from botragram.constants.app import APP_NAME, APP_VERSION
 from botragram.enums import AuthorizationStatus, MarketType, SignalType
 from botragram.models import (
+    AutonomousLiveRecoverySnapshot,
     ExecutionAuthorization,
     ExecutionAuthorizationOutcome,
+    LiveRuntimeHealthSnapshot,
     Order,
     Position,
     Trade,
@@ -36,9 +38,11 @@ from botragram.utils.formatter import format_currency
 
 __all__ = [
     "get_balance_message",
+    "get_autonomous_live_recovery_message",
     "get_exchange_message",
     "get_exchange_switched_message",
     "get_history_message",
+    "get_live_runtime_health_message",
     "get_interval_message",
     "get_market_message",
     "get_market_overview_message",
@@ -93,7 +97,7 @@ def get_navigation_message(*, title: str, description: str) -> str:
 def get_status_message(
     is_running: bool,
     trade_mode: str,
-    symbol: str,
+    symbol: str | None,
     last_price: Decimal,
     available_balance: Decimal | None = None,
     open_position_count: int | None = None,
@@ -105,8 +109,16 @@ def get_status_message(
     stream_active: bool | None = None,
     total_unrealized_pnl: Decimal | None = None,
     missing_configuration_requirements: Sequence[str] = (),
+    live_runtime_health: LiveRuntimeHealthSnapshot | None = None,
+    autonomous_live_recovery: AutonomousLiveRecoverySnapshot | None = None,
 ) -> str:
     """Return a compact application, market, and portfolio control center."""
+    multi_context_count = (
+        len(live_runtime_health.contexts)
+        if live_runtime_health is not None and len(live_runtime_health.contexts) > 1
+        else None
+    )
+    is_multi_context_runtime = multi_context_count is not None
     configuration_requirements = frozenset(
         {"exchange", "market type", "symbol", "interval", "strategy"}
     )
@@ -115,7 +127,9 @@ def get_status_message(
         state = "🟡 PAUSED"
     else:
         state = "🟢 RUNNING" if is_running else "🔴 STOPPED"
-    if stream_active is None:
+    if is_multi_context_runtime:
+        stream = "MULTI-CONTEXT"
+    elif stream_active is None:
         stream = "⚪ UNKNOWN"
     else:
         stream = "🟢 LIVE" if stream_active else "⚪ OFFLINE"
@@ -129,7 +143,9 @@ def get_status_message(
         if exchange_type and "exchange" not in missing
         else "BELUM DIPILIH"
     )
-    selected_symbol = symbol if "symbol" not in missing else "BELUM DIPILIH"
+    selected_symbol = (
+        symbol if symbol is not None and "symbol" not in missing else "BELUM DIPILIH"
+    )
     strategy = (
         strategy_name
         if strategy_name and "strategy" not in missing
@@ -140,10 +156,14 @@ def get_status_message(
     )
     price = (
         format_currency(last_price, symbol="USDT")
-        if "symbol" not in missing and last_price > 0
+        if not is_multi_context_runtime and "symbol" not in missing and last_price > 0
         else "WAITING"
     )
-    if missing:
+    if is_multi_context_runtime:
+        configuration_summary = (
+            f"📁 <b>Recovered LIVE Portfolio</b> · {multi_context_count} contexts\n"
+        )
+    elif missing:
         configured_count = len(configuration_requirements) - len(missing)
         configuration_summary = (
             f"🧭 Setup: <b>{configured_count}/5 · INCOMPLETE</b>\n"
@@ -182,6 +202,84 @@ def get_status_message(
             f"{format_currency(total_unrealized_pnl, symbol='USDT')}"
         )
 
+    if live_runtime_health is not None:
+        lines.append(get_live_runtime_health_message(snapshot=live_runtime_health))
+    if autonomous_live_recovery is not None:
+        lines.append(
+            get_autonomous_live_recovery_message(snapshot=autonomous_live_recovery)
+        )
+
+    return "".join(lines)
+
+
+def get_autonomous_live_recovery_message(
+    *, snapshot: AutonomousLiveRecoverySnapshot
+) -> str:
+    """Render durable autonomous recovery state without controls or mutation."""
+    entry_state = (
+        "ENABLED — TESTNET" if snapshot.autonomous_entry_authorized else "DISABLED"
+    )
+    new_entry_state = (
+        "BLOCKED"
+        if snapshot.new_entry_blocked_by_recovery
+        else "NOT BLOCKED BY RECOVERY"
+    )
+    lines = [
+        "\n\n<b>AUTONOMOUS LIVE RECOVERY</b>\n",
+        f"Status: <b>{escape(snapshot.status.value.upper())}</b>\n",
+        f"Autonomous Entry: <b>{entry_state}</b>\n",
+        f"New Entry: <b>{new_entry_state}</b>\n",
+    ]
+    if snapshot.reason is not None:
+        lines.append(f"Reason: <b>{escape(snapshot.reason.value.upper())}</b>\n")
+    if snapshot.incomplete_attempt_count:
+        lines.append(f"Incomplete Attempts: {snapshot.incomplete_attempt_count}\n")
+    if snapshot.attempt_status is not None:
+        lines.append(f"Attempt: {escape(snapshot.attempt_status.value.upper())}\n")
+    if snapshot.symbol is not None:
+        lines.append(f"Symbol: {escape(snapshot.symbol)}\n")
+    return "".join(lines)
+
+
+def get_live_runtime_health_message(*, snapshot: LiveRuntimeHealthSnapshot) -> str:
+    """Render one immutable recovered LIVE health snapshot without controls."""
+    lines = [
+        "\n\n<b>RECOVERED LIVE RUNTIME</b>\n",
+        f"Status: <b>{escape(snapshot.status.value.upper())}</b>\n",
+        f"Contexts: {len(snapshot.contexts)}\n",
+        "Management Authorization: "
+        f"{'EXACT' if snapshot.authorization_exact else 'UNAVAILABLE'}\n",
+        "New LIVE Exposure: <b>DISABLED</b>\n",
+    ]
+    if snapshot.reason is not None:
+        lines.append(f"Reason: <b>{escape(snapshot.reason.value.upper())}</b>\n")
+    for context in snapshot.contexts:
+        stream = next(
+            (
+                state
+                for state in snapshot.stream_states
+                if state.identity.symbol == context.symbol
+                and state.identity.interval == context.interval
+            ),
+            None,
+        )
+        monitor = next(
+            (state for state in snapshot.monitor_states if state.context == context),
+            None,
+        )
+        stream_text = (
+            stream.lifecycle_status.value.upper() if stream is not None else "MISSING"
+        )
+        monitor_text = (
+            "HEALTHY"
+            if monitor is not None and monitor.failure_type is None
+            else "UNHEALTHY"
+        )
+        lines.append(
+            f"\n<b>{escape(context.symbol)}</b> · {escape(context.interval.value)}"
+            f" · {escape(context.strategy_type.value)}\n"
+            f"Stream: {escape(stream_text)} · Monitor: {escape(monitor_text)}"
+        )
     return "".join(lines)
 
 

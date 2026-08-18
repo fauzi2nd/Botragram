@@ -37,7 +37,15 @@ from botragram.exchanges.base.mapper import (
 )
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
-from botragram.models import Account, Candle, Order, Position, Ticker, Trade
+from botragram.models import (
+    Account,
+    Candle,
+    ExchangeSymbolRules,
+    Order,
+    Position,
+    Ticker,
+    Trade,
+)
 
 __all__ = [
     "BinanceExchangeClient",
@@ -148,6 +156,19 @@ class BinanceExchangeClient(BaseExchangeClient):
         return self._mapper.map_ticker(
             self._require_mapping(payload),
         )
+
+    async def get_market_entry_rules(
+        self,
+        *,
+        symbol: str,
+    ) -> ExchangeSymbolRules:
+        """Return authoritative Binance Spot MARKET quantity rules."""
+        payload = await self._rest.get(
+            _EXCHANGE_INFO_ENDPOINT,
+            params={"symbol": self._normalize_symbol(symbol)},
+        )
+        symbol_payload = self._get_exchange_info_symbol(payload=payload, symbol=symbol)
+        return self._mapper.map_market_entry_rules(symbol_payload)
 
     async def get_trading_symbols(
         self,
@@ -523,6 +544,26 @@ class BinanceExchangeClient(BaseExchangeClient):
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    def _get_exchange_info_symbol(
+        self,
+        *,
+        payload: object,
+        symbol: str,
+    ) -> ExchangePayload:
+        """Return one normalized symbol payload from Binance exchangeInfo."""
+        normalized_symbol = self._normalize_symbol(symbol)
+        response = self._require_mapping(payload)
+        raw_symbols = self._require_sequence(response.get("symbols"))
+
+        for raw_symbol in raw_symbols:
+            candidate = self._require_mapping(raw_symbol)
+            candidate_symbol = candidate.get("symbol")
+
+            if candidate_symbol == normalized_symbol:
+                return candidate
+
+        raise ValueError(f"Binance exchangeInfo did not contain {normalized_symbol!r}")
 
     async def _get_trading_symbols(
         self,

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 # Local Imports
 # =============================================================================
 from botragram.constants import DEFAULT_MAX_RETRIES, DEFAULT_REQUEST_TIMEOUT_SECONDS
-from botragram.enums import ExchangeType, MarketType
+from botragram.enums import ExchangeEnvironment, ExchangeType, MarketType
 
 __all__ = [
     "ExchangeSettings",
@@ -53,3 +53,10 @@ class ExchangeSettings:
     def is_live(self) -> bool:
         """Whether the application connects to the live exchange."""
         return not self.testnet
+
+    @property
+    def environment(self) -> ExchangeEnvironment:
+        """Return the canonical network environment for this exchange."""
+        return (
+            ExchangeEnvironment.TESTNET if self.testnet else ExchangeEnvironment.MAINNET
+        )

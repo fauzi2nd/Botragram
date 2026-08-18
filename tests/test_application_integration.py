@@ -31,6 +31,7 @@ import pytest
 from botragram.app import (
     Application,
     ApplicationLifecycle,
+    AutonomousLiveTradingCycleExecutor,
     AutonomousPaperTradingCycleExecutor,
     DependencyProvider,
     HumanConfirmedPaperTradingCycleExecutor,
@@ -40,16 +41,20 @@ from botragram.app import (
 from botragram.config import Settings
 from botragram.config.app_settings import AppSettings
 from botragram.config.exchange_settings import ExchangeSettings
-from botragram.enums import ExchangeType, ExecutionPolicy, TradeMode
+from botragram.enums import ExchangeType, ExecutionPolicy, MarketType, TradeMode
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.services import (
+    AutonomousLiveEntryExecutionService,
+    AutonomousLiveEntryIntentService,
     AutonomousPaperExecutionService,
     ExecutionAuthorizationService,
     HealthService,
     LiveFuturesEntryService,
+    LiveMarketStreamService,
     LivePortfolioRecoveryService,
     LivePositionProtectionService,
     LivePostEntryRecoveryService,
+    LiveProtectionMonitoringService,
     LiveSubmissionRecoveryService,
     PaperTradingService,
     RuntimeReporter,
@@ -99,9 +104,29 @@ async def _run_application_dependency_smoke_test() -> None:
                 provider.runtime_recovery_service.live_portfolio_recovery_service
                 is provider.live_portfolio_recovery_service
             )
+            assert (
+                provider.runtime_recovery_service.market_stream_service
+                is provider.live_market_stream_service
+            )
             assert isinstance(
                 provider.live_futures_entry_service,
                 LiveFuturesEntryService,
+            )
+            assert isinstance(
+                provider.live_market_stream_service,
+                LiveMarketStreamService,
+            )
+            assert isinstance(
+                provider.live_protection_monitoring_service,
+                LiveProtectionMonitoringService,
+            )
+            assert provider.live_market_stream_service.tick_listeners[0] is (
+                provider.live_protection_monitoring_service
+            )
+            assert len(provider.live_market_stream_service.tick_listeners) == 2
+            assert (
+                provider.runtime_recovery_service.protection_monitoring_service
+                is provider.live_protection_monitoring_service
             )
             assert isinstance(
                 provider.live_submission_recovery_service,
@@ -173,6 +198,12 @@ async def _run_application_dependency_smoke_test() -> None:
 
         with pytest.raises(RuntimeError, match="not been initialized"):
             _ = provider.live_futures_entry_service
+
+        with pytest.raises(RuntimeError, match="not been initialized"):
+            _ = provider.live_market_stream_service
+
+        with pytest.raises(RuntimeError, match="not been initialized"):
+            _ = provider.live_protection_monitoring_service
 
         with pytest.raises(RuntimeError, match="not been initialized"):
             _ = provider.live_submission_recovery_service
@@ -265,3 +296,55 @@ def test_provider_rejects_live_human_confirmation_configuration() -> None:
 
     with pytest.raises(ValueError, match="only in paper mode"):
         SettingsManager.validate(settings=settings)
+
+
+def test_provider_selects_testnet_autonomous_live_executor() -> None:
+    """Compose the single global TESTNET autonomous LIVE workflow."""
+    asyncio.run(_run_testnet_autonomous_live_provider_test())
+
+
+async def _run_testnet_autonomous_live_provider_test() -> None:
+    """Verify provider-only composition and cleanup without live order I/O."""
+    with TemporaryDirectory() as temporary_directory:
+        provider = DependencyProvider(
+            database_path=Path(temporary_directory) / "botragram.db",
+            settings=Settings(
+                app=AppSettings(
+                    trade_mode=TradeMode.LIVE,
+                    execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+                    autonomous_live_entry_enabled=True,
+                ),
+                exchange=ExchangeSettings(
+                    exchange=ExchangeType.BINANCE,
+                    market_type=MarketType.FUTURES,
+                    api_key="test-key",
+                    api_secret="test-secret",
+                    testnet=True,
+                ),
+            ),
+        )
+
+        async with provider:
+            executor = provider.trading_cycle_executor
+            assert isinstance(executor, AutonomousLiveTradingCycleExecutor)
+            assert provider.autonomous_live_entry_authorization is not None
+            assert isinstance(
+                provider.autonomous_live_entry_intent_service,
+                AutonomousLiveEntryIntentService,
+            )
+            assert isinstance(
+                provider.autonomous_live_entry_execution_service,
+                AutonomousLiveEntryExecutionService,
+            )
+            assert executor.discovery_service is provider.opportunity_discovery_service
+            assert (
+                executor.risk_evaluation_service
+                is provider.live_entry_risk_evaluation_service
+            )
+            assert (
+                executor.execution_service
+                is provider.autonomous_live_entry_execution_service
+            )
+
+        with pytest.raises(RuntimeError, match="not been initialized"):
+            _ = provider.live_entry_risk_evaluation_service

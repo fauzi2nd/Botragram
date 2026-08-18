@@ -72,21 +72,11 @@ class LivePositionProtectionService:
                 client_id=position.take_profit_client_algo_id,
             )
 
-        calculated_stop, calculated_take_profit = (
-            self.risk_engine.calculate_protection_levels(
-                side=position.side,
-                entry_price=position.entry_price,
-                strategy_type=position.strategy_type,
-            )
-        )
-
         if stop_order is None or take_profit_order is None:
-            position = self._with_missing_client_algo_ids(
-                position=position,
-                needs_stop_loss=stop_order is None,
-                needs_take_profit=take_profit_order is None,
-            )
-            await self.position_repository.save(position=position)
+            (
+                normalized_stop,
+                normalized_take_profit,
+            ) = await self._normalize_initial_protection_plan(position=position)
             _LOGGER.info(
                 "Live protection reconciliation started: symbol=%s missing_stop=%s "
                 "missing_take_profit=%s",
@@ -95,45 +85,43 @@ class LivePositionProtectionService:
                 take_profit_order is None,
             )
             if stop_order is None:
+                position = self._with_missing_client_algo_ids(
+                    position=replace(position, stop_loss=normalized_stop),
+                    needs_stop_loss=True,
+                    needs_take_profit=False,
+                )
+                await self.position_repository.save(position=position)
                 await self._submit_missing_leg(
                     position=position,
                     order_type=OrderType.STOP_MARKET,
-                    trigger_price=calculated_stop,
+                    trigger_price=normalized_stop,
                     client_id=self._require_client_id(
                         position.stop_loss_client_algo_id
                     ),
                 )
+                stop_order = await self._get_verified_submitted_leg(
+                    position=position,
+                    order_type=OrderType.STOP_MARKET,
+                )
             if take_profit_order is None:
+                position = self._with_missing_client_algo_ids(
+                    position=replace(position, take_profit=normalized_take_profit),
+                    needs_stop_loss=False,
+                    needs_take_profit=True,
+                )
+                await self.position_repository.save(position=position)
                 await self._submit_missing_leg(
                     position=position,
                     order_type=OrderType.TAKE_PROFIT_MARKET,
-                    trigger_price=calculated_take_profit,
+                    trigger_price=normalized_take_profit,
                     client_id=self._require_client_id(
                         position.take_profit_client_algo_id
                     ),
                 )
-            refreshed_orders = await self.exchange_client.get_open_protection_orders(
-                symbol=position.symbol,
-            )
-            stop_order = (
-                self._find_protection_order(
-                    orders=refreshed_orders,
-                    position=position,
-                    order_type=OrderType.STOP_MARKET,
-                )
-                or stop_order
-            )
-            take_profit_order = (
-                self._find_protection_order(
-                    orders=refreshed_orders,
+                take_profit_order = await self._get_verified_submitted_leg(
                     position=position,
                     order_type=OrderType.TAKE_PROFIT_MARKET,
                 )
-                or take_profit_order
-            )
-
-        if stop_order is None or take_profit_order is None:
-            raise RuntimeError("Exchange did not confirm both SL and TP orders")
 
         if stop_order.stop_price is None or take_profit_order.stop_price is None:
             raise RuntimeError("Exchange protection order is missing a trigger price")
@@ -151,6 +139,61 @@ class LivePositionProtectionService:
             protected.take_profit,
         )
         return protected
+
+    async def _normalize_initial_protection_plan(
+        self,
+        *,
+        position: Position,
+    ) -> tuple[Decimal, Decimal]:
+        """Return the complete validated venue-trigger plan before persistence.
+
+        Both legs are planned before a durable protection identity is created so
+        local rule, mark-price, or logical validation failures have no mutation
+        or persistence side effect. Persisted ``Position`` trigger fields then
+        represent final venue prices, never unrounded risk-engine intent.
+        """
+        raw_stop, raw_take_profit = self.risk_engine.calculate_protection_levels(
+            side=position.side,
+            entry_price=position.entry_price,
+            strategy_type=position.strategy_type,
+        )
+        rules = await self.exchange_client.get_market_entry_rules(
+            symbol=position.symbol,
+        )
+        mark_price = await self.exchange_client.get_mark_price(symbol=position.symbol)
+        return (
+            rules.normalize_protection_trigger(
+                raw_trigger_price=raw_stop,
+                position_side=position.side,
+                order_type=OrderType.STOP_MARKET,
+                mark_price=mark_price,
+            ),
+            rules.normalize_protection_trigger(
+                raw_trigger_price=raw_take_profit,
+                position_side=position.side,
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                mark_price=mark_price,
+            ),
+        )
+
+    async def _get_verified_submitted_leg(
+        self,
+        *,
+        position: Position,
+        order_type: OrderType,
+    ) -> Order:
+        """Return the newly submitted leg only after an authoritative read."""
+        orders = await self.exchange_client.get_open_protection_orders(
+            symbol=position.symbol,
+        )
+        order = self._find_protection_order(
+            orders=orders,
+            position=position,
+            order_type=order_type,
+        )
+        if order is None:
+            raise RuntimeError("Exchange did not confirm submitted protection order")
+        return order
 
     async def _submit_missing_leg(
         self,
@@ -274,6 +317,11 @@ class LivePositionProtectionService:
         client_id: str,
     ) -> None:
         """Reject a queried algo order that cannot cover the expected leg."""
+        expected_trigger = (
+            position.stop_loss
+            if order_type is OrderType.STOP_MARKET
+            else position.take_profit
+        )
         if (
             order.client_order_id != client_id
             or order.symbol.upper() != position.symbol.upper()
@@ -282,6 +330,8 @@ class LivePositionProtectionService:
             or order.order_type is not order_type
             or order.quantity < position.quantity
             or order.stop_price is None
+            or expected_trigger is None
+            or order.stop_price != expected_trigger
             or order.status is not OrderStatus.NEW
         ):
             raise RuntimeError("Reconciled protection order does not match its leg")

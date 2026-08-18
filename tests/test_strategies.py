@@ -28,6 +28,7 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.config.strategy_settings import StrategySettings
+from botragram.engine import SignalEngine
 from botragram.enums import Interval, SignalType, StrategyType
 from botragram.models import Candle
 from botragram.strategies import StrategyFactory
@@ -132,6 +133,50 @@ def test_strategy_factory_rejects_custom_without_an_implementation() -> None:
 
     with pytest.raises(ValueError, match="Unsupported strategy type"):
         StrategyFactory.create(settings=settings)
+
+
+def test_strategy_resolver_returns_exact_reusable_instances() -> None:
+    """Resolve explicit types without a mutable current-strategy selection."""
+    resolver = StrategyFactory.create_resolver(
+        settings=_create_strategy_settings(strategy_type=StrategyType.EMA_CROSS),
+    )
+
+    btc_strategy = resolver.resolve(strategy_type=StrategyType.EMA_CROSS)
+    eth_strategy = resolver.resolve(strategy_type=StrategyType.EMA_SCALPING)
+
+    assert isinstance(btc_strategy, EMACrossStrategy)
+    assert isinstance(eth_strategy, EMAScalpingStrategy)
+    assert resolver.resolve(strategy_type=StrategyType.EMA_CROSS) is btc_strategy
+    with pytest.raises(ValueError, match="Unsupported strategy type"):
+        resolver.resolve(strategy_type=StrategyType.CUSTOM)
+
+
+def test_signal_engine_resolves_each_context_strategy_without_leakage() -> None:
+    """Evaluate BTC and ETH with distinct explicit strategies sequentially."""
+    resolver = StrategyFactory.create_resolver(
+        settings=_create_strategy_settings(strategy_type=StrategyType.EMA_CROSS),
+    )
+    engine = SignalEngine(
+        strategy_resolver=resolver,
+        default_strategy_type=StrategyType.EMA_CROSS,
+    )
+    btc_candles = _create_candles((1, 1, 1, 2), symbol="BTCUSDT")
+    eth_candles = _create_candles((1, 1, 1, 2), symbol="ETHUSDT")
+
+    btc_signal = engine.generate(
+        candles=btc_candles,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+    eth_signal = engine.generate(
+        candles=eth_candles,
+        strategy_type=StrategyType.EMA_SCALPING,
+    )
+
+    assert btc_signal.strategy_name == StrategyType.EMA_CROSS.value
+    assert eth_signal.strategy_name == StrategyType.EMA_SCALPING.value
+    assert engine.generate(candles=btc_candles).strategy_name == (
+        StrategyType.EMA_CROSS.value
+    )
 
 
 @pytest.mark.parametrize(

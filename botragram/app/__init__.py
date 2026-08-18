@@ -30,8 +30,12 @@ from botragram.app.shutdown import shutdown_application
 from botragram.app.startup import startup_application
 from botragram.app.terminal_monitor import TerminalMonitor, TerminalStatus
 from botragram.app.trading_runner import (
+    AutonomousLiveCycleUnsafeError,
+    AutonomousLiveTradingCycleExecutor,
     AutonomousPaperTradingCycleExecutor,
     HumanConfirmedPaperTradingCycleExecutor,
+    MultiContextActivationPreconditionProvider,
+    MultiContextRunnerActivationPreconditions,
     SingleSymbolTradingCycleExecutor,
     TradingCycleExecutor,
     TradingRunner,
@@ -40,11 +44,15 @@ from botragram.app.trading_runner import (
 __all__ = [
     "Application",
     "ApplicationLifecycle",
+    "AutonomousLiveCycleUnsafeError",
+    "AutonomousLiveTradingCycleExecutor",
     "AutonomousPaperTradingCycleExecutor",
     "DependencyProvider",
     "HumanConfirmedPaperTradingCycleExecutor",
     "MarketStreamTelemetry",
     "MarketTypeSwitchService",
+    "MultiContextActivationPreconditionProvider",
+    "MultiContextRunnerActivationPreconditions",
     "RuntimeRestartCoordinator",
     "SettingsManager",
     "SingleSymbolTradingCycleExecutor",

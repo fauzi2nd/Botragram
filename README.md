@@ -44,8 +44,166 @@ This mode discovers and ranks candidates, creates bounded pending approvals,
 and sends them to the Telegram allow-list. It performs no PAPER execution until
 an allowed user presses Approve; final portfolio validation still occurs at
 approval time. Equivalent symbol/direction/strategy candidates are suppressed
-while an approval remains pending. Both market-wide policies are rejected in
+while an approval remains pending. Both PAPER market-wide policies are rejected in
 `TRADE_MODE=LIVE`.
+
+## TESTNET autonomous LIVE entry
+
+AUTONOMOUS LIVE = TESTNET ONLY. The explicit `autonomous_live` execution policy
+is operational only with `TRADE_MODE=LIVE`,
+`AUTONOMOUS_LIVE_ENTRY_ENABLED=true`, and an exchange TESTNET connection.
+The existing deterministic discovery/ranking pipeline processes candidates
+sequentially. Each candidate receives a current portfolio/balance/risk decision
+before intent authorization and a fresh mutation-time validation at the protected
+entry boundary. Successful entries remain PREPARED-before-POST, exactly-one-POST
+reconciled, and must finish with verified STOP/TP protection. Unsafe mutation
+outcomes stop later candidates; recovered positions participate in capacity and
+risk. MAINNET autonomous LIVE remains rejected.
+
+After the existing discovery, ranking, position, and risk gates have approved a
+candidate, the pure authorization boundary may create a transient typed entry
+intent. An explicit TESTNET-only adapter can consume that intent only after a
+fresh authoritative account/portfolio risk evaluation, then delegates to the
+existing protected-entry lifecycle. The decision-time quantity is never reused
+as mutation-time authority. PREPARED-before-POST, one-POST reconciliation, and
+verified protection remain mandatory. MAINNET remains rejected, PAPER remains
+separate, and recovered-position management authorization cannot grant
+permission for new LIVE exposure.
+
+Protected Futures MARKET entries convert risk sizing into a venue-valid quantity
+before durable `PREPARED` and before the first POST. Botragram reads
+authoritative MARKET rules, rounds quantity **down** to the step grid, and
+validates min/max quantity plus applicable minimum notional against a fresh
+market reference price. Invalid venue quantity creates zero PREPARED records and
+zero mutations; it never increases approved exposure. Phase 5C real TESTNET
+acceptance remains pending.
+
+Futures STOP/TAKE_PROFIT triggers use the same authoritative PRICE_FILTER grid
+for initial protection and stepped STOP replacement. Durable position trigger
+prices are final venue values, and restart reconciliation requires exact trigger
+matches through each durable client identity. A stepped candidate that rounds to
+the existing trigger creates no identity, POST, or cancellation; invalid stepped
+candidates leave the existing verified STOP untouched. Phase 5C acceptance
+remains blocked pending recovery-state resolution and a fresh TESTNET soak.
+
+### Autonomous TESTNET recovery policy
+
+Recovery is restart/operator-driven in the current release. There is no
+background self-healing, no automatic stream/monitor reconstruction, and no
+automatic mutation retry. The application remains alive for read-only operator
+visibility, but an unsafe autonomous cycle pauses new entry until a later
+restart/recovery boundary. Bounded GET reconciliation already inside the durable
+submission/protection contracts remains allowed; entry, protection, and delete
+mutations are never generically retried.
+
+Startup always runs in this order before autonomous discovery is eligible:
+
+```text
+STARTING -> RECOVERING -> submission reconciliation -> acknowledged-entry recovery
+         -> authoritative portfolio/protection recovery -> runtime readiness
+         -> READY -> AUTONOMOUS_RUNNING
+
+any unsafe/incomplete result -> UNSAFE_PAUSED -> restart/operator recovery
+```
+
+`AutonomousLiveEntryAuthorization` authorizes only creation of new TESTNET
+exposure. It is not required to reconcile an existing submission or protect an
+existing exchange position. Therefore, if an operator disables autonomous entry
+after a crash, LIVE recovery still runs, but no new autonomous discovery cycle
+is activated. MAINNET autonomous entry remains rejected.
+
+| Durable state or condition | Authoritative recovery action | New POST allowed? | Autonomous entry / runner |
+| --- | --- | --- | --- |
+| No positions, no incomplete attempt | Full portfolio read is clean | Yes, only with current TESTNET capability | Global cycle may start |
+| `PREPARED` or `UNRESOLVED` | GET by durable `client_order_id` only | No | Blocked until ACKNOWLEDGED or terminal rejection |
+| `ACKNOWLEDGED` | Authoritative position read, persistence, protection verification, then `COMPLETED` | No | Blocked until complete |
+| `REJECTED` | Terminal; no exposure recovery is required | A later, newly discovered candidate only | Normal fresh discovery may continue |
+| `COMPLETED` with verified protection | Authoritative portfolio recovery confirms state | A later, newly discovered candidate only | Eligible only after all recovery/readiness gates pass |
+| Multiple incomplete attempts | Do not guess or select one | No | Paused; operator/recovery intervention required |
+| Unknown portfolio metadata or failed protection | Fail closed | No | Paused |
+| Failed stream, unhealthy monitor, or reconciliation marker | Existing runtime ownership fails closed | No | Paused; no self-healing in 5C |
+
+Crash-window policy is likewise read-first and fail-closed:
+
+| Crash boundary | Durable/exchange source after restart | Safe operation |
+| --- | --- | --- |
+| Before `PREPARED` | No durable attempt | Fresh discovery only; no replay |
+| After `PREPARED`, before POST | SubmissionAttempt + GET by client identity | Never POST again solely because it is not found |
+| During POST / unknown transport outcome | `UNRESOLVED` + authoritative GET | Adopt FILLED, reject terminal state, otherwise remain blocked |
+| FILLED before `ACKNOWLEDGED` persistence | Durable attempt + authoritative GET | Mark the same attempt ACKNOWLEDGED, then post-entry recovery |
+| `ACKNOWLEDGED` before Position persistence | Authoritative position | Persist factual position and verify protection |
+| Position persistence before protection | Position plus durable protection identities | Reconcile/verify STOP and TP before completion |
+| STOP before TP | Distinct durable leg identities + GET | Reconcile sequentially; never blind-repost a missing identity |
+| Protection exists before `COMPLETED` | Position/protection verification | Persist `COMPLETED` only after verification |
+| `COMPLETED` | Durable attempt plus authoritative portfolio | Normal recovery; no duplicate entry/protection mutation |
+
+Autonomous intents and candidate batches are transient process-local values. They
+are neither persisted nor replayed after a crash, unsafe result, or restart.
+After safe recovery the system performs a fresh discovery pass; it does not
+execute stale pre-recovery signals. There is no durable opportunity/signal
+deduplication today. Duplicate economic exposure is instead prevented by fresh
+authoritative same-symbol and portfolio-capacity risk checks.
+
+Current health views describe recovered runtime/stream/monitor state and the
+read-only typed autonomous-recovery lifecycle. Health text is never an
+authorization source.
+
+Operator status now additionally exposes a read-only durable autonomous recovery
+snapshot. `PREPARED`, `UNRESOLVED`, `ACKNOWLEDGED`, and multiple incomplete
+attempts are distinct; recovery remains visible when autonomous entry is
+disabled. Rendering status performs no reconciliation, exchange I/O, mutation,
+or authorization change. Recovery remains restart/operator-driven.
+
+### TESTNET failure-injection and soak readiness
+
+Phase 5C.4A adds deterministic automated coverage for the protected-entry
+failure boundaries alongside the existing submission, post-entry, protection,
+runtime-recovery, runner, configuration, and PAPER regressions. It does not add
+automatic recovery. The operational policy remains fail closed, inspect the
+typed status, then use restart/operator-driven recovery followed by fresh
+discovery. Transient intents and candidate batches remain process-local and are
+never replayed after a crash.
+
+Before any extended TESTNET soak, an operator must verify all of the following:
+
+- TESTNET credentials, `BINANCE_TESTNET=true`, and small TESTNET sizing are in use.
+- Autonomous cycles do not overlap and entry mutation concurrency remains one.
+- Each filled entry has exchange-verified STOP and TAKE_PROFIT protection with
+  distinct durable client identities.
+- Incomplete attempts visibly block new entries; a restart reconciles them
+  without a duplicate entry POST or identity.
+- Portfolio capacity reflects each recovered or newly filled position, and
+  Telegram/terminal recovery status remains truthful.
+- A graceful shutdown leaves verified exchange protection intact and no
+  process-local stream, monitor, or runner task remains active.
+- MAINNET autonomous configuration is rejected before mutation.
+
+Bounded in-process autonomous recovery (Phase 5C.3C) remains deferred pending
+this TESTNET soak evidence. No stream/monitor rebuild, mutation retry, or
+self-healing behavior is enabled.
+
+### Dedicated autonomous TESTNET soak profile
+
+The normal `.env` remains the safe default. To prepare a real TESTNET soak,
+copy `.env.autonomous_testnet_soak.example` to
+`.env.autonomous_testnet_soak`, and copy
+`.env.autonomous_testnet_soak.testnet.example` to
+`.env.autonomous_testnet_soak.testnet`. Fill only the latter with Binance
+**TESTNET** credentials; empty credentials intentionally make LIVE validation
+fail. Never substitute MAINNET credentials.
+
+Select the dedicated base file explicitly before starting a preflight or the
+later soak:
+
+```powershell
+$env:BOTRAGRAM_ENV_FILE = '.env.autonomous_testnet_soak'
+python -c "from botragram.app.settings_manager import SettingsManager; s = SettingsManager().load(); print(s.app.trade_mode.value, s.exchange.market_type.value, s.exchange.environment.value, s.app.effective_execution_policy.value, s.app.autonomous_live_entry_enabled)"
+```
+
+The expected output is `live futures testnet autonomous_live True`. The template
+uses the existing conservative `MAX_POSITION_SIZE_USDT=10` and
+`MAX_OPEN_POSITIONS=1` risk controls. Only after this preflight succeeds should
+the separate Phase 5C acceptance soak start.
 
 ## Backtest
 
@@ -151,23 +309,60 @@ fill asinkron dapat ditangani dengan aman. Saat startup, Botragram mengevaluasi
 seluruh portofolio posisi LIVE yang authoritative dari exchange. Setiap posisi
 dengan metadata lokal yang cukup disimpan kembali dan diverifikasi proteksinya
 secara independen; metadata yang tidak dapat dipastikan membuat recovery gagal
-tertutup. Portofolio dengan beberapa posisi dapat dikenali aman, tetapi runtime
-saat ini masih single-position sehingga tetap paused untuk dua atau lebih posisi.
-Multi-symbol runtime ditunda ke Phase 5B.2.2 dan autonomous LIVE tetap dinonaktifkan.
-Blocker Phase 5B.2.2 yang masih disengaja adalah konfigurasi tunggal pada
-`TradingRuntimeControl`, satu subscription/consumer pada market stream, dan satu
-konteks `PositionProtectionManager`; startup tidak memilih satu posisi dari
-portofolio untuk melewati batas tersebut.
+tertutup. Portofolio dengan beberapa posisi dapat dikenali aman. Runtime hanya
+mengaktifkan management multi-position setelah seluruh context, stream, monitor,
+dan authorization exact dibangun kembali dari state authoritative/durable.
+`LiveMarketStreamService` adalah pemilik lifecycle task/subscription stream
+produksi; Telegram hanya mendelegasikan operasi kompatibilitas singular kepadanya.
+Untuk `MULTIPLE_POSITIONS_SAFE`, startup membuka dan memverifikasi tick pertama
+untuk setiap runtime context secara berurutan. Setelah seluruh stream siap,
+`LiveProtectionMonitoringService` mendaftarkan satu
+`PositionProtectionManager` independen per context dan merutekan tick berdasarkan
+symbol. Kegagalan parsial membersihkan hanya monitor dan stream milik attempt,
+tanpa membatalkan proteksi exchange yang durable. Recovery berikutnya lebih dahulu
+membersihkan ownership process-local sebelumnya, lalu membangun ulang seluruh
+portfolio; tidak ada fallback ke subset posisi yang masih sehat. Streaming bersamaan
+untuk symbol yang sama dengan interval berbeda belum didukung karena API
+`MarketService` masih dialamatkan berdasarkan symbol; autonomous LIVE hanya
+diizinkan pada TESTNET dengan opt-in eksplisit.
 `TradingRuntimeControl` dapat menyimpan nol, satu, atau beberapa runtime context
 LIVE yang immutable. Penggantian seluruh context portfolio bersifat atomik dan
 memvalidasi duplicate symbol terlebih dahulu; urutan dipertahankan untuk
 reproducibility, bukan prioritas. Accessor singular `symbol`, `interval`, dan
 `strategy_type` hanya valid untuk tepat satu context dan gagal eksplisit untuk
-beberapa context. `NO_POSITIONS` dan `UNSAFE` menghapus state runtime lama,
-sedangkan `MULTIPLE_POSITIONS_SAFE` menyimpan semua context tetapi tetap paused.
-Reset juga menghapus seluruh context dan telemetry stream singular. Stream,
-Telegram, `PositionProtectionManager`, dan `TradingRunner` masih single-context;
-active multi-symbol runtime dan autonomous LIVE belum tersedia.
+beberapa context. `NO_POSITIONS`, `UNSAFE`, perubahan bentuk portfolio, atau
+degradasi stream/monitor menghapus state runtime serta authorization dan
+mem-pause runtime.
+`TradingRunner` memiliki satu lifecycle global yang dapat mengambil snapshot
+context immutable dan menjalankan batch secara sequential. Setiap context memakai
+cadence intervalnya sendiri; perubahan context diterapkan pada batas batch
+berikutnya. Prasyarat aktivasi multi-context (portfolio, stream, monitor,
+management authorization, dan lifecycle) dievaluasi eksplisit tanpa memilih
+primary symbol. Management authorization hanya mengizinkan evaluasi context
+posisi yang sudah dipulihkan; ia tidak pernah mengizinkan pembuatan exposure LIVE
+baru. Jika posisi recovered menghilang, entry baru ditolak dan rekonsiliasi
+portfolio diperlukan. Portfolio/risk tetap terserialisasi. Untuk portofolio LIVE
+yang dipulihkan dengan
+beberapa posisi, management cycle produksi sekarang aktif hanya setelah context,
+stream, monitor, dan authorization exact diverifikasi; satu `TradingRunner`
+menjalankan context secara sequential. Authorization dihapus dan runtime dipause
+jika portfolio, stream, atau monitor menjadi stale. Ini tetap tidak mengizinkan
+entry LIVE baru selain workflow autonomous TESTNET yang eksplisit.
+`LiveRuntimeHealthService` menyediakan snapshot operational immutable dan read-only
+yang merangkum context, authorization, stream, serta monitor. Kegagalan stream,
+monitor, atau kebutuhan rekonsiliasi menyebut context yang terdampak dan menilai
+seluruh portfolio secara atomik; snapshot ini tidak pernah mengotorisasi eksekusi.
+Cycle context dapat memilih strategi secara eksplisit dari `strategy_type` melalui
+registry strategy immutable; tidak ada lagi pergantian mutable satu strategy global
+antar context. Default konfigurasi tetap hanya untuk workflow non-context.
+Shutdown application menghentikan runner sebelum menghapus authorization/runtime
+state, lalu menghapus ownership monitor dan menghentikan stream; proteksi exchange
+yang durable tidak dibatalkan. Reset runtime menghapus seluruh context dan
+telemetry stream singular.
+Telegram dan terminal hanya menampilkan health portfolio LIVE secara read-only;
+Telegram tidak menyediakan kontrol interaktif multi-symbol. Autonomous LIVE
+entry hanya tersedia pada FUTURES TESTNET dengan capability eksplisit; MAINNET
+tetap ditolak.
 Jika sinkronisasi, pemasangan proteksi, verifikasi, atau tick pertama gagal, bot
 tetap paused dan terminal mencatat penyebabnya. Perilaku ini bukan pengganti
 pemantauan account dan order secara independen pada exchange.

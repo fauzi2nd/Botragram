@@ -25,7 +25,15 @@ from decimal import Decimal
 # Local Imports
 # =============================================================================
 from botragram.enums import Interval, OrderSide, OrderType
-from botragram.models import Account, Candle, Order, Position, Ticker, Trade
+from botragram.models import (
+    Account,
+    Candle,
+    ExchangeSymbolRules,
+    Order,
+    Position,
+    Ticker,
+    Trade,
+)
 
 __all__ = [
     "BaseExchangeClient",
@@ -69,6 +77,23 @@ class BaseExchangeClient(ABC):
         symbol: str,
     ) -> Ticker:
         """Return the latest ticker for a trading symbol."""
+
+    async def get_mark_price(self, *, symbol: str) -> Decimal:
+        """Return the current trigger reference price for a protection order.
+
+        Spot clients have no distinct mark price, so their typed ticker price is
+        the closest available reference.  Futures clients override this method
+        with their authoritative MARK_PRICE endpoint.
+        """
+        return (await self.get_ticker(symbol=symbol)).last_price
+
+    @abstractmethod
+    async def get_market_entry_rules(
+        self,
+        *,
+        symbol: str,
+    ) -> ExchangeSymbolRules:
+        """Return authoritative quantity rules for a MARKET entry."""
 
     @abstractmethod
     async def get_trading_symbols(

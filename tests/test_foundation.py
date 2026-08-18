@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import asyncio
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -29,7 +30,7 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app import SettingsManager
+from botragram.app import DependencyProvider, SettingsManager
 from botragram.app.environment_provider import EnvironmentProvider
 from botragram.config import Settings
 from botragram.config.app_settings import AppSettings
@@ -39,11 +40,19 @@ from botragram.config.risk_settings import RiskSettings
 from botragram.enums import (
     Environment,
     EnvironmentProfile,
+    ExchangeEnvironment,
     ExchangeType,
     ExecutionPolicy,
+    Interval,
     LogLevel,
     MarketType,
+    StrategyType,
     TradeMode,
+)
+from botragram.models import (
+    AutonomousLiveEntryAuthorization,
+    LiveRecoveredPositionManagementAuthorization,
+    LiveRuntimePositionContext,
 )
 from botragram.utils.datetime import (
     current_utc_timestamp_ms,
@@ -64,12 +73,14 @@ from botragram.utils.validator import validate_positive_decimal, validate_symbol
 _ENVIRONMENT_KEYS = (
     "ACTIVE_EXCHANGE",
     "AUTONOMOUS_EXECUTION_ENABLED",
+    "AUTONOMOUS_LIVE_ENTRY_ENABLED",
     "AI_MODEL",
     "AI_PROVIDER",
     "BINANCE_API_KEY",
     "BINANCE_API_SECRET",
     "BINANCE_MARKET_TYPE",
     "BINANCE_TESTNET",
+    "BOTRAGRAM_ENV_FILE",
     "BOTRAGRAM_PROFILE",
     "BOTRAGRAM_EXCHANGE_API_KEY",
     "BOTRAGRAM_EXCHANGE_API_SECRET",
@@ -81,6 +92,8 @@ _ENVIRONMENT_KEYS = (
     "EXECUTION_POLICY",
     "GEMINI_API_KEY",
     "LOG_LEVEL",
+    "MAX_OPEN_POSITIONS",
+    "MAX_POSITION_SIZE_USDT",
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
     "TELEGRAM_CHAT_ID",
@@ -125,6 +138,7 @@ def test_configuration_defaults_are_safe_and_immutable() -> None:
 
     assert settings.app.trade_mode is TradeMode.PAPER
     assert not settings.app.autonomous_execution_enabled
+    assert not settings.app.autonomous_live_entry_enabled
     assert settings.exchange.exchange is ExchangeType.BINANCE
     assert settings.exchange.testnet
     assert not settings.exchange.is_live
@@ -166,6 +180,36 @@ def test_environment_provider_rejects_an_empty_path() -> None:
     """Verify a dotenv path cannot be blank."""
     with pytest.raises(ValueError, match="must not be empty"):
         EnvironmentProvider(env_path="   ")
+
+
+def test_default_base_configuration_remains_safe_without_soak_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep an ordinary base dotenv file PAPER-only without bootstrap selection."""
+    _clear_environment(monkeypatch)
+    base_path = tmp_path / ".env"
+    _write_environment_file(
+        base_path,
+        "\n".join(
+            (
+                "TRADE_MODE=paper",
+                "BINANCE_MARKET_TYPE=futures",
+                "BINANCE_TESTNET=false",
+                "EXECUTION_POLICY=single_symbol",
+                "AUTONOMOUS_LIVE_ENTRY_ENABLED=false",
+            )
+        ),
+    )
+
+    settings = SettingsManager(
+        environment_provider=EnvironmentProvider(env_path=str(base_path))
+    ).load()
+
+    assert settings.app.trade_mode is TradeMode.PAPER
+    assert settings.exchange.environment is ExchangeEnvironment.MAINNET
+    assert settings.app.effective_execution_policy is ExecutionPolicy.SINGLE_SYMBOL
+    assert not settings.app.autonomous_live_entry_enabled
 
 
 @pytest.mark.parametrize(
@@ -242,6 +286,62 @@ def test_environment_provider_rejects_invalid_autonomous_execution_flag(
         provider.get_autonomous_execution_enabled()
 
 
+def test_environment_provider_loads_autonomous_live_entry_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Require a separate, strict opt-in for future autonomous LIVE entry."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+
+    assert not provider.get_autonomous_live_entry_enabled()
+
+    monkeypatch.setenv("AUTONOMOUS_LIVE_ENTRY_ENABLED", "true")
+
+    assert provider.get_autonomous_live_entry_enabled()
+
+
+def test_autonomous_live_entry_authorization_is_testnet_only_and_immutable() -> None:
+    """Keep future autonomous entry separate from general LIVE state."""
+    authorization = AutonomousLiveEntryAuthorization(
+        environment=ExchangeEnvironment.TESTNET,
+        explicit_opt_in=True,
+    )
+
+    assert authorization.new_live_entry_allowed
+    with pytest.raises(FrozenInstanceError):
+        setattr(authorization, "explicit_opt_in", False)
+    with pytest.raises(ValueError, match="TESTNET"):
+        AutonomousLiveEntryAuthorization(
+            environment=ExchangeEnvironment.MAINNET,
+            explicit_opt_in=True,
+        )
+    with pytest.raises(ValueError, match="opt-in"):
+        AutonomousLiveEntryAuthorization(
+            environment=ExchangeEnvironment.TESTNET,
+            explicit_opt_in=False,
+        )
+
+
+def test_recovered_management_authorization_cannot_be_entry_authorization() -> None:
+    """Keep exact recovered-position management separate from new entry consent."""
+    management = LiveRecoveredPositionManagementAuthorization(
+        contexts=(
+            LiveRuntimePositionContext(
+                symbol="BTCUSDT",
+                interval=Interval.M1,
+                strategy_type=StrategyType.EMA_CROSS,
+            ),
+        ),
+        runtime_management_allowed=True,
+    )
+
+    assert not isinstance(management, AutonomousLiveEntryAuthorization)
+    assert not management.new_live_entry_allowed
+
+
 def test_settings_manager_allows_paper_autonomous_execution(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -258,6 +358,30 @@ def test_settings_manager_allows_paper_autonomous_execution(
 
     assert settings.app.trade_mode is TradeMode.PAPER
     assert settings.app.autonomous_execution_enabled
+
+
+def test_settings_manager_loads_explicit_testnet_live_entry_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Load the separate LIVE capability request without changing policy."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("TRADE_MODE", "live")
+    monkeypatch.setenv("BINANCE_API_KEY", "configured-key")
+    monkeypatch.setenv("BINANCE_API_SECRET", "configured-secret")
+    monkeypatch.setenv("BINANCE_TESTNET", "true")
+    monkeypatch.setenv("BINANCE_MARKET_TYPE", "futures")
+    monkeypatch.setenv("AUTONOMOUS_LIVE_ENTRY_ENABLED", "true")
+
+    settings = SettingsManager(environment_provider=provider).load()
+
+    assert settings.app.trade_mode is TradeMode.LIVE
+    assert settings.app.autonomous_live_entry_enabled
+    assert settings.exchange.environment is ExchangeEnvironment.TESTNET
+    assert settings.app.effective_execution_policy is ExecutionPolicy.SINGLE_SYMBOL
 
 
 def test_settings_manager_loads_explicit_human_confirmation_policy(
@@ -277,6 +401,28 @@ def test_settings_manager_loads_explicit_human_confirmation_policy(
     assert (
         settings.app.effective_execution_policy is ExecutionPolicy.HUMAN_CONFIRMED_PAPER
     )
+
+
+def test_settings_manager_loads_testnet_autonomous_live_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Accept only the explicit TESTNET autonomous LIVE intent workflow."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("TRADE_MODE", "live")
+    monkeypatch.setenv("BINANCE_API_KEY", "configured-key")
+    monkeypatch.setenv("BINANCE_API_SECRET", "configured-secret")
+    monkeypatch.setenv("BINANCE_TESTNET", "true")
+    monkeypatch.setenv("BINANCE_MARKET_TYPE", "futures")
+    monkeypatch.setenv("AUTONOMOUS_LIVE_ENTRY_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_POLICY", "autonomous_live")
+
+    settings = SettingsManager(environment_provider=provider).load()
+
+    assert settings.app.effective_execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE
 
 
 def test_settings_validation_rejects_conflicting_legacy_and_human_policy() -> None:
@@ -352,6 +498,106 @@ def test_environment_provider_loads_isolated_credential_profile(
     assert provider.get_binance_api_key() == expected_api_key
     assert provider.get_binance_api_secret() == "profile-secret"
     assert provider.get_binance_testnet() is testnet
+
+
+def test_explicit_soak_environment_file_builds_testnet_autonomous_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Resolve the dedicated soak base and TESTNET credentials without startup."""
+    _clear_environment(monkeypatch)
+    soak_path = tmp_path / ".env.autonomous_testnet_soak"
+    _write_environment_file(
+        soak_path,
+        "\n".join(
+            (
+                "BOTRAGRAM_PROFILE=testnet",
+                "TRADE_MODE=live",
+                "BINANCE_MARKET_TYPE=futures",
+                "EXECUTION_POLICY=autonomous_live",
+                "AUTONOMOUS_LIVE_ENTRY_ENABLED=true",
+                "MAX_POSITION_SIZE_USDT=10",
+                "MAX_OPEN_POSITIONS=1",
+            )
+        ),
+    )
+    _write_environment_file(
+        tmp_path / ".env.autonomous_testnet_soak.testnet",
+        "\n".join(
+            (
+                "BINANCE_API_KEY=testnet-key",
+                "BINANCE_API_SECRET=testnet-secret",
+                "BINANCE_TESTNET=true",
+            )
+        ),
+    )
+    monkeypatch.setenv("BOTRAGRAM_ENV_FILE", str(soak_path))
+
+    settings = SettingsManager().load()
+    provider = DependencyProvider(
+        database_path=tmp_path / "botragram.db",
+        settings=settings,
+    )
+
+    assert settings.app.trade_mode is TradeMode.LIVE
+    assert settings.exchange.market_type is MarketType.FUTURES
+    assert settings.exchange.environment is ExchangeEnvironment.TESTNET
+    assert settings.app.effective_execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE
+    assert settings.app.autonomous_live_entry_enabled
+    assert settings.risk.max_position_size_usdt == Decimal("10")
+    assert settings.risk.max_open_positions == 1
+    assert provider.autonomous_live_entry_authorization is not None
+    asyncio.run(provider.close())
+
+
+def test_explicit_soak_environment_file_fails_without_testnet_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Never fall back to default or MAINNET credentials for a soak selection."""
+    _clear_environment(monkeypatch)
+    soak_path = tmp_path / ".env.autonomous_testnet_soak"
+    _write_environment_file(
+        soak_path,
+        "\n".join(
+            (
+                "BOTRAGRAM_PROFILE=testnet",
+                "TRADE_MODE=live",
+                "BINANCE_MARKET_TYPE=futures",
+                "EXECUTION_POLICY=autonomous_live",
+                "AUTONOMOUS_LIVE_ENTRY_ENABLED=true",
+            )
+        ),
+    )
+    _write_environment_file(
+        tmp_path / ".env.autonomous_testnet_soak.testnet",
+        "\n".join(
+            (
+                "BINANCE_API_KEY=",
+                "BINANCE_API_SECRET=",
+                "BINANCE_TESTNET=true",
+            )
+        ),
+    )
+    monkeypatch.setenv("BOTRAGRAM_ENV_FILE", str(soak_path))
+
+    with pytest.raises(ValueError, match="Live trading requires"):
+        SettingsManager().load()
+
+
+def test_explicit_missing_soak_environment_file_fails_without_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Reject a missing requested base file before default dotenv can load."""
+    _clear_environment(monkeypatch)
+    monkeypatch.setenv(
+        "BOTRAGRAM_ENV_FILE",
+        str(tmp_path / ".env.autonomous_testnet_soak"),
+    )
+
+    with pytest.raises(FileNotFoundError, match="Explicit environment file"):
+        EnvironmentProvider()
 
 
 def test_dotenv_overrides_stale_terminal_configuration_by_default(
@@ -539,6 +785,210 @@ def test_settings_validation_rejects_autonomous_live_mode() -> None:
 
     with pytest.raises(ValueError, match="only in paper mode"):
         SettingsManager.validate(settings=settings)
+
+
+def test_settings_validation_requires_live_testnet_for_autonomous_live_entry() -> None:
+    """Reject PAPER and MAINNET before provider composition can grant capability."""
+    paper_settings = Settings(
+        app=AppSettings(autonomous_live_entry_enabled=True),
+        exchange=ExchangeSettings(exchange=ExchangeType.BINANCE),
+    )
+    mainnet_settings = Settings(
+        app=AppSettings(
+            trade_mode=TradeMode.LIVE,
+            autonomous_live_entry_enabled=True,
+        ),
+        exchange=ExchangeSettings(
+            exchange=ExchangeType.BINANCE,
+            api_key="configured-key",
+            api_secret="configured-secret",
+            testnet=False,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requires LIVE mode"):
+        SettingsManager.validate(settings=paper_settings)
+    with pytest.raises(ValueError, match="requires TESTNET"):
+        SettingsManager.validate(settings=mainnet_settings)
+
+
+@pytest.mark.parametrize(
+    ("app_settings", "exchange_settings", "message"),
+    (
+        (
+            AppSettings(execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE),
+            ExchangeSettings(exchange=ExchangeType.BINANCE),
+            "requires LIVE mode",
+        ),
+        (
+            AppSettings(
+                trade_mode=TradeMode.LIVE,
+                execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+            ),
+            ExchangeSettings(
+                exchange=ExchangeType.BINANCE,
+                market_type=MarketType.FUTURES,
+                api_key="configured-key",
+                api_secret="configured-secret",
+            ),
+            "requires explicit opt-in",
+        ),
+        (
+            AppSettings(
+                trade_mode=TradeMode.LIVE,
+                execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+                autonomous_live_entry_enabled=True,
+            ),
+            ExchangeSettings(
+                exchange=ExchangeType.BINANCE,
+                market_type=MarketType.FUTURES,
+                api_key="configured-key",
+                api_secret="configured-secret",
+                testnet=False,
+            ),
+            "requires TESTNET",
+        ),
+        (
+            AppSettings(
+                trade_mode=TradeMode.LIVE,
+                execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+                autonomous_live_entry_enabled=True,
+            ),
+            ExchangeSettings(
+                exchange=ExchangeType.BINANCE,
+                api_key="configured-key",
+                api_secret="configured-secret",
+            ),
+            "requires FUTURES",
+        ),
+    ),
+)
+def test_settings_validation_rejects_invalid_autonomous_live_workflow(
+    app_settings: AppSettings,
+    exchange_settings: ExchangeSettings,
+    message: str,
+) -> None:
+    """Reject every incomplete autonomous LIVE workflow combination."""
+    with pytest.raises(ValueError, match=message):
+        SettingsManager.validate(
+            settings=Settings(
+                app=app_settings,
+                exchange=exchange_settings,
+            )
+        )
+
+
+def test_dependency_provider_builds_testnet_entry_authorization(
+    tmp_path: Path,
+) -> None:
+    """Construct the capability only in composition, without execution wiring."""
+    provider = DependencyProvider(
+        database_path=tmp_path / "botragram.db",
+        settings=Settings(
+            app=AppSettings(
+                trade_mode=TradeMode.LIVE,
+                autonomous_live_entry_enabled=True,
+            ),
+            exchange=ExchangeSettings(
+                exchange=ExchangeType.BINANCE,
+                api_key="configured-key",
+                api_secret="configured-secret",
+                testnet=True,
+            ),
+        ),
+    )
+
+    authorization = provider.autonomous_live_entry_authorization
+
+    assert authorization is not None
+    assert authorization.environment is ExchangeEnvironment.TESTNET
+    assert authorization.new_live_entry_allowed
+    asyncio.run(provider.close())
+    assert provider.autonomous_live_entry_authorization is None
+
+
+def test_dependency_provider_builds_testnet_autonomous_live_intent_boundary(
+    tmp_path: Path,
+) -> None:
+    """Compose the pure intent boundary without a LIVE execution route."""
+    provider = DependencyProvider(
+        database_path=tmp_path / "botragram.db",
+        settings=Settings(
+            app=AppSettings(
+                trade_mode=TradeMode.LIVE,
+                execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+                autonomous_live_entry_enabled=True,
+            ),
+            exchange=ExchangeSettings(
+                exchange=ExchangeType.BINANCE,
+                api_key="configured-key",
+                api_secret="configured-secret",
+                testnet=True,
+            ),
+        ),
+    )
+
+    assert provider.autonomous_live_entry_authorization is not None
+    assert provider.autonomous_live_entry_intent_service is not None
+    asyncio.run(provider.close())
+    assert provider.autonomous_live_entry_intent_service is None
+
+
+def test_dependency_provider_rejects_mainnet_autonomous_live_entry(
+    tmp_path: Path,
+) -> None:
+    """Prevent direct provider construction from bypassing settings validation."""
+    with pytest.raises(ValueError, match="requires TESTNET"):
+        DependencyProvider(
+            database_path=tmp_path / "botragram.db",
+            settings=Settings(
+                app=AppSettings(
+                    trade_mode=TradeMode.LIVE,
+                    autonomous_live_entry_enabled=True,
+                ),
+                exchange=ExchangeSettings(
+                    exchange=ExchangeType.BINANCE,
+                    api_key="configured-key",
+                    api_secret="configured-secret",
+                    testnet=False,
+                ),
+            ),
+        )
+
+
+def test_dependency_provider_rejects_mainnet_autonomous_live_workflow(
+    tmp_path: Path,
+) -> None:
+    """Reject MAINNET before the autonomous LIVE intent boundary can exist."""
+    with pytest.raises(ValueError, match="requires TESTNET"):
+        DependencyProvider(
+            database_path=tmp_path / "botragram.db",
+            settings=Settings(
+                app=AppSettings(
+                    trade_mode=TradeMode.LIVE,
+                    execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+                    autonomous_live_entry_enabled=True,
+                ),
+                exchange=ExchangeSettings(
+                    exchange=ExchangeType.BINANCE,
+                    api_key="configured-key",
+                    api_secret="configured-secret",
+                    testnet=False,
+                ),
+            ),
+        )
+
+
+def test_safe_default_has_no_autonomous_live_entry_authorization(
+    tmp_path: Path,
+) -> None:
+    """Keep default PAPER composition free of future LIVE entry permission."""
+    provider = DependencyProvider(
+        database_path=tmp_path / "botragram.db",
+        settings=Settings(exchange=ExchangeSettings(exchange=ExchangeType.BINANCE)),
+    )
+
+    assert provider.autonomous_live_entry_authorization is None
 
 
 # =============================================================================

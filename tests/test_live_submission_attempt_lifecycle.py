@@ -163,6 +163,13 @@ class RecordingOrderService:
         default_factory=list[Order | BaseException]
     )
 
+    async def normalize_futures_market_quantity(
+        self, *, symbol: str, quantity: Decimal
+    ) -> Decimal:
+        """Return the test's already-valid quantity."""
+        del symbol
+        return quantity
+
     async def submit(
         self,
         *,

@@ -9,8 +9,10 @@ from datetime import timedelta
 from typing import Final, Protocol
 
 from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.app.trading_runner import MultiContextRunnerActivationPreconditions
 from botragram.enums import (
     Interval,
+    LiveMarketStreamLifecycleStatus,
     LivePortfolioRecoveryStatus,
     MarketType,
     PositionSide,
@@ -19,7 +21,15 @@ from botragram.enums import (
     SubmissionAttemptStatus,
     TradeMode,
 )
-from botragram.models import LiveRuntimePositionContext, Position
+from botragram.models import (
+    AutonomousLiveEntryAuthorization,
+    LiveMarketStreamIdentity,
+    LiveMarketStreamState,
+    LiveProtectionMonitorState,
+    LiveRecoveredPositionManagementAuthorization,
+    LiveRuntimePositionContext,
+    Position,
+)
 from botragram.repositories import (
     CandleRepository,
     PositionRepository,
@@ -58,14 +68,63 @@ class MarketStreamController(Protocol):
         ...
 
 
+class LiveMarketStreamOwner(Protocol):
+    """Own multi-context market streams without Telegram compatibility routing."""
+
+    @property
+    def stream_states(self) -> tuple[LiveMarketStreamState, ...]:
+        """Return immutable state for every owned market stream."""
+        ...
+
+    async def start(
+        self,
+        *,
+        context: LiveRuntimePositionContext,
+    ) -> LiveMarketStreamIdentity:
+        """Start one stream from its runtime context."""
+        ...
+
+    async def wait_for_first_tick(
+        self,
+        *,
+        identity: LiveMarketStreamIdentity,
+        timeout_seconds: float,
+    ) -> bool:
+        """Wait for one owned stream's first valid tick."""
+        ...
+
+    async def stop(self, *, identity: LiveMarketStreamIdentity) -> bool:
+        """Stop one owned stream."""
+        ...
+
+
+class LiveProtectionMonitorOwner(Protocol):
+    """Own independent per-position protection monitors during recovery."""
+
+    @property
+    def monitor_states(self) -> tuple[LiveProtectionMonitorState, ...]:
+        """Return immutable state for every owned protection monitor."""
+        ...
+
+    def register(self, *, context: LiveRuntimePositionContext) -> bool:
+        """Register one monitor for a recovered runtime context."""
+        ...
+
+    def stop(self, *, symbol: str) -> bool:
+        """Stop one runtime monitor without changing durable protection."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class RuntimeRecoveryService:
-    """Restore one active position without bypassing live safety gates."""
+    """Restore recovered runtime state without bypassing LIVE safety gates."""
 
     trade_mode: TradeMode
     market_type: MarketType
     runtime_control: TradingRuntimeControl
     stream_controller: MarketStreamController
+    market_stream_service: LiveMarketStreamOwner
+    protection_monitoring_service: LiveProtectionMonitorOwner
     position_repository: PositionRepository
     signal_repository: SignalRepository
     candle_repository: CandleRepository
@@ -74,6 +133,7 @@ class RuntimeRecoveryService:
     submission_attempt_repository: SubmissionAttemptRepository | None = None
     live_submission_recovery_service: LiveIncompleteSubmissionRecovery | None = None
     live_post_entry_recovery_service: LiveAcknowledgedEntryRecovery | None = None
+    autonomous_live_entry_authorization: AutonomousLiveEntryAuthorization | None = None
 
     def __post_init__(self) -> None:
         """Validate recovery timing."""
@@ -81,9 +141,13 @@ class RuntimeRecoveryService:
             raise ValueError("First stream tick timeout must be greater than zero")
 
     async def recover(self) -> bool:
-        """Recover one position and resume only when every safety gate is ready."""
+        """Rebuild runtime state and resume only when every safety gate is ready."""
         if self.trade_mode is TradeMode.LIVE:
-            self.runtime_control.set_position_protection_ready(False)
+            if not await self._clear_live_recovery_runtime_state():
+                _LOGGER.critical(
+                    "LIVE recovery cannot release prior process-local runtime state"
+                )
+                return False
             if not await self._recover_incomplete_live_entry():
                 return False
 
@@ -96,6 +160,14 @@ class RuntimeRecoveryService:
             portfolio_result = await self.live_portfolio_recovery_service.recover()
             if portfolio_result.status is LivePortfolioRecoveryStatus.NO_POSITIONS:
                 self.runtime_control.clear_runtime_contexts()
+                if self.autonomous_live_entry_authorization is not None:
+                    self.runtime_control.set_position_protection_ready(True)
+                    self.runtime_control.resume_global_cycle()
+                    _LOGGER.info(
+                        "TESTNET autonomous LIVE runtime activated after clean "
+                        "portfolio recovery"
+                    )
+                    return True
                 return False
             if portfolio_result.status is LivePortfolioRecoveryStatus.UNSAFE:
                 self.runtime_control.clear_runtime_contexts()
@@ -109,18 +181,54 @@ class RuntimeRecoveryService:
                 portfolio_result.status
                 is LivePortfolioRecoveryStatus.MULTIPLE_POSITIONS_SAFE
             ):
-                self.runtime_control.set_runtime_contexts(
-                    contexts=tuple(
-                        self._to_runtime_context(position=position)
-                        for position in portfolio_result.recovered_positions
-                    ),
+                contexts = tuple(
+                    self._to_runtime_context(position=position)
+                    for position in portfolio_result.recovered_positions
                 )
+                self.runtime_control.set_runtime_contexts(contexts=contexts)
+                started_identities = await self._start_multi_position_streams(
+                    contexts=contexts
+                )
+                if started_identities is None:
+                    await self._clear_live_recovery_runtime_state()
+                    return False
+                try:
+                    if not self._register_protection_monitors(contexts=contexts):
+                        await self._clear_live_recovery_runtime_state()
+                        return False
+                except asyncio.CancelledError:
+                    await self._clear_live_recovery_runtime_state()
+                    raise
+                try:
+                    authorization = LiveRecoveredPositionManagementAuthorization(
+                        contexts=contexts,
+                        runtime_management_allowed=True,
+                    )
+                    self.runtime_control.set_live_management_authorization(
+                        authorization=authorization,
+                    )
+                    preconditions = self.get_multi_context_activation_preconditions(
+                        runtime_is_stopping=False,
+                    )
+                    if preconditions is None or not preconditions.can_activate:
+                        await self._clear_live_recovery_runtime_state()
+                        return False
+                    self.runtime_control.set_position_protection_ready(True)
+                    self.runtime_control.resume()
+                except asyncio.CancelledError:
+                    await self._clear_live_recovery_runtime_state()
+                    raise
+                except Exception:
+                    _LOGGER.exception(
+                        "LIVE multi-position management activation failed"
+                    )
+                    await self._clear_live_recovery_runtime_state()
+                    return False
                 _LOGGER.critical(
-                    "LIVE portfolio is protected but singular runtime activation "
-                    "remains blocked: count=%d",
+                    "LIVE recovered multi-position management activated: count=%d",
                     len(portfolio_result.recovered_positions),
                 )
-                return False
+                return True
 
             if (
                 portfolio_result.status
@@ -176,6 +284,17 @@ class RuntimeRecoveryService:
             )
             return False
 
+        if self.trade_mode is TradeMode.LIVE:
+            try:
+                if not self._register_protection_monitors(
+                    contexts=(self._to_runtime_context(position=position),),
+                ):
+                    await self.stream_controller.stop_market_stream()
+                    return False
+            except asyncio.CancelledError:
+                await self.stream_controller.stop_market_stream()
+                raise
+
         self.runtime_control.resume()
         _LOGGER.info(
             "Active position recovered automatically: mode=%s symbol=%s side=%s "
@@ -187,6 +306,62 @@ class RuntimeRecoveryService:
             self._require_strategy(position).value,
         )
         return True
+
+    def get_multi_context_activation_preconditions(
+        self,
+        *,
+        runtime_is_stopping: bool,
+    ) -> MultiContextRunnerActivationPreconditions | None:
+        """Return exact current LIVE multi-context runner activation state."""
+        authorization = self.runtime_control.live_management_authorization
+        contexts = self.runtime_control.runtime_contexts
+
+        if authorization is None or len(contexts) <= 1:
+            return None
+
+        return MultiContextRunnerActivationPreconditions(
+            portfolio_status=LivePortfolioRecoveryStatus.MULTIPLE_POSITIONS_SAFE,
+            contexts=contexts,
+            stream_states=self.market_stream_service.stream_states,
+            monitor_states=self.protection_monitoring_service.monitor_states,
+            live_management_authorization=authorization,
+            runtime_is_paused=self.runtime_control.is_paused,
+            runtime_is_stopping=runtime_is_stopping,
+        )
+
+    async def _clear_live_recovery_runtime_state(self) -> bool:
+        """Release all process-local LIVE runtime state before recovery or exit.
+
+        Returns:
+            Whether monitor and stream ownership is empty after deterministic
+            cleanup. Durable exchange protection is intentionally untouched.
+        """
+        monitor_symbols = tuple(
+            monitor_state.context.symbol
+            for monitor_state in self.protection_monitoring_service.monitor_states
+        )
+        stream_identities = tuple(
+            stream_state.identity
+            for stream_state in self.market_stream_service.stream_states
+        )
+        self.runtime_control.pause()
+        self.runtime_control.set_position_protection_ready(False)
+        self.runtime_control.clear_runtime_contexts()
+        self._stop_recovery_monitors(symbols=list(monitor_symbols))
+        await self._stop_recovery_streams(identities=stream_identities)
+
+        is_cleared = (
+            not self.protection_monitoring_service.monitor_states
+            and not self.market_stream_service.stream_states
+        )
+        if not is_cleared:
+            _LOGGER.critical(
+                "LIVE recovery cleanup left process-local ownership: monitors=%d "
+                "streams=%d",
+                len(self.protection_monitoring_service.monitor_states),
+                len(self.market_stream_service.stream_states),
+            )
+        return is_cleared
 
     async def _recover_incomplete_live_entry(self) -> bool:
         """Recover a durable LIVE entry before normal position recovery runs."""
@@ -255,6 +430,143 @@ class RuntimeRecoveryService:
             "LIVE startup blocked because acknowledged entry position is not visible"
         )
         return False
+
+    async def _start_multi_position_streams(
+        self,
+        *,
+        contexts: tuple[LiveRuntimePositionContext, ...],
+    ) -> tuple[LiveMarketStreamIdentity, ...] | None:
+        """Start and verify every recovered stream while keeping runtime paused."""
+        stream_service = self.market_stream_service
+
+        if stream_service.stream_states:
+            _LOGGER.critical(
+                "LIVE multi-position stream recovery requires no pre-existing "
+                "owned streams"
+            )
+            return None
+
+        started_identities: list[LiveMarketStreamIdentity] = []
+
+        try:
+            for context in contexts:
+                identity = await stream_service.start(context=context)
+                started_identities.append(identity)
+
+            for identity in started_identities:
+                is_ready = await stream_service.wait_for_first_tick(
+                    identity=identity,
+                    timeout_seconds=self.first_tick_timeout_seconds,
+                )
+                stream_state = self._get_owned_stream_state(identity=identity)
+
+                if (
+                    not is_ready
+                    or stream_state is None
+                    or stream_state.lifecycle_status
+                    is not LiveMarketStreamLifecycleStatus.RUNNING
+                    or not stream_state.first_tick_received
+                ):
+                    _LOGGER.error(
+                        "LIVE multi-position stream readiness failed: symbol=%s "
+                        "interval=%s",
+                        identity.symbol,
+                        identity.interval.value,
+                    )
+                    await self._stop_recovery_streams(
+                        identities=tuple(started_identities)
+                    )
+                    return None
+        except asyncio.CancelledError:
+            await self._stop_recovery_streams(identities=tuple(started_identities))
+            raise
+        except Exception:
+            _LOGGER.exception("LIVE multi-position stream startup failed")
+            await self._stop_recovery_streams(identities=tuple(started_identities))
+            return None
+
+        return tuple(started_identities)
+
+    def _register_protection_monitors(
+        self,
+        *,
+        contexts: tuple[LiveRuntimePositionContext, ...],
+    ) -> bool:
+        """Register every context or release only this recovery attempt's monitors."""
+        monitor_service = self.protection_monitoring_service
+
+        if monitor_service.monitor_states:
+            _LOGGER.critical(
+                "LIVE recovery requires no pre-existing protection monitors"
+            )
+            return False
+
+        registered_symbols: list[str] = []
+
+        try:
+            for context in contexts:
+                if not monitor_service.register(context=context):
+                    _LOGGER.error(
+                        "LIVE protection monitor registration was rejected: symbol=%s",
+                        context.symbol,
+                    )
+                    self._stop_recovery_monitors(symbols=registered_symbols)
+                    return False
+                registered_symbols.append(context.symbol)
+        except asyncio.CancelledError:
+            self._stop_recovery_monitors(symbols=registered_symbols)
+            raise
+        except Exception:
+            _LOGGER.exception("LIVE protection monitor registration failed")
+            self._stop_recovery_monitors(symbols=registered_symbols)
+            return False
+
+        return True
+
+    def _stop_recovery_monitors(self, *, symbols: list[str]) -> None:
+        """Release only monitors registered by this recovery attempt."""
+        for symbol in reversed(symbols):
+            try:
+                self.protection_monitoring_service.stop(symbol=symbol)
+            except Exception:
+                _LOGGER.exception(
+                    "LIVE protection monitor cleanup failed: symbol=%s",
+                    symbol,
+                )
+
+    async def _stop_recovery_streams(
+        self,
+        *,
+        identities: tuple[LiveMarketStreamIdentity, ...],
+    ) -> None:
+        """Stop only streams started by this recovery attempt in reverse order."""
+        for identity in reversed(identities):
+            try:
+                await self.market_stream_service.stop(identity=identity)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.exception(
+                    "LIVE multi-position recovery stream cleanup failed: "
+                    "symbol=%s interval=%s",
+                    identity.symbol,
+                    identity.interval.value,
+                )
+
+    def _get_owned_stream_state(
+        self,
+        *,
+        identity: LiveMarketStreamIdentity,
+    ) -> LiveMarketStreamState | None:
+        """Return one identity-specific owner snapshot without selecting a stream."""
+        return next(
+            (
+                stream_state
+                for stream_state in self.market_stream_service.stream_states
+                if stream_state.identity == identity
+            ),
+            None,
+        )
 
     async def _restore_metadata(self, *, position: Position) -> Position | None:
         """Reconstruct missing paper metadata from its exact entry history."""

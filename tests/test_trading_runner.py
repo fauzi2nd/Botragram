@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -33,6 +34,7 @@ import pytest
 from botragram.app import (
     AutonomousPaperTradingCycleExecutor,
     HumanConfirmedPaperTradingCycleExecutor,
+    MultiContextRunnerActivationPreconditions,
     SingleSymbolTradingCycleExecutor,
     TradingRunner,
     TradingRuntimeControl,
@@ -40,6 +42,8 @@ from botragram.app import (
 from botragram.enums import (
     AuthorizationStatus,
     Interval,
+    LiveMarketStreamLifecycleStatus,
+    LivePortfolioRecoveryStatus,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -49,6 +53,11 @@ from botragram.enums import (
 )
 from botragram.models import (
     ExecutionAuthorization,
+    LiveMarketStreamIdentity,
+    LiveMarketStreamState,
+    LiveProtectionMonitorState,
+    LiveRecoveredPositionManagementAuthorization,
+    LiveRuntimePositionContext,
     Order,
     PositionSize,
     RiskMetrics,
@@ -73,6 +82,7 @@ class ExecutionCall:
 
     symbol: str
     interval: Interval
+    strategy_type: StrategyType | None
     candle_limit: int
     account_balance_override: Decimal | None
     synchronize_position: bool
@@ -96,6 +106,10 @@ class FakeTradingCycleExecutor:
         symbol: str,
         interval: Interval,
         candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
         current_drawdown_pct: Decimal = Decimal("0"),
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
@@ -104,11 +118,12 @@ class FakeTradingCycleExecutor:
         submit_order: bool = True,
     ) -> tuple[TradingResult, ...]:
         """Capture one complete executor invocation."""
-        del current_drawdown_pct, order_type, price
+        del live_management_authorization, current_drawdown_pct, order_type, price
         self.calls.append(
             ExecutionCall(
                 symbol=symbol,
                 interval=interval,
+                strategy_type=strategy_type,
                 candle_limit=candle_limit,
                 account_balance_override=account_balance_override,
                 synchronize_position=synchronize_position,
@@ -130,6 +145,99 @@ class FakeTradingCycleExecutor:
 
         self.execution_succeeded.set()
         return (self.result,)
+
+
+@dataclass(slots=True, kw_only=True)
+class SequentialContextExecutor:
+    """Measure cycle ordering without parallel task execution."""
+
+    result: TradingResult
+    events: list[str] = field(default_factory=list[str])
+    strategy_types: list[StrategyType | None] = field(
+        default_factory=list[StrategyType | None],
+    )
+    active_cycles: int = 0
+    maximum_active_cycles: int = 0
+    cancel_symbol: str | None = None
+    failure_symbol: str | None = None
+    on_cycle_started: Callable[[str], None] | None = None
+
+    async def execute(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
+    ) -> tuple[TradingResult, ...]:
+        """Record one context cycle and expose sequential execution state."""
+        del (
+            interval,
+            candle_limit,
+            live_management_authorization,
+            current_drawdown_pct,
+            order_type,
+            price,
+            account_balance_override,
+            synchronize_position,
+            submit_order,
+        )
+        self.events.append(f"start:{symbol}")
+        if self.on_cycle_started is not None:
+            self.on_cycle_started(symbol)
+        self.strategy_types.append(strategy_type)
+        self.active_cycles += 1
+        self.maximum_active_cycles = max(self.maximum_active_cycles, self.active_cycles)
+
+        try:
+            if symbol == self.cancel_symbol:
+                raise asyncio.CancelledError()
+            if symbol == self.failure_symbol:
+                raise RuntimeError(f"configured context failure: {symbol}")
+            await asyncio.sleep(0)
+            self.events.append(f"complete:{symbol}")
+            return (self.result,)
+        finally:
+            self.active_cycles -= 1
+
+
+@dataclass(slots=True, kw_only=True)
+class _MultiContextActivationProvider:
+    """Build exact ready activation state from one runtime-control snapshot."""
+
+    control: TradingRuntimeControl
+    contexts: tuple[LiveRuntimePositionContext, ...]
+    stream_states: tuple[LiveMarketStreamState, ...]
+    monitor_states: tuple[LiveProtectionMonitorState, ...]
+
+    def get_multi_context_activation_preconditions(
+        self,
+        *,
+        runtime_is_stopping: bool,
+    ) -> MultiContextRunnerActivationPreconditions | None:
+        """Return exact current activation state for the runner protocol."""
+        authorization = self.control.live_management_authorization
+        if authorization is None:
+            return None
+
+        return MultiContextRunnerActivationPreconditions(
+            portfolio_status=LivePortfolioRecoveryStatus.MULTIPLE_POSITIONS_SAFE,
+            contexts=self.contexts,
+            stream_states=self.stream_states,
+            monitor_states=self.monitor_states,
+            live_management_authorization=authorization,
+            runtime_is_paused=self.control.is_paused,
+            runtime_is_stopping=runtime_is_stopping,
+        )
 
 
 @dataclass(slots=True, kw_only=True)
@@ -203,6 +311,10 @@ class FakeSingleSymbolTradingService:
         symbol: str,
         interval: Interval,
         candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
         current_drawdown_pct: Decimal = Decimal("0"),
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
@@ -211,11 +323,12 @@ class FakeSingleSymbolTradingService:
         submit_order: bool = True,
     ) -> TradingResult:
         """Capture one legacy single-symbol execution."""
-        del current_drawdown_pct, order_type, price
+        del live_management_authorization, current_drawdown_pct, order_type, price
         self.calls.append(
             ExecutionCall(
                 symbol=symbol,
                 interval=interval,
+                strategy_type=strategy_type,
                 candle_limit=candle_limit,
                 account_balance_override=account_balance_override,
                 synchronize_position=synchronize_position,
@@ -351,9 +464,459 @@ def _complete_startup_configuration(
     return control
 
 
+def _context(
+    *,
+    symbol: str,
+    interval: Interval,
+    strategy_type: StrategyType = StrategyType.EMA_CROSS,
+) -> LiveRuntimePositionContext:
+    """Build one immutable runtime context for scheduler-foundation tests."""
+    return LiveRuntimePositionContext(
+        symbol=symbol,
+        interval=interval,
+        strategy_type=strategy_type,
+    )
+
+
+def _ready_stream_state(
+    *,
+    context: LiveRuntimePositionContext,
+) -> LiveMarketStreamState:
+    """Build an exact ready stream state for activation-policy tests."""
+    return LiveMarketStreamState(
+        identity=LiveMarketStreamIdentity.from_runtime_context(context=context),
+        lifecycle_status=LiveMarketStreamLifecycleStatus.RUNNING,
+        first_tick_received=True,
+        event_count=1,
+        last_price=Decimal("100"),
+        last_event_monotonic=1.0,
+    )
+
+
+def _healthy_monitor_state(
+    *,
+    context: LiveRuntimePositionContext,
+) -> LiveProtectionMonitorState:
+    """Build an exact healthy monitor state for activation-policy tests."""
+    return LiveProtectionMonitorState(
+        context=context,
+        is_active=True,
+    )
+
+
 # =============================================================================
 # Configuration and Safety Tests
 # =============================================================================
+def test_context_cycle_receives_the_exact_explicit_context() -> None:
+    """Verify the new cycle boundary forwards BTC context without control lookup."""
+    asyncio.run(_run_explicit_context_cycle_test())
+
+
+async def _run_explicit_context_cycle_test() -> None:
+    """Execute one BTC context through the context-explicit boundary."""
+    executor = FakeTradingCycleExecutor(result=_create_result())
+    control = TradingRuntimeControl()
+    runner = TradingRunner(
+        executor=executor,
+        symbol="SOLUSDT",
+        interval=Interval.H1,
+        runtime_control=control,
+    )
+
+    await runner.run_context_cycle(
+        context=_context(symbol="BTCUSDT", interval=Interval.M1),
+    )
+
+    assert executor.calls[0].symbol == "BTCUSDT"
+    assert executor.calls[0].interval is Interval.M1
+    assert executor.calls[0].strategy_type is StrategyType.EMA_CROSS
+    assert control.symbol == "SOLUSDT"
+
+
+def test_context_scheduler_is_deterministic_and_sequential() -> None:
+    """Verify BTC fully completes before ETH begins without task fan-out."""
+    asyncio.run(_run_sequential_context_scheduler_test())
+
+
+async def _run_sequential_context_scheduler_test() -> None:
+    """Run BTC then ETH through the isolated sequential scheduler foundation."""
+    executor = SequentialContextExecutor(result=_create_result())
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(
+        contexts=(
+            _context(symbol="BTCUSDT", interval=Interval.M1),
+            _context(
+                symbol="ETHUSDT",
+                interval=Interval.H1,
+                strategy_type=StrategyType.EMA_SCALPING,
+            ),
+        ),
+    )
+    runner = TradingRunner(
+        executor=executor,
+        symbol="SOLUSDT",
+        interval=Interval.M15,
+        runtime_control=control,
+    )
+
+    results = await runner.run_context_cycles_once(
+        contexts=control.runtime_contexts,
+    )
+
+    assert len(results) == 2
+    assert executor.events == [
+        "start:BTCUSDT",
+        "complete:BTCUSDT",
+        "start:ETHUSDT",
+        "complete:ETHUSDT",
+    ]
+    assert executor.maximum_active_cycles == 1
+    assert executor.strategy_types == [
+        StrategyType.EMA_CROSS,
+        StrategyType.EMA_SCALPING,
+    ]
+    assert not control.cycle_in_progress
+
+
+def test_context_scheduler_propagates_cancellation_before_next_context() -> None:
+    """Verify cancellation of BTC cannot be isolated by starting ETH."""
+    asyncio.run(_run_context_scheduler_cancellation_test())
+
+
+async def _run_context_scheduler_cancellation_test() -> None:
+    """Cancel the first explicit context before a second context can start."""
+    executor = SequentialContextExecutor(
+        result=_create_result(),
+        cancel_symbol="BTCUSDT",
+    )
+    runner = TradingRunner(
+        executor=executor,
+        symbol="SOLUSDT",
+        interval=Interval.M15,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await runner.run_context_cycles_once(
+            contexts=(
+                _context(symbol="BTCUSDT", interval=Interval.M1),
+                _context(symbol="ETHUSDT", interval=Interval.H1),
+            ),
+        )
+
+    assert executor.events == ["start:BTCUSDT"]
+    assert executor.maximum_active_cycles == 1
+
+
+def test_context_scheduler_propagates_failure_before_next_context() -> None:
+    """Verify a failed BTC context cannot silently proceed to ETH."""
+    asyncio.run(_run_context_scheduler_failure_test())
+
+
+async def _run_context_scheduler_failure_test() -> None:
+    """Fail the first explicit context and prove no later cycle begins."""
+    executor = SequentialContextExecutor(
+        result=_create_result(),
+        failure_symbol="BTCUSDT",
+    )
+    runner = TradingRunner(
+        executor=executor,
+        symbol="SOLUSDT",
+        interval=Interval.M15,
+    )
+
+    with pytest.raises(RuntimeError, match="configured context failure"):
+        await runner.run_context_cycles_once(
+            contexts=(
+                _context(symbol="BTCUSDT", interval=Interval.M1),
+                _context(symbol="ETHUSDT", interval=Interval.H1),
+            ),
+        )
+
+    assert executor.events == ["start:BTCUSDT"]
+
+
+def test_runner_lifecycle_uses_multiple_contexts_sequentially() -> None:
+    """Support one global runner lifecycle without per-context runner tasks."""
+    asyncio.run(_run_multi_context_lifecycle_test())
+
+
+async def _run_multi_context_lifecycle_test() -> None:
+    """Run a stable batch despite a runtime-context change during BTC."""
+    control = TradingRuntimeControl()
+    _complete_startup_configuration(control)
+    control.set_runtime_contexts(
+        contexts=(
+            _context(symbol="BTCUSDT", interval=Interval.M1),
+            _context(symbol="ETHUSDT", interval=Interval.H1),
+        ),
+    )
+
+    def change_contexts_after_btc(symbol: str) -> None:
+        """Install a new portfolio only after the immutable batch begins."""
+        if symbol != "BTCUSDT":
+            return
+
+        control.set_runtime_contexts(
+            contexts=(
+                _context(symbol="BTCUSDT", interval=Interval.M1),
+                _context(symbol="SOLUSDT", interval=Interval.M15),
+            ),
+        )
+
+    executor = SequentialContextExecutor(
+        result=_create_result(),
+        on_cycle_started=change_contexts_after_btc,
+    )
+    runner = TradingRunner(
+        executor=executor,
+        symbol="SOLUSDT",
+        interval=Interval.M15,
+        runtime_control=control,
+    )
+
+    task = asyncio.create_task(runner.run())
+    for _ in range(100):
+        if executor.events == [
+            "start:BTCUSDT",
+            "complete:BTCUSDT",
+            "start:ETHUSDT",
+            "complete:ETHUSDT",
+        ]:
+            break
+        await asyncio.sleep(0)
+    else:
+        raise AssertionError("Multi-context batch did not complete")
+
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert executor.maximum_active_cycles == 1
+    assert not runner.is_running
+
+
+def test_multi_context_activation_preconditions_require_exact_ready_owners() -> None:
+    """Require exact streams and monitors without using protection-ready state."""
+    contexts = (
+        _context(symbol="BTCUSDT", interval=Interval.M1),
+        _context(symbol="ETHUSDT", interval=Interval.M5),
+    )
+    ready = MultiContextRunnerActivationPreconditions(
+        portfolio_status=LivePortfolioRecoveryStatus.MULTIPLE_POSITIONS_SAFE,
+        contexts=contexts,
+        stream_states=tuple(
+            _ready_stream_state(context=context) for context in contexts
+        ),
+        monitor_states=tuple(
+            _healthy_monitor_state(context=context) for context in contexts
+        ),
+        live_management_authorization=LiveRecoveredPositionManagementAuthorization(
+            contexts=contexts,
+            runtime_management_allowed=True,
+        ),
+        runtime_is_paused=False,
+        runtime_is_stopping=False,
+    )
+
+    assert ready.runtime_representation_valid
+    assert ready.stream_substrate_ready
+    assert ready.protection_monitoring_ready
+    assert ready.is_eligible
+
+    missing_stream = MultiContextRunnerActivationPreconditions(
+        portfolio_status=ready.portfolio_status,
+        contexts=contexts,
+        stream_states=ready.stream_states[:1],
+        monitor_states=ready.monitor_states,
+        live_management_authorization=ready.live_management_authorization,
+        runtime_is_paused=False,
+        runtime_is_stopping=False,
+    )
+    failed_monitor = MultiContextRunnerActivationPreconditions(
+        portfolio_status=ready.portfolio_status,
+        contexts=contexts,
+        stream_states=ready.stream_states,
+        monitor_states=(
+            ready.monitor_states[0],
+            LiveProtectionMonitorState(
+                context=contexts[1],
+                is_active=True,
+                failure_type="RuntimeError",
+            ),
+        ),
+        live_management_authorization=ready.live_management_authorization,
+        runtime_is_paused=False,
+        runtime_is_stopping=False,
+    )
+
+    assert not missing_stream.is_eligible
+    assert not failed_monitor.protection_monitoring_ready
+    assert not failed_monitor.is_eligible
+
+    unauthorized = MultiContextRunnerActivationPreconditions(
+        portfolio_status=ready.portfolio_status,
+        contexts=contexts,
+        stream_states=ready.stream_states,
+        monitor_states=ready.monitor_states,
+        live_management_authorization=LiveRecoveredPositionManagementAuthorization(
+            contexts=contexts,
+        ),
+        runtime_is_paused=False,
+        runtime_is_stopping=False,
+    )
+
+    assert not unauthorized.is_eligible
+
+
+def test_live_multi_context_runner_requires_exact_ready_management_authorization() -> (
+    None
+):
+    """Run exactly one global LIVE batch only after exact activation succeeds."""
+    asyncio.run(_run_live_multi_context_management_test())
+
+
+async def _run_live_multi_context_management_test() -> None:
+    """Activate BTC and ETH management sequentially without any new entry path."""
+    contexts = (
+        _context(symbol="BTCUSDT", interval=Interval.M1),
+        _context(symbol="ETHUSDT", interval=Interval.M5),
+    )
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(contexts=contexts)
+    control.set_live_management_authorization(
+        authorization=LiveRecoveredPositionManagementAuthorization(
+            contexts=contexts,
+            runtime_management_allowed=True,
+        ),
+    )
+    control.set_position_protection_ready(True)
+    control.resume()
+    executor = SequentialContextExecutor(result=_create_result())
+    runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M15,
+        trade_mode=TradeMode.LIVE,
+        runtime_control=control,
+        multi_context_activation_precondition_provider=(
+            _MultiContextActivationProvider(
+                control=control,
+                contexts=contexts,
+                stream_states=tuple(
+                    _ready_stream_state(context=context) for context in contexts
+                ),
+                monitor_states=tuple(
+                    _healthy_monitor_state(context=context) for context in contexts
+                ),
+            )
+        ),
+    )
+
+    task = asyncio.create_task(runner.run())
+    for _ in range(100):
+        if executor.events == [
+            "start:BTCUSDT",
+            "complete:BTCUSDT",
+            "start:ETHUSDT",
+            "complete:ETHUSDT",
+        ]:
+            break
+        await asyncio.sleep(0)
+    else:
+        raise AssertionError("Authorized multi-context LIVE batch did not complete")
+
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+    assert executor.maximum_active_cycles == 1
+
+
+@pytest.mark.parametrize(
+    "failed_owner",
+    ("stream", "monitor"),
+)
+def test_live_multi_context_runner_pauses_before_a_batch_when_owner_is_unhealthy(
+    failed_owner: str,
+) -> None:
+    """Block the complete portfolio when a required owner becomes unhealthy."""
+    asyncio.run(_run_live_multi_context_unhealthy_owner_test(failed_owner=failed_owner))
+
+
+async def _run_live_multi_context_unhealthy_owner_test(
+    *,
+    failed_owner: str,
+) -> None:
+    """Verify owner health is revalidated before every LIVE context batch."""
+    contexts = (
+        _context(symbol="BTCUSDT", interval=Interval.M1),
+        _context(symbol="ETHUSDT", interval=Interval.M5),
+    )
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(contexts=contexts)
+    control.set_live_management_authorization(
+        authorization=LiveRecoveredPositionManagementAuthorization(
+            contexts=contexts,
+            runtime_management_allowed=True,
+        ),
+    )
+    control.set_position_protection_ready(True)
+    control.resume()
+    stream_states = tuple(_ready_stream_state(context=context) for context in contexts)
+    monitor_states = tuple(
+        _healthy_monitor_state(context=context) for context in contexts
+    )
+
+    if failed_owner == "stream":
+        stream_states = (
+            stream_states[0],
+            LiveMarketStreamState(
+                identity=stream_states[1].identity,
+                lifecycle_status=LiveMarketStreamLifecycleStatus.FAILED,
+                first_tick_received=True,
+                event_count=1,
+                last_price=Decimal("100"),
+                last_event_monotonic=1.0,
+            ),
+        )
+    else:
+        monitor_states = (
+            monitor_states[0],
+            LiveProtectionMonitorState(
+                context=contexts[1],
+                is_active=True,
+                failure_type="RuntimeError",
+            ),
+        )
+
+    executor = SequentialContextExecutor(result=_create_result())
+    runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M15,
+        trade_mode=TradeMode.LIVE,
+        runtime_control=control,
+        multi_context_activation_precondition_provider=(
+            _MultiContextActivationProvider(
+                control=control,
+                contexts=contexts,
+                stream_states=stream_states,
+                monitor_states=monitor_states,
+            )
+        ),
+    )
+
+    task = asyncio.create_task(runner.run())
+    for _ in range(100):
+        if control.is_paused:
+            break
+        await asyncio.sleep(0)
+    else:
+        raise AssertionError("Unhealthy owner did not pause the LIVE runtime")
+
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+    assert executor.events == []
+    assert control.live_management_authorization is None
+
+
 def test_paper_runner_evaluates_without_enabling_order_submission() -> None:
     """Verify paper mode can evaluate a cycle but cannot submit an order."""
     asyncio.run(_run_paper_cycle_test())
@@ -378,6 +941,7 @@ async def _run_paper_cycle_test() -> None:
             symbol="BTCUSDT",
             interval=Interval.M15,
             candle_limit=50,
+            strategy_type=StrategyType.EMA_CROSS,
             account_balance_override=Decimal("10000"),
             synchronize_position=False,
             submit_order=False,

@@ -32,6 +32,7 @@ from botragram.constants.env import (
     ENV_AI_MODEL,
     ENV_AI_PROVIDER,
     ENV_AUTONOMOUS_EXECUTION_ENABLED,
+    ENV_AUTONOMOUS_LIVE_ENTRY_ENABLED,
     ENV_BINANCE_API_KEY,
     ENV_BINANCE_API_SECRET,
     ENV_BINANCE_MARKET_TYPE,
@@ -40,6 +41,7 @@ from botragram.constants.env import (
     ENV_BITGET_API_SECRET,
     ENV_BITGET_PASSPHRASE,
     ENV_BITGET_TESTNET,
+    ENV_BOTRAGRAM_ENV_FILE,
     ENV_BOTRAGRAM_PROFILE,
     ENV_BYBIT_API_KEY,
     ENV_BYBIT_API_SECRET,
@@ -52,6 +54,8 @@ from botragram.constants.env import (
     ENV_GEMINI_API_KEY,
     ENV_LOG_LEVEL,
     ENV_LOG_LEVEL_LEGACY,
+    ENV_MAX_OPEN_POSITIONS,
+    ENV_MAX_POSITION_SIZE_USDT,
     ENV_OKX_API_KEY,
     ENV_OKX_API_SECRET,
     ENV_OKX_PASSPHRASE,
@@ -115,19 +119,21 @@ class EnvironmentProvider:
 
     def __init__(
         self,
-        env_path: str = ".env",
+        env_path: str | None = None,
         *,
         override: bool = True,
     ) -> None:
         """Load environment variables from a dotenv file.
 
         Args:
-            env_path: Path to the dotenv file.
+            env_path: Path to the dotenv file. When omitted, the explicit
+                BOTRAGRAM_ENV_FILE bootstrap value selects a file; otherwise
+                the default remains .env.
             override: Whether dotenv values override inherited process
                 variables. Enabled by default so local configuration is
                 deterministic.
         """
-        normalized_path = env_path.strip()
+        normalized_path = self._resolve_env_path(env_path=env_path)
 
         if not normalized_path:
             raise ValueError("Environment file path must not be empty")
@@ -141,6 +147,23 @@ class EnvironmentProvider:
             override=override,
         )
         self._load_environment_profile()
+
+    @staticmethod
+    def _resolve_env_path(*, env_path: str | None) -> str:
+        """Resolve the base dotenv path before loading any dotenv values."""
+        if env_path is not None:
+            return env_path.strip()
+
+        selected_path = os.getenv(ENV_BOTRAGRAM_ENV_FILE, "").strip()
+        if not selected_path:
+            return ".env"
+
+        if not Path(selected_path).is_file():
+            raise FileNotFoundError(
+                f"Explicit environment file does not exist: {selected_path}"
+            )
+
+        return selected_path
 
     @property
     def env_path(self) -> str:
@@ -391,6 +414,10 @@ class EnvironmentProvider:
         """Return whether autonomous opportunity execution is enabled."""
         return self._get_bool(ENV_AUTONOMOUS_EXECUTION_ENABLED, default=False)
 
+    def get_autonomous_live_entry_enabled(self) -> bool:
+        """Return explicit opt-in for future TESTNET autonomous LIVE entry."""
+        return self._get_bool(ENV_AUTONOMOUS_LIVE_ENTRY_ENABLED, default=False)
+
     def get_execution_policy(self) -> str:
         """Return the optional explicit runtime execution policy."""
         return self._get_var(ENV_EXECUTION_POLICY)
@@ -408,6 +435,14 @@ class EnvironmentProvider:
             ENV_EMA_SCALPING_TAKE_PROFIT_PCT,
             default="0.01",
         )
+
+    def get_max_open_positions(self) -> str:
+        """Return the configured limit for concurrently open positions."""
+        return self._get_var(ENV_MAX_OPEN_POSITIONS, default="1")
+
+    def get_max_position_size_usdt(self) -> str:
+        """Return the configured maximum position notional in USDT."""
+        return self._get_var(ENV_MAX_POSITION_SIZE_USDT, default="1000")
 
     def get_active_exchange(self) -> str:
         """Return the configured active exchange."""

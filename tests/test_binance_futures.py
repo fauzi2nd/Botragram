@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -19,6 +20,7 @@ from botragram.enums import (
     OrderType,
     PositionSide,
 )
+from botragram.exceptions import ExchangeOrderOutcomeUnknownError
 from botragram.exchanges.base.rest import (
     JsonObject,
     JsonResponse,
@@ -161,6 +163,45 @@ class InMemoryProtectionClient(BinanceFuturesExchangeClient):
             for order in self.open_protections
             if not (order.symbol == symbol and order.order_id == order_id)
         ]
+
+
+class AmbiguousInMemoryProtectionClient(InMemoryProtectionClient):
+    """Model a timed-out replacement POST that is later proven by client ID."""
+
+    async def create_protection_orders(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        stop_loss: Decimal | None = None,
+        take_profit: Decimal | None = None,
+        stop_loss_client_algo_id: str | None = None,
+        take_profit_client_algo_id: str | None = None,
+    ) -> tuple[Order, ...]:
+        """Create once remotely but expose only an ambiguous local outcome."""
+        await super().create_protection_orders(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            stop_loss_client_algo_id=stop_loss_client_algo_id,
+            take_profit_client_algo_id=take_profit_client_algo_id,
+        )
+        raise ExchangeOrderOutcomeUnknownError("configured ambiguous POST outcome")
+
+    async def get_protection_order_by_client_id(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+    ) -> Order:
+        """Prove the single remote replacement through its durable identity."""
+        for order in reversed(self.open_protections):
+            if order.symbol == symbol and order.order_type is OrderType.STOP_MARKET:
+                return replace(order, client_order_id=client_id)
+        raise AssertionError("Expected an already-created replacement stop")
 
 
 def _order_payload() -> JsonObject:
@@ -420,6 +461,31 @@ async def test_futures_stop_replacement_is_verified_and_idempotent() -> None:
         "new-1",
         "take-profit",
     }
+
+
+@pytest.mark.asyncio
+async def test_futures_ambiguous_stop_replacement_reconciles_before_old_cancel() -> (
+    None
+):
+    """GET-reconcile one ambiguous replacement and only then remove its predecessor."""
+    old_stop = _protection_order(
+        order_id="old-stop",
+        order_type=OrderType.STOP_MARKET,
+        stop_price=Decimal("100.5"),
+    )
+    client = AmbiguousInMemoryProtectionClient(orders=[old_stop])
+
+    replacement = await client.ensure_stop_loss_order(
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        quantity=Decimal("1"),
+        stop_loss=Decimal("99.7"),
+        client_algo_id="bsl-00000000000000000000000000000000",
+    )
+
+    assert replacement.client_order_id == "bsl-00000000000000000000000000000000"
+    assert client.created == 1
+    assert client.cancelled == ["old-stop"]
 
 
 @pytest.mark.asyncio

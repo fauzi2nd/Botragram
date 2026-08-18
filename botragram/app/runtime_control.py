@@ -9,7 +9,11 @@ from decimal import Decimal
 from time import monotonic
 
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
-from botragram.models import LiveRuntimePortfolioContext, LiveRuntimePositionContext
+from botragram.models import (
+    LiveRecoveredPositionManagementAuthorization,
+    LiveRuntimePortfolioContext,
+    LiveRuntimePositionContext,
+)
 
 __all__ = [
     "MarketStreamTelemetry",
@@ -67,6 +71,14 @@ class TradingRuntimeControl:
         init=False,
         repr=False,
     )
+    _live_management_authorization: (
+        LiveRecoveredPositionManagementAuthorization | None
+    ) = field(default=None, init=False, repr=False)
+    _reconciliation_required_context: LiveRuntimePositionContext | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         """Normalize settings and remain paused for Telegram configuration."""
@@ -90,6 +102,18 @@ class TradingRuntimeControl:
         """Return the immutable canonical recovered runtime portfolio context."""
         return self._runtime_contexts
 
+    @property
+    def live_management_authorization(
+        self,
+    ) -> LiveRecoveredPositionManagementAuthorization | None:
+        """Return the exact process-local recovered LIVE capability, if installed."""
+        return self._live_management_authorization
+
+    @property
+    def reconciliation_required_context(self) -> LiveRuntimePositionContext | None:
+        """Return the exact recovered context requiring portfolio reconciliation."""
+        return self._reconciliation_required_context
+
     def set_runtime_contexts(
         self,
         *,
@@ -98,6 +122,11 @@ class TradingRuntimeControl:
         """Atomically replace the complete recovered runtime portfolio context."""
         candidate = LiveRuntimePortfolioContext(contexts=tuple(contexts))
         self._runtime_contexts = candidate.contexts
+        self._reconciliation_required_context = None
+
+        authorization = self._live_management_authorization
+        if authorization is not None and authorization.contexts != candidate.contexts:
+            self._live_management_authorization = None
 
         if len(candidate.contexts) != 1:
             self._reset_singular_runtime_state()
@@ -105,6 +134,35 @@ class TradingRuntimeControl:
     def clear_runtime_contexts(self) -> None:
         """Clear recovered runtime contexts and reset singular compatibility state."""
         self.set_runtime_contexts(contexts=())
+
+    def set_live_management_authorization(
+        self,
+        *,
+        authorization: LiveRecoveredPositionManagementAuthorization,
+    ) -> None:
+        """Install an authorization only for the exact current context tuple."""
+        if authorization.contexts != self._runtime_contexts:
+            raise ValueError(
+                "Recovered LIVE management authorization does not match runtime "
+                "contexts"
+            )
+
+        self._live_management_authorization = authorization
+
+    def clear_live_management_authorization(self) -> None:
+        """Clear any process-local recovered LIVE management authorization."""
+        self._live_management_authorization = None
+
+    def require_portfolio_reconciliation(
+        self,
+        *,
+        context: LiveRuntimePositionContext,
+    ) -> None:
+        """Record one stale recovered context for read-only operational diagnosis."""
+        if context not in self._runtime_contexts:
+            raise ValueError("Reconciliation context is not part of runtime state")
+
+        self._reconciliation_required_context = context
 
     @property
     def is_paused(self) -> bool:
@@ -124,12 +182,46 @@ class TradingRuntimeControl:
         if not self.is_paused:
             return False
 
+        if len(self._runtime_contexts) > 1:
+            authorization = self._live_management_authorization
+            if authorization is None or not authorization.authorizes_contexts(
+                contexts=self._runtime_contexts,
+            ):
+                raise RuntimeError(
+                    "Multi-context runtime requires exact recovered LIVE "
+                    "management authorization"
+                )
+
+            if not self._position_protection_ready:
+                raise RuntimeError(
+                    "Multi-context runtime requires verified position protection"
+                )
+
+            self._active_event.set()
+            return True
+
         missing = self.get_missing_startup_requirements()
 
         if missing:
             raise RuntimeError(
                 "Startup configuration incomplete: " + ", ".join(missing)
             )
+
+        self._active_event.set()
+        return True
+
+    def resume_global_cycle(self) -> bool:
+        """Resume an already-authorized global workflow without stream state.
+
+        Composition is responsible for authorizing this narrow activation. The
+        method intentionally does not select a runtime context or alter
+        recovered-position management authorization.
+        """
+        if not self.is_paused:
+            return False
+
+        if not self._position_protection_ready:
+            raise RuntimeError("Global runtime requires verified position protection")
 
         self._active_event.set()
         return True

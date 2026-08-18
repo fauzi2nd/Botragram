@@ -17,7 +17,6 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import logging
-from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
@@ -27,6 +26,7 @@ from botragram.app.market_type_switch import (
 )
 from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.app.trading_runner import (
+    AutonomousLiveTradingCycleExecutor,
     AutonomousPaperTradingCycleExecutor,
     HumanConfirmedPaperTradingCycleExecutor,
     SingleSymbolTradingCycleExecutor,
@@ -66,6 +66,10 @@ from botragram.enums import (
 )
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.exchanges.factory import ExchangeFactory
+from botragram.models import (
+    AutonomousLiveEntryAuthorization,
+    LiveRuntimePositionContext,
+)
 from botragram.repositories import (
     CandleRepository,
     ExecutionAuthorizationRepository,
@@ -77,14 +81,21 @@ from botragram.repositories import (
 )
 from botragram.services import (
     AccountService,
+    AutonomousLiveEntryExecutionService,
+    AutonomousLiveEntryIntentService,
+    AutonomousLiveRecoveryObservabilityService,
     AutonomousPaperExecutionService,
     ExecutionAuthorizationService,
     HealthService,
     HumanConfirmedPaperExecutionService,
+    LiveEntryRiskEvaluationService,
     LiveFuturesEntryService,
+    LiveMarketStreamService,
     LivePortfolioRecoveryService,
     LivePositionProtectionService,
     LivePostEntryRecoveryService,
+    LiveProtectionMonitoringService,
+    LiveRuntimeHealthService,
     LiveSubmissionRecoveryService,
     MarketService,
     OpportunityDiscoveryService,
@@ -96,6 +107,7 @@ from botragram.services import (
     RuntimeReporter,
     StrategyService,
 )
+from botragram.services.live_market_stream_service import MarketTickListener
 from botragram.services.trading_service import TradingService
 from botragram.storage.memory import MemoryExecutionAuthorizationRepository
 from botragram.storage.sqlite import (
@@ -111,7 +123,7 @@ from botragram.storage.sqlite import (
 from botragram.strategies.factory import StrategyFactory
 from botragram.telegram import TelegramBot
 from botragram.telegram.context import BotContext
-from botragram.telegram.query_service import MarketTickListener, TelegramQueryService
+from botragram.telegram.query_service import TelegramQueryService
 
 __all__ = [
     "DependencyProvider",
@@ -134,6 +146,11 @@ class DependencyProvider:
 
     __slots__ = (
         "_account_service",
+        "_autonomous_live_entry_authorization",
+        "_autonomous_live_entry_execution_service",
+        "_autonomous_live_entry_intent_service",
+        "_autonomous_live_recovery_observability_service",
+        "_live_entry_risk_evaluation_service",
         "_autonomous_paper_execution_service",
         "_execution_authorization_repository",
         "_execution_authorization_service",
@@ -144,9 +161,12 @@ class DependencyProvider:
         "_exchange_client",
         "_health_service",
         "_live_futures_entry_service",
+        "_live_market_stream_service",
         "_live_post_entry_recovery_service",
         "_live_position_protection_service",
+        "_live_protection_monitoring_service",
         "_live_portfolio_recovery_service",
+        "_live_runtime_health_service",
         "_live_submission_recovery_service",
         "_initialized",
         "_market_service",
@@ -159,7 +179,6 @@ class DependencyProvider:
         "_pnl_engine",
         "_portfolio_engine",
         "_position_engine",
-        "_position_protection_manager",
         "_position_repository",
         "_position_service",
         "_risk_engine",
@@ -212,6 +231,12 @@ class DependencyProvider:
             if settings is not None
             else Settings(exchange=ExchangeSettings(exchange=ExchangeType.BINANCE))
         )
+        self._autonomous_live_entry_authorization = (
+            self._build_autonomous_live_entry_authorization()
+        )
+        self._autonomous_live_entry_intent_service = (
+            self._build_autonomous_live_entry_intent_service()
+        )
         self._runtime_control = TradingRuntimeControl(
             exchange_type=self._settings.exchange.exchange,
             market_type=self._settings.exchange.market_type,
@@ -235,15 +260,20 @@ class DependencyProvider:
         self._telegram_query_service: TelegramQueryService | None = None
         self._health_service: HealthService | None = None
         self._live_futures_entry_service: LiveFuturesEntryService | None = None
+        self._live_market_stream_service: LiveMarketStreamService | None = None
         self._live_post_entry_recovery_service: LivePostEntryRecoveryService | None = (
             None
         )
         self._live_position_protection_service: LivePositionProtectionService | None = (
             None
         )
+        self._live_protection_monitoring_service: (
+            LiveProtectionMonitoringService | None
+        ) = None
         self._live_portfolio_recovery_service: LivePortfolioRecoveryService | None = (
             None
         )
+        self._live_runtime_health_service: LiveRuntimeHealthService | None = None
         self._live_submission_recovery_service: LiveSubmissionRecoveryService | None = (
             None
         )
@@ -267,11 +297,19 @@ class DependencyProvider:
         self._trading_engine: TradingEngine | None = None
         self._order_engine: OrderEngine | None = None
         self._position_engine: PositionEngine | None = None
-        self._position_protection_manager: PositionProtectionManager | None = None
 
         self._market_service: MarketService | None = None
         self._autonomous_paper_execution_service: (
             AutonomousPaperExecutionService | None
+        ) = None
+        self._autonomous_live_entry_execution_service: (
+            AutonomousLiveEntryExecutionService | None
+        ) = None
+        self._autonomous_live_recovery_observability_service: (
+            AutonomousLiveRecoveryObservabilityService | None
+        ) = None
+        self._live_entry_risk_evaluation_service: (
+            LiveEntryRiskEvaluationService | None
         ) = None
         self._opportunity_discovery_service: OpportunityDiscoveryService | None = None
         self._market_type_switch_service: MarketTypeSwitchService | None = None
@@ -305,6 +343,39 @@ class DependencyProvider:
         return self._settings
 
     @property
+    def autonomous_live_entry_authorization(
+        self,
+    ) -> AutonomousLiveEntryAuthorization | None:
+        """Return the TESTNET-only future autonomous LIVE entry capability."""
+        return self._autonomous_live_entry_authorization
+
+    @property
+    def autonomous_live_entry_intent_service(
+        self,
+    ) -> AutonomousLiveEntryIntentService | None:
+        """Return the pure TESTNET autonomous LIVE intent boundary, if enabled."""
+        return self._autonomous_live_entry_intent_service
+
+    @property
+    def autonomous_live_entry_execution_service(
+        self,
+    ) -> AutonomousLiveEntryExecutionService | None:
+        """Return the protected TESTNET intent execution adapter, if configured."""
+        return self._autonomous_live_entry_execution_service
+
+    @property
+    def autonomous_live_recovery_observability_service(
+        self,
+    ) -> AutonomousLiveRecoveryObservabilityService:
+        """Return read-only durable autonomous recovery observability."""
+        return self._require(self._autonomous_live_recovery_observability_service)
+
+    @property
+    def live_entry_risk_evaluation_service(self) -> LiveEntryRiskEvaluationService:
+        """Return fresh authoritative risk evaluation for autonomous LIVE entry."""
+        return self._require(self._live_entry_risk_evaluation_service)
+
+    @property
     def runtime_control(self) -> TradingRuntimeControl:
         """Return the process-wide cooperative trading runtime controller."""
         return self._runtime_control
@@ -319,6 +390,15 @@ class DependencyProvider:
         if self._initialized:
             _LOGGER.debug("Dependency provider is already initialized")
             return
+
+        if self._autonomous_live_entry_authorization is None:
+            self._autonomous_live_entry_authorization = (
+                self._build_autonomous_live_entry_authorization()
+            )
+        if self._autonomous_live_entry_intent_service is None:
+            self._autonomous_live_entry_intent_service = (
+                self._build_autonomous_live_entry_intent_service()
+            )
 
         database = SQLiteDatabase(database_path=self._database_path)
         _LOGGER.info(
@@ -355,18 +435,26 @@ class DependencyProvider:
                 trade_mode=self._settings.app.trade_mode,
                 symbol=self._settings.market.symbol,
             )
-            self._position_protection_manager = PositionProtectionManager(
-                trade_mode=self._settings.app.trade_mode,
-                position_repository=self.position_repository,
-                exchange_client=self.exchange_client,
+            self._live_protection_monitoring_service = LiveProtectionMonitoringService(
+                manager_factory=self._create_position_protection_manager,
             )
             tick_listeners: tuple[MarketTickListener, ...] = (
-                self.position_protection_manager,
+                self.live_protection_monitoring_service,
             )
 
             if self._settings.app.trade_mode is TradeMode.PAPER:
                 tick_listeners += (self.paper_trading_service,)
 
+            self._live_market_stream_service = LiveMarketStreamService(
+                market_service=self.market_service,
+                runtime_control=self.runtime_control,
+                tick_listeners=tick_listeners,
+            )
+            self._live_runtime_health_service = LiveRuntimeHealthService(
+                runtime_control=self.runtime_control,
+                market_stream_service=self.live_market_stream_service,
+                protection_monitoring_service=(self.live_protection_monitoring_service),
+            )
             query_service = TelegramQueryService(
                 symbol=self._settings.market.symbol,
                 market_service=self.market_service,
@@ -374,9 +462,15 @@ class DependencyProvider:
                 position_repository=self.position_repository,
                 trade_repository=self.trade_repository,
                 order_repository=self.order_repository,
+                market_stream_service=self.live_market_stream_service,
                 quote_asset=self._settings.market.quote_asset,
+                interval=self._settings.market.interval,
+                strategy_type=self._settings.strategy.strategy_type,
                 runtime_control=self.runtime_control,
-                tick_listeners=tick_listeners,
+                live_runtime_health_service=self.live_runtime_health_service,
+                autonomous_live_recovery_observability_service=(
+                    self.autonomous_live_recovery_observability_service
+                ),
             )
             self._telegram_query_service = query_service
             self._runtime_recovery_service = RuntimeRecoveryService(
@@ -384,6 +478,8 @@ class DependencyProvider:
                 market_type=self._settings.exchange.market_type,
                 runtime_control=self.runtime_control,
                 stream_controller=query_service,
+                market_stream_service=self.live_market_stream_service,
+                protection_monitoring_service=self.live_protection_monitoring_service,
                 position_repository=self.position_repository,
                 signal_repository=self.signal_repository,
                 candle_repository=self.candle_repository,
@@ -394,6 +490,12 @@ class DependencyProvider:
                 ),
                 live_post_entry_recovery_service=(
                     self.live_post_entry_recovery_service
+                ),
+                autonomous_live_entry_authorization=(
+                    self._autonomous_live_entry_authorization
+                    if self._settings.app.effective_execution_policy
+                    is ExecutionPolicy.AUTONOMOUS_LIVE
+                    else None
                 ),
             )
             self._market_type_switch_service = MarketTypeSwitchService(
@@ -436,7 +538,8 @@ class DependencyProvider:
         exchange_client = self._exchange_client
         stream_client = self._stream_client
         telegram_bot = self._telegram_bot
-        telegram_query_service = self._telegram_query_service
+        live_market_stream_service = self._live_market_stream_service
+        live_protection_monitoring_service = self._live_protection_monitoring_service
         database = self._database
 
         self._clear_dependencies()
@@ -447,19 +550,23 @@ class DependencyProvider:
                 await telegram_bot.stop()
         finally:
             try:
-                if telegram_query_service is not None:
-                    await telegram_query_service.close()
+                if live_protection_monitoring_service is not None:
+                    live_protection_monitoring_service.stop_all()
             finally:
                 try:
-                    if stream_client is not None:
-                        await stream_client.close()
+                    if live_market_stream_service is not None:
+                        await live_market_stream_service.stop_all()
                 finally:
                     try:
-                        if exchange_client is not None:
-                            await exchange_client.close()
+                        if stream_client is not None:
+                            await stream_client.close()
                     finally:
-                        if database is not None:
-                            await database.close()
+                        try:
+                            if exchange_client is not None:
+                                await exchange_client.close()
+                        finally:
+                            if database is not None:
+                                await database.close()
 
         _LOGGER.info("Dependencies shut down")
 
@@ -532,6 +639,11 @@ class DependencyProvider:
         return self._require(self._runtime_recovery_service)
 
     @property
+    def live_runtime_health_service(self) -> LiveRuntimeHealthService:
+        """Return read-only recovered LIVE runtime health aggregation."""
+        return self._require(self._live_runtime_health_service)
+
+    @property
     def live_position_protection_service(self) -> LivePositionProtectionService:
         """Return the shared LIVE Futures protection reconciler."""
         return self._require(self._live_position_protection_service)
@@ -555,6 +667,16 @@ class DependencyProvider:
     def live_futures_entry_service(self) -> LiveFuturesEntryService:
         """Return the protected LIVE Futures entry workflow."""
         return self._require(self._live_futures_entry_service)
+
+    @property
+    def live_market_stream_service(self) -> LiveMarketStreamService:
+        """Return the sole production owner of live market stream tasks."""
+        return self._require(self._live_market_stream_service)
+
+    @property
+    def live_protection_monitoring_service(self) -> LiveProtectionMonitoringService:
+        """Return the sole production owner of live protection monitor contexts."""
+        return self._require(self._live_protection_monitoring_service)
 
     @property
     def signal_engine(self) -> SignalEngine:
@@ -639,11 +761,6 @@ class DependencyProvider:
         return self._require(self._position_service)
 
     @property
-    def position_protection_manager(self) -> PositionProtectionManager:
-        """Return the stream-driven active-position protection manager."""
-        return self._require(self._position_protection_manager)
-
-    @property
     def paper_trading_service(self) -> PaperTradingService:
         """Return the configured paper-trading simulation service."""
         return self._require(self._paper_trading_service)
@@ -719,7 +836,10 @@ class DependencyProvider:
         """Construct engines from configured strategies and exchange clients."""
         exchange_client = self.exchange_client
         self._signal_engine = SignalEngine(
-            strategy=StrategyFactory.create(settings=self._settings.strategy),
+            strategy_resolver=StrategyFactory.create_resolver(
+                settings=self._settings.strategy,
+            ),
+            default_strategy_type=self._settings.strategy.strategy_type,
         )
         self._risk_engine = RiskEngine(settings=self._settings.risk)
         self._pnl_engine = PnLEngine()
@@ -732,16 +852,10 @@ class DependencyProvider:
         self._position_engine = PositionEngine(exchange_client=exchange_client)
 
     def _select_runtime_strategy(self, strategy_type: StrategyType) -> None:
-        """Replace the active signal strategy using validated base settings."""
-        strategy_settings = replace(
-            self._settings.strategy,
-            strategy_type=strategy_type,
-        )
-        self.signal_engine.strategy = StrategyFactory.create(
-            settings=strategy_settings,
-        )
+        """Validate a singular runtime strategy without mutating global state."""
+        self.signal_engine.get_minimum_candles(strategy_type=strategy_type)
         _LOGGER.info(
-            "Runtime strategy changed: strategy=%s",
+            "Runtime strategy selected: strategy=%s",
             strategy_type.value,
         )
 
@@ -770,6 +884,12 @@ class DependencyProvider:
             position_repository=self.position_repository,
         )
         self._account_service = AccountService(exchange_client=exchange_client)
+        self._live_entry_risk_evaluation_service = LiveEntryRiskEvaluationService(
+            account_service=self.account_service,
+            position_service=self.position_service,
+            trading_engine=self.trading_engine,
+            balance_asset=self._settings.market.quote_asset,
+        )
         self._live_position_protection_service = LivePositionProtectionService(
             exchange_client=exchange_client,
             position_repository=self.position_repository,
@@ -785,6 +905,12 @@ class DependencyProvider:
         self._live_submission_recovery_service = LiveSubmissionRecoveryService(
             submission_attempt_repository=self.submission_attempt_repository,
             order_service=self.order_service,
+        )
+        self._autonomous_live_recovery_observability_service = (
+            AutonomousLiveRecoveryObservabilityService(
+                submission_attempt_repository=self.submission_attempt_repository,
+                authorization=self._autonomous_live_entry_authorization,
+            )
         )
         self._live_post_entry_recovery_service = LivePostEntryRecoveryService(
             submission_attempt_repository=self.submission_attempt_repository,
@@ -825,6 +951,9 @@ class DependencyProvider:
             discovery_service=self.opportunity_discovery_service,
             paper_trading_service=self.paper_trading_service,
         )
+        self._autonomous_live_entry_execution_service = (
+            self._build_autonomous_live_entry_execution_service()
+        )
         if self._settings.app.trade_mode is TradeMode.PAPER:
             self._execution_authorization_repository = (
                 MemoryExecutionAuthorizationRepository()
@@ -852,6 +981,33 @@ class DependencyProvider:
                 trading_service=self.trading_service,
             )
 
+        if policy is ExecutionPolicy.AUTONOMOUS_LIVE:
+            if self._settings.exchange.market_type is not MarketType.FUTURES:
+                raise ValueError("Autonomous LIVE execution requires FUTURES")
+            authorization = self._autonomous_live_entry_authorization
+            intent_service = self._autonomous_live_entry_intent_service
+            execution_service = self._autonomous_live_entry_execution_service
+            if (
+                authorization is None
+                or intent_service is None
+                or execution_service is None
+            ):
+                raise ValueError(
+                    "Autonomous LIVE execution requires complete TESTNET composition"
+                )
+            market = self._settings.market
+            return AutonomousLiveTradingCycleExecutor(
+                discovery_service=self.opportunity_discovery_service,
+                risk_evaluation_service=self.live_entry_risk_evaluation_service,
+                intent_service=intent_service,
+                execution_service=execution_service,
+                authorization=authorization,
+                quote_asset=market.quote_asset,
+                max_symbols=market.discovery_max_symbols,
+                top_n=market.discovery_top_n,
+                strategy_type=self._settings.strategy.strategy_type,
+            )
+
         if self._settings.app.trade_mode is not TradeMode.PAPER:
             raise ValueError("Market-wide execution is supported only in paper mode")
 
@@ -874,6 +1030,86 @@ class DependencyProvider:
             )
 
         raise ValueError(f"Unsupported execution policy: {policy.value!r}")
+
+    def _build_autonomous_live_entry_authorization(
+        self,
+    ) -> AutonomousLiveEntryAuthorization | None:
+        """Build only the explicit TESTNET future-entry capability.
+
+        The capability is deliberately not injected into any execution path in
+        Phase 5C.1.
+        """
+        app_settings = self._settings.app
+
+        if not app_settings.autonomous_live_entry_enabled:
+            return None
+
+        if app_settings.trade_mode is not TradeMode.LIVE:
+            raise ValueError("Autonomous LIVE entry authorization requires LIVE mode")
+
+        return AutonomousLiveEntryAuthorization(
+            environment=self._settings.exchange.environment,
+            explicit_opt_in=app_settings.autonomous_live_entry_enabled,
+        )
+
+    def _build_autonomous_live_entry_intent_service(
+        self,
+    ) -> AutonomousLiveEntryIntentService | None:
+        """Build only the pure TESTNET autonomous intent boundary.
+
+        Phase 5C.2A intentionally does not attach this service to a runner or
+        protected LIVE entry service. The future mutation boundary remains
+        absent even when this workflow is composition-valid.
+        """
+        if (
+            self._settings.app.effective_execution_policy
+            is not ExecutionPolicy.AUTONOMOUS_LIVE
+        ):
+            return None
+
+        authorization = self._autonomous_live_entry_authorization
+        if authorization is None:
+            raise ValueError("Autonomous LIVE execution requires explicit opt-in")
+
+        if self._settings.app.trade_mode is not TradeMode.LIVE:
+            raise ValueError("Autonomous LIVE execution requires LIVE mode")
+
+        return AutonomousLiveEntryIntentService(
+            execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+            environment=authorization.environment,
+        )
+
+    def _build_autonomous_live_entry_execution_service(
+        self,
+    ) -> AutonomousLiveEntryExecutionService | None:
+        """Build the isolated TESTNET protected-entry adapter without runtime wiring."""
+        if (
+            self._settings.app.effective_execution_policy
+            is not ExecutionPolicy.AUTONOMOUS_LIVE
+        ):
+            return None
+
+        authorization = self._autonomous_live_entry_authorization
+        if authorization is None:
+            raise ValueError("Autonomous LIVE execution requires explicit opt-in")
+
+        return AutonomousLiveEntryExecutionService(
+            risk_evaluation_service=self.live_entry_risk_evaluation_service,
+            live_futures_entry_service=self.live_futures_entry_service,
+            environment=authorization.environment,
+        )
+
+    def _create_position_protection_manager(
+        self,
+        context: LiveRuntimePositionContext,
+    ) -> PositionProtectionManager:
+        """Construct one independent protection manager for a runtime context."""
+        del context
+        return PositionProtectionManager(
+            trade_mode=self._settings.app.trade_mode,
+            position_repository=self.position_repository,
+            exchange_client=self.exchange_client,
+        )
 
     @staticmethod
     def _get_binance_urls(
@@ -914,6 +1150,8 @@ class DependencyProvider:
 
     def _clear_dependencies(self) -> None:
         """Clear initialized dependencies before releasing resources."""
+        self.runtime_control.pause()
+        self.runtime_control.set_position_protection_ready(False)
         self.runtime_control.clear_runtime_contexts()
         self._candle_repository = None
         self._execution_authorization_repository = None
@@ -930,9 +1168,12 @@ class DependencyProvider:
         self._telegram_query_service = None
         self._health_service = None
         self._live_futures_entry_service = None
+        self._live_market_stream_service = None
         self._live_post_entry_recovery_service = None
         self._live_position_protection_service = None
+        self._live_protection_monitoring_service = None
         self._live_portfolio_recovery_service = None
+        self._live_runtime_health_service = None
         self._live_submission_recovery_service = None
         self._runtime_reporter = None
         self._runtime_recovery_service = None
@@ -943,7 +1184,6 @@ class DependencyProvider:
         self._trading_engine = None
         self._order_engine = None
         self._position_engine = None
-        self._position_protection_manager = None
         self._market_service = None
         self._autonomous_paper_execution_service = None
         self._opportunity_discovery_service = None
@@ -952,6 +1192,11 @@ class DependencyProvider:
         self._order_service = None
         self._position_service = None
         self._account_service = None
+        self._autonomous_live_entry_authorization = None
+        self._autonomous_live_entry_execution_service = None
+        self._autonomous_live_entry_intent_service = None
+        self._autonomous_live_recovery_observability_service = None
+        self._live_entry_risk_evaluation_service = None
         self._paper_trading_service = None
         self._trading_service = None
         self._trading_cycle_executor = None

@@ -24,6 +24,7 @@ from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderRejectedError,
+    LiveSubmissionBlockedError,
 )
 from botragram.models import Order, Position, RiskResult, Signal, SubmissionAttempt
 from botragram.repositories import SubmissionAttemptRepository
@@ -51,6 +52,15 @@ class LiveOrderSubmission(Protocol):
         client_order_id: str | None = None,
     ) -> Order:
         """Submit and persist one exchange order."""
+        ...
+
+    async def normalize_futures_market_quantity(
+        self,
+        *,
+        symbol: str,
+        quantity: Decimal,
+    ) -> Decimal:
+        """Return a venue-valid quantity before durable submission intent."""
         ...
 
     async def get_by_client_order_id(
@@ -110,7 +120,15 @@ class LiveFuturesEntryService:
         """
         self._validate_entry(order_type=order_type)
         if await self.submission_attempt_repository.get_unresolved():
-            raise RuntimeError("An unresolved LIVE submission attempt blocks entry")
+            raise LiveSubmissionBlockedError(
+                "An unresolved LIVE submission attempt blocks entry"
+            )
+        normalized_quantity = (
+            await self.order_service.normalize_futures_market_quantity(
+                symbol=signal.symbol,
+                quantity=risk_result.position.quantity,
+            )
+        )
         self.runtime_control.set_position_protection_ready(False)
         client_order_id = f"{_CLIENT_ORDER_ID_PREFIX}{uuid4().hex}"
         now = datetime.now(UTC)
@@ -121,7 +139,7 @@ class LiveFuturesEntryService:
                 OrderSide.BUY if signal.signal_type.value == "buy" else OrderSide.SELL
             ),
             order_type=order_type,
-            quantity=risk_result.position.quantity,
+            quantity=normalized_quantity,
             signal_generated_at=signal.generated_at,
             interval=interval,
             strategy_type=self._resolve_strategy_type(signal.strategy_name),
@@ -139,7 +157,14 @@ class LiveFuturesEntryService:
         try:
             order = await self.order_service.submit(
                 signal=signal,
-                risk_result=risk_result,
+                risk_result=replace(
+                    risk_result,
+                    position=replace(
+                        risk_result.position,
+                        quantity=normalized_quantity,
+                        notional=normalized_quantity * signal.price,
+                    ),
+                ),
                 order_type=order_type,
                 price=price,
                 client_order_id=client_order_id,

@@ -35,8 +35,20 @@ from rich.console import Console
 # =============================================================================
 from botragram.app import TerminalMonitor, TradingRuntimeControl
 from botragram.engine import PnLEngine
-from botragram.enums import PositionSide, TradeMode
-from botragram.models import Position
+from botragram.enums import (
+    Interval,
+    LiveRuntimeHealthReason,
+    LiveRuntimeHealthStatus,
+    PositionSide,
+    StrategyType,
+    TradeMode,
+)
+from botragram.models import (
+    LiveProtectionMonitorState,
+    LiveRuntimeHealthSnapshot,
+    LiveRuntimePositionContext,
+    Position,
+)
 from botragram.services import PaperPortfolioSnapshot
 
 
@@ -103,6 +115,17 @@ class RecordingAlternateScreenConsole(Console):
         return super().set_alt_screen(enable)
 
 
+@dataclass(slots=True, kw_only=True, frozen=True)
+class FakeLiveRuntimeHealthProvider:
+    """Return one immutable LIVE health snapshot for terminal rendering."""
+
+    snapshot: LiveRuntimeHealthSnapshot
+
+    def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
+        """Return the configured read-only health snapshot."""
+        return self.snapshot
+
+
 # =============================================================================
 # Test Helpers
 # =============================================================================
@@ -134,6 +157,7 @@ def _create_monitor(
     output: list[str] | None = None,
     console: Console | None = None,
     refresh_interval_seconds: float = 1.0,
+    live_runtime_health: LiveRuntimeHealthSnapshot | None = None,
 ) -> TerminalMonitor:
     """Create a terminal monitor with deterministic dependencies."""
     lines = output if output is not None else []
@@ -164,6 +188,11 @@ def _create_monitor(
         pnl_engine=PnLEngine(),
         trade_mode=trade_mode,
         quote_asset="usdt",
+        live_runtime_health_service=(
+            FakeLiveRuntimeHealthProvider(snapshot=live_runtime_health)
+            if live_runtime_health is not None
+            else None
+        ),
         console=terminal_console,
         output=lines.append,
         refresh_interval_seconds=refresh_interval_seconds,
@@ -221,6 +250,70 @@ async def _run_terminal_snapshot_test() -> None:
 def test_terminal_monitor_renders_three_rich_dashboard_panels() -> None:
     """Render status, stream, and buffered logs in the requested layout."""
     asyncio.run(_run_rich_dashboard_render_test())
+
+
+def test_terminal_multi_context_health_never_selects_a_singular_runtime() -> None:
+    """Render complete read-only LIVE health without touching legacy accessors."""
+    asyncio.run(_run_terminal_multi_context_health_test())
+
+
+async def _run_terminal_multi_context_health_test() -> None:
+    """Collect and render an ambiguous runtime portfolio safely."""
+    contexts = (
+        LiveRuntimePositionContext(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            strategy_type=StrategyType.EMA_CROSS,
+        ),
+        LiveRuntimePositionContext(
+            symbol="ETHUSDT",
+            interval=Interval.M5,
+            strategy_type=StrategyType.EMA_SCALPING,
+        ),
+    )
+    health = LiveRuntimeHealthSnapshot(
+        status=LiveRuntimeHealthStatus.DEGRADED,
+        reason=LiveRuntimeHealthReason.MONITOR_UNHEALTHY,
+        contexts=contexts,
+        affected_contexts=(contexts[1],),
+        authorization_present=True,
+        authorization_exact=True,
+        runner_paused=False,
+        cycle_in_progress=False,
+        stream_states=(),
+        monitor_states=(
+            LiveProtectionMonitorState(context=contexts[0], is_active=True),
+            LiveProtectionMonitorState(
+                context=contexts[1],
+                is_active=True,
+                failure_type="RuntimeError",
+            ),
+        ),
+    )
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(contexts=contexts)
+    monitor = _create_monitor(
+        runtime_control=control,
+        positions=(_create_position(),),
+        live_runtime_health=health,
+    )
+
+    status = await monitor.collect_status()
+    compact = await monitor.refresh()
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=140).print(
+        monitor.render_dashboard(status)
+    )
+    rendered = output.getvalue()
+
+    assert status.unrealized_pnl == Decimal("2")
+    assert "contexts=2" in compact
+    assert "BTCUSDT" in rendered
+    assert "ETHUSDT" in rendered
+    assert "ema_cross" in rendered
+    assert "ema_scalping" in rendered
+    assert "Monitor: UNHEALTHY" in rendered
+    assert "New LIVE Exposure" in rendered
 
 
 async def _run_rich_dashboard_render_test() -> None:

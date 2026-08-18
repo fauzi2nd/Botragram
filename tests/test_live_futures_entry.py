@@ -19,10 +19,19 @@ from botragram.enums import (
     PositionSide,
     SignalType,
     StrategyType,
+    SubmissionAttemptStatus,
 )
-from botragram.models import Order, Position, RiskMetrics, RiskResult, Signal
+from botragram.exceptions import VenueRuleValidationError
+from botragram.models import (
+    Order,
+    Position,
+    RiskMetrics,
+    RiskResult,
+    Signal,
+    SubmissionAttempt,
+)
 from botragram.models.risk import PositionSize
-from botragram.services import LiveFuturesEntryService
+from botragram.services import LiveFuturesEntryService, LivePostEntryRecoveryService
 from botragram.storage.memory import MemorySubmissionAttemptRepository
 
 _NOW = datetime(2026, 8, 17, tzinfo=UTC)
@@ -96,7 +105,18 @@ class FakeOrderService:
 
     order: Order = field(default_factory=_order)
     error: BaseException | None = None
+    normalization_error: BaseException | None = None
+    normalized_quantity: Decimal | None = None
     calls: int = 0
+
+    async def normalize_futures_market_quantity(
+        self, *, symbol: str, quantity: Decimal
+    ) -> Decimal:
+        """Return the test's already-valid quantity."""
+        assert symbol == "BTCUSDT"
+        if self.normalization_error is not None:
+            raise self.normalization_error
+        return self.normalized_quantity or quantity
 
     async def submit(self, **_: object) -> Order:
         """Return one order or raise the configured submission failure."""
@@ -147,6 +167,25 @@ class FakeProtectionService:
         if self.error is not None:
             raise self.error
         return position
+
+
+class FailingSubmissionAttemptRepository(MemorySubmissionAttemptRepository):
+    """Fail one configured durable transition without exchange interaction."""
+
+    __slots__ = ("_failed", "_failure_status")
+
+    def __init__(self, *, failure_status: SubmissionAttemptStatus) -> None:
+        """Configure the one transition that deterministically fails."""
+        super().__init__()
+        self._failed = False
+        self._failure_status = failure_status
+
+    async def save(self, *, attempt: SubmissionAttempt) -> None:
+        """Fail exactly once before delegating later durable transitions."""
+        if not self._failed and attempt.status is self._failure_status:
+            self._failed = True
+            raise RuntimeError(f"configured {attempt.status.value} persistence failure")
+        await super().save(attempt=attempt)
 
 
 def _service(
@@ -275,3 +314,102 @@ async def test_cancellation_propagates_with_protection_gate_closed() -> None:
 
     assert orders.calls == 1
     assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_prepared_persistence_failure_never_reaches_entry_post() -> None:
+    """A crash before PREPARED leaves no mutation or replayable durable intent."""
+    orders = FakeOrderService()
+    repository = FailingSubmissionAttemptRepository(
+        failure_status=SubmissionAttemptStatus.PREPARED
+    )
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(_position()),
+        protection_service=FakeProtectionService(),
+        runtime_control=control,
+        submission_attempt_repository=repository,
+    )
+
+    with pytest.raises(RuntimeError, match="prepared persistence failure"):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 0
+    assert await repository.get_incomplete() == ()
+    assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_completion_persistence_failure_recovers_same_acknowledged_attempt() -> (
+    None
+):
+    """Verified protection without COMPLETED remains recoverable without a new POST."""
+    orders = FakeOrderService()
+    positions = FakePositionService(_position())
+    protection = FakeProtectionService()
+    repository = FailingSubmissionAttemptRepository(
+        failure_status=SubmissionAttemptStatus.COMPLETED
+    )
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=positions,
+        protection_service=protection,
+        runtime_control=control,
+        submission_attempt_repository=repository,
+    )
+
+    with pytest.raises(RuntimeError, match="completed persistence failure"):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    incomplete = await repository.get_incomplete()
+    assert len(incomplete) == 1
+    assert incomplete[0].status is SubmissionAttemptStatus.ACKNOWLEDGED
+    assert orders.calls == 1
+
+    await LivePostEntryRecoveryService(
+        submission_attempt_repository=repository,
+        position_service=positions,
+        protection_service=protection,
+        runtime_control=control,
+    ).recover_acknowledged(attempt=incomplete[0])
+
+    assert orders.calls == 1
+    assert await repository.get_incomplete() == ()
+    assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_venue_rejection_prevents_prepared_and_entry_post() -> None:
+    """Invalid venue quantity must not create a durable mutation intent."""
+    orders = FakeOrderService(
+        normalization_error=VenueRuleValidationError("below minimum")
+    )
+    service, _ = _service(order_service=orders)
+
+    with pytest.raises(VenueRuleValidationError, match="below minimum"):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 0
+    assert await service.submission_attempt_repository.get_incomplete() == ()

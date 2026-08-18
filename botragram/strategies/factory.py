@@ -14,6 +14,13 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
+# Standard Library Imports
+# =============================================================================
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
+from types import MappingProxyType
+
+# =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.config.strategy_settings import StrategySettings
@@ -32,7 +39,50 @@ from botragram.strategies.trend import (
 
 __all__ = [
     "StrategyFactory",
+    "StrategyResolver",
 ]
+
+
+# =============================================================================
+# Strategy Resolution
+# =============================================================================
+@dataclass(slots=True, kw_only=True, frozen=True)
+class StrategyResolver:
+    """Resolve immutable strategy instances from explicit strategy types."""
+
+    strategies: Mapping[StrategyType, BaseStrategy]
+
+    def __post_init__(self) -> None:
+        """Copy and validate the resolver registry before exposing it."""
+        registry = dict(self.strategies)
+
+        for strategy_type, strategy in registry.items():
+            if strategy.strategy_type is not strategy_type:
+                raise ValueError(
+                    "Strategy resolver key does not match strategy instance: "
+                    f"{strategy_type.value!r}"
+                )
+
+        object.__setattr__(self, "strategies", MappingProxyType(registry))
+
+    def resolve(self, *, strategy_type: StrategyType) -> BaseStrategy:
+        """Return the strategy registered for one explicit strategy type.
+
+        Args:
+            strategy_type: The context-authoritative strategy type.
+
+        Returns:
+            The matching immutable strategy instance.
+
+        Raises:
+            ValueError: If the type has no registered strategy.
+        """
+        strategy = self.strategies.get(strategy_type)
+
+        if strategy is None:
+            raise ValueError(f"Unsupported strategy type: {strategy_type.value!r}")
+
+        return strategy
 
 
 # =============================================================================
@@ -104,3 +154,28 @@ class StrategyFactory:
                 raise ValueError(
                     f"Unsupported strategy type: {settings.strategy_type.value!r}"
                 )
+
+    @staticmethod
+    def create_resolver(*, settings: StrategySettings) -> StrategyResolver:
+        """Construct one reusable immutable strategy per supported type.
+
+        Args:
+            settings: Shared parameter settings used to construct each strategy.
+
+        Returns:
+            A deterministic resolver with no mutable current-strategy state.
+        """
+        if settings.strategy_type is StrategyType.CUSTOM:
+            raise ValueError(
+                f"Unsupported strategy type: {settings.strategy_type.value!r}"
+            )
+
+        return StrategyResolver(
+            strategies={
+                strategy_type: StrategyFactory.create(
+                    settings=replace(settings, strategy_type=strategy_type),
+                )
+                for strategy_type in StrategyType
+                if strategy_type is not StrategyType.CUSTOM
+            },
+        )

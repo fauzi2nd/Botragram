@@ -24,11 +24,15 @@ __all__ = [
     "ENV_TELEGRAM_CHAT_ID",
     "ENV_TRADE_MODE",
     "ENV_AUTONOMOUS_EXECUTION_ENABLED",
+    "ENV_AUTONOMOUS_LIVE_ENTRY_ENABLED",
     "ENV_EXECUTION_POLICY",
     "ENV_LOG_LEVEL",
     "ENV_EMA_SCALPING_STOP_LOSS_PCT",
     "ENV_EMA_SCALPING_TAKE_PROFIT_PCT",
+    "ENV_MAX_OPEN_POSITIONS",
+    "ENV_MAX_POSITION_SIZE_USDT",
     "ENV_BOTRAGRAM_PROFILE",
+    "ENV_BOTRAGRAM_ENV_FILE",
     "ENV_ACTIVE_EXCHANGE",
     "ENV_BINANCE_API_KEY",
     "ENV_BINANCE_API_SECRET",
@@ -72,15 +76,19 @@ ENV_TELEGRAM_CHAT_ID: str = "TELEGRAM_CHAT_ID"
 # =============================================================================
 ENV_TRADE_MODE: str = "TRADE_MODE"
 ENV_AUTONOMOUS_EXECUTION_ENABLED: str = "AUTONOMOUS_EXECUTION_ENABLED"
+ENV_AUTONOMOUS_LIVE_ENTRY_ENABLED: str = "AUTONOMOUS_LIVE_ENTRY_ENABLED"
 ENV_EXECUTION_POLICY: str = "EXECUTION_POLICY"
 ENV_LOG_LEVEL: str = "LOG_LEVEL"
 ENV_BOTRAGRAM_PROFILE: str = "BOTRAGRAM_PROFILE"
+ENV_BOTRAGRAM_ENV_FILE: str = "BOTRAGRAM_ENV_FILE"
 
 # =============================================================================
 # Constants — Risk
 # =============================================================================
 ENV_EMA_SCALPING_STOP_LOSS_PCT: str = "EMA_SCALPING_STOP_LOSS_PCT"
 ENV_EMA_SCALPING_TAKE_PROFIT_PCT: str = "EMA_SCALPING_TAKE_PROFIT_PCT"
+ENV_MAX_OPEN_POSITIONS: str = "MAX_OPEN_POSITIONS"
+ENV_MAX_POSITION_SIZE_USDT: str = "MAX_POSITION_SIZE_USDT"
 
 # =============================================================================
 # Constants — Exchange

@@ -27,7 +27,16 @@ from typing import cast
 from botragram.enums import Interval, OrderSide, OrderStatus, OrderType, PositionSide
 from botragram.exchanges.base import BaseExchangeMapper
 from botragram.exchanges.base.mapper import ExchangePayload, ExchangeSequencePayload
-from botragram.models import Account, Balance, Candle, Order, Position, Ticker, Trade
+from botragram.models import (
+    Account,
+    Balance,
+    Candle,
+    ExchangeSymbolRules,
+    Order,
+    Position,
+    Ticker,
+    Trade,
+)
 
 __all__ = [
     "BinanceExchangeMapper",
@@ -103,6 +112,41 @@ class BinanceExchangeMapper(BaseExchangeMapper):
                 else datetime.now(tz=UTC)
             ),
         )
+
+    def map_market_entry_rules(self, payload: ExchangePayload) -> ExchangeSymbolRules:
+        """Map Binance exchangeInfo filters into typed Futures symbol rules."""
+        raw_filters = self._require_list_field(payload, key="filters")
+        filters = {
+            self._to_string(
+                self._require_mapping(item).get("filterType")
+            ): self._require_mapping(item)
+            for item in raw_filters
+        }
+        market_filter = filters.get("MARKET_LOT_SIZE") or filters.get("LOT_SIZE")
+        if market_filter is None:
+            raise ValueError("Binance symbol has no MARKET quantity filter")
+        price_filter = filters.get("PRICE_FILTER")
+        if price_filter is None:
+            raise ValueError("Binance symbol has no PRICE_FILTER")
+        minimum_notional = filters.get("MIN_NOTIONAL")
+        return ExchangeSymbolRules(
+            symbol=self._to_string(payload.get("symbol")),
+            market_min_quantity=self._to_decimal(market_filter.get("minQty")),
+            market_max_quantity=self._to_decimal(market_filter.get("maxQty")),
+            market_quantity_step=self._to_decimal(market_filter.get("stepSize")),
+            minimum_notional=(
+                self._to_decimal(minimum_notional.get("notional"))
+                if minimum_notional is not None
+                else None
+            ),
+            minimum_price=self._to_decimal(price_filter.get("minPrice")),
+            maximum_price=self._to_decimal(price_filter.get("maxPrice")),
+            price_tick_size=self._to_decimal(price_filter.get("tickSize")),
+        )
+
+    def map_futures_mark_price(self, payload: ExchangePayload) -> Decimal:
+        """Map Binance Futures premium-index payload into a MARK_PRICE value."""
+        return self._to_decimal(payload.get("markPrice"))
 
     def map_stream_ticker(
         self,

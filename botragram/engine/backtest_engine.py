@@ -28,7 +28,6 @@ from typing import Final
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine.pnl_engine import PnLEngine
 from botragram.engine.risk_engine import RiskEngine
-from botragram.engine.signal_engine import SignalEngine
 from botragram.engine.trading_engine import TradingEngine
 from botragram.enums import Interval, OrderSide, PositionSide, SignalType
 from botragram.models import (
@@ -104,7 +103,6 @@ class BacktestEngine:
             fee_rate=request.fee_rate,
             slippage_rate=request.slippage_rate,
         )
-        signal_engine = SignalEngine(strategy=self.strategy)
         exit_reasons: list[str] = []
         peak_equity = request.initial_balance
         current_drawdown = _DECIMAL_ZERO
@@ -127,7 +125,7 @@ class BacktestEngine:
                 continue
 
             window_start = max(0, index + 1 - _STRATEGY_WINDOW)
-            signal = signal_engine.generate(
+            signal = self.strategy.generate_signal(
                 candles=ordered_candles[window_start : index + 1],
             )
             had_position = (

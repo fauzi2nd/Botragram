@@ -19,21 +19,51 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from typing import Final, Protocol
+from time import monotonic
+from typing import Final, Protocol, runtime_checkable
 
 from botragram.app.runtime_control import TradingRuntimeControl
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import Interval, OrderType, SignalType, TradeMode
-from botragram.models import ExecutionAuthorization, TradingDecision, TradingResult
+from botragram.enums import (
+    AutonomousLiveEntryExecutionStatus,
+    Interval,
+    LiveMarketStreamLifecycleStatus,
+    LivePortfolioRecoveryStatus,
+    OrderType,
+    SignalType,
+    StrategyType,
+    TradeMode,
+)
+from botragram.models import (
+    AutonomousLiveEntryAuthorization,
+    AutonomousLiveEntryExecutionResult,
+    AutonomousLiveEntryIntent,
+    AutonomousLiveEntryIntentResult,
+    ExecutionAuthorization,
+    LiveEntryRiskEvaluation,
+    LiveMarketStreamIdentity,
+    LiveMarketStreamState,
+    LiveProtectionMonitorState,
+    LiveRecoveredPositionManagementAuthorization,
+    LiveRuntimePositionContext,
+    Signal,
+    TradingDecision,
+    TradingResult,
+)
 
 __all__ = [
     "AutonomousPaperTradingCycleExecutor",
+    "AutonomousLiveCycleUnsafeError",
+    "AutonomousLiveTradingCycleExecutor",
+    "GlobalTradingCycleExecutor",
     "HumanConfirmedPaperTradingCycleExecutor",
+    "MultiContextActivationPreconditionProvider",
+    "MultiContextRunnerActivationPreconditions",
     "SingleSymbolTradingCycleExecutor",
     "TradingCycleExecutor",
     "TradingRunner",
@@ -50,6 +80,14 @@ _RESULT_REASON_UNAVAILABLE: Final[str] = "No reason provided"
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
+class _RecoveredPortfolioReconciliationRequiredError(RuntimeError):
+    """Stop a batch when recovered LIVE portfolio state becomes stale."""
+
+
+class AutonomousLiveCycleUnsafeError(RuntimeError):
+    """Stop autonomous LIVE after an uncertain protected-entry outcome."""
+
+
 # =============================================================================
 # Runtime Contracts
 # =============================================================================
@@ -62,6 +100,10 @@ class TradingCycleExecutor(Protocol):
         symbol: str,
         interval: Interval,
         candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
         current_drawdown_pct: Decimal = Decimal("0"),
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
@@ -70,6 +112,20 @@ class TradingCycleExecutor(Protocol):
         submit_order: bool = True,
     ) -> Sequence[TradingResult]:
         """Execute and return all results produced by one runtime cycle."""
+        ...
+
+
+@runtime_checkable
+class GlobalTradingCycleExecutor(Protocol):
+    """Execute one market-wide cycle independent of recovered contexts."""
+
+    async def execute_global(
+        self,
+        *,
+        interval: Interval,
+        candle_limit: int,
+    ) -> Sequence[TradingResult]:
+        """Execute one bounded global discovery and entry cycle."""
         ...
 
 
@@ -82,6 +138,10 @@ class SingleSymbolExecutionProvider(Protocol):
         symbol: str,
         interval: Interval,
         candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
         current_drawdown_pct: Decimal = Decimal("0"),
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
@@ -107,6 +167,58 @@ class AutonomousPaperExecutionProvider(Protocol):
         initial_balance: Decimal | None = None,
     ) -> Sequence[TradingResult]:
         """Discover and execute ranked PAPER candidates."""
+        ...
+
+
+class OpportunityDiscoveryProvider(Protocol):
+    """Discover deterministic actionable market opportunities."""
+
+    async def discover(
+        self,
+        *,
+        quote_asset: str,
+        interval: Interval,
+        candle_limit: int,
+        max_symbols: int,
+        top_n: int,
+    ) -> Sequence[Signal]:
+        """Return ranked actionable signals."""
+        ...
+
+
+class AutonomousLiveIntentProvider(Protocol):
+    """Authorize one fresh decision as a transient autonomous LIVE intent."""
+
+    def authorize(
+        self,
+        *,
+        decision: TradingDecision,
+        interval: Interval,
+        strategy_type: StrategyType,
+        authorization: AutonomousLiveEntryAuthorization | None,
+    ) -> AutonomousLiveEntryIntentResult:
+        """Return a typed pre-mutation intent outcome."""
+        ...
+
+
+class LiveEntryRiskEvaluationProvider(Protocol):
+    """Provide current portfolio-aware risk decisions for one signal."""
+
+    async def evaluate(self, *, signal: Signal) -> LiveEntryRiskEvaluation:
+        """Return the canonical current decision evaluation."""
+        ...
+
+
+class AutonomousLiveEntryExecutionProvider(Protocol):
+    """Execute one authorized TESTNET protected entry."""
+
+    async def execute(
+        self,
+        *,
+        intent: AutonomousLiveEntryIntent,
+        authorization: AutonomousLiveEntryAuthorization | None,
+    ) -> AutonomousLiveEntryExecutionResult:
+        """Return the typed protected-entry execution outcome."""
         ...
 
 
@@ -152,6 +264,112 @@ class TradingRuntimeObserver(Protocol):
         ...
 
 
+class MultiContextActivationPreconditionProvider(Protocol):
+    """Build current LIVE multi-context activation state without runner I/O."""
+
+    def get_multi_context_activation_preconditions(
+        self,
+        *,
+        runtime_is_stopping: bool,
+    ) -> MultiContextRunnerActivationPreconditions | None:
+        """Return current exact multi-context activation state."""
+        ...
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class MultiContextRunnerActivationPreconditions:
+    """Describe whether a recovered context portfolio can run safely.
+
+    The value object separates verified runtime substrate from authorization.
+    It deliberately does not resume a runner or select a primary context.
+    """
+
+    portfolio_status: LivePortfolioRecoveryStatus
+    contexts: tuple[LiveRuntimePositionContext, ...]
+    stream_states: tuple[LiveMarketStreamState, ...]
+    monitor_states: tuple[LiveProtectionMonitorState, ...]
+    live_management_authorization: LiveRecoveredPositionManagementAuthorization
+    runtime_is_paused: bool
+    runtime_is_stopping: bool
+
+    @property
+    def runtime_representation_valid(self) -> bool:
+        """Return whether contexts match their typed recovery outcome."""
+        context_count = len(self.contexts)
+        return (
+            self.portfolio_status is LivePortfolioRecoveryStatus.SINGLE_POSITION_SAFE
+            and context_count == 1
+        ) or (
+            self.portfolio_status is LivePortfolioRecoveryStatus.MULTIPLE_POSITIONS_SAFE
+            and context_count > 1
+        )
+
+    @property
+    def stream_substrate_ready(self) -> bool:
+        """Return whether every context has exactly one ready owned stream."""
+        expected_identities = frozenset(
+            LiveMarketStreamIdentity.from_runtime_context(context=context)
+            for context in self.contexts
+        )
+        actual_identities = tuple(
+            stream_state.identity for stream_state in self.stream_states
+        )
+        return (
+            bool(expected_identities)
+            and len(actual_identities) == len(set(actual_identities))
+            and frozenset(actual_identities) == expected_identities
+            and all(
+                stream_state.lifecycle_status is LiveMarketStreamLifecycleStatus.RUNNING
+                and stream_state.first_tick_received
+                for stream_state in self.stream_states
+            )
+        )
+
+    @property
+    def protection_monitoring_ready(self) -> bool:
+        """Return whether every context has one active healthy exact monitor."""
+        expected_contexts = frozenset(self.contexts)
+        actual_contexts = tuple(
+            monitor_state.context for monitor_state in self.monitor_states
+        )
+        return (
+            bool(expected_contexts)
+            and len(actual_contexts) == len(set(actual_contexts))
+            and frozenset(actual_contexts) == expected_contexts
+            and all(
+                monitor_state.is_active and monitor_state.failure_type is None
+                for monitor_state in self.monitor_states
+            )
+        )
+
+    @property
+    def is_eligible(self) -> bool:
+        """Return whether all future runner-activation requirements are met."""
+        return (
+            self.runtime_representation_valid
+            and self.stream_substrate_ready
+            and self.protection_monitoring_ready
+            and self.live_management_authorization.authorizes_contexts(
+                contexts=self.contexts,
+            )
+            and not self.runtime_is_paused
+            and not self.runtime_is_stopping
+        )
+
+    @property
+    def can_activate(self) -> bool:
+        """Return whether readiness and authorization permit a paused activation."""
+        return (
+            self.runtime_representation_valid
+            and self.stream_substrate_ready
+            and self.protection_monitoring_ready
+            and self.live_management_authorization.authorizes_contexts(
+                contexts=self.contexts,
+            )
+            and not self.runtime_is_stopping
+        )
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class SingleSymbolTradingCycleExecutor:
     """Adapt the established single-symbol service to the runtime contract."""
@@ -164,6 +382,10 @@ class SingleSymbolTradingCycleExecutor:
         symbol: str,
         interval: Interval,
         candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
         current_drawdown_pct: Decimal = Decimal("0"),
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
@@ -172,9 +394,26 @@ class SingleSymbolTradingCycleExecutor:
         submit_order: bool = True,
     ) -> Sequence[TradingResult]:
         """Execute the existing single-symbol workflow as one cycle result."""
+        if live_management_authorization is None:
+            result = await self.trading_service.execute(
+                symbol=symbol,
+                interval=interval,
+                strategy_type=strategy_type,
+                candle_limit=candle_limit,
+                current_drawdown_pct=current_drawdown_pct,
+                order_type=order_type,
+                price=price,
+                account_balance_override=account_balance_override,
+                synchronize_position=synchronize_position,
+                submit_order=submit_order,
+            )
+            return (result,)
+
         result = await self.trading_service.execute(
             symbol=symbol,
             interval=interval,
+            strategy_type=strategy_type,
+            live_management_authorization=live_management_authorization,
             candle_limit=candle_limit,
             current_drawdown_pct=current_drawdown_pct,
             order_type=order_type,
@@ -216,6 +455,10 @@ class AutonomousPaperTradingCycleExecutor:
         symbol: str,
         interval: Interval,
         candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
         current_drawdown_pct: Decimal = Decimal("0"),
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
@@ -224,7 +467,15 @@ class AutonomousPaperTradingCycleExecutor:
         submit_order: bool = True,
     ) -> Sequence[TradingResult]:
         """Execute one bounded PAPER discovery cycle without order submission."""
-        del symbol, current_drawdown_pct, order_type, price, synchronize_position
+        del (
+            symbol,
+            strategy_type,
+            live_management_authorization,
+            current_drawdown_pct,
+            order_type,
+            price,
+            synchronize_position,
+        )
 
         if submit_order:
             raise RuntimeError("Autonomous execution is restricted to paper mode")
@@ -236,6 +487,162 @@ class AutonomousPaperTradingCycleExecutor:
             max_symbols=self.max_symbols,
             top_n=self.top_n,
             initial_balance=account_balance_override,
+        )
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class AutonomousLiveTradingCycleExecutor:
+    """Compose ranked TESTNET discovery with sequential protected LIVE entry.
+
+    It has no exchange client or persistence dependency. Each candidate first
+    receives a fresh canonical decision for intent authorization, then the
+    protected-entry adapter repeats authoritative mutation-time validation.
+    """
+
+    discovery_service: OpportunityDiscoveryProvider
+    risk_evaluation_service: LiveEntryRiskEvaluationProvider
+    intent_service: AutonomousLiveIntentProvider
+    execution_service: AutonomousLiveEntryExecutionProvider
+    authorization: AutonomousLiveEntryAuthorization
+    quote_asset: str
+    max_symbols: int
+    top_n: int
+    strategy_type: StrategyType
+
+    def __post_init__(self) -> None:
+        """Validate the static TESTNET discovery composition."""
+        quote_asset = self.quote_asset.strip().upper()
+        if not quote_asset:
+            raise ValueError("Autonomous LIVE quote asset must not be empty")
+        if self.max_symbols <= 0:
+            raise ValueError("Autonomous LIVE maximum symbols must be positive")
+        if self.top_n <= 0:
+            raise ValueError("Autonomous LIVE top N must be positive")
+        if not self.authorization.new_live_entry_allowed:
+            raise ValueError("Autonomous LIVE requires TESTNET entry authorization")
+        object.__setattr__(self, "quote_asset", quote_asset)
+
+    async def execute_global(
+        self,
+        *,
+        interval: Interval,
+        candle_limit: int,
+    ) -> Sequence[TradingResult]:
+        """Discover and process ranked candidates strictly one at a time."""
+        signals = await self.discovery_service.discover(
+            quote_asset=self.quote_asset,
+            interval=interval,
+            candle_limit=candle_limit,
+            max_symbols=self.max_symbols,
+            top_n=self.top_n,
+        )
+        results: list[TradingResult] = []
+
+        for signal in signals:
+            evaluation = await self.risk_evaluation_service.evaluate(signal=signal)
+            decision = evaluation.decision
+            intent_result = self.intent_service.authorize(
+                decision=decision,
+                interval=interval,
+                strategy_type=self.strategy_type,
+                authorization=self.authorization,
+            )
+            if intent_result.intent is None:
+                results.append(
+                    self._non_executed_result(
+                        decision=decision,
+                        reason=intent_result.status.value,
+                    )
+                )
+                continue
+
+            execution_result = await self.execution_service.execute(
+                intent=intent_result.intent,
+                authorization=self.authorization,
+            )
+            results.append(self._to_trading_result(result=execution_result))
+
+            if execution_result.status in {
+                AutonomousLiveEntryExecutionStatus.SUBMISSION_BLOCKED,
+                AutonomousLiveEntryExecutionStatus.EXECUTION_UNSAFE,
+            }:
+                raise AutonomousLiveCycleUnsafeError(
+                    "Autonomous LIVE protected entry requires recovery: "
+                    f"{execution_result.status.value}"
+                )
+
+        return tuple(results)
+
+    async def execute(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
+    ) -> Sequence[TradingResult]:
+        """Satisfy the legacy executor boundary without using a symbol context."""
+        del (
+            symbol,
+            strategy_type,
+            live_management_authorization,
+            current_drawdown_pct,
+            order_type,
+            price,
+            account_balance_override,
+            synchronize_position,
+        )
+        if not submit_order:
+            raise RuntimeError("Autonomous LIVE execution requires LIVE submission")
+        return await self.execute_global(
+            interval=interval,
+            candle_limit=candle_limit,
+        )
+
+    @staticmethod
+    def _non_executed_result(
+        *,
+        decision: TradingDecision,
+        reason: str,
+    ) -> TradingResult:
+        """Return an explicit safe no-entry workflow result."""
+        return TradingResult(
+            executed=False,
+            decision=replace(decision, should_execute=False, reason=reason),
+            order=None,
+            reason=reason,
+        )
+
+    @classmethod
+    def _to_trading_result(
+        cls,
+        *,
+        result: AutonomousLiveEntryExecutionResult,
+    ) -> TradingResult:
+        """Translate typed entry outcomes without exposing exchange exceptions."""
+        if result.decision is None:
+            raise RuntimeError("Autonomous LIVE execution result lacks a decision")
+
+        if result.status is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED:
+            return TradingResult(
+                executed=True,
+                decision=result.decision,
+                order=result.order,
+                reason=result.status.value,
+            )
+
+        return cls._non_executed_result(
+            decision=result.decision,
+            reason=result.status.value,
         )
 
 
@@ -269,6 +676,10 @@ class HumanConfirmedPaperTradingCycleExecutor:
         symbol: str,
         interval: Interval,
         candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
         current_drawdown_pct: Decimal = Decimal("0"),
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
@@ -279,6 +690,8 @@ class HumanConfirmedPaperTradingCycleExecutor:
         """Prepare human approvals while structurally rejecting order submission."""
         del (
             symbol,
+            strategy_type,
+            live_management_authorization,
             current_drawdown_pct,
             order_type,
             price,
@@ -333,6 +746,12 @@ class TradingRunner:
         default_factory=TradingRuntimeControl,
     )
     runtime_observer: TradingRuntimeObserver | None = None
+    multi_context_activation_precondition_provider: (
+        MultiContextActivationPreconditionProvider | None
+    ) = None
+    live_management_authorization: (
+        LiveRecoveredPositionManagementAuthorization | None
+    ) = None
     maximum_consecutive_failures: int = 1
     failure_retry_delay_seconds: float = 5.0
     heartbeat_interval_seconds: float = _DEFAULT_HEARTBEAT_INTERVAL_SECONDS
@@ -340,6 +759,17 @@ class TradingRunner:
     _running: bool = field(default=False, init=False)
     _stop_event: asyncio.Event = field(
         default_factory=asyncio.Event,
+        init=False,
+        repr=False,
+    )
+    _context_next_eligible_monotonic: dict[LiveRuntimePositionContext, float] = field(
+        default_factory=dict[LiveRuntimePositionContext, float],
+        init=False,
+        repr=False,
+    )
+    _active_batch_context_count: int = field(default=0, init=False, repr=False)
+    _global_next_eligible_monotonic: float = field(
+        default=0.0,
         init=False,
         repr=False,
     )
@@ -371,6 +801,14 @@ class TradingRunner:
         if self.heartbeat_interval_seconds <= 0:
             raise ValueError("Heartbeat interval must be greater than zero")
 
+        if (
+            self.live_management_authorization is not None
+            and self.trade_mode is not TradeMode.LIVE
+        ):
+            raise ValueError(
+                "Recovered LIVE management authorization requires LIVE mode"
+            )
+
     @property
     def is_running(self) -> bool:
         """Return whether the continuous runtime loop is active."""
@@ -383,46 +821,119 @@ class TradingRunner:
 
     @property
     def effective_cycle_interval_seconds(self) -> float:
-        """Return the fixed override or current Telegram interval cadence."""
-        configured_interval = self.cycle_interval_seconds
-
-        if configured_interval is not None:
-            return configured_interval
-
-        return float(self.runtime_control.interval.seconds)
+        """Return the configured cadence for exactly one executable context."""
+        if self._is_global_cycle_executor():
+            return self._get_global_cadence_seconds()
+        return self._get_context_cadence_seconds(
+            context=self._get_single_cycle_context(),
+        )
 
     async def run_once(self) -> tuple[TradingResult, ...]:
         """Execute one configured trading cycle."""
+        if self._is_global_cycle_executor():
+            return await self._run_global_cycle()
+        context = self._get_single_cycle_context()
+        self.symbol = context.symbol
+        self.interval = context.interval
+        return await self.run_context_cycle(context=context)
+
+    async def run_context_cycle(
+        self,
+        *,
+        context: LiveRuntimePositionContext,
+    ) -> tuple[TradingResult, ...]:
+        """Execute one cycle for an explicit immutable runtime context.
+
+        This context-explicit boundary is deliberately independent of singular
+        runtime-control access. It is not a multi-context runtime activation
+        mechanism; callers that need several contexts must invoke
+        ``run_context_cycles_once`` while preserving its sequential contract.
+
+        Args:
+            context: The exact symbol, interval, and strategy context to execute.
+
+        Returns:
+            All trading results produced for the supplied context.
+        """
+        if self._is_global_cycle_executor():
+            return await self._run_global_cycle()
+
         live_trading = self.order_submission_enabled
-        self.symbol = self.runtime_control.symbol
-        self.interval = self.runtime_control.interval
+        live_management_authorization = self.live_management_authorization
+        if live_management_authorization is None and live_trading:
+            live_management_authorization = (
+                self.runtime_control.live_management_authorization
+            )
+
+        if (
+            live_management_authorization is not None
+            and not live_management_authorization.authorizes_context(context=context)
+        ):
+            raise RuntimeError(
+                "Recovered LIVE management authorization does not cover runtime "
+                f"context: {context.symbol}:{context.interval.value}"
+            )
         _LOGGER.info(
             "Trading cycle started: symbol=%s interval=%s cadence_seconds=%s",
-            self.symbol,
-            self.interval.value,
-            self.effective_cycle_interval_seconds,
+            context.symbol,
+            context.interval.value,
+            float(context.interval.seconds),
         )
         self.runtime_control.begin_cycle()
 
         try:
             results = tuple(
-                await self.executor.execute(
-                    symbol=self.symbol,
-                    interval=self.interval,
-                    candle_limit=self.candle_limit,
-                    account_balance_override=(
-                        None if live_trading else self.paper_account_balance
-                    ),
-                    synchronize_position=live_trading,
-                    submit_order=live_trading,
+                await self._execute_context(
+                    context=context,
+                    live_trading=live_trading,
+                    live_management_authorization=live_management_authorization,
                 )
             )
         finally:
             self.runtime_control.end_cycle()
 
-        self._log_results(results=results)
+        self._log_results(context=context, results=results)
 
         return results
+
+    async def run_context_cycles_once(
+        self,
+        *,
+        contexts: tuple[LiveRuntimePositionContext, ...],
+    ) -> tuple[TradingResult, ...]:
+        """Execute explicit contexts sequentially without activating the runner.
+
+        Args:
+            contexts: Canonically ordered contexts to process exactly in order.
+
+        Returns:
+            The flattened results in the same order as their context cycles.
+
+        Raises:
+            asyncio.CancelledError: If cancellation interrupts any context cycle.
+            Exception: Propagates a context-cycle failure before another context
+                can begin.
+        """
+        if self._is_global_cycle_executor():
+            return await self._run_global_cycle()
+
+        results: list[TradingResult] = []
+
+        for context in contexts:
+            context_results = await self.run_context_cycle(context=context)
+            results.extend(context_results)
+            if any(
+                result.decision.requires_portfolio_reconciliation
+                for result in context_results
+            ):
+                self.runtime_control.require_portfolio_reconciliation(
+                    context=context,
+                )
+                raise _RecoveredPortfolioReconciliationRequiredError(
+                    "Recovered LIVE portfolio reconciliation is required"
+                )
+
+        return tuple(results)
 
     async def run(self) -> None:
         """Run trading cycles until stop is requested or the task is cancelled.
@@ -438,16 +949,14 @@ class TradingRunner:
 
         self._running = True
         self._stop_event.clear()
-        self.symbol = self.runtime_control.symbol
-        self.interval = self.runtime_control.interval
+        initial_contexts = self._get_cycle_contexts_snapshot()
         _LOGGER.info(
-            "Trading runner started: symbol=%s interval=%s mode=%s "
-            "candle_limit=%d cycle_interval_seconds=%s",
-            self.symbol,
-            self.interval.value,
+            "Trading runner started: context_count=%d mode=%s candle_limit=%d "
+            "cycle_interval_override=%s",
+            len(initial_contexts),
             self.trade_mode.value,
             self.candle_limit,
-            self.effective_cycle_interval_seconds,
+            self.cycle_interval_seconds,
         )
 
         heartbeat_task = asyncio.create_task(
@@ -467,13 +976,60 @@ class TradingRunner:
                 if not active:
                     break
 
+                contexts: tuple[LiveRuntimePositionContext, ...] = ()
                 try:
-                    results = await self.run_once()
+                    if self._is_global_cycle_executor():
+                        results = await self._run_global_cycle()
+                        self._global_next_eligible_monotonic = (
+                            monotonic() + self._get_global_cadence_seconds()
+                        )
+                        await self._notify_cycle_completed(results=results)
+                        await self._wait_for_global_cycle()
+                        continue
+
+                    contexts = self._get_cycle_contexts_snapshot()
+                    if not self._is_multi_context_batch_authorized(
+                        contexts=contexts,
+                    ):
+                        self._pause_unauthorized_multi_context_runtime()
+                        continue
+                    eligible_contexts = self._get_eligible_contexts(
+                        contexts=contexts,
+                    )
+                    if not eligible_contexts:
+                        await self._wait_for_next_eligible_context(
+                            contexts=contexts,
+                        )
+                        continue
+
+                    self._active_batch_context_count = len(eligible_contexts)
+                    try:
+                        results = await self.run_context_cycles_once(
+                            contexts=eligible_contexts,
+                        )
+                    finally:
+                        self._active_batch_context_count = 0
+                except _RecoveredPortfolioReconciliationRequiredError:
+                    self._pause_unauthorized_multi_context_runtime()
+                    continue
+                except AutonomousLiveCycleUnsafeError as error:
+                    self.runtime_control.set_position_protection_ready(False)
+                    self.runtime_control.pause()
+                    _LOGGER.critical(
+                        "Autonomous LIVE runtime paused pending recovery: %s",
+                        error,
+                    )
+                    await self._notify_cycle_failed(
+                        error=error,
+                        consecutive_failures=1,
+                    )
+                    break
                 except Exception as error:
                     consecutive_failures += 1
                     _LOGGER.warning(
-                        "Trading cycle failed: symbol=%s error_type=%s attempt=%d/%d",
-                        self.symbol,
+                        "Trading batch failed: context_count=%d error_type=%s "
+                        "attempt=%d/%d",
+                        len(contexts),
                         type(error).__name__,
                         consecutive_failures,
                         self.maximum_consecutive_failures,
@@ -492,8 +1048,9 @@ class TradingRunner:
                     continue
 
                 consecutive_failures = 0
+                self._mark_contexts_completed(contexts=eligible_contexts)
                 await self._notify_cycle_completed(results=results)
-                await self._wait_for_next_cycle()
+                await self._wait_for_next_eligible_context(contexts=contexts)
         except asyncio.CancelledError:
             _LOGGER.info("Trading runner cancellation requested")
             raise
@@ -507,12 +1064,6 @@ class TradingRunner:
     def stop(self) -> None:
         """Request graceful runtime termination."""
         self._stop_event.set()
-
-    async def _wait_for_next_cycle(self) -> None:
-        """Wait for the next cycle while remaining immediately stoppable."""
-        await self._wait_for_delay(
-            delay_seconds=self.effective_cycle_interval_seconds,
-        )
 
     async def _wait_for_delay(self, *, delay_seconds: float) -> None:
         """Wait for a configured delay while remaining immediately stoppable."""
@@ -534,6 +1085,17 @@ class TradingRunner:
                 )
             except TimeoutError:
                 state = "PAUSED" if self.runtime_control.is_paused else "RUNNING"
+                contexts = self.runtime_control.runtime_contexts
+                if len(contexts) > 1:
+                    _LOGGER.info(
+                        "Runtime heartbeat: state=%s context_count=%d "
+                        "active_batch_context_count=%d stream=MULTI",
+                        state,
+                        len(contexts),
+                        self._active_batch_context_count,
+                    )
+                    continue
+
                 _LOGGER.info(
                     "Runtime heartbeat: state=%s symbol=%s strategy=%s stream=%s",
                     state,
@@ -604,14 +1166,27 @@ class TradingRunner:
         except Exception:
             _LOGGER.exception("Trading runtime shutdown observer failed")
 
-    def _log_results(self, *, results: Sequence[TradingResult]) -> None:
+    def _log_results(
+        self,
+        *,
+        context: LiveRuntimePositionContext | None,
+        results: Sequence[TradingResult],
+    ) -> None:
         """Log safe summaries without credentials or sensitive payloads."""
         for result in results:
-            self._log_result(result=result)
+            self._log_result(context=context, result=result)
 
-    def _log_result(self, *, result: TradingResult) -> None:
+    def _log_result(
+        self,
+        *,
+        context: LiveRuntimePositionContext | None,
+        result: TradingResult,
+    ) -> None:
         """Log one safe execution summary without sensitive payloads."""
         reason = self._get_result_reason(result=result)
+        symbol = (
+            context.symbol if context is not None else result.decision.signal.symbol
+        )
 
         if result.executed:
             order_id = result.order.order_id if result.order is not None else "unknown"
@@ -622,7 +1197,7 @@ class TradingRunner:
             _LOGGER.info(
                 "Trading cycle submitted an order: symbol=%s order_id=%s "
                 "position=%s reason=%s risk_amount=%s stop_loss=%s take_profit=%s",
-                self.symbol,
+                symbol,
                 order_id,
                 self._get_position_action(
                     signal_type=result.decision.signal.signal_type,
@@ -638,7 +1213,7 @@ class TradingRunner:
             _LOGGER.info(
                 "Trading cycle approved without order submission: symbol=%s "
                 "mode=%s reason=%s",
-                self.symbol,
+                symbol,
                 self.trade_mode.value,
                 reason,
             )
@@ -646,9 +1221,213 @@ class TradingRunner:
 
         _LOGGER.info(
             "Trading cycle completed without execution: symbol=%s reason=%s",
-            self.symbol,
+            symbol,
             reason,
         )
+
+    def _get_single_cycle_context(self) -> LiveRuntimePositionContext:
+        """Return the exact singular context or preserve legacy control inputs."""
+        contexts = self.runtime_control.runtime_contexts
+
+        if len(contexts) == 1:
+            return contexts[0]
+
+        if len(contexts) > 1:
+            raise RuntimeError(
+                "TradingRunner single-cycle execution requires exactly one "
+                "runtime context"
+            )
+
+        return LiveRuntimePositionContext(
+            symbol=self.runtime_control.symbol,
+            interval=self.runtime_control.interval,
+            strategy_type=self.runtime_control.strategy_type,
+        )
+
+    def _get_cycle_contexts_snapshot(
+        self,
+    ) -> tuple[LiveRuntimePositionContext, ...]:
+        """Return one immutable batch snapshot without selecting a primary.
+
+        Empty canonical context state retains the legacy manually-configured
+        single-symbol path. LIVE recovery never resumes an empty portfolio.
+        """
+        contexts = self.runtime_control.runtime_contexts
+        if not contexts:
+            contexts = (self._get_single_cycle_context(),)
+
+        self._prune_context_schedule(contexts=contexts)
+        return contexts
+
+    def _is_multi_context_batch_authorized(
+        self,
+        *,
+        contexts: tuple[LiveRuntimePositionContext, ...],
+    ) -> bool:
+        """Return whether a LIVE multi-context batch remains exactly authorized."""
+        if self.trade_mode is not TradeMode.LIVE or len(contexts) <= 1:
+            return True
+
+        provider = self.multi_context_activation_precondition_provider
+        if provider is None:
+            return False
+
+        preconditions = provider.get_multi_context_activation_preconditions(
+            runtime_is_stopping=self._stop_event.is_set(),
+        )
+        return (
+            preconditions is not None
+            and preconditions.contexts == contexts
+            and preconditions.is_eligible
+        )
+
+    def _pause_unauthorized_multi_context_runtime(self) -> None:
+        """Fail closed after stale recovered LIVE context state is detected."""
+        self.runtime_control.clear_live_management_authorization()
+        self.runtime_control.pause()
+        _LOGGER.critical(
+            "LIVE multi-context management paused; recovery reconciliation is required"
+        )
+
+    async def _execute_context(
+        self,
+        *,
+        context: LiveRuntimePositionContext,
+        live_trading: bool,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ),
+    ) -> Sequence[TradingResult]:
+        """Execute one context with the optional recovered-LIVE capability."""
+        if live_management_authorization is None:
+            return await self.executor.execute(
+                symbol=context.symbol,
+                interval=context.interval,
+                strategy_type=context.strategy_type,
+                candle_limit=self.candle_limit,
+                account_balance_override=(
+                    None if live_trading else self.paper_account_balance
+                ),
+                synchronize_position=live_trading,
+                submit_order=live_trading,
+            )
+
+        return await self.executor.execute(
+            symbol=context.symbol,
+            interval=context.interval,
+            strategy_type=context.strategy_type,
+            candle_limit=self.candle_limit,
+            account_balance_override=(
+                None if live_trading else self.paper_account_balance
+            ),
+            synchronize_position=live_trading,
+            submit_order=live_trading,
+            live_management_authorization=live_management_authorization,
+        )
+
+    def _is_global_cycle_executor(self) -> bool:
+        """Return whether composition selected one market-wide cycle executor."""
+        return isinstance(self.executor, GlobalTradingCycleExecutor)
+
+    async def _run_global_cycle(self) -> tuple[TradingResult, ...]:
+        """Execute one discovery cycle without selecting a recovered context."""
+        executor = self.executor
+        if not isinstance(executor, GlobalTradingCycleExecutor):
+            raise RuntimeError("Configured executor is not market-wide")
+
+        self.runtime_control.begin_cycle()
+        try:
+            results = tuple(
+                await executor.execute_global(
+                    interval=self.interval,
+                    candle_limit=self.candle_limit,
+                )
+            )
+        finally:
+            self.runtime_control.end_cycle()
+
+        self._log_results(context=None, results=results)
+        return results
+
+    def _get_global_cadence_seconds(self) -> float:
+        """Return the established global discovery cadence."""
+        return (
+            self.cycle_interval_seconds
+            if self.cycle_interval_seconds is not None
+            else float(self.interval.seconds)
+        )
+
+    async def _wait_for_global_cycle(self) -> None:
+        """Wait until one global discovery cycle is due or the runner stops."""
+        delay_seconds = max(0.0, self._global_next_eligible_monotonic - monotonic())
+        await self._wait_for_delay(delay_seconds=delay_seconds)
+
+    def _get_eligible_contexts(
+        self,
+        *,
+        contexts: tuple[LiveRuntimePositionContext, ...],
+    ) -> tuple[LiveRuntimePositionContext, ...]:
+        """Return snapshot contexts due for one sequential batch."""
+        current_monotonic = monotonic()
+        return tuple(
+            context
+            for context in contexts
+            if self._context_next_eligible_monotonic.get(context, 0.0)
+            <= current_monotonic
+        )
+
+    def _mark_contexts_completed(
+        self,
+        *,
+        contexts: tuple[LiveRuntimePositionContext, ...],
+    ) -> None:
+        """Schedule every fully successful context using its own cadence."""
+        completed_at = monotonic()
+        for context in contexts:
+            self._context_next_eligible_monotonic[context] = (
+                completed_at + self._get_context_cadence_seconds(context=context)
+            )
+
+    async def _wait_for_next_eligible_context(
+        self,
+        *,
+        contexts: tuple[LiveRuntimePositionContext, ...],
+    ) -> None:
+        """Wait once for the earliest context cadence without delaying a batch."""
+        deadlines = tuple(
+            self._context_next_eligible_monotonic.get(context, 0.0)
+            for context in contexts
+        )
+        next_deadline = min(deadlines, default=monotonic())
+        await self._wait_for_delay(
+            delay_seconds=max(0.0, next_deadline - monotonic()),
+        )
+
+    def _prune_context_schedule(
+        self,
+        *,
+        contexts: tuple[LiveRuntimePositionContext, ...],
+    ) -> None:
+        """Drop process-local scheduling state for contexts no longer present."""
+        active_contexts = frozenset(contexts)
+        stale_contexts = tuple(
+            context
+            for context in self._context_next_eligible_monotonic
+            if context not in active_contexts
+        )
+        for context in stale_contexts:
+            del self._context_next_eligible_monotonic[context]
+
+    def _get_context_cadence_seconds(
+        self,
+        *,
+        context: LiveRuntimePositionContext,
+    ) -> float:
+        """Return the explicit override or this context's candle cadence."""
+        if self.cycle_interval_seconds is not None:
+            return self.cycle_interval_seconds
+
+        return float(context.interval.seconds)
 
     @staticmethod
     def _get_result_reason(*, result: TradingResult) -> str:

@@ -32,7 +32,15 @@ from botragram.exceptions import (
 from botragram.exchanges.binance.client import BinanceExchangeClient
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient, BinanceRestResponseError
-from botragram.models import Account, Candle, Order, Position, Ticker, Trade
+from botragram.models import (
+    Account,
+    Candle,
+    ExchangeSymbolRules,
+    Order,
+    Position,
+    Ticker,
+    Trade,
+)
 
 __all__ = ["BinanceFuturesExchangeClient"]
 
@@ -43,6 +51,7 @@ _PING_ENDPOINT = "/fapi/v1/ping"
 _EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
 _ACCOUNT_ENDPOINT = "/fapi/v3/account"
 _TICKER_ENDPOINT = "/fapi/v1/ticker/24hr"
+_MARK_PRICE_ENDPOINT = "/fapi/v1/premiumIndex"
 _CANDLES_ENDPOINT = "/fapi/v1/klines"
 _ORDER_ENDPOINT = "/fapi/v1/order"
 _OPEN_ORDERS_ENDPOINT = "/fapi/v1/openOrders"
@@ -107,6 +116,14 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         )
         return self._mapper.map_ticker(self._require_mapping(payload))
 
+    async def get_mark_price(self, *, symbol: str) -> Decimal:
+        """Return the current Futures MARK_PRICE for conditional triggers."""
+        payload = await self._rest.get(
+            _MARK_PRICE_ENDPOINT,
+            params={"symbol": self._normalize_symbol(symbol)},
+        )
+        return self._mapper.map_futures_mark_price(self._require_mapping(payload))
+
     async def get_trading_symbols(
         self,
         *,
@@ -118,6 +135,20 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             quote_asset=quote_asset,
             contract_type="PERPETUAL",
         )
+
+    async def get_market_entry_rules(
+        self,
+        *,
+        symbol: str,
+    ) -> ExchangeSymbolRules:
+        """Return authoritative Futures MARKET quantity rules."""
+        normalized_symbol = self._normalize_symbol(symbol)
+        payload = await self._rest.get(_EXCHANGE_INFO_ENDPOINT)
+        symbol_payload = self._get_exchange_info_symbol(
+            payload=payload,
+            symbol=normalized_symbol,
+        )
+        return self._mapper.map_market_entry_rules(symbol_payload)
 
     async def get_candles(
         self,

@@ -2,16 +2,30 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from time import monotonic
 from typing import Final, Protocol
 
-from botragram.models import Order, Position, Ticker, Trade
+from botragram.enums import Interval, StrategyType
+from botragram.models import (
+    AutonomousLiveRecoverySnapshot,
+    LiveMarketStreamIdentity,
+    LiveMarketStreamState,
+    LiveRuntimeHealthSnapshot,
+    LiveRuntimePositionContext,
+    Order,
+    Position,
+    Ticker,
+    Trade,
+)
 from botragram.repositories import OrderRepository, PositionRepository, TradeRepository
+from botragram.services.live_market_stream_service import (
+    LiveMarketStreamService,
+    MarketTickListener,
+)
 
 __all__ = ["MarketTickListener", "TelegramQueryService"]
 
@@ -42,14 +56,6 @@ class MarketTickerProvider(Protocol):
         """Return whether the WebSocket transport is ready."""
         ...
 
-    def stream_ticker(self, *, symbol: str) -> AsyncIterator[Ticker]:
-        """Stream normalized ticker updates."""
-        ...
-
-    async def unsubscribe(self, *, symbol: str) -> None:
-        """Stop active subscriptions for a symbol."""
-        ...
-
 
 class PaperBalanceProvider(Protocol):
     """Read reconstructed paper balance."""
@@ -67,20 +73,30 @@ class RuntimeSymbolProvider(Protocol):
         """Return the current normalized symbol."""
         ...
 
-    def set_stream_enabled(self, enabled: bool) -> bool:
-        """Record whether a market subscription is active."""
+    @property
+    def interval(self) -> Interval:
+        """Return the selected market interval."""
         ...
 
-    def record_stream_tick(self, *, price: Decimal) -> None:
-        """Record one market-stream ticker event."""
+    @property
+    def strategy_type(self) -> StrategyType:
+        """Return the selected trading strategy."""
         ...
 
 
-class MarketTickListener(Protocol):
-    """Consume validated market ticks without owning the stream lifecycle."""
+class LiveRuntimeHealthProvider(Protocol):
+    """Read immutable recovered LIVE runtime health for presentation."""
 
-    async def on_market_tick(self, *, ticker: Ticker) -> None:
-        """Process one normalized ticker event."""
+    def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
+        """Return the current read-only operational health snapshot."""
+        ...
+
+
+class AutonomousLiveRecoveryObservabilityProvider(Protocol):
+    """Read durable autonomous recovery state for presentation only."""
+
+    async def get_snapshot(self) -> AutonomousLiveRecoverySnapshot:
+        """Return a read-only durable recovery snapshot."""
         ...
 
 
@@ -94,21 +110,15 @@ class TelegramQueryService:
     position_repository: PositionRepository
     trade_repository: TradeRepository
     order_repository: OrderRepository
+    market_stream_service: LiveMarketStreamService
     quote_asset: str = "USDT"
+    interval: Interval = Interval.M15
+    strategy_type: StrategyType = StrategyType.EMA_CROSS
     runtime_control: RuntimeSymbolProvider | None = None
-    tick_listeners: tuple[MarketTickListener, ...] = ()
-    _stream_task: asyncio.Task[None] | None = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
-    _stream_symbol: str | None = field(default=None, init=False)
-    _last_stream_price: Decimal = field(default=_DECIMAL_ZERO, init=False)
-    _first_tick_event: asyncio.Event = field(
-        default_factory=asyncio.Event,
-        init=False,
-        repr=False,
-    )
+    live_runtime_health_service: LiveRuntimeHealthProvider | None = None
+    autonomous_live_recovery_observability_service: (
+        AutonomousLiveRecoveryObservabilityProvider | None
+    ) = None
     _trading_symbols: tuple[str, ...] = field(default=(), init=False, repr=False)
     _symbols_expire_monotonic: float = field(default=0.0, init=False, repr=False)
 
@@ -130,6 +140,18 @@ class TelegramQueryService:
     async def get_positions(self) -> Sequence[Position]:
         """Return all persisted active paper positions."""
         return await self.position_repository.get_open_positions()
+
+    def get_live_runtime_health(self) -> LiveRuntimeHealthSnapshot | None:
+        """Return the read-only recovered LIVE runtime health when configured."""
+        service = self.live_runtime_health_service
+        return service.get_snapshot() if service is not None else None
+
+    async def get_autonomous_live_recovery(
+        self,
+    ) -> AutonomousLiveRecoverySnapshot | None:
+        """Return durable autonomous recovery status without reconciliation."""
+        service = self.autonomous_live_recovery_observability_service
+        return await service.get_snapshot() if service is not None else None
 
     async def get_trading_symbols(self) -> Sequence[str]:
         """Return cached exchange-supported symbols for the quote asset."""
@@ -183,14 +205,15 @@ class TelegramQueryService:
 
     async def get_last_price(self) -> Decimal:
         """Return public ticker price, falling back to a persisted position mark."""
+        stream_state = self._get_singular_stream_state()
         symbol = (
-            self.runtime_control.symbol
-            if self.runtime_control is not None
-            else self.symbol
+            stream_state.identity.symbol
+            if stream_state is not None
+            else self._get_runtime_context().symbol
         )
 
-        if self._stream_symbol == symbol and self._last_stream_price > 0:
-            return self._last_stream_price
+        if stream_state is not None and stream_state.last_price is not None:
+            return stream_state.last_price
 
         try:
             ticker = await self.market_service.get_ticker(symbol=symbol)
@@ -209,29 +232,21 @@ class TelegramQueryService:
         return self.market_service.is_stream_connected
 
     async def start_market_stream(self) -> bool:
-        """Start one background ticker subscription for the selected symbol."""
-        task = self._stream_task
+        """Delegate one selected ticker subscription to the stream owner."""
+        context = self._get_runtime_context()
+        identity = LiveMarketStreamIdentity.from_runtime_context(context=context)
+        existing_stream = self._get_singular_stream_state()
 
-        if task is not None and not task.done():
+        if existing_stream is not None:
+            if existing_stream.identity != identity:
+                raise RuntimeError(
+                    "Cannot start a Telegram market stream while another stream "
+                    "identity is owned"
+                )
             return False
 
-        symbol = (
-            self.runtime_control.symbol
-            if self.runtime_control is not None
-            else self.symbol
-        )
-        self._stream_symbol = symbol
-        self._last_stream_price = _DECIMAL_ZERO
-        self._first_tick_event.clear()
-        self._stream_task = asyncio.create_task(
-            self._consume_market_stream(symbol=symbol),
-            name=f"telegram-market-stream:{symbol}",
-        )
-
-        if self.runtime_control is not None:
-            self.runtime_control.set_stream_enabled(True)
-
-        _LOGGER.info("Telegram market stream started: symbol=%s", symbol)
+        await self.market_stream_service.start(context=context)
+        _LOGGER.info("Telegram market stream delegated: symbol=%s", identity.symbol)
         return True
 
     async def wait_for_first_stream_tick(
@@ -239,80 +254,60 @@ class TelegramQueryService:
         *,
         timeout_seconds: float = _FIRST_TICK_TIMEOUT_SECONDS,
     ) -> bool:
-        """Wait briefly for the active subscription's first validated tick."""
-        if timeout_seconds <= 0:
-            raise ValueError("First-tick timeout must be greater than zero")
+        """Delegate first-tick readiness to the singular stream owner."""
+        stream_state = self._get_singular_stream_state()
 
-        task = self._stream_task
-
-        if task is None or task.done():
+        if stream_state is None:
             return False
 
-        if self._first_tick_event.is_set():
-            return True
-
-        try:
-            async with asyncio.timeout(timeout_seconds):
-                await self._first_tick_event.wait()
-        except TimeoutError:
-            return False
-
-        return True
+        return await self.market_stream_service.wait_for_first_tick(
+            identity=stream_state.identity,
+            timeout_seconds=timeout_seconds,
+        )
 
     async def stop_market_stream(self) -> bool:
-        """Stop the background ticker subscription if it is active."""
-        task = self._stream_task
-        symbol = self._stream_symbol
+        """Delegate singular stream stop to the stream lifecycle owner."""
+        stream_state = self._get_singular_stream_state()
 
-        if task is None or task.done():
-            if self.runtime_control is not None:
-                self.runtime_control.set_stream_enabled(False)
+        if stream_state is None:
             return False
 
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-
-        if symbol is not None:
-            await self.market_service.unsubscribe(symbol=symbol)
-
-        self._stream_task = None
-        self._stream_symbol = None
-
-        if self.runtime_control is not None:
-            self.runtime_control.set_stream_enabled(False)
-
-        _LOGGER.info("Telegram market stream stopped: symbol=%s", symbol)
-        return True
+        return await self.market_stream_service.stop(identity=stream_state.identity)
 
     async def close(self) -> None:
-        """Release the optional background market subscription."""
-        await self.stop_market_stream()
+        """Release Telegram resources without owning stream shutdown."""
 
-    async def _consume_market_stream(self, *, symbol: str) -> None:
-        """Keep the latest streamed price available to Telegram queries."""
-        try:
-            async for ticker in self.market_service.stream_ticker(symbol=symbol):
-                self._last_stream_price = ticker.last_price
-                self._first_tick_event.set()
+    def _get_singular_stream_state(self) -> LiveMarketStreamState | None:
+        """Return exactly one owner state or reject ambiguous compatibility use."""
+        states = self.market_stream_service.stream_states
 
-                if self.runtime_control is not None:
-                    self.runtime_control.record_stream_tick(
-                        price=ticker.last_price,
-                    )
+        if not states:
+            return None
 
-                for listener in self.tick_listeners:
-                    try:
-                        await listener.on_market_tick(ticker=ticker)
-                    except Exception:
-                        _LOGGER.exception(
-                            "Market tick listener failed: symbol=%s listener=%s",
-                            symbol,
-                            type(listener).__name__,
-                        )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            _LOGGER.exception("Telegram market stream failed: symbol=%s", symbol)
-        finally:
-            if self.runtime_control is not None:
-                self.runtime_control.set_stream_enabled(False)
+        if len(states) != 1:
+            raise RuntimeError(
+                "Telegram singular stream compatibility is unavailable for "
+                "multiple owned streams"
+            )
+
+        return states[0]
+
+    def _get_runtime_context(self) -> LiveRuntimePositionContext:
+        """Build the selected singular runtime context for stream delegation."""
+        runtime_control = self.runtime_control
+
+        return LiveRuntimePositionContext(
+            symbol=runtime_control.symbol
+            if runtime_control is not None
+            else self.symbol,
+            interval=(
+                runtime_control.interval
+                if runtime_control is not None
+                else self.interval
+            ),
+            strategy_type=(
+                runtime_control.strategy_type
+                if runtime_control is not None
+                else self.strategy_type
+            ),
+        )

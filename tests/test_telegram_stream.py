@@ -9,12 +9,16 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import cast
 
-from botragram.models import Ticker
+import pytest
+
+from botragram.enums import Interval, StrategyType
+from botragram.models import LiveRuntimePositionContext, Ticker
 from botragram.repositories import (
     OrderRepository,
     PositionRepository,
     TradeRepository,
 )
+from botragram.services.live_market_stream_service import LiveMarketStreamService
 from botragram.telegram.query_service import TelegramQueryService
 
 
@@ -24,6 +28,7 @@ class FakeStreamMarketService:
 
     ticker_published: asyncio.Event = field(default_factory=asyncio.Event)
     trading_symbol_calls: int = 0
+    stream_calls: list[str] = field(default_factory=list[str])
     unsubscribe_calls: list[str] = field(default_factory=list[str])
 
     @property
@@ -43,6 +48,7 @@ class FakeStreamMarketService:
 
     async def stream_ticker(self, *, symbol: str) -> AsyncIterator[Ticker]:
         """Yield one streamed ticker and wait indefinitely."""
+        self.stream_calls.append(symbol)
         yield _create_ticker(symbol=symbol, price=Decimal("101"))
         self.ticker_published.set()
         await asyncio.Event().wait()
@@ -57,6 +63,8 @@ class FakeRuntimeStreamControl:
     """Expose selected symbol and capture subscription state."""
 
     symbol: str = "BTCUSDT"
+    interval: Interval = Interval.M15
+    strategy_type: StrategyType = StrategyType.EMA_CROSS
     stream_enabled: bool = False
     stream_prices: list[Decimal] = field(default_factory=list[Decimal])
 
@@ -69,6 +77,17 @@ class FakeRuntimeStreamControl:
     def record_stream_tick(self, *, price: Decimal) -> None:
         """Record one streamed ticker price."""
         self.stream_prices.append(price)
+
+
+@dataclass(slots=True)
+class FakeTickListener:
+    """Record delegated ticker delivery without owning the stream."""
+
+    prices: list[Decimal] = field(default_factory=list[Decimal])
+
+    async def on_market_tick(self, *, ticker: Ticker) -> None:
+        """Record the exact ticker price once."""
+        self.prices.append(ticker.last_price)
 
 
 @dataclass(slots=True)
@@ -100,6 +119,12 @@ async def _run_stream_lifecycle_test() -> None:
     """Start and stop a background ticker subscription."""
     market_service = FakeStreamMarketService()
     runtime_control = FakeRuntimeStreamControl()
+    tick_listener = FakeTickListener()
+    stream_owner = LiveMarketStreamService(
+        market_service=market_service,
+        runtime_control=runtime_control,
+        tick_listeners=(tick_listener,),
+    )
     unused_repository = object()
     service = TelegramQueryService(
         symbol="BTCUSDT",
@@ -108,15 +133,22 @@ async def _run_stream_lifecycle_test() -> None:
         position_repository=cast(PositionRepository, unused_repository),
         trade_repository=cast(TradeRepository, unused_repository),
         order_repository=cast(OrderRepository, unused_repository),
+        market_stream_service=stream_owner,
         runtime_control=runtime_control,
     )
 
+    assert not hasattr(service, "_stream_task")
+    assert not hasattr(service, "_first_tick_event")
+    assert not await service.stop_market_stream()
+    assert not await service.wait_for_first_stream_tick(timeout_seconds=1.0)
     assert await service.start_market_stream()
     assert await service.wait_for_first_stream_tick(timeout_seconds=1.0)
     await asyncio.wait_for(market_service.ticker_published.wait(), timeout=1.0)
 
     assert runtime_control.stream_enabled
+    assert market_service.stream_calls == ["BTCUSDT"]
     assert runtime_control.stream_prices == [Decimal("101")]
+    assert tick_listener.prices == [Decimal("101")]
     assert await service.get_last_price() == Decimal("101")
     assert tuple(await service.get_trading_symbols()) == ("BTCUSDT", "ETHUSDT")
     assert tuple(await service.get_trading_symbols()) == ("BTCUSDT", "ETHUSDT")
@@ -124,3 +156,84 @@ async def _run_stream_lifecycle_test() -> None:
     assert await service.stop_market_stream()
     assert not runtime_control.stream_enabled
     assert market_service.unsubscribe_calls == ["BTCUSDT"]
+    await service.close()
+    assert market_service.unsubscribe_calls == ["BTCUSDT"]
+
+
+def test_owner_shutdown_stops_telegram_stream_once() -> None:
+    """Verify provider-style owner shutdown is the only stream cleanup path."""
+    asyncio.run(_run_owner_shutdown_test())
+
+
+async def _run_owner_shutdown_test() -> None:
+    """Start through Telegram then stop through the canonical owner once."""
+    market_service = FakeStreamMarketService()
+    runtime_control = FakeRuntimeStreamControl()
+    stream_owner = LiveMarketStreamService(
+        market_service=market_service,
+        runtime_control=runtime_control,
+    )
+    unused_repository = object()
+    service = TelegramQueryService(
+        symbol="BTCUSDT",
+        market_service=market_service,
+        paper_trading_service=FakePaperBalanceProvider(),
+        position_repository=cast(PositionRepository, unused_repository),
+        trade_repository=cast(TradeRepository, unused_repository),
+        order_repository=cast(OrderRepository, unused_repository),
+        market_stream_service=stream_owner,
+        runtime_control=runtime_control,
+    )
+
+    assert await service.start_market_stream()
+    assert await service.wait_for_first_stream_tick(timeout_seconds=1.0)
+    await stream_owner.stop_all()
+    await service.close()
+
+    assert market_service.unsubscribe_calls == ["BTCUSDT"]
+
+
+def test_telegram_stream_compatibility_rejects_multiple_owned_streams() -> None:
+    """Verify singular Telegram wrappers never choose a stream arbitrarily."""
+    asyncio.run(_run_multi_stream_ambiguity_test())
+
+
+async def _run_multi_stream_ambiguity_test() -> None:
+    """Install two owner streams before invoking singular Telegram compatibility."""
+    market_service = FakeStreamMarketService()
+    runtime_control = FakeRuntimeStreamControl()
+    stream_owner = LiveMarketStreamService(
+        market_service=market_service,
+        runtime_control=runtime_control,
+    )
+    unused_repository = object()
+    service = TelegramQueryService(
+        symbol="BTCUSDT",
+        market_service=market_service,
+        paper_trading_service=FakePaperBalanceProvider(),
+        position_repository=cast(PositionRepository, unused_repository),
+        trade_repository=cast(TradeRepository, unused_repository),
+        order_repository=cast(OrderRepository, unused_repository),
+        market_stream_service=stream_owner,
+        runtime_control=runtime_control,
+    )
+    await stream_owner.start(
+        context=LiveRuntimePositionContext(
+            symbol="BTCUSDT",
+            interval=Interval.M15,
+            strategy_type=StrategyType.EMA_CROSS,
+        ),
+    )
+    await stream_owner.start(
+        context=LiveRuntimePositionContext(
+            symbol="ETHUSDT",
+            interval=Interval.H1,
+            strategy_type=StrategyType.EMA_CROSS,
+        ),
+    )
+    await asyncio.wait_for(market_service.ticker_published.wait(), timeout=1.0)
+
+    with pytest.raises(RuntimeError, match="multiple owned streams"):
+        await service.stop_market_stream()
+
+    await stream_owner.stop_all()

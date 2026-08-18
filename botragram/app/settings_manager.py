@@ -29,6 +29,7 @@ from botragram.config.settings import Settings
 from botragram.config.strategy_settings import StrategySettings
 from botragram.config.telegram_settings import TelegramSettings
 from botragram.enums import (
+    ExchangeEnvironment,
     ExchangeType,
     ExecutionPolicy,
     LogLevel,
@@ -98,6 +99,9 @@ class SettingsManager:
             ),
             autonomous_execution_enabled=(
                 self._environment_provider.get_autonomous_execution_enabled()
+            ),
+            autonomous_live_entry_enabled=(
+                self._environment_provider.get_autonomous_live_entry_enabled()
             ),
             execution_policy=(
                 self._parse_enum(
@@ -184,6 +188,14 @@ class SettingsManager:
             ema_scalping_take_profit_pct=self._parse_decimal(
                 raw_value=environment.get_ema_scalping_take_profit_pct(),
                 setting_name="EMA_SCALPING_TAKE_PROFIT_PCT",
+            ),
+            max_open_positions=self._parse_positive_int(
+                raw_value=environment.get_max_open_positions(),
+                setting_name="MAX_OPEN_POSITIONS",
+            ),
+            max_position_size_usdt=self._parse_decimal(
+                raw_value=environment.get_max_position_size_usdt(),
+                setting_name="MAX_POSITION_SIZE_USDT",
             ),
         )
 
@@ -272,6 +284,28 @@ class SettingsManager:
                 "in paper mode"
             )
 
+        if policy is ExecutionPolicy.AUTONOMOUS_LIVE:
+            if settings.app.trade_mode is not TradeMode.LIVE:
+                raise ValueError("Autonomous LIVE execution requires LIVE mode")
+
+            if settings.exchange.market_type is not MarketType.FUTURES:
+                raise ValueError("Autonomous LIVE execution requires FUTURES")
+
+            if settings.exchange.environment is not ExchangeEnvironment.TESTNET:
+                raise ValueError("Autonomous LIVE execution requires TESTNET")
+
+            if not settings.app.autonomous_live_entry_enabled:
+                raise ValueError("Autonomous LIVE execution requires explicit opt-in")
+
+        if settings.app.autonomous_live_entry_enabled:
+            if settings.app.trade_mode is not TradeMode.LIVE:
+                raise ValueError(
+                    "Autonomous LIVE entry authorization requires LIVE mode"
+                )
+
+            if settings.exchange.environment is not ExchangeEnvironment.TESTNET:
+                raise ValueError("Autonomous LIVE entry authorization requires TESTNET")
+
         if settings.telegram.enabled and not settings.telegram.bot_token:
             raise ValueError("Enabled Telegram integration requires a bot token")
 
@@ -339,5 +373,22 @@ class SettingsManager:
 
         if not value.is_finite():
             raise ValueError(f"Environment variable {setting_name!r} must be finite")
+
+        return value
+
+    @staticmethod
+    def _parse_positive_int(*, raw_value: str, setting_name: str) -> int:
+        """Parse one strictly positive integer configuration value."""
+        try:
+            value = int(raw_value)
+        except ValueError as error:
+            raise ValueError(
+                f"Environment variable {setting_name!r} must be an integer"
+            ) from error
+
+        if value <= 0:
+            raise ValueError(
+                f"Environment variable {setting_name!r} must be greater than zero"
+            )
 
         return value

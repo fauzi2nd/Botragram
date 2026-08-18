@@ -47,12 +47,14 @@ class AppSettings:
     trade_mode: TradeMode = TradeMode.PAPER
     execution_policy: ExecutionPolicy | None = None
     autonomous_execution_enabled: bool = False
+    autonomous_live_entry_enabled: bool = False
     database_path: Path = Path("data") / "botragram.db"
 
     def __post_init__(self) -> None:
         """Reject ambiguous explicit and legacy execution-policy combinations."""
         if self.autonomous_execution_enabled and self.execution_policy in (
             ExecutionPolicy.SINGLE_SYMBOL,
+            ExecutionPolicy.AUTONOMOUS_LIVE,
             ExecutionPolicy.HUMAN_CONFIRMED_PAPER,
         ):
             raise ValueError(

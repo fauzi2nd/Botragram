@@ -81,6 +81,18 @@ class OrderService:
 
         return order
 
+    async def normalize_futures_market_quantity(
+        self,
+        *,
+        symbol: str,
+        quantity: Decimal,
+    ) -> Decimal:
+        """Return a venue-valid Futures MARKET quantity before persistence."""
+        return await self.order_engine.normalize_futures_market_quantity(
+            symbol=self._normalize_symbol(symbol),
+            quantity=quantity,
+        )
+
     async def cancel(
         self,
         *,

@@ -26,8 +26,10 @@ from typing import Final, Protocol
 # =============================================================================
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.models import (
+    AutonomousLiveRecoverySnapshot,
     ExecutionAuthorization,
     ExecutionAuthorizationOutcome,
+    LiveRuntimeHealthSnapshot,
     Order,
     Position,
     Trade,
@@ -75,6 +77,16 @@ class BotQueryProvider(Protocol):
 
     async def get_last_price(self) -> Decimal:
         """Return the latest available market price."""
+        ...
+
+    def get_live_runtime_health(self) -> LiveRuntimeHealthSnapshot | None:
+        """Return a read-only runtime health snapshot when available."""
+        ...
+
+    async def get_autonomous_live_recovery(
+        self,
+    ) -> AutonomousLiveRecoverySnapshot | None:
+        """Return durable autonomous recovery state when available."""
         ...
 
     def is_stream_transport_connected(self) -> bool:

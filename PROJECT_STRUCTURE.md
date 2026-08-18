@@ -16,6 +16,8 @@ Botragram/
 |-- data/                      # SQLite runtime data; ignored by Git
 |-- logs/                      # Runtime logs; ignored by Git
 |-- .env.example              # Public environment-variable template
+|-- .env.autonomous_testnet_soak.example # Explicit autonomous TESTNET soak base
+|-- .env.autonomous_testnet_soak.testnet.example # TESTNET credential template
 |-- .env.mainnet.example      # Mainnet credential template
 |-- .env.testnet.example      # Testnet credential template
 |-- .gitignore
@@ -44,7 +46,7 @@ botragram/
 |   |-- shutdown.py
 |   |-- startup.py
 |   |-- terminal_monitor.py    # Rich status/stream/log dashboard
-|   `-- trading_runner.py
+|   `-- trading_runner.py        # Single-symbol and global cycle orchestration
 |-- config/
 |   |-- ai_settings.py
 |   |-- app_settings.py
@@ -77,7 +79,9 @@ botragram/
 |   |-- risk_engine.py
 |   |-- signal_engine.py
 |   `-- trading_engine.py
-|-- enums/                     # Closed domain choices
+|-- enums/                     # Closed domain choices, including exchange_environment.py
+|   |-- autonomous_live_entry_execution_status.py # Typed protected-entry outcome
+|   `-- autonomous_live_entry_intent_status.py # Typed autonomous intent outcome
 |-- exceptions/                # Project-specific exception hierarchy
 |-- exchanges/
 |   |-- factory.py
@@ -102,22 +106,37 @@ botragram/
 |   |-- volatility/
 |   `-- volume/
 |-- models/                    # Immutable domain/data models
+|   |-- autonomous_live_entry_authorization.py # TESTNET-only future-entry capability
+|   |-- autonomous_live_entry_execution.py # Typed protected-entry execution result
+|   |-- autonomous_live_entry_intent.py # Transient authorized TESTNET entry intent
+|   |-- autonomous_live_recovery_snapshot.py # Immutable durable recovery status
+|   |-- live_entry_risk_evaluation.py # Immutable fresh LIVE risk decision
 |   `-- backtest.py            # Backtest request, trade, metrics, dan result
+|   |-- live_market_stream_identity.py # LIVE ticker subscription identity
+|   |-- live_market_stream_state.py # Immutable per-stream telemetry snapshot
+|   |-- live_runtime_health_snapshot.py # Read-only recovered LIVE health snapshot
 |   |-- live_runtime_position_context.py # One recovered LIVE runtime context
 |   `-- live_runtime_portfolio_context.py # Immutable recovered LIVE portfolio
 |-- repositories/              # Persistence interfaces, including submission attempts
 |-- services/
 |   |-- account_service.py
+|   |-- autonomous_live_entry_execution_service.py # Fresh-risk protected TESTNET entry adapter
+|   |-- autonomous_live_entry_intent_service.py # Pure TESTNET intent authorization
+|   |-- autonomous_live_recovery_observability_service.py # Read-only recovery view
+|   |-- live_entry_risk_evaluation_service.py # Authoritative portfolio/balance decision
 |   |-- autonomous_paper_execution_service.py # Ranked PAPER candidate execution
 |   |-- backtest_service.py   # Paginated historical candle orchestration
 |   |-- execution_authorization_service.py # PAPER human-approval boundary
 |   |-- health_service.py
 |   |-- human_confirmed_paper_execution_service.py # Discovery-to-approval orchestration
 |   |-- market_service.py
+|   |-- live_market_stream_service.py # Production 0/1/N LIVE stream ownership
 |   |-- live_futures_entry_service.py # Protected Futures MARKET entry workflow
 |   |-- live_post_entry_recovery_service.py # ACKNOWLEDGED entry recovery core
 |   |-- live_position_protection_service.py # Shared LIVE SL/TP reconciliation
+|   |-- live_protection_monitoring_service.py # Production 0/1/N protection monitor owner
 |   |-- live_portfolio_recovery_service.py # LIVE portfolio safety recovery
+|   |-- live_runtime_health_service.py # Derived recovered LIVE health aggregation
 |   |-- live_submission_recovery_service.py # GET-only incomplete entry recovery
 |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |-- order_service.py

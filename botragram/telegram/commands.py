@@ -54,7 +54,7 @@ from botragram.constants.telegram import (
     MENU_TEST,
     MENU_TRADING,
 )
-from botragram.models import Order, Trade
+from botragram.models import LiveRuntimeHealthSnapshot, Order, Trade
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import (
     BOT_CONTEXT_KEY,
@@ -155,6 +155,13 @@ def _get_runtime_strategy(context: BotContext) -> str:
     """Return the actively selected runtime strategy name."""
     control = context.runtime_control
     return control.strategy_type.value if control is not None else context.strategy_name
+
+
+def _uses_multi_context_runtime(
+    health: LiveRuntimeHealthSnapshot | None,
+) -> bool:
+    """Return whether legacy singular presentation values are unsafe to read."""
+    return health is not None and len(health.contexts) > 1
 
 
 def _is_runtime_confirmed(context: BotContext, requirement: str) -> bool:
@@ -322,14 +329,19 @@ async def status_command(
         ctx = _get_context(context)
         last_price = ctx.last_price
         available_balance: Decimal | None = None
+        live_runtime_health = None
+        autonomous_live_recovery = None
         positions = ctx.positions
         provider = ctx.query_provider
 
         if provider is not None:
             try:
+                live_runtime_health = provider.get_live_runtime_health()
+                autonomous_live_recovery = await provider.get_autonomous_live_recovery()
                 positions = tuple(await provider.get_positions())
-                last_price = await provider.get_last_price()
                 available_balance = await provider.get_available_balance()
+                if not _uses_multi_context_runtime(live_runtime_health):
+                    last_price = await provider.get_last_price()
             except Exception:
                 logger.exception("Telegram status query failed")
                 await _reply_data_unavailable(update)
@@ -338,7 +350,11 @@ async def status_command(
         msg = get_status_message(
             is_running=ctx.is_running,
             trade_mode=ctx.trade_mode,
-            symbol=_get_runtime_symbol(ctx),
+            symbol=(
+                None
+                if _uses_multi_context_runtime(live_runtime_health)
+                else _get_runtime_symbol(ctx)
+            ),
             last_price=last_price,
             available_balance=available_balance,
             open_position_count=len(positions),
@@ -349,15 +365,21 @@ async def status_command(
             ),
             exchange_type=ctx.exchange_type,
             market_type=ctx.market_type,
-            strategy_name=_get_runtime_strategy(ctx),
+            strategy_name=(
+                None
+                if _uses_multi_context_runtime(live_runtime_health)
+                else _get_runtime_strategy(ctx)
+            ),
             interval=(
                 ctx.runtime_control.interval.value
                 if ctx.runtime_control is not None
+                and not _uses_multi_context_runtime(live_runtime_health)
                 else None
             ),
             stream_active=(
                 ctx.runtime_control.stream_enabled
                 if ctx.runtime_control is not None
+                and not _uses_multi_context_runtime(live_runtime_health)
                 else None
             ),
             total_unrealized_pnl=sum(
@@ -365,8 +387,12 @@ async def status_command(
                 start=Decimal("0"),
             ),
             missing_configuration_requirements=(
-                _get_missing_configuration_requirements(ctx)
+                ()
+                if _uses_multi_context_runtime(live_runtime_health)
+                else _get_missing_configuration_requirements(ctx)
             ),
+            live_runtime_health=live_runtime_health,
+            autonomous_live_recovery=autonomous_live_recovery,
         )
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 

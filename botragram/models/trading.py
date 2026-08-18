@@ -46,6 +46,7 @@ class TradingDecision:
     signal: Signal
     risk_result: RiskResult | None
     reason: str = ""
+    requires_portfolio_reconciliation: bool = False
 
 
 @dataclass(

@@ -18,13 +18,14 @@ from __future__ import annotations
 # =============================================================================
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Protocol
 
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.enums import OrderSide, OrderType, SignalType
-from botragram.exchanges.base import BaseExchangeClient
-from botragram.models import Order, RiskResult, Signal
+from botragram.exceptions import VenueRuleValidationError
+from botragram.models import ExchangeSymbolRules, Order, RiskResult, Signal, Ticker
 
 __all__ = [
     "OrderEngine",
@@ -35,6 +36,45 @@ __all__ = [
 # Constants
 # =============================================================================
 _DECIMAL_ZERO = Decimal("0")
+
+
+class OrderExchangeClient(Protocol):
+    """Provide the narrow exchange operations owned by the order engine."""
+
+    async def get_ticker(self, *, symbol: str) -> Ticker:
+        """Return a current typed market reference price."""
+        ...
+
+    async def get_market_entry_rules(self, *, symbol: str) -> ExchangeSymbolRules:
+        """Return authoritative MARKET quantity rules."""
+        ...
+
+    async def create_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        order_type: OrderType,
+        quantity: Decimal,
+        price: Decimal | None = None,
+        client_order_id: str | None = None,
+    ) -> Order:
+        """Create one order."""
+        ...
+
+    async def cancel_order(self, *, symbol: str, order_id: str) -> Order:
+        """Cancel one order."""
+        ...
+
+    async def get_order(self, *, symbol: str, order_id: str) -> Order:
+        """Return one order."""
+        ...
+
+    async def get_order_by_client_order_id(
+        self, *, symbol: str, client_order_id: str
+    ) -> Order:
+        """Return one order by client identity."""
+        ...
 
 
 # =============================================================================
@@ -48,7 +88,7 @@ _DECIMAL_ZERO = Decimal("0")
 class OrderEngine:
     """Create and manage orders through an exchange client."""
 
-    exchange_client: BaseExchangeClient
+    exchange_client: OrderExchangeClient
 
     async def submit(
         self,
@@ -88,6 +128,30 @@ class OrderEngine:
             price=price,
             client_order_id=client_order_id,
         )
+
+    async def normalize_futures_market_quantity(
+        self,
+        *,
+        symbol: str,
+        quantity: Decimal,
+    ) -> Decimal:
+        """Normalize and validate a Futures MARKET quantity before mutation."""
+        rules = await self.exchange_client.get_market_entry_rules(symbol=symbol)
+        ticker = await self.exchange_client.get_ticker(symbol=symbol)
+        normalized_quantity = self._round_down(
+            quantity=quantity,
+            step=rules.market_quantity_step,
+        )
+        self._validate_market_quantity(
+            quantity=normalized_quantity,
+            reference_price=ticker.last_price,
+            symbol=symbol,
+            minimum_quantity=rules.market_min_quantity,
+            maximum_quantity=rules.market_max_quantity,
+            step=rules.market_quantity_step,
+            minimum_notional=rules.minimum_notional,
+        )
+        return normalized_quantity
 
     async def cancel(
         self,
@@ -169,6 +233,49 @@ class OrderEngine:
 
         if price is not None and price <= _DECIMAL_ZERO:
             raise ValueError("Order price must be greater than zero")
+
+    @staticmethod
+    def _round_down(*, quantity: Decimal, step: Decimal) -> Decimal:
+        """Round quantity downward to the exact exchange step grid."""
+        if quantity <= _DECIMAL_ZERO:
+            raise VenueRuleValidationError("Venue quantity must be greater than zero")
+        if step <= _DECIMAL_ZERO:
+            raise VenueRuleValidationError(
+                "Venue quantity step must be greater than zero"
+            )
+        return (quantity // step) * step
+
+    @staticmethod
+    def _validate_market_quantity(
+        *,
+        quantity: Decimal,
+        reference_price: Decimal,
+        symbol: str,
+        minimum_quantity: Decimal,
+        maximum_quantity: Decimal,
+        step: Decimal,
+        minimum_notional: Decimal | None,
+    ) -> None:
+        """Reject an invalid venue quantity without clamping exposure upward."""
+        if quantity <= _DECIMAL_ZERO:
+            raise VenueRuleValidationError("Venue-normalized quantity is zero")
+        if quantity < minimum_quantity:
+            raise VenueRuleValidationError("Venue quantity is below the minimum")
+        if quantity > maximum_quantity:
+            raise VenueRuleValidationError("Venue quantity exceeds the maximum")
+        if quantity % step != _DECIMAL_ZERO:
+            raise VenueRuleValidationError("Venue quantity is not step-aligned")
+        if reference_price <= _DECIMAL_ZERO:
+            raise VenueRuleValidationError(
+                "Venue reference price must be greater than zero"
+            )
+        if (
+            minimum_notional is not None
+            and quantity * reference_price < minimum_notional
+        ):
+            raise VenueRuleValidationError(
+                f"Venue quantity for {symbol!r} is below the minimum notional"
+            )
 
     @staticmethod
     def _resolve_order_side(

@@ -35,4 +35,5 @@ class ExecutionPolicy(BaseEnum):
 
     SINGLE_SYMBOL = "single_symbol"
     AUTONOMOUS_PAPER = "autonomous_paper"
+    AUTONOMOUS_LIVE = "autonomous_live"
     HUMAN_CONFIRMED_PAPER = "human_confirmed_paper"

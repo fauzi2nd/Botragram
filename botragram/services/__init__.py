@@ -1,4 +1,13 @@
 from botragram.services.account_service import AccountService
+from botragram.services.autonomous_live_entry_execution_service import (
+    AutonomousLiveEntryExecutionService,
+)
+from botragram.services.autonomous_live_entry_intent_service import (
+    AutonomousLiveEntryIntentService,
+)
+from botragram.services.autonomous_live_recovery_observability_service import (
+    AutonomousLiveRecoveryObservabilityService,
+)
 from botragram.services.autonomous_paper_execution_service import (
     AutonomousPaperExecutionService,
 )
@@ -9,7 +18,14 @@ from botragram.services.health_service import HealthReport, HealthService
 from botragram.services.human_confirmed_paper_execution_service import (
     HumanConfirmedPaperExecutionService,
 )
+from botragram.services.live_entry_risk_evaluation_service import (
+    LiveEntryRiskEvaluationService,
+)
 from botragram.services.live_futures_entry_service import LiveFuturesEntryService
+from botragram.services.live_market_stream_service import (
+    LiveMarketStreamService,
+    MarketTickListener,
+)
 from botragram.services.live_portfolio_recovery_service import (
     LivePortfolioRecoveryService,
 )
@@ -20,6 +36,10 @@ from botragram.services.live_post_entry_recovery_service import (
     LivePostEntryRecoveryResult,
     LivePostEntryRecoveryService,
 )
+from botragram.services.live_protection_monitoring_service import (
+    LiveProtectionMonitoringService,
+)
+from botragram.services.live_runtime_health_service import LiveRuntimeHealthService
 from botragram.services.live_submission_recovery_service import (
     LiveSubmissionRecoveryResult,
     LiveSubmissionRecoveryService,
@@ -44,14 +64,22 @@ from botragram.services.trading_service import TradingService
 __all__ = [
     "AccountService",
     "AutonomousPaperExecutionService",
+    "AutonomousLiveEntryIntentService",
+    "AutonomousLiveEntryExecutionService",
+    "AutonomousLiveRecoveryObservabilityService",
     "ExecutionAuthorizationService",
     "HealthReport",
     "HealthService",
     "LiveFuturesEntryService",
+    "LiveEntryRiskEvaluationService",
+    "LiveMarketStreamService",
+    "MarketTickListener",
     "LivePostEntryRecoveryResult",
     "LivePostEntryRecoveryService",
     "LivePositionProtectionService",
+    "LiveProtectionMonitoringService",
     "LivePortfolioRecoveryService",
+    "LiveRuntimeHealthService",
     "LiveSubmissionRecoveryResult",
     "LiveSubmissionRecoveryService",
     "HumanConfirmedPaperExecutionService",

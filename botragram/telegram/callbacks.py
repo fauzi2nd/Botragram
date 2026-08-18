@@ -33,6 +33,7 @@ from telegram.ext import ContextTypes
 # =============================================================================
 from botragram.constants.telegram import DEFAULT_PARSE_MODE
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
+from botragram.models import LiveRuntimeHealthSnapshot
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import (
     BOT_CONTEXT_KEY,
@@ -196,6 +197,13 @@ def _get_authorization_identifier(
     return parsed_identifier.hex if parsed_identifier.hex == identifier else None
 
 
+def _uses_multi_context_runtime(
+    health: LiveRuntimeHealthSnapshot | None,
+) -> bool:
+    """Return whether legacy singular presentation values are unsafe to read."""
+    return health is not None and len(health.contexts) > 1
+
+
 async def _handle_execution_authorization_callback(
     *,
     query: CallbackQuery,
@@ -284,25 +292,58 @@ async def handle_callback_query(
     if data in {"cb_status", "cb_back_main"}:
         last_price = bot_context.last_price
         available_balance = None
+        live_runtime_health = None
         positions = bot_context.positions
         provider = bot_context.query_provider
 
         if provider is not None:
             try:
+                live_runtime_health = provider.get_live_runtime_health()
                 positions = tuple(await provider.get_positions())
-                last_price = await provider.get_last_price()
                 available_balance = await provider.get_available_balance()
+                if not _uses_multi_context_runtime(live_runtime_health):
+                    last_price = await provider.get_last_price()
             except Exception:
                 _LOGGER.exception("Telegram callback status query failed")
+
+        is_multi_context_runtime = _uses_multi_context_runtime(live_runtime_health)
+        runtime_control = bot_context.runtime_control
+        symbol = (
+            None
+            if is_multi_context_runtime
+            else runtime_control.symbol
+            if runtime_control is not None
+            else bot_context.symbol
+        )
+        strategy_name = (
+            None
+            if is_multi_context_runtime
+            else runtime_control.strategy_type.value
+            if runtime_control is not None
+            else bot_context.strategy_name
+        )
+        interval = (
+            runtime_control.interval.value
+            if runtime_control is not None and not is_multi_context_runtime
+            else None
+        )
+        stream_active = (
+            runtime_control.stream_enabled
+            if runtime_control is not None and not is_multi_context_runtime
+            else None
+        )
+        missing_configuration_requirements = (
+            ()
+            if is_multi_context_runtime
+            else runtime_control.get_missing_configuration_requirements()
+            if runtime_control is not None
+            else ("exchange", "market type", "symbol", "interval", "strategy")
+        )
 
         message = get_status_message(
             is_running=bot_context.is_running,
             trade_mode=bot_context.trade_mode,
-            symbol=(
-                bot_context.runtime_control.symbol
-                if bot_context.runtime_control is not None
-                else bot_context.symbol
-            ),
+            symbol=symbol,
             last_price=last_price,
             available_balance=available_balance,
             open_position_count=len(positions),
@@ -313,30 +354,15 @@ async def handle_callback_query(
             ),
             exchange_type=bot_context.exchange_type,
             market_type=bot_context.market_type,
-            strategy_name=(
-                bot_context.runtime_control.strategy_type.value
-                if bot_context.runtime_control is not None
-                else bot_context.strategy_name
-            ),
-            interval=(
-                bot_context.runtime_control.interval.value
-                if bot_context.runtime_control is not None
-                else None
-            ),
-            stream_active=(
-                bot_context.runtime_control.stream_enabled
-                if bot_context.runtime_control is not None
-                else None
-            ),
+            strategy_name=strategy_name,
+            interval=interval,
+            stream_active=stream_active,
             total_unrealized_pnl=sum(
                 (position.unrealized_pnl for position in positions),
                 start=Decimal("0"),
             ),
-            missing_configuration_requirements=(
-                bot_context.runtime_control.get_missing_configuration_requirements()
-                if bot_context.runtime_control is not None
-                else ("exchange", "market type", "symbol", "interval", "strategy")
-            ),
+            missing_configuration_requirements=missing_configuration_requirements,
+            live_runtime_health=live_runtime_health,
         )
         await query.edit_message_text(message, parse_mode=DEFAULT_PARSE_MODE)
     elif data == "cb_positions":

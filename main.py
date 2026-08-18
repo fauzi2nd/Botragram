@@ -67,6 +67,10 @@ async def _run_trading(
         pnl_engine=dependency_provider.pnl_engine,
         trade_mode=settings.app.trade_mode,
         quote_asset=settings.market.quote_asset,
+        live_runtime_health_service=(dependency_provider.live_runtime_health_service),
+        autonomous_live_recovery_observability_service=(
+            dependency_provider.autonomous_live_recovery_observability_service
+        ),
     )
     monitor_task = asyncio.create_task(
         terminal_monitor.run(),
@@ -75,15 +79,29 @@ async def _run_trading(
 
     try:
         await dependency_provider.runtime_recovery_service.recover()
-        minimum_candles = dependency_provider.signal_engine.strategy.minimum_candles
+        runtime_contexts = dependency_provider.runtime_control.runtime_contexts
+        strategy_types = (
+            tuple(context.strategy_type for context in runtime_contexts)
+            if runtime_contexts
+            else (settings.strategy.strategy_type,)
+        )
+        minimum_candles = max(
+            dependency_provider.signal_engine.get_minimum_candles(
+                strategy_type=strategy_type,
+            )
+            for strategy_type in strategy_types
+        )
         runner = TradingRunner(
             executor=dependency_provider.trading_cycle_executor,
-            symbol=dependency_provider.runtime_control.symbol,
-            interval=dependency_provider.runtime_control.interval,
+            symbol=settings.market.symbol,
+            interval=settings.market.interval,
             trade_mode=settings.app.trade_mode,
             candle_limit=max(100, minimum_candles),
             runtime_control=dependency_provider.runtime_control,
             runtime_observer=dependency_provider.runtime_reporter,
+            multi_context_activation_precondition_provider=(
+                dependency_provider.runtime_recovery_service
+            ),
             maximum_consecutive_failures=3,
             failure_retry_delay_seconds=5.0,
         )

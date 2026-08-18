@@ -9,7 +9,7 @@ from decimal import Decimal
 from time import monotonic
 from typing import Final
 
-from botragram.enums import OrderSide, PositionSide, TradeMode
+from botragram.enums import OrderSide, OrderType, PositionSide, TradeMode
 from botragram.exchanges.base import BaseExchangeClient
 from botragram.models import Position, Ticker
 from botragram.repositories import PositionRepository
@@ -79,16 +79,21 @@ class PositionProtectionManager:
                 locked_progress=locked_progress,
             )
 
-            if not self._is_tighter_stop(
-                position=position,
-                replacement_stop=replacement_stop,
-            ):
-                return
-
             position_with_client_id = position
+            final_stop = replacement_stop
             if self.trade_mode is TradeMode.LIVE:
+                final_stop = await self._normalize_live_replacement_stop(
+                    position=position,
+                    raw_stop=replacement_stop,
+                )
+                if not self._is_tighter_stop(
+                    position=position,
+                    replacement_stop=final_stop,
+                ):
+                    return
                 position_with_client_id = replace(
                     position,
+                    stop_loss=final_stop,
                     stop_loss_client_algo_id=Position.create_stop_loss_client_algo_id(),
                 )
                 await self.position_repository.update(
@@ -101,7 +106,7 @@ class PositionProtectionManager:
                         symbol=position_with_client_id.symbol,
                         side=self._closing_side(position_with_client_id.side),
                         quantity=position_with_client_id.quantity,
-                        stop_loss=replacement_stop,
+                        stop_loss=final_stop,
                         client_algo_id=(
                             position_with_client_id.stop_loss_client_algo_id
                         ),
@@ -111,13 +116,18 @@ class PositionProtectionManager:
                         monotonic() + self.failure_retry_seconds
                     )
                     raise
+            elif not self._is_tighter_stop(
+                position=position,
+                replacement_stop=final_stop,
+            ):
+                return
 
             protected_position = replace(
                 position_with_client_id
                 if self.trade_mode is TradeMode.LIVE
                 else position,
                 current_price=ticker.last_price,
-                stop_loss=replacement_stop,
+                stop_loss=final_stop,
                 protection_step=step,
                 updated_at=ticker.timestamp,
             )
@@ -132,8 +142,31 @@ class PositionProtectionManager:
                 step,
                 progress * Decimal("100"),
                 locked_progress * Decimal("100"),
-                replacement_stop,
+                final_stop,
             )
+
+    async def _normalize_live_replacement_stop(
+        self,
+        *,
+        position: Position,
+        raw_stop: Decimal,
+    ) -> Decimal:
+        """Return the final venue trigger before a stepped STOP mutation.
+
+        The same ``ExchangeSymbolRules`` operation used by initial protection is
+        deliberately reused here so durable and exchange trigger prices share
+        one PRICE_FILTER representation.
+        """
+        rules = await self.exchange_client.get_market_entry_rules(
+            symbol=position.symbol,
+        )
+        mark_price = await self.exchange_client.get_mark_price(symbol=position.symbol)
+        return rules.normalize_protection_trigger(
+            raw_trigger_price=raw_stop,
+            position_side=position.side,
+            order_type=OrderType.STOP_MARKET,
+            mark_price=mark_price,
+        )
 
     async def _get_position(self, *, symbol: str) -> Position | None:
         """Refresh the active position at a bounded cadence."""

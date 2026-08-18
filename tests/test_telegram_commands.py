@@ -22,16 +22,22 @@ from botragram.constants.telegram import (
 )
 from botragram.enums import (
     AuthorizationStatus,
+    Interval,
+    LiveRuntimeHealthStatus,
     MarketType,
     OrderSide,
     OrderStatus,
     OrderType,
     PositionSide,
     SignalType,
+    StrategyType,
 )
 from botragram.models import (
+    AutonomousLiveRecoverySnapshot,
     ExecutionAuthorization,
     ExecutionAuthorizationOutcome,
+    LiveRuntimeHealthSnapshot,
+    LiveRuntimePositionContext,
     Order,
     Position,
     Signal,
@@ -139,6 +145,9 @@ class FakeQueryProvider:
     orders: tuple[Order, ...]
     balance: Decimal
     last_price: Decimal
+    live_runtime_health: LiveRuntimeHealthSnapshot | None = None
+    autonomous_live_recovery: AutonomousLiveRecoverySnapshot | None = None
+    last_price_calls: int = 0
 
     async def get_positions(self) -> Sequence[Position]:
         """Return active positions."""
@@ -162,7 +171,18 @@ class FakeQueryProvider:
 
     async def get_last_price(self) -> Decimal:
         """Return current market price."""
+        self.last_price_calls += 1
         return self.last_price
+
+    def get_live_runtime_health(self) -> LiveRuntimeHealthSnapshot | None:
+        """Return the configured read-only LIVE health snapshot."""
+        return self.live_runtime_health
+
+    async def get_autonomous_live_recovery(
+        self,
+    ) -> AutonomousLiveRecoverySnapshot | None:
+        """Return configured durable recovery observability."""
+        return self.autonomous_live_recovery
 
     def is_stream_transport_connected(self) -> bool:
         """Return a ready test WebSocket transport."""
@@ -546,6 +566,85 @@ def test_menu_navigation_switches_between_compact_levels() -> None:
 def test_unconfirmed_status_hides_runtime_defaults() -> None:
     """Keep status consistent with unconfirmed configuration screens."""
     asyncio.run(_run_unconfirmed_status_test())
+
+
+def test_multi_context_status_and_callback_avoid_singular_runtime_access() -> None:
+    """Present every recovered context without selecting a Telegram primary."""
+    asyncio.run(_run_multi_context_status_presentation_test())
+
+
+async def _run_multi_context_status_presentation_test() -> None:
+    """Exercise both status entry points against ambiguous legacy state."""
+    contexts = (
+        LiveRuntimePositionContext(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            strategy_type=StrategyType.EMA_CROSS,
+        ),
+        LiveRuntimePositionContext(
+            symbol="ETHUSDT",
+            interval=Interval.M5,
+            strategy_type=StrategyType.EMA_SCALPING,
+        ),
+    )
+    health = LiveRuntimeHealthSnapshot(
+        status=LiveRuntimeHealthStatus.ACTIVE,
+        reason=None,
+        contexts=contexts,
+        affected_contexts=(),
+        authorization_present=True,
+        authorization_exact=True,
+        runner_paused=False,
+        cycle_in_progress=False,
+        stream_states=(),
+        monitor_states=(),
+    )
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(contexts=contexts)
+    provider = FakeQueryProvider(
+        positions=(),
+        trades=(),
+        orders=(),
+        balance=Decimal("10000"),
+        last_price=Decimal("65000"),
+        live_runtime_health=health,
+    )
+    message = FakeMessage()
+    callback = FakeCallbackQuery(data="cb_status")
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=message,
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=callback,
+        ),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: BotContext(
+                    is_running=True,
+                    trade_mode="LIVE",
+                    query_provider=provider,
+                    runtime_control=control,
+                ),
+            }
+        ),
+    )
+
+    await status_command(update, context)
+    await handle_callback_query(update, context)
+
+    for rendered in (message.replies[-1], callback.replies[-1]):
+        assert "Recovered LIVE Portfolio" in rendered
+        assert "BTCUSDT" in rendered
+        assert "ETHUSDT" in rendered
+        assert "ema_cross" in rendered
+        assert "ema_scalping" in rendered
+        assert "New LIVE Exposure: <b>DISABLED</b>" in rendered
+    assert provider.last_price_calls == 0
 
 
 def test_market_search_returns_selectable_exchange_symbols() -> None:
