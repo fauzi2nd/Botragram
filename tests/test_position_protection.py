@@ -150,6 +150,30 @@ async def test_live_protection_verifies_exchange_before_persisting_step() -> Non
 
 
 @pytest.mark.asyncio
+async def test_live_protection_assigns_a_fresh_identity_to_each_stop_replacement() -> (
+    None
+):
+    """Persist a new durable identity before every distinct LIVE stop mutation."""
+    repository = MemoryPositionRepository()
+    await repository.save(position=_short_position())
+    exchange = RecordingProtectionExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+    await manager.on_market_tick(ticker=_ticker(price="99.4", seconds=2))
+
+    assert len(exchange.stop_client_algo_ids) == 2
+    assert exchange.stop_client_algo_ids[0] is not None
+    assert exchange.stop_client_algo_ids[1] is not None
+    assert exchange.stop_client_algo_ids[0] != exchange.stop_client_algo_ids[1]
+
+
+@pytest.mark.asyncio
 async def test_paper_stream_closes_position_when_stepped_stop_is_hit() -> None:
     """Close on the stream instead of waiting for the next candle cycle."""
     position_repository = MemoryPositionRepository()

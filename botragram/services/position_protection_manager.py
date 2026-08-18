@@ -87,17 +87,14 @@ class PositionProtectionManager:
 
             position_with_client_id = position
             if self.trade_mode is TradeMode.LIVE:
-                if position.stop_loss_client_algo_id is None:
-                    position_with_client_id = replace(
-                        position,
-                        stop_loss_client_algo_id=(
-                            Position.create_stop_loss_client_algo_id()
-                        ),
-                    )
-                    await self.position_repository.update(
-                        position=position_with_client_id,
-                    )
-                    self._cached_position = position_with_client_id
+                position_with_client_id = replace(
+                    position,
+                    stop_loss_client_algo_id=Position.create_stop_loss_client_algo_id(),
+                )
+                await self.position_repository.update(
+                    position=position_with_client_id,
+                )
+                self._cached_position = position_with_client_id
 
                 try:
                     await self.exchange_client.ensure_stop_loss_order(

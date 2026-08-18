@@ -451,6 +451,15 @@ class BinanceExchangeClient(BaseExchangeClient):
         del symbol
         return ()
 
+    async def get_protection_order_by_client_id(
+        self, *, symbol: str, client_id: str
+    ) -> Order:
+        """Reject unsupported Spot conditional-algo lookup semantics."""
+        del symbol, client_id
+        raise NotImplementedError(
+            "Binance Spot protection orders require dedicated OCO support"
+        )
+
     async def ensure_stop_loss_order(
         self,
         *,

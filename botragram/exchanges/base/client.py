@@ -195,6 +195,12 @@ class BaseExchangeClient(ABC):
         """Return currently open conditional protection orders."""
 
     @abstractmethod
+    async def get_protection_order_by_client_id(
+        self, *, symbol: str, client_id: str
+    ) -> Order:
+        """Return one conditional protection order by client identity."""
+
+    @abstractmethod
     async def ensure_stop_loss_order(
         self,
         *,

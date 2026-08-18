@@ -10,13 +10,20 @@ Python:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 
 import aiohttp
 
-from botragram.enums import Interval, OrderSide, OrderType, PositionSide
+from botragram.enums import (
+    Interval,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+)
 from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
@@ -48,6 +55,8 @@ _DEFAULT_TIME_IN_FORCE = "GTC"
 _SUPPORTED_ENTRY_ORDER_TYPES = frozenset({OrderType.MARKET, OrderType.LIMIT})
 _CLIENT_ORDER_ID_MAX_LENGTH = 36
 _BINANCE_ORDER_NOT_FOUND_CODE = -2013
+_PROTECTION_RECONCILIATION_ATTEMPTS = 2
+_PROTECTION_RECONCILIATION_DELAY_SECONDS = 0.05
 
 
 class BinanceFuturesExchangeClient(BinanceExchangeClient):
@@ -381,6 +390,28 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             for item in self._require_sequence(payload)
         )
 
+    async def get_protection_order_by_client_id(
+        self, *, symbol: str, client_id: str
+    ) -> Order:
+        """Read one Futures conditional algo order by its client identity."""
+        try:
+            payload = await self._rest.get(
+                _ALGO_ORDER_ENDPOINT,
+                params={"clientAlgoId": self._normalize_client_order_id(client_id)},
+                authenticated=True,
+            )
+        except BinanceRestResponseError as error:
+            if error.code == _BINANCE_ORDER_NOT_FOUND_CODE:
+                raise ExchangeOrderNotFoundError(
+                    "Binance Futures protection order was not found"
+                ) from error
+            raise
+        except (aiohttp.ClientError, TimeoutError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                "Binance Futures protection lookup outcome is unknown"
+            ) from error
+        return self._mapper.map_algo_order(self._require_mapping(payload))
+
     async def ensure_stop_loss_order(
         self,
         *,
@@ -411,26 +442,40 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         )
 
         if target is None:
-            await self.create_protection_orders(
-                symbol=normalized_symbol,
-                side=side,
-                quantity=quantity,
-                stop_loss=stop_loss,
-                stop_loss_client_algo_id=client_algo_id,
-            )
-            orders = await self.get_open_protection_orders(
-                symbol=normalized_symbol,
-            )
-            candidates = self._matching_stop_orders(
-                orders=orders,
-                symbol=normalized_symbol,
-                side=side,
-                quantity=quantity,
-            )
-            target = next(
-                (order for order in candidates if order.stop_price == stop_loss),
-                None,
-            )
+            try:
+                await self.create_protection_orders(
+                    symbol=normalized_symbol,
+                    side=side,
+                    quantity=quantity,
+                    stop_loss=stop_loss,
+                    stop_loss_client_algo_id=client_algo_id,
+                )
+            except ExchangeOrderOutcomeUnknownError:
+                if client_algo_id is None:
+                    raise
+                target = await self._reconcile_stop_loss_order(
+                    symbol=normalized_symbol,
+                    side=side,
+                    quantity=quantity,
+                    stop_loss=stop_loss,
+                    client_algo_id=client_algo_id,
+                )
+            if target is not None:
+                candidates = tuple((*candidates, target))
+            else:
+                orders = await self.get_open_protection_orders(
+                    symbol=normalized_symbol,
+                )
+                candidates = self._matching_stop_orders(
+                    orders=orders,
+                    symbol=normalized_symbol,
+                    side=side,
+                    quantity=quantity,
+                )
+                target = next(
+                    (order for order in candidates if order.stop_price == stop_loss),
+                    None,
+                )
 
         if target is None:
             raise RuntimeError("Binance did not confirm the replacement stop-loss")
@@ -450,6 +495,40 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             raise RuntimeError("Replacement stop-loss was not active after cleanup")
 
         return target
+
+    async def _reconcile_stop_loss_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        stop_loss: Decimal,
+        client_algo_id: str,
+    ) -> Order:
+        """Resolve an ambiguous replacement solely through its client identity."""
+        for attempt in range(_PROTECTION_RECONCILIATION_ATTEMPTS):
+            try:
+                order = await self.get_protection_order_by_client_id(
+                    symbol=symbol,
+                    client_id=client_algo_id,
+                )
+            except ExchangeOrderNotFoundError, ExchangeOrderOutcomeUnknownError:
+                if attempt + 1 < _PROTECTION_RECONCILIATION_ATTEMPTS:
+                    await asyncio.sleep(_PROTECTION_RECONCILIATION_DELAY_SECONDS)
+                    continue
+                break
+            if (
+                order.client_order_id == client_algo_id
+                and order.symbol == symbol
+                and order.side is side
+                and order.order_type is OrderType.STOP_MARKET
+                and order.quantity >= quantity
+                and order.stop_price == stop_loss
+                and order.status is OrderStatus.NEW
+            ):
+                return order
+            break
+        raise RuntimeError("Ambiguous replacement stop-loss remains unresolved")
 
     async def get_positions(
         self,
@@ -590,11 +669,20 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         params: RequestParams,
     ) -> Order:
         """Submit and map one authenticated Futures conditional algo order."""
-        payload = await self._rest.post(
-            _ALGO_ORDER_ENDPOINT,
-            params=params,
-            authenticated=True,
-        )
+        try:
+            payload = await self._rest.post(
+                _ALGO_ORDER_ENDPOINT,
+                params=params,
+                authenticated=True,
+            )
+        except BinanceRestResponseError as error:
+            raise ExchangeOrderRejectedError(
+                "Binance Futures protection order was rejected"
+            ) from error
+        except (aiohttp.ClientError, TimeoutError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                "Binance Futures protection outcome is unknown"
+            ) from error
         return self._mapper.map_algo_order(self._require_mapping(payload))
 
     async def _cancel_algo_order(self, *, symbol: str, order_id: str) -> None:

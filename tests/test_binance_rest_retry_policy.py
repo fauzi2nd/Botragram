@@ -174,7 +174,7 @@ async def test_futures_protection_post_timeout_is_single_attempt() -> None:
     client = BinanceFuturesExchangeClient(rest=rest, mapper=BinanceExchangeMapper())
 
     try:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(ExchangeOrderOutcomeUnknownError):
             await client.create_protection_orders(
                 symbol="BTCUSDT",
                 side=OrderSide.SELL,

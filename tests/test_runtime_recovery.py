@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -24,6 +24,7 @@ from botragram.enums import (
     SubmissionAttemptStatus,
     TradeMode,
 )
+from botragram.exceptions import ExchangeOrderNotFoundError
 from botragram.exchanges.binance.futures_client import (
     BinanceFuturesExchangeClient,
 )
@@ -56,6 +57,8 @@ class RecoveryExchangeClient(BinanceFuturesExchangeClient):
         "positions",
         "position_repository",
         "protection_orders",
+        "reconciled_protection_orders",
+        "reconciliation_requests",
     )
 
     def __init__(
@@ -72,6 +75,8 @@ class RecoveryExchangeClient(BinanceFuturesExchangeClient):
         self.positions = positions
         self.position_repository = position_repository
         self.protection_orders: list[Order] = []
+        self.reconciled_protection_orders: list[Order] = []
+        self.reconciliation_requests: list[str] = []
         self.create_calls = 0
         self.identity_snapshots: list[tuple[str | None, str | None]] = []
 
@@ -152,11 +157,28 @@ class RecoveryExchangeClient(BinanceFuturesExchangeClient):
                 stop_price=trigger_price,
                 created_at=_NOW,
                 updated_at=_NOW,
+                client_order_id=client_algo_id,
             )
             self.protection_orders.append(order)
             created.append(order)
 
         return tuple(created)
+
+    async def get_protection_order_by_client_id(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+    ) -> Order:
+        """Return a deterministic authoritative protection lookup result."""
+        self.reconciliation_requests.append(client_id)
+        orders = (*self.protection_orders, *self.reconciled_protection_orders)
+
+        for order in orders:
+            if order.symbol == symbol.upper() and order.client_order_id == client_id:
+                return order
+
+        raise ExchangeOrderNotFoundError("configured protection is not found")
 
 
 @dataclass(slots=True, kw_only=True)
@@ -391,7 +413,7 @@ async def test_live_recovery_creates_missing_protection_only_once() -> None:
     )
     assert await second_service.recover()
 
-    assert exchange.create_calls == 1
+    assert exchange.create_calls == 2
     assert len(exchange.protection_orders) == 2
     assert not first_control.is_paused
     assert not second_control.is_paused
@@ -468,6 +490,144 @@ async def test_live_recovery_reconciles_only_missing_protection_leg() -> None:
     assert len(exchange.protection_orders) == 2
     assert exchange.protection_orders[0].order_type is OrderType.STOP_MARKET
     assert exchange.protection_orders[1].order_type is OrderType.TAKE_PROFIT_MARKET
+
+
+@pytest.mark.asyncio
+async def test_live_restart_fails_closed_when_persisted_missing_leg_is_not_found() -> (
+    None
+):
+    """Never POST after a restart cannot prove a durable protection mutation."""
+    persisted = replace(
+        _position(include_metadata=True),
+        stop_loss_client_algo_id="bsl-00000000000000000000000000000000",
+        take_profit_client_algo_id="btp-00000000000000000000000000000000",
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=persisted)
+    exchange = RecoveryExchangeClient(positions=(persisted,))
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=repository,
+    )
+
+    assert not await service.recover()
+    assert exchange.create_calls == 0
+    assert exchange.reconciliation_requests == [persisted.stop_loss_client_algo_id]
+    assert control.is_paused
+
+
+@pytest.mark.asyncio
+async def test_live_restart_does_not_let_an_old_stop_mask_missing_replacement() -> None:
+    """Keep startup paused when an old stop cannot prove the new durable leg."""
+    persisted = replace(
+        _position(include_metadata=True),
+        stop_loss_client_algo_id="bsl-00000000000000000000000000000001",
+        take_profit_client_algo_id="btp-00000000000000000000000000000000",
+    )
+    exchange = RecoveryExchangeClient(positions=(persisted,))
+    exchange.protection_orders.extend(
+        (
+            Order(
+                order_id="old-stop",
+                symbol=persisted.symbol,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                status=OrderStatus.NEW,
+                quantity=persisted.quantity,
+                executed_quantity=Decimal("0"),
+                price=None,
+                stop_price=Decimal("64000"),
+                created_at=_NOW,
+                updated_at=_NOW,
+                client_order_id="bsl-00000000000000000000000000000000",
+            ),
+            Order(
+                order_id="take-profit",
+                symbol=persisted.symbol,
+                side=OrderSide.SELL,
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                status=OrderStatus.NEW,
+                quantity=persisted.quantity,
+                executed_quantity=Decimal("0"),
+                price=None,
+                stop_price=Decimal("65650"),
+                created_at=_NOW,
+                updated_at=_NOW,
+                client_order_id=persisted.take_profit_client_algo_id,
+            ),
+        )
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=persisted)
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=repository,
+    )
+
+    assert not await service.recover()
+    assert exchange.create_calls == 0
+    assert exchange.reconciliation_requests == [persisted.stop_loss_client_algo_id]
+    assert control.is_paused
+
+
+@pytest.mark.asyncio
+async def test_live_restart_adopts_proven_persisted_protection_without_post() -> None:
+    """Reuse authoritative client-identity matches even before open-order visibility."""
+    persisted = replace(
+        _position(include_metadata=True),
+        stop_loss_client_algo_id="bsl-00000000000000000000000000000000",
+        take_profit_client_algo_id="btp-00000000000000000000000000000000",
+    )
+    exchange = RecoveryExchangeClient(positions=(persisted,))
+    exchange.reconciled_protection_orders.extend(
+        (
+            Order(
+                order_id="reconciled-stop",
+                symbol=persisted.symbol,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                status=OrderStatus.NEW,
+                quantity=persisted.quantity,
+                executed_quantity=Decimal("0"),
+                price=None,
+                stop_price=Decimal("64675"),
+                created_at=_NOW,
+                updated_at=_NOW,
+                client_order_id=persisted.stop_loss_client_algo_id,
+            ),
+            Order(
+                order_id="reconciled-take-profit",
+                symbol=persisted.symbol,
+                side=OrderSide.SELL,
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                status=OrderStatus.NEW,
+                quantity=persisted.quantity,
+                executed_quantity=Decimal("0"),
+                price=None,
+                stop_price=Decimal("65650"),
+                created_at=_NOW,
+                updated_at=_NOW,
+                client_order_id=persisted.take_profit_client_algo_id,
+            ),
+        )
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=persisted)
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=repository,
+    )
+
+    assert await service.recover()
+    assert exchange.create_calls == 0
+    assert exchange.reconciliation_requests == [
+        persisted.stop_loss_client_algo_id,
+        persisted.take_profit_client_algo_id,
+    ]
+    assert not control.is_paused
 
 
 @pytest.mark.asyncio
