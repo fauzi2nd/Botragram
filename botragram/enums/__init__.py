@@ -28,6 +28,12 @@ from botragram.enums.execution_policy import ExecutionPolicy
 from botragram.enums.indicator_type import IndicatorType
 from botragram.enums.interval import Interval
 from botragram.enums.leverage_mode import LeverageMode
+from botragram.enums.live_portfolio_recovery_status import (
+    LivePortfolioRecoveryStatus,
+)
+from botragram.enums.live_portfolio_recovery_unsafe_reason import (
+    LivePortfolioRecoveryUnsafeReason,
+)
 from botragram.enums.log_level import LogLevel
 from botragram.enums.margin_mode import MarginMode
 from botragram.enums.market_type import MarketType
@@ -66,6 +72,8 @@ __all__ = [
     "TradeMode",
     "MarginMode",
     "LeverageMode",
+    "LivePortfolioRecoveryStatus",
+    "LivePortfolioRecoveryUnsafeReason",
     # Market
     "Interval",
     "TrendType",

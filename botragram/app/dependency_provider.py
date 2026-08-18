@@ -82,6 +82,7 @@ from botragram.services import (
     HealthService,
     HumanConfirmedPaperExecutionService,
     LiveFuturesEntryService,
+    LivePortfolioRecoveryService,
     LivePositionProtectionService,
     LivePostEntryRecoveryService,
     LiveSubmissionRecoveryService,
@@ -145,6 +146,7 @@ class DependencyProvider:
         "_live_futures_entry_service",
         "_live_post_entry_recovery_service",
         "_live_position_protection_service",
+        "_live_portfolio_recovery_service",
         "_live_submission_recovery_service",
         "_initialized",
         "_market_service",
@@ -237,6 +239,9 @@ class DependencyProvider:
             None
         )
         self._live_position_protection_service: LivePositionProtectionService | None = (
+            None
+        )
+        self._live_portfolio_recovery_service: LivePortfolioRecoveryService | None = (
             None
         )
         self._live_submission_recovery_service: LiveSubmissionRecoveryService | None = (
@@ -379,13 +384,10 @@ class DependencyProvider:
                 market_type=self._settings.exchange.market_type,
                 runtime_control=self.runtime_control,
                 stream_controller=query_service,
-                position_service=self.position_service,
                 position_repository=self.position_repository,
                 signal_repository=self.signal_repository,
                 candle_repository=self.candle_repository,
-                live_position_protection_service=(
-                    self.live_position_protection_service
-                ),
+                live_portfolio_recovery_service=(self.live_portfolio_recovery_service),
                 submission_attempt_repository=self.submission_attempt_repository,
                 live_submission_recovery_service=(
                     self.live_submission_recovery_service
@@ -533,6 +535,11 @@ class DependencyProvider:
     def live_position_protection_service(self) -> LivePositionProtectionService:
         """Return the shared LIVE Futures protection reconciler."""
         return self._require(self._live_position_protection_service)
+
+    @property
+    def live_portfolio_recovery_service(self) -> LivePortfolioRecoveryService:
+        """Return the LIVE portfolio safety recovery service."""
+        return self._require(self._live_portfolio_recovery_service)
 
     @property
     def live_submission_recovery_service(self) -> LiveSubmissionRecoveryService:
@@ -768,6 +775,13 @@ class DependencyProvider:
             position_repository=self.position_repository,
             risk_engine=self.risk_engine,
         )
+        self._live_portfolio_recovery_service = LivePortfolioRecoveryService(
+            position_service=self.position_service,
+            protection_service=self.live_position_protection_service,
+            runtime_control=self.runtime_control,
+            signal_repository=self.signal_repository,
+            candle_repository=self.candle_repository,
+        )
         self._live_submission_recovery_service = LiveSubmissionRecoveryService(
             submission_attempt_repository=self.submission_attempt_repository,
             order_service=self.order_service,
@@ -900,6 +914,7 @@ class DependencyProvider:
 
     def _clear_dependencies(self) -> None:
         """Clear initialized dependencies before releasing resources."""
+        self.runtime_control.clear_runtime_contexts()
         self._candle_repository = None
         self._execution_authorization_repository = None
         self._execution_authorization_service = None
@@ -917,6 +932,7 @@ class DependencyProvider:
         self._live_futures_entry_service = None
         self._live_post_entry_recovery_service = None
         self._live_position_protection_service = None
+        self._live_portfolio_recovery_service = None
         self._live_submission_recovery_service = None
         self._runtime_reporter = None
         self._runtime_recovery_service = None

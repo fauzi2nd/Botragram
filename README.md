@@ -147,9 +147,28 @@ Pada mode `LIVE`, entry terlindungi saat ini hanya mendukung Binance Futures
 `MARKET`. Entry baru tidak dianggap berhasil sampai posisi aktual tersinkron,
 metadata tersimpan, dan order `STOP_MARKET` serta `TAKE_PROFIT_MARKET`
 reduce-only terverifikasi dari exchange. `LIMIT` LIVE ditolak sampai lifecycle
-fill asinkron dapat ditangani dengan aman. Auto-resume hanya berlaku untuk satu
-posisi Binance Futures dan memakai rekonsiliasi proteksi yang sama. Jika
-sinkronisasi, pemasangan proteksi, verifikasi, atau tick pertama gagal, bot
+fill asinkron dapat ditangani dengan aman. Saat startup, Botragram mengevaluasi
+seluruh portofolio posisi LIVE yang authoritative dari exchange. Setiap posisi
+dengan metadata lokal yang cukup disimpan kembali dan diverifikasi proteksinya
+secara independen; metadata yang tidak dapat dipastikan membuat recovery gagal
+tertutup. Portofolio dengan beberapa posisi dapat dikenali aman, tetapi runtime
+saat ini masih single-position sehingga tetap paused untuk dua atau lebih posisi.
+Multi-symbol runtime ditunda ke Phase 5B.2.2 dan autonomous LIVE tetap dinonaktifkan.
+Blocker Phase 5B.2.2 yang masih disengaja adalah konfigurasi tunggal pada
+`TradingRuntimeControl`, satu subscription/consumer pada market stream, dan satu
+konteks `PositionProtectionManager`; startup tidak memilih satu posisi dari
+portofolio untuk melewati batas tersebut.
+`TradingRuntimeControl` dapat menyimpan nol, satu, atau beberapa runtime context
+LIVE yang immutable. Penggantian seluruh context portfolio bersifat atomik dan
+memvalidasi duplicate symbol terlebih dahulu; urutan dipertahankan untuk
+reproducibility, bukan prioritas. Accessor singular `symbol`, `interval`, dan
+`strategy_type` hanya valid untuk tepat satu context dan gagal eksplisit untuk
+beberapa context. `NO_POSITIONS` dan `UNSAFE` menghapus state runtime lama,
+sedangkan `MULTIPLE_POSITIONS_SAFE` menyimpan semua context tetapi tetap paused.
+Reset juga menghapus seluruh context dan telemetry stream singular. Stream,
+Telegram, `PositionProtectionManager`, dan `TradingRunner` masih single-context;
+active multi-symbol runtime dan autonomous LIVE belum tersedia.
+Jika sinkronisasi, pemasangan proteksi, verifikasi, atau tick pertama gagal, bot
 tetap paused dan terminal mencatat penyebabnya. Perilaku ini bukan pengganti
 pemantauan account dan order secara independen pada exchange.
 

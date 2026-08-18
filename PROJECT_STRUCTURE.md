@@ -103,6 +103,8 @@ botragram/
 |   `-- volume/
 |-- models/                    # Immutable domain/data models
 |   `-- backtest.py            # Backtest request, trade, metrics, dan result
+|   |-- live_runtime_position_context.py # One recovered LIVE runtime context
+|   `-- live_runtime_portfolio_context.py # Immutable recovered LIVE portfolio
 |-- repositories/              # Persistence interfaces, including submission attempts
 |-- services/
 |   |-- account_service.py
@@ -115,6 +117,7 @@ botragram/
 |   |-- live_futures_entry_service.py # Protected Futures MARKET entry workflow
 |   |-- live_post_entry_recovery_service.py # ACKNOWLEDGED entry recovery core
 |   |-- live_position_protection_service.py # Shared LIVE SL/TP reconciliation
+|   |-- live_portfolio_recovery_service.py # LIVE portfolio safety recovery
 |   |-- live_submission_recovery_service.py # GET-only incomplete entry recovery
 |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |-- order_service.py

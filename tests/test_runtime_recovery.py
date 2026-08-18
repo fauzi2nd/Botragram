@@ -30,8 +30,16 @@ from botragram.exchanges.binance.futures_client import (
 )
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
-from botragram.models import Candle, Order, Position, Signal, SubmissionAttempt
+from botragram.models import (
+    Candle,
+    LiveRuntimePositionContext,
+    Order,
+    Position,
+    Signal,
+    SubmissionAttempt,
+)
 from botragram.services import (
+    LivePortfolioRecoveryService,
     LivePositionProtectionService,
     LivePostEntryRecoveryResult,
     LiveSubmissionRecoveryResult,
@@ -273,23 +281,31 @@ def _recovery_service(
         strategy_type=StrategyType.EMA_CROSS,
     )
     control.bind_strategy_selector(lambda strategy_type: None)
+    position_service = PositionService(
+        position_engine=PositionEngine(exchange_client=exchange),
+        position_repository=repository,
+    )
+    protection_service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+    portfolio_recovery_service = LivePortfolioRecoveryService(
+        position_service=position_service,
+        protection_service=protection_service,
+        runtime_control=control,
+        signal_repository=signal_repository or MemorySignalRepository(),
+        candle_repository=candle_repository or MemoryCandleRepository(),
+    )
     service = RuntimeRecoveryService(
         trade_mode=trade_mode,
         market_type=MarketType.FUTURES,
         runtime_control=control,
         stream_controller=ImmediateTickStream(runtime_control=control),
-        position_service=PositionService(
-            position_engine=PositionEngine(exchange_client=exchange),
-            position_repository=repository,
-        ),
         position_repository=repository,
         signal_repository=signal_repository or MemorySignalRepository(),
         candle_repository=candle_repository or MemoryCandleRepository(),
-        live_position_protection_service=LivePositionProtectionService(
-            exchange_client=exchange,
-            position_repository=repository,
-            risk_engine=RiskEngine(settings=RiskSettings()),
-        ),
+        live_portfolio_recovery_service=portfolio_recovery_service,
         submission_attempt_repository=submission_attempt_repository,
         live_submission_recovery_service=submission_recovery,
         live_post_entry_recovery_service=post_entry_recovery,
@@ -421,6 +437,83 @@ async def test_live_recovery_creates_missing_protection_only_once() -> None:
     assert stored is not None
     assert stored.stop_loss == Decimal("64675.000")
     assert stored.take_profit == Decimal("65650.00")
+
+
+@pytest.mark.asyncio
+async def test_live_multiple_safe_positions_do_not_activate_singular_runtime() -> None:
+    """Recover every position but never choose one for the current runtime."""
+    btc_position = _position(include_metadata=True)
+    eth_position = replace(btc_position, symbol="ETHUSDT")
+    exchange = RecoveryExchangeClient(positions=(eth_position, btc_position))
+    repository = MemoryPositionRepository()
+    await repository.save(position=btc_position)
+    await repository.save(position=eth_position)
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=repository,
+    )
+
+    assert not await service.recover()
+    assert control.is_paused
+    assert not control.stream_enabled
+    assert [context.symbol for context in control.runtime_contexts] == [
+        "BTCUSDT",
+        "ETHUSDT",
+    ]
+    with pytest.raises(RuntimeError, match="Singular runtime configuration"):
+        _ = control.symbol
+    assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_live_no_positions_clears_stale_runtime_context() -> None:
+    """Do not retain a prior singular context when exchange portfolio is empty."""
+    exchange = RecoveryExchangeClient(positions=())
+    repository = MemoryPositionRepository()
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=repository,
+    )
+    control.set_runtime_contexts(
+        contexts=(
+            LiveRuntimePositionContext(
+                symbol="SOLUSDT",
+                interval=Interval.M1,
+                strategy_type=StrategyType.EMA_SCALPING,
+            ),
+        ),
+    )
+
+    assert not await service.recover()
+    assert control.runtime_contexts == ()
+    assert not control.stream_enabled
+
+
+@pytest.mark.asyncio
+async def test_live_unsafe_portfolio_clears_stale_runtime_context() -> None:
+    """Partial portfolio diagnostics must never preserve prior active context."""
+    exchange = RecoveryExchangeClient(positions=(_position(include_metadata=False),))
+    repository = MemoryPositionRepository()
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=repository,
+    )
+    control.set_runtime_contexts(
+        contexts=(
+            LiveRuntimePositionContext(
+                symbol="SOLUSDT",
+                interval=Interval.M1,
+                strategy_type=StrategyType.EMA_SCALPING,
+            ),
+        ),
+    )
+
+    assert not await service.recover()
+    assert control.runtime_contexts == ()
+    assert "position protection" in control.get_missing_startup_requirements()
 
 
 @pytest.mark.asyncio

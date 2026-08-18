@@ -9,6 +9,7 @@ from decimal import Decimal
 from time import monotonic
 
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
+from botragram.models import LiveRuntimePortfolioContext, LiveRuntimePositionContext
 
 __all__ = [
     "MarketStreamTelemetry",
@@ -61,10 +62,49 @@ class TradingRuntimeControl:
         init=False,
         repr=False,
     )
+    _runtime_contexts: tuple[LiveRuntimePositionContext, ...] = field(
+        default=(),
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         """Normalize settings and remain paused for Telegram configuration."""
         self.symbol = self._normalize_symbol(self.symbol)
+
+    def __getattribute__(self, name: str) -> object:
+        """Reject ambiguous legacy runtime access when multiple contexts exist."""
+        if name in {"symbol", "interval", "strategy_type"}:
+            contexts = object.__getattribute__(self, "_runtime_contexts")
+            if len(contexts) > 1:
+                raise RuntimeError(
+                    "Singular runtime configuration is unavailable for multiple "
+                    "runtime contexts"
+                )
+            if len(contexts) == 1:
+                return getattr(contexts[0], name)
+        return object.__getattribute__(self, name)
+
+    @property
+    def runtime_contexts(self) -> tuple[LiveRuntimePositionContext, ...]:
+        """Return the immutable canonical recovered runtime portfolio context."""
+        return self._runtime_contexts
+
+    def set_runtime_contexts(
+        self,
+        *,
+        contexts: tuple[LiveRuntimePositionContext, ...],
+    ) -> None:
+        """Atomically replace the complete recovered runtime portfolio context."""
+        candidate = LiveRuntimePortfolioContext(contexts=tuple(contexts))
+        self._runtime_contexts = candidate.contexts
+
+        if len(candidate.contexts) != 1:
+            self._reset_singular_runtime_state()
+
+    def clear_runtime_contexts(self) -> None:
+        """Clear recovered runtime contexts and reset singular compatibility state."""
+        self.set_runtime_contexts(contexts=())
 
     @property
     def is_paused(self) -> bool:
@@ -193,6 +233,15 @@ class TradingRuntimeControl:
         self.select_symbol(symbol)
         self.select_interval(interval)
         self.select_strategy(strategy_type)
+        self.set_runtime_contexts(
+            contexts=(
+                LiveRuntimePositionContext(
+                    symbol=symbol,
+                    interval=interval,
+                    strategy_type=strategy_type,
+                ),
+            ),
+        )
 
     def set_position_protection_ready(self, ready: bool) -> bool:
         """Set the live-position protection gate and return whether it changed."""
@@ -243,6 +292,19 @@ class TradingRuntimeControl:
             self._stream_last_event_monotonic = None
 
         return True
+
+    def _reset_singular_runtime_state(self) -> None:
+        """Clear stream telemetry and stale legacy values without selecting context."""
+        self.symbol = "BTCUSDT"
+        self.interval = Interval.M15
+        self.strategy_type = StrategyType.EMA_CROSS
+        self._symbol_confirmed = False
+        self._interval_confirmed = False
+        self._strategy_confirmed = False
+        self.stream_enabled = False
+        self._stream_event_count = 0
+        self._stream_last_price = None
+        self._stream_last_event_monotonic = None
 
     def record_stream_tick(self, *, price: Decimal) -> None:
         """Record one validated stream event using the local monotonic clock."""

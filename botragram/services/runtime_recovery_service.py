@@ -11,6 +11,7 @@ from typing import Final, Protocol
 from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.enums import (
     Interval,
+    LivePortfolioRecoveryStatus,
     MarketType,
     PositionSide,
     SignalType,
@@ -18,15 +19,15 @@ from botragram.enums import (
     SubmissionAttemptStatus,
     TradeMode,
 )
-from botragram.models import Position
+from botragram.models import LiveRuntimePositionContext, Position
 from botragram.repositories import (
     CandleRepository,
     PositionRepository,
     SignalRepository,
     SubmissionAttemptRepository,
 )
-from botragram.services.live_position_protection_service import (
-    LivePositionProtectionService,
+from botragram.services.live_portfolio_recovery_service import (
+    LivePortfolioRecoveryService,
 )
 from botragram.services.live_post_entry_recovery_service import (
     LiveAcknowledgedEntryRecovery,
@@ -36,7 +37,6 @@ from botragram.services.live_submission_recovery_service import (
     LiveIncompleteSubmissionRecovery,
     LiveSubmissionRecoveryResult,
 )
-from botragram.services.position_service import PositionService
 
 __all__ = ["RuntimeRecoveryService"]
 
@@ -66,11 +66,10 @@ class RuntimeRecoveryService:
     market_type: MarketType
     runtime_control: TradingRuntimeControl
     stream_controller: MarketStreamController
-    position_service: PositionService
     position_repository: PositionRepository
     signal_repository: SignalRepository
     candle_repository: CandleRepository
-    live_position_protection_service: LivePositionProtectionService
+    live_portfolio_recovery_service: LivePortfolioRecoveryService
     first_tick_timeout_seconds: float = _FIRST_TICK_TIMEOUT_SECONDS
     submission_attempt_repository: SubmissionAttemptRepository | None = None
     live_submission_recovery_service: LiveIncompleteSubmissionRecovery | None = None
@@ -88,65 +87,75 @@ class RuntimeRecoveryService:
             if not await self._recover_incomplete_live_entry():
                 return False
 
-        persisted_positions = tuple(await self.position_repository.get_open_positions())
-        positions = (
-            await self._synchronize_live_positions(
-                persisted_positions=persisted_positions,
-            )
-            if self.trade_mode is TradeMode.LIVE
-            else persisted_positions
-        )
-
-        if not positions:
-            if self.trade_mode is TradeMode.LIVE:
-                self.runtime_control.set_position_protection_ready(True)
-            return False
-
-        if len(positions) != 1:
-            self.runtime_control.set_position_protection_ready(False)
-            _LOGGER.critical(
-                "Automatic recovery requires exactly one active position: count=%d",
-                len(positions),
-            )
-            return False
-
-        position = await self._restore_metadata(position=positions[0])
-
-        if position is None:
-            if self.trade_mode is TradeMode.LIVE:
-                self.runtime_control.set_position_protection_ready(False)
-            _LOGGER.critical(
-                "Automatic recovery blocked because position metadata could not "
-                "be reconstructed unambiguously: symbol=%s",
-                positions[0].symbol,
-            )
-            return False
-
-        await self.position_repository.save(position=position)
-
-        if self.trade_mode is TradeMode.LIVE:
             if self.market_type is not MarketType.FUTURES:
-                self.runtime_control.set_position_protection_ready(False)
                 _LOGGER.critical(
                     "Automatic live position recovery currently requires FUTURES"
                 )
                 return False
 
-            self.runtime_control.set_position_protection_ready(False)
-
-            try:
-                position = await self.live_position_protection_service.ensure(
-                    position=position,
+            portfolio_result = await self.live_portfolio_recovery_service.recover()
+            if portfolio_result.status is LivePortfolioRecoveryStatus.NO_POSITIONS:
+                self.runtime_control.clear_runtime_contexts()
+                return False
+            if portfolio_result.status is LivePortfolioRecoveryStatus.UNSAFE:
+                self.runtime_control.clear_runtime_contexts()
+                _LOGGER.critical(
+                    "LIVE portfolio recovery is unsafe: reason=%s symbol=%s",
+                    portfolio_result.unsafe_reason,
+                    portfolio_result.unsafe_symbol,
                 )
-            except Exception:
-                _LOGGER.exception(
-                    "Live recovery blocked because SL/TP protection could not be "
-                    "verified: symbol=%s",
-                    position.symbol,
+                return False
+            if (
+                portfolio_result.status
+                is LivePortfolioRecoveryStatus.MULTIPLE_POSITIONS_SAFE
+            ):
+                self.runtime_control.set_runtime_contexts(
+                    contexts=tuple(
+                        self._to_runtime_context(position=position)
+                        for position in portfolio_result.recovered_positions
+                    ),
+                )
+                _LOGGER.critical(
+                    "LIVE portfolio is protected but singular runtime activation "
+                    "remains blocked: count=%d",
+                    len(portfolio_result.recovered_positions),
                 )
                 return False
 
-            self.runtime_control.set_position_protection_ready(True)
+            if (
+                portfolio_result.status
+                is not LivePortfolioRecoveryStatus.SINGLE_POSITION_SAFE
+            ):
+                raise RuntimeError(
+                    "Unsupported LIVE portfolio recovery status: "
+                    f"{portfolio_result.status!r}"
+                )
+
+            position = portfolio_result.recovered_positions[0]
+            self.runtime_control.set_runtime_contexts(
+                contexts=(self._to_runtime_context(position=position),),
+            )
+        else:
+            positions = tuple(await self.position_repository.get_open_positions())
+            if not positions:
+                return False
+            if len(positions) != 1:
+                _LOGGER.critical(
+                    "Automatic recovery requires exactly one active position: count=%d",
+                    len(positions),
+                )
+                return False
+
+            restored_position = await self._restore_metadata(position=positions[0])
+            if restored_position is None:
+                _LOGGER.critical(
+                    "Automatic recovery blocked because position metadata could not "
+                    "be reconstructed unambiguously: symbol=%s",
+                    positions[0].symbol,
+                )
+                return False
+            await self.position_repository.save(position=restored_position)
+            position = restored_position
 
         self.runtime_control.restore_configuration(
             symbol=position.symbol,
@@ -247,32 +256,6 @@ class RuntimeRecoveryService:
         )
         return False
 
-    async def _synchronize_live_positions(
-        self,
-        *,
-        persisted_positions: tuple[Position, ...],
-    ) -> tuple[Position, ...]:
-        """Read live positions from the exchange and preserve local metadata."""
-        previous_by_symbol = {
-            position.symbol.upper(): position for position in persisted_positions
-        }
-        exchange_positions = tuple(await self.position_service.sync())
-        merged: list[Position] = []
-
-        for position in exchange_positions:
-            previous = previous_by_symbol.get(position.symbol.upper())
-            merged_position = replace(
-                position,
-                interval=(previous.interval if previous is not None else None),
-                strategy_type=(
-                    previous.strategy_type if previous is not None else None
-                ),
-            )
-            await self.position_repository.save(position=merged_position)
-            merged.append(merged_position)
-
-        return tuple(merged)
-
     async def _restore_metadata(self, *, position: Position) -> Position | None:
         """Reconstruct missing paper metadata from its exact entry history."""
         if position.interval is not None and position.strategy_type is not None:
@@ -335,6 +318,15 @@ class RuntimeRecoveryService:
         async with asyncio.timeout(self.first_tick_timeout_seconds):
             while self.runtime_control.get_stream_telemetry().event_count == 0:
                 await asyncio.sleep(_FIRST_TICK_POLL_SECONDS)
+
+    @staticmethod
+    def _to_runtime_context(*, position: Position) -> LiveRuntimePositionContext:
+        """Build one runtime context from an already recovered position."""
+        return LiveRuntimePositionContext(
+            symbol=position.symbol,
+            interval=RuntimeRecoveryService._require_interval(position),
+            strategy_type=RuntimeRecoveryService._require_strategy(position),
+        )
 
     @staticmethod
     def _require_interval(position: Position) -> Interval:

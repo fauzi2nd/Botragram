@@ -10,6 +10,9 @@ from botragram.services.human_confirmed_paper_execution_service import (
     HumanConfirmedPaperExecutionService,
 )
 from botragram.services.live_futures_entry_service import LiveFuturesEntryService
+from botragram.services.live_portfolio_recovery_service import (
+    LivePortfolioRecoveryService,
+)
 from botragram.services.live_position_protection_service import (
     LivePositionProtectionService,
 )
@@ -48,6 +51,7 @@ __all__ = [
     "LivePostEntryRecoveryResult",
     "LivePostEntryRecoveryService",
     "LivePositionProtectionService",
+    "LivePortfolioRecoveryService",
     "LiveSubmissionRecoveryResult",
     "LiveSubmissionRecoveryService",
     "HumanConfirmedPaperExecutionService",
