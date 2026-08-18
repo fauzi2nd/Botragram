@@ -223,6 +223,20 @@ class LiveFuturesEntryService:
             )
             raise
 
+        try:
+            await self._persist_attempt(
+                attempt=attempt,
+                status=SubmissionAttemptStatus.COMPLETED,
+                exchange_order_id=order.order_id,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Live Futures entry protection is verified but durable completion "
+                "failed: client_order_id=%s",
+                attempt.client_order_id,
+            )
+            raise
+
         self.runtime_control.set_position_protection_ready(True)
         _LOGGER.info(
             "Live Futures entry completed safely: symbol=%s order_id=%s",

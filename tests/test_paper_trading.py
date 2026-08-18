@@ -385,7 +385,7 @@ async def _run_sqlite_position_metadata_test() -> None:
             await repository.save(position=position)
             stored_position = await repository.get_by_symbol(symbol="BTCUSDT")
 
-            assert version == 9
+            assert version == 10
             assert stored_position == position
         finally:
             await database.close()

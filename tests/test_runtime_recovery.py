@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -20,6 +21,7 @@ from botragram.enums import (
     PositionSide,
     SignalType,
     StrategyType,
+    SubmissionAttemptStatus,
     TradeMode,
 )
 from botragram.exchanges.binance.futures_client import (
@@ -27,9 +29,11 @@ from botragram.exchanges.binance.futures_client import (
 )
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
-from botragram.models import Candle, Order, Position, Signal
+from botragram.models import Candle, Order, Position, Signal, SubmissionAttempt
 from botragram.services import (
     LivePositionProtectionService,
+    LivePostEntryRecoveryResult,
+    LiveSubmissionRecoveryResult,
     PositionService,
     RuntimeRecoveryService,
 )
@@ -37,6 +41,7 @@ from botragram.storage.memory import (
     MemoryCandleRepository,
     MemoryPositionRepository,
     MemorySignalRepository,
+    MemorySubmissionAttemptRepository,
 )
 
 _NOW = datetime(2026, 8, 7, tzinfo=UTC)
@@ -45,17 +50,30 @@ _NOW = datetime(2026, 8, 7, tzinfo=UTC)
 class RecoveryExchangeClient(BinanceFuturesExchangeClient):
     """Provide deterministic positions and protection orders for recovery."""
 
-    __slots__ = ("create_calls", "positions", "protection_orders")
+    __slots__ = (
+        "create_calls",
+        "identity_snapshots",
+        "positions",
+        "position_repository",
+        "protection_orders",
+    )
 
-    def __init__(self, *, positions: tuple[Position, ...]) -> None:
+    def __init__(
+        self,
+        *,
+        positions: tuple[Position, ...],
+        position_repository: MemoryPositionRepository | None = None,
+    ) -> None:
         """Initialize the fake Futures exchange."""
         super().__init__(
             rest=BinanceRestClient(base_url="https://example.test"),
             mapper=BinanceExchangeMapper(),
         )
         self.positions = positions
+        self.position_repository = position_repository
         self.protection_orders: list[Order] = []
         self.create_calls = 0
+        self.identity_snapshots: list[tuple[str | None, str | None]] = []
 
     async def get_positions(
         self,
@@ -91,17 +109,36 @@ class RecoveryExchangeClient(BinanceFuturesExchangeClient):
         quantity: Decimal,
         stop_loss: Decimal | None = None,
         take_profit: Decimal | None = None,
+        stop_loss_client_algo_id: str | None = None,
+        take_profit_client_algo_id: str | None = None,
     ) -> tuple[Order, ...]:
         """Create deterministic protection snapshots."""
         self.create_calls += 1
         created: list[Order] = []
 
-        for order_type, trigger_price in (
-            (OrderType.STOP_MARKET, stop_loss),
-            (OrderType.TAKE_PROFIT_MARKET, take_profit),
+        for order_type, trigger_price, client_algo_id in (
+            (OrderType.STOP_MARKET, stop_loss, stop_loss_client_algo_id),
+            (
+                OrderType.TAKE_PROFIT_MARKET,
+                take_profit,
+                take_profit_client_algo_id,
+            ),
         ):
             if trigger_price is None:
                 continue
+
+            assert client_algo_id is not None
+
+            repository = self.position_repository
+            if repository is not None:
+                persisted = await repository.get_by_symbol(symbol=symbol)
+                assert persisted is not None
+                self.identity_snapshots.append(
+                    (
+                        persisted.stop_loss_client_algo_id,
+                        persisted.take_profit_client_algo_id,
+                    )
+                )
 
             order = Order(
                 order_id=f"protection-{len(self.protection_orders) + 1}",
@@ -139,6 +176,41 @@ class ImmediateTickStream:
         return self.runtime_control.set_stream_enabled(False)
 
 
+@dataclass(slots=True)
+class FakeSubmissionRecovery:
+    """Return one configured durable submission-recovery outcome."""
+
+    result: LiveSubmissionRecoveryResult
+    error: BaseException | None = None
+    events: list[str] = field(default_factory=list[str])
+
+    async def recover_incomplete(self) -> LiveSubmissionRecoveryResult:
+        """Record the pre-position startup recovery stage."""
+        self.events.append("submission")
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+@dataclass(slots=True)
+class FakePostEntryRecovery:
+    """Record acknowledged-entry recovery without exchange mutation."""
+
+    result: LivePostEntryRecoveryResult
+    events: list[str] = field(default_factory=list[str])
+    attempts: list[SubmissionAttempt] = field(default_factory=list[SubmissionAttempt])
+
+    async def recover_acknowledged(
+        self,
+        *,
+        attempt: SubmissionAttempt,
+    ) -> LivePostEntryRecoveryResult:
+        """Record the durable acknowledged handoff."""
+        self.events.append("post_entry")
+        self.attempts.append(attempt)
+        return self.result
+
+
 def _position(
     *,
     include_metadata: bool,
@@ -168,6 +240,9 @@ def _recovery_service(
     repository: MemoryPositionRepository,
     signal_repository: MemorySignalRepository | None = None,
     candle_repository: MemoryCandleRepository | None = None,
+    submission_attempt_repository: MemorySubmissionAttemptRepository | None = None,
+    submission_recovery: FakeSubmissionRecovery | None = None,
+    post_entry_recovery: FakePostEntryRecovery | None = None,
 ) -> tuple[RuntimeRecoveryService, TradingRuntimeControl]:
     """Build isolated recovery dependencies."""
     control = TradingRuntimeControl(
@@ -193,9 +268,30 @@ def _recovery_service(
             position_repository=repository,
             risk_engine=RiskEngine(settings=RiskSettings()),
         ),
+        submission_attempt_repository=submission_attempt_repository,
+        live_submission_recovery_service=submission_recovery,
+        live_post_entry_recovery_service=post_entry_recovery,
         first_tick_timeout_seconds=0.1,
     )
     return service, control
+
+
+def _acknowledged_attempt() -> SubmissionAttempt:
+    """Build one durable entry that requires post-entry startup recovery."""
+    return SubmissionAttempt(
+        client_order_id="btg-00000000000000000000000000000000",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.01"),
+        signal_generated_at=_NOW,
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+        status=SubmissionAttemptStatus.ACKNOWLEDGED,
+        created_at=_NOW,
+        updated_at=_NOW,
+        exchange_order_id="entry-1",
+    )
 
 
 @pytest.mark.asyncio
@@ -306,6 +402,40 @@ async def test_live_recovery_creates_missing_protection_only_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_live_protection_identities_are_durable_before_new_leg_posts() -> None:
+    """Persist distinct logical-leg identities before the first protection POST."""
+    position = _position(include_metadata=True)
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = RecoveryExchangeClient(
+        positions=(position,),
+        position_repository=repository,
+    )
+    service, _ = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=repository,
+    )
+
+    assert await service.recover()
+    stored = await repository.get_by_symbol(symbol=position.symbol)
+    assert stored is not None
+    assert stored.stop_loss_client_algo_id is not None
+    assert stored.take_profit_client_algo_id is not None
+    assert stored.stop_loss_client_algo_id != stored.take_profit_client_algo_id
+    assert exchange.identity_snapshots == [
+        (
+            stored.stop_loss_client_algo_id,
+            stored.take_profit_client_algo_id,
+        ),
+        (
+            stored.stop_loss_client_algo_id,
+            stored.take_profit_client_algo_id,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_live_recovery_reconciles_only_missing_protection_leg() -> None:
     """Reuse shared reconciliation when only take-profit coverage is absent."""
     position = _position(include_metadata=True)
@@ -338,3 +468,132 @@ async def test_live_recovery_reconciles_only_missing_protection_leg() -> None:
     assert len(exchange.protection_orders) == 2
     assert exchange.protection_orders[0].order_type is OrderType.STOP_MARKET
     assert exchange.protection_orders[1].order_type is OrderType.TAKE_PROFIT_MARKET
+
+
+@pytest.mark.asyncio
+async def test_live_startup_recovers_acknowledged_entry_before_runtime_readiness() -> (
+    None
+):
+    """Run post-entry recovery before the existing one-position resume workflow."""
+    position = _position(include_metadata=True)
+    exchange = RecoveryExchangeClient(positions=(position,))
+    position_repository = MemoryPositionRepository()
+    await position_repository.save(position=position)
+    attempt_repository = MemorySubmissionAttemptRepository()
+    attempt = _acknowledged_attempt()
+    await attempt_repository.save(attempt=attempt)
+    events: list[str] = []
+    submission_recovery = FakeSubmissionRecovery(
+        result=LiveSubmissionRecoveryResult.ORDER_ACKNOWLEDGED,
+        events=events,
+    )
+    post_entry_recovery = FakePostEntryRecovery(
+        result=LivePostEntryRecoveryResult.COMPLETED,
+        events=events,
+    )
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=position_repository,
+        submission_attempt_repository=attempt_repository,
+        submission_recovery=submission_recovery,
+        post_entry_recovery=post_entry_recovery,
+    )
+
+    assert await service.recover()
+    assert events == ["submission", "post_entry"]
+    assert post_entry_recovery.attempts == [attempt]
+    assert not control.is_paused
+
+
+@pytest.mark.asyncio
+async def test_live_startup_stays_paused_for_incomplete_submission_recovery() -> None:
+    """Do not synchronize positions or create protection after an unsafe handoff."""
+    exchange = RecoveryExchangeClient(positions=(_position(include_metadata=True),))
+    position_repository = MemoryPositionRepository()
+    attempt_repository = MemorySubmissionAttemptRepository()
+    await attempt_repository.save(attempt=_acknowledged_attempt())
+    submission_recovery = FakeSubmissionRecovery(
+        result=LiveSubmissionRecoveryResult.STILL_INCOMPLETE,
+    )
+    post_entry_recovery = FakePostEntryRecovery(
+        result=LivePostEntryRecoveryResult.COMPLETED,
+    )
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=position_repository,
+        submission_attempt_repository=attempt_repository,
+        submission_recovery=submission_recovery,
+        post_entry_recovery=post_entry_recovery,
+    )
+
+    assert not await service.recover()
+    assert submission_recovery.events == ["submission"]
+    assert post_entry_recovery.attempts == []
+    assert exchange.create_calls == 0
+    assert control.is_paused
+    assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_live_startup_stays_paused_when_post_entry_position_is_not_visible() -> (
+    None
+):
+    """Do not fall through to normal recovery after an incomplete post-entry stage."""
+    exchange = RecoveryExchangeClient(positions=(_position(include_metadata=True),))
+    position_repository = MemoryPositionRepository()
+    attempt_repository = MemorySubmissionAttemptRepository()
+    await attempt_repository.save(attempt=_acknowledged_attempt())
+    events: list[str] = []
+    submission_recovery = FakeSubmissionRecovery(
+        result=LiveSubmissionRecoveryResult.ORDER_ACKNOWLEDGED,
+        events=events,
+    )
+    post_entry_recovery = FakePostEntryRecovery(
+        result=LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE,
+        events=events,
+    )
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=position_repository,
+        submission_attempt_repository=attempt_repository,
+        submission_recovery=submission_recovery,
+        post_entry_recovery=post_entry_recovery,
+    )
+
+    assert not await service.recover()
+    assert events == ["submission", "post_entry"]
+    assert exchange.create_calls == 0
+    assert control.is_paused
+    assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_live_startup_propagates_submission_recovery_cancellation() -> None:
+    """Do not convert cancellation into a recoverable startup result."""
+    exchange = RecoveryExchangeClient(positions=())
+    position_repository = MemoryPositionRepository()
+    attempt_repository = MemorySubmissionAttemptRepository()
+    submission_recovery = FakeSubmissionRecovery(
+        result=LiveSubmissionRecoveryResult.NOTHING_TO_RECOVER,
+        error=asyncio.CancelledError(),
+    )
+    post_entry_recovery = FakePostEntryRecovery(
+        result=LivePostEntryRecoveryResult.COMPLETED,
+    )
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=position_repository,
+        submission_attempt_repository=attempt_repository,
+        submission_recovery=submission_recovery,
+        post_entry_recovery=post_entry_recovery,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.recover()
+
+    assert post_entry_recovery.attempts == []
+    assert control.is_paused

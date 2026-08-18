@@ -35,7 +35,7 @@ _NOW = datetime(2026, 8, 7, tzinfo=UTC)
 class RecordingProtectionExchange(BinanceFuturesExchangeClient):
     """Record verified stop replacements without network access."""
 
-    __slots__ = ("stop_replacements",)
+    __slots__ = ("stop_client_algo_ids", "stop_replacements")
 
     def __init__(self) -> None:
         """Initialize an isolated exchange double."""
@@ -44,6 +44,7 @@ class RecordingProtectionExchange(BinanceFuturesExchangeClient):
             mapper=BinanceExchangeMapper(),
         )
         self.stop_replacements: list[Decimal] = []
+        self.stop_client_algo_ids: list[str | None] = []
 
     async def ensure_stop_loss_order(
         self,
@@ -52,9 +53,11 @@ class RecordingProtectionExchange(BinanceFuturesExchangeClient):
         side: OrderSide,
         quantity: Decimal,
         stop_loss: Decimal,
+        client_algo_id: str | None = None,
     ) -> Order:
         """Record and return one deterministic active stop."""
         self.stop_replacements.append(stop_loss)
+        self.stop_client_algo_ids.append(client_algo_id)
         return Order(
             order_id=f"stop-{len(self.stop_replacements)}",
             symbol=symbol,
@@ -140,7 +143,9 @@ async def test_live_protection_verifies_exchange_before_persisting_step() -> Non
     position = await repository.get_by_symbol(symbol="BTCUSDT")
     assert position is not None
     assert exchange.stop_replacements == [Decimal("99.70")]
+    assert exchange.stop_client_algo_ids[0] is not None
     assert position.stop_loss == Decimal("99.70")
+    assert position.stop_loss_client_algo_id == exchange.stop_client_algo_ids[0]
     assert position.protection_step == 1
 
 

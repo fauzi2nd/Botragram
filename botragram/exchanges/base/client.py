@@ -125,6 +125,8 @@ class BaseExchangeClient(ABC):
         quantity: Decimal,
         stop_loss: Decimal | None = None,
         take_profit: Decimal | None = None,
+        stop_loss_client_algo_id: str | None = None,
+        take_profit_client_algo_id: str | None = None,
     ) -> Sequence[Order]:
         """Create stop-loss and/or take-profit protection orders.
 
@@ -134,6 +136,8 @@ class BaseExchangeClient(ABC):
             quantity: Quantity protected by the orders.
             stop_loss: Optional stop-loss trigger price.
             take_profit: Optional take-profit trigger price.
+            stop_loss_client_algo_id: Stable client identity for a new stop leg.
+            take_profit_client_algo_id: Stable client identity for a new TP leg.
 
         Returns:
             Created protection orders.
@@ -198,6 +202,7 @@ class BaseExchangeClient(ABC):
         side: OrderSide,
         quantity: Decimal,
         stop_loss: Decimal,
+        client_algo_id: str | None = None,
     ) -> Order:
         """Ensure one matching stop-loss is active and remove older duplicates."""
 

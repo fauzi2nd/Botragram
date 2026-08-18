@@ -15,5 +15,6 @@ class SubmissionAttemptStatus(BaseEnum):
 
     PREPARED = "prepared"
     ACKNOWLEDGED = "acknowledged"
+    COMPLETED = "completed"
     REJECTED = "rejected"
     UNRESOLVED = "unresolved"

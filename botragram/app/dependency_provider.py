@@ -83,6 +83,8 @@ from botragram.services import (
     HumanConfirmedPaperExecutionService,
     LiveFuturesEntryService,
     LivePositionProtectionService,
+    LivePostEntryRecoveryService,
+    LiveSubmissionRecoveryService,
     MarketService,
     OpportunityDiscoveryService,
     OrderService,
@@ -141,7 +143,9 @@ class DependencyProvider:
         "_exchange_client",
         "_health_service",
         "_live_futures_entry_service",
+        "_live_post_entry_recovery_service",
         "_live_position_protection_service",
+        "_live_submission_recovery_service",
         "_initialized",
         "_market_service",
         "_market_type_switch_service",
@@ -229,7 +233,13 @@ class DependencyProvider:
         self._telegram_query_service: TelegramQueryService | None = None
         self._health_service: HealthService | None = None
         self._live_futures_entry_service: LiveFuturesEntryService | None = None
+        self._live_post_entry_recovery_service: LivePostEntryRecoveryService | None = (
+            None
+        )
         self._live_position_protection_service: LivePositionProtectionService | None = (
+            None
+        )
+        self._live_submission_recovery_service: LiveSubmissionRecoveryService | None = (
             None
         )
         self._runtime_reporter: RuntimeReporter | None = None
@@ -376,6 +386,13 @@ class DependencyProvider:
                 live_position_protection_service=(
                     self.live_position_protection_service
                 ),
+                submission_attempt_repository=self.submission_attempt_repository,
+                live_submission_recovery_service=(
+                    self.live_submission_recovery_service
+                ),
+                live_post_entry_recovery_service=(
+                    self.live_post_entry_recovery_service
+                ),
             )
             self._market_type_switch_service = MarketTypeSwitchService(
                 trade_mode=self._settings.app.trade_mode,
@@ -516,6 +533,16 @@ class DependencyProvider:
     def live_position_protection_service(self) -> LivePositionProtectionService:
         """Return the shared LIVE Futures protection reconciler."""
         return self._require(self._live_position_protection_service)
+
+    @property
+    def live_submission_recovery_service(self) -> LiveSubmissionRecoveryService:
+        """Return the GET-only durable LIVE submission recovery service."""
+        return self._require(self._live_submission_recovery_service)
+
+    @property
+    def live_post_entry_recovery_service(self) -> LivePostEntryRecoveryService:
+        """Return the durable acknowledged-entry recovery service."""
+        return self._require(self._live_post_entry_recovery_service)
 
     @property
     def live_futures_entry_service(self) -> LiveFuturesEntryService:
@@ -741,6 +768,16 @@ class DependencyProvider:
             position_repository=self.position_repository,
             risk_engine=self.risk_engine,
         )
+        self._live_submission_recovery_service = LiveSubmissionRecoveryService(
+            submission_attempt_repository=self.submission_attempt_repository,
+            order_service=self.order_service,
+        )
+        self._live_post_entry_recovery_service = LivePostEntryRecoveryService(
+            submission_attempt_repository=self.submission_attempt_repository,
+            position_service=self.position_service,
+            protection_service=self.live_position_protection_service,
+            runtime_control=self.runtime_control,
+        )
         self._live_futures_entry_service = LiveFuturesEntryService(
             market_type=self._settings.exchange.market_type,
             order_service=self.order_service,
@@ -878,7 +915,9 @@ class DependencyProvider:
         self._telegram_query_service = None
         self._health_service = None
         self._live_futures_entry_service = None
+        self._live_post_entry_recovery_service = None
         self._live_position_protection_service = None
+        self._live_submission_recovery_service = None
         self._runtime_reporter = None
         self._runtime_recovery_service = None
         self._signal_engine = None

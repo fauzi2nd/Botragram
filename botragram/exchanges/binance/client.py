@@ -296,6 +296,8 @@ class BinanceExchangeClient(BaseExchangeClient):
         quantity: Decimal,
         stop_loss: Decimal | None = None,
         take_profit: Decimal | None = None,
+        stop_loss_client_algo_id: str | None = None,
+        take_profit_client_algo_id: str | None = None,
     ) -> Sequence[Order]:
         """Create Binance Spot protection orders.
 
@@ -304,7 +306,15 @@ class BinanceExchangeClient(BaseExchangeClient):
         emulated with independent orders because one leg could remain active
         after the other fills.
         """
-        del symbol, side, quantity, stop_loss, take_profit
+        del (
+            symbol,
+            side,
+            quantity,
+            stop_loss,
+            take_profit,
+            stop_loss_client_algo_id,
+            take_profit_client_algo_id,
+        )
 
         raise NotImplementedError(
             "Binance Spot protection orders require dedicated OCO support"
@@ -448,9 +458,10 @@ class BinanceExchangeClient(BaseExchangeClient):
         side: OrderSide,
         quantity: Decimal,
         stop_loss: Decimal,
+        client_algo_id: str | None = None,
     ) -> Order:
         """Reject unsupported Spot stop replacement until OCO is implemented."""
-        del symbol, side, quantity, stop_loss
+        del symbol, side, quantity, stop_loss, client_algo_id
         raise NotImplementedError(
             "Binance Spot stop replacement requires dedicated OCO support"
         )

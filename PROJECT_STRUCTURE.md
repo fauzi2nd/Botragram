@@ -113,7 +113,9 @@ botragram/
 |   |-- human_confirmed_paper_execution_service.py # Discovery-to-approval orchestration
 |   |-- market_service.py
 |   |-- live_futures_entry_service.py # Protected Futures MARKET entry workflow
+|   |-- live_post_entry_recovery_service.py # ACKNOWLEDGED entry recovery core
 |   |-- live_position_protection_service.py # Shared LIVE SL/TP reconciliation
+|   |-- live_submission_recovery_service.py # GET-only incomplete entry recovery
 |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |-- order_service.py
 |   |-- paper_trading_service.py

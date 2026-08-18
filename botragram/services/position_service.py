@@ -150,6 +150,14 @@ class PositionService:
                 exchange_position.protection_step,
                 stored_position.protection_step,
             ),
+            stop_loss_client_algo_id=(
+                exchange_position.stop_loss_client_algo_id
+                or stored_position.stop_loss_client_algo_id
+            ),
+            take_profit_client_algo_id=(
+                exchange_position.take_profit_client_algo_id
+                or stored_position.take_profit_client_algo_id
+            ),
         )
 
     async def get(

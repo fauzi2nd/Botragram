@@ -56,6 +56,12 @@ class LivePositionProtectionService:
         )
 
         if stop_order is None or take_profit_order is None:
+            position = self._with_missing_client_algo_ids(
+                position=position,
+                needs_stop_loss=stop_order is None,
+                needs_take_profit=take_profit_order is None,
+            )
+            await self.position_repository.save(position=position)
             _LOGGER.info(
                 "Live protection reconciliation started: symbol=%s missing_stop=%s "
                 "missing_take_profit=%s",
@@ -70,6 +76,14 @@ class LivePositionProtectionService:
                 stop_loss=calculated_stop if stop_order is None else None,
                 take_profit=(
                     calculated_take_profit if take_profit_order is None else None
+                ),
+                stop_loss_client_algo_id=(
+                    position.stop_loss_client_algo_id if stop_order is None else None
+                ),
+                take_profit_client_algo_id=(
+                    position.take_profit_client_algo_id
+                    if take_profit_order is None
+                    else None
                 ),
             )
             protection_orders = await self.exchange_client.get_open_protection_orders(
@@ -105,6 +119,29 @@ class LivePositionProtectionService:
             protected.take_profit,
         )
         return protected
+
+    @staticmethod
+    def _with_missing_client_algo_ids(
+        *,
+        position: Position,
+        needs_stop_loss: bool,
+        needs_take_profit: bool,
+    ) -> Position:
+        """Assign each newly-created logical protection leg its stable identity."""
+        return replace(
+            position,
+            stop_loss_client_algo_id=(
+                position.stop_loss_client_algo_id
+                if not needs_stop_loss or position.stop_loss_client_algo_id is not None
+                else Position.create_stop_loss_client_algo_id()
+            ),
+            take_profit_client_algo_id=(
+                position.take_profit_client_algo_id
+                if not needs_take_profit
+                or position.take_profit_client_algo_id is not None
+                else Position.create_take_profit_client_algo_id()
+            ),
+        )
 
     @staticmethod
     def _find_protection_order(

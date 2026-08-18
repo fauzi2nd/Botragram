@@ -26,3 +26,7 @@ class SubmissionAttemptRepository(ABC):
     @abstractmethod
     async def get_unresolved(self) -> Sequence[SubmissionAttempt]:
         """Return attempts that still block a new LIVE entry."""
+
+    @abstractmethod
+    async def get_incomplete(self) -> Sequence[SubmissionAttempt]:
+        """Return attempts requiring durable LIVE lifecycle recovery."""

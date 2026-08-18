@@ -324,6 +324,16 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ON submission_attempts (status, created_at);
         """,
     ),
+    _Migration(
+        version=10,
+        script="""
+        ALTER TABLE positions
+        ADD COLUMN stop_loss_client_algo_id TEXT;
+
+        ALTER TABLE positions
+        ADD COLUMN take_profit_client_algo_id TEXT;
+        """,
+    ),
 )
 
 

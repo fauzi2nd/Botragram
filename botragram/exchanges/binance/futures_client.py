@@ -208,6 +208,8 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         quantity: Decimal,
         stop_loss: Decimal | None = None,
         take_profit: Decimal | None = None,
+        stop_loss_client_algo_id: str | None = None,
+        take_profit_client_algo_id: str | None = None,
     ) -> Sequence[Order]:
         """Create reduce-only stop-loss and take-profit market orders."""
         if quantity <= 0:
@@ -216,15 +218,22 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         normalized_symbol = self._normalize_symbol(symbol)
         orders: list[Order] = []
 
-        for order_type, trigger_price in (
-            (OrderType.STOP_MARKET, stop_loss),
-            (OrderType.TAKE_PROFIT_MARKET, take_profit),
+        for order_type, trigger_price, client_algo_id in (
+            (OrderType.STOP_MARKET, stop_loss, stop_loss_client_algo_id),
+            (
+                OrderType.TAKE_PROFIT_MARKET,
+                take_profit,
+                take_profit_client_algo_id,
+            ),
         ):
             if trigger_price is None:
                 continue
 
             if trigger_price <= 0:
                 raise ValueError("Protection trigger price must be greater than zero")
+
+            if client_algo_id is None:
+                raise ValueError("Protection client algo identity is required")
 
             orders.append(
                 await self._post_algo_order(
@@ -237,6 +246,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
                         "triggerPrice": self._format_decimal(trigger_price),
                         "reduceOnly": "true",
                         "workingType": "MARK_PRICE",
+                        "clientAlgoId": self._normalize_client_order_id(client_algo_id),
                     }
                 )
             )
@@ -378,6 +388,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         side: OrderSide,
         quantity: Decimal,
         stop_loss: Decimal,
+        client_algo_id: str | None = None,
     ) -> Order:
         """Place a replacement stop before cancelling matching older stops."""
         if quantity <= 0:
@@ -405,6 +416,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
                 side=side,
                 quantity=quantity,
                 stop_loss=stop_loss,
+                stop_loss_client_algo_id=client_algo_id,
             )
             orders = await self.get_open_protection_orders(
                 symbol=normalized_symbol,

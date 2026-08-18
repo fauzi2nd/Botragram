@@ -61,10 +61,12 @@ INSERT INTO positions (
     take_profit,
     interval,
     strategy_type,
-    protection_step
+    protection_step,
+    stop_loss_client_algo_id,
+    take_profit_client_algo_id
 )
 VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT (
     symbol
@@ -82,7 +84,9 @@ DO UPDATE SET
     take_profit = excluded.take_profit,
     interval = excluded.interval,
     strategy_type = excluded.strategy_type,
-    protection_step = excluded.protection_step;
+    protection_step = excluded.protection_step,
+    stop_loss_client_algo_id = excluded.stop_loss_client_algo_id,
+    take_profit_client_algo_id = excluded.take_profit_client_algo_id;
 """
 
 _UPDATE_POSITION_SQL: Final[str] = """
@@ -100,7 +104,9 @@ SET
     take_profit = ?,
     interval = ?,
     strategy_type = ?,
-    protection_step = ?
+    protection_step = ?,
+    stop_loss_client_algo_id = ?,
+    take_profit_client_algo_id = ?
 WHERE symbol = ?;
 """
 
@@ -119,7 +125,9 @@ SELECT
     take_profit,
     interval,
     strategy_type,
-    protection_step
+    protection_step,
+    stop_loss_client_algo_id,
+    take_profit_client_algo_id
 FROM positions
 """
 
@@ -193,6 +201,8 @@ type PositionParameters = tuple[
     str | None,
     str | None,
     int,
+    str | None,
+    str | None,
 ]
 
 type PositionUpdateParameters = tuple[
@@ -209,6 +219,8 @@ type PositionUpdateParameters = tuple[
     str | None,
     str | None,
     int,
+    str | None,
+    str | None,
     str,
 ]
 
@@ -396,6 +408,8 @@ class SQLitePositionRepository(PositionRepository):
                 else None
             ),
             position.protection_step,
+            position.stop_loss_client_algo_id,
+            position.take_profit_client_algo_id,
         )
 
     @classmethod
@@ -428,6 +442,8 @@ class SQLitePositionRepository(PositionRepository):
                 else None
             ),
             position.protection_step,
+            position.stop_loss_client_algo_id,
+            position.take_profit_client_algo_id,
             cls._normalize_symbol(position.symbol),
         )
 
@@ -497,6 +513,14 @@ class SQLitePositionRepository(PositionRepository):
             protection_step=cls._get_integer(
                 row,
                 column="protection_step",
+            ),
+            stop_loss_client_algo_id=cls._get_optional_string(
+                row,
+                column="stop_loss_client_algo_id",
+            ),
+            take_profit_client_algo_id=cls._get_optional_string(
+                row,
+                column="take_profit_client_algo_id",
             ),
         )
 
@@ -616,6 +640,23 @@ class SQLitePositionRepository(PositionRepository):
             raise TypeError(f"SQLite column {column!r} must contain text or null")
 
         return Decimal(value)
+
+    @staticmethod
+    def _get_optional_string(
+        row: Row,
+        *,
+        column: str,
+    ) -> str | None:
+        """Return optional text from a nullable SQLite column."""
+        value: object = row[column]
+
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            raise TypeError(f"SQLite column {column!r} must contain text or null")
+
+        return value
 
     @staticmethod
     def _get_string(

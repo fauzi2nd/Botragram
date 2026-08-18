@@ -72,6 +72,21 @@ class SQLiteSubmissionAttemptRepository(SubmissionAttemptRepository):
         )
         return tuple(self._from_row(row) for row in rows)
 
+    async def get_incomplete(self) -> Sequence[SubmissionAttempt]:
+        """Return attempts that require startup lifecycle recovery."""
+        rows = await self._database.fetch_all(
+            statement=(
+                f"SELECT {_COLUMNS} FROM submission_attempts "
+                "WHERE status IN (?, ?, ?) ORDER BY created_at ASC;"
+            ),
+            parameters=(
+                SubmissionAttemptStatus.PREPARED.value,
+                SubmissionAttemptStatus.UNRESOLVED.value,
+                SubmissionAttemptStatus.ACKNOWLEDGED.value,
+            ),
+        )
+        return tuple(self._from_row(row) for row in rows)
+
     @staticmethod
     def _params(attempt: SubmissionAttempt) -> tuple[object, ...]:
         """Serialize one immutable attempt."""

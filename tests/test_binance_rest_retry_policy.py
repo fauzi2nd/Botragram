@@ -180,6 +180,7 @@ async def test_futures_protection_post_timeout_is_single_attempt() -> None:
                 side=OrderSide.SELL,
                 quantity=Decimal("0.01"),
                 stop_loss=Decimal("64000"),
+                stop_loss_client_algo_id="bsl-00000000000000000000000000000000",
             )
     finally:
         await rest.close()

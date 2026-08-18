@@ -85,13 +85,29 @@ class PositionProtectionManager:
             ):
                 return
 
+            position_with_client_id = position
             if self.trade_mode is TradeMode.LIVE:
+                if position.stop_loss_client_algo_id is None:
+                    position_with_client_id = replace(
+                        position,
+                        stop_loss_client_algo_id=(
+                            Position.create_stop_loss_client_algo_id()
+                        ),
+                    )
+                    await self.position_repository.update(
+                        position=position_with_client_id,
+                    )
+                    self._cached_position = position_with_client_id
+
                 try:
                     await self.exchange_client.ensure_stop_loss_order(
-                        symbol=position.symbol,
-                        side=self._closing_side(position.side),
-                        quantity=position.quantity,
+                        symbol=position_with_client_id.symbol,
+                        side=self._closing_side(position_with_client_id.side),
+                        quantity=position_with_client_id.quantity,
                         stop_loss=replacement_stop,
+                        client_algo_id=(
+                            position_with_client_id.stop_loss_client_algo_id
+                        ),
                     )
                 except Exception:
                     self._retry_after_monotonic = (
@@ -100,7 +116,9 @@ class PositionProtectionManager:
                     raise
 
             protected_position = replace(
-                position,
+                position_with_client_id
+                if self.trade_mode is TradeMode.LIVE
+                else position,
                 current_price=ticker.last_price,
                 stop_loss=replacement_stop,
                 protection_step=step,

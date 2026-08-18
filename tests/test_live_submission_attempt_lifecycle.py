@@ -138,6 +138,15 @@ class RecordingSubmissionAttemptRepository(SubmissionAttemptRepository):
             )
         )
 
+    async def get_incomplete(self) -> tuple[SubmissionAttempt, ...]:
+        """Return attempts requiring lifecycle recovery."""
+        return tuple(
+            attempt
+            for attempt in self.attempts.values()
+            if attempt.status is not SubmissionAttemptStatus.REJECTED
+            and attempt.status is not SubmissionAttemptStatus.COMPLETED
+        )
+
 
 @dataclass(slots=True)
 class RecordingOrderService:
@@ -280,11 +289,12 @@ async def test_prepared_attempt_persists_before_submit_and_acknowledges() -> Non
         "save:prepared",
         "submit",
         "save:acknowledged",
+        "save:completed",
     ]
     assert orders.events == repository.events
     assert orders.client_order_ids == [attempt.client_order_id]
     assert order.client_order_id == attempt.client_order_id
-    assert attempt.status is SubmissionAttemptStatus.ACKNOWLEDGED
+    assert attempt.status is SubmissionAttemptStatus.COMPLETED
     assert attempt.exchange_order_id == "entry-1"
     assert attempt.client_order_id.startswith("btg-")
     assert len(attempt.client_order_id) == 36
@@ -492,7 +502,7 @@ async def test_ambiguous_submission_reconciles_using_the_original_client_id() ->
     attempt = next(iter(repository.attempts.values()))
     assert orders.calls == 1
     assert order.client_order_id == attempt.client_order_id
-    assert attempt.status is SubmissionAttemptStatus.ACKNOWLEDGED
+    assert attempt.status is SubmissionAttemptStatus.COMPLETED
     assert attempt.exchange_order_id == "entry-1"
     assert "position protection" not in control.get_missing_startup_requirements()
 
@@ -515,7 +525,7 @@ async def test_ambiguous_submission_handles_delayed_order_visibility() -> None:
     assert orders.calls == 1
     assert (
         next(iter(repository.attempts.values())).status
-        is SubmissionAttemptStatus.ACKNOWLEDGED
+        is SubmissionAttemptStatus.COMPLETED
     )
 
 

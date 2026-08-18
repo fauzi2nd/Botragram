@@ -49,3 +49,18 @@ class MemorySubmissionAttemptRepository(
                 )
             )
         return tuple(sorted(attempts, key=lambda attempt: attempt.created_at))
+
+    async def get_incomplete(self) -> Sequence[SubmissionAttempt]:
+        """Return all attempts whose LIVE lifecycle is not terminally safe."""
+        async with self._lock:
+            attempts = tuple(
+                attempt
+                for attempt in self._attempts.values()
+                if attempt.status
+                in (
+                    SubmissionAttemptStatus.PREPARED,
+                    SubmissionAttemptStatus.UNRESOLVED,
+                    SubmissionAttemptStatus.ACKNOWLEDGED,
+                )
+            )
+        return tuple(sorted(attempts, key=lambda attempt: attempt.created_at))

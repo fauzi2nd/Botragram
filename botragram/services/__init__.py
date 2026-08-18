@@ -13,6 +13,14 @@ from botragram.services.live_futures_entry_service import LiveFuturesEntryServic
 from botragram.services.live_position_protection_service import (
     LivePositionProtectionService,
 )
+from botragram.services.live_post_entry_recovery_service import (
+    LivePostEntryRecoveryResult,
+    LivePostEntryRecoveryService,
+)
+from botragram.services.live_submission_recovery_service import (
+    LiveSubmissionRecoveryResult,
+    LiveSubmissionRecoveryService,
+)
 from botragram.services.market_service import MarketService
 from botragram.services.opportunity_discovery_service import (
     OpportunityDiscoveryService,
@@ -37,7 +45,11 @@ __all__ = [
     "HealthReport",
     "HealthService",
     "LiveFuturesEntryService",
+    "LivePostEntryRecoveryResult",
+    "LivePostEntryRecoveryService",
     "LivePositionProtectionService",
+    "LiveSubmissionRecoveryResult",
+    "LiveSubmissionRecoveryService",
     "HumanConfirmedPaperExecutionService",
     "MarketService",
     "NotificationPublisher",

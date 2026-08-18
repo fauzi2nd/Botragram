@@ -124,13 +124,19 @@ class InMemoryProtectionClient(BinanceFuturesExchangeClient):
         quantity: Decimal,
         stop_loss: Decimal | None = None,
         take_profit: Decimal | None = None,
+        stop_loss_client_algo_id: str | None = None,
+        take_profit_client_algo_id: str | None = None,
     ) -> tuple[Order, ...]:
         """Create only the requested in-memory protection legs."""
         created: list[Order] = []
 
-        for order_type, trigger in (
-            (OrderType.STOP_MARKET, stop_loss),
-            (OrderType.TAKE_PROFIT_MARKET, take_profit),
+        for order_type, trigger, client_algo_id in (
+            (OrderType.STOP_MARKET, stop_loss, stop_loss_client_algo_id),
+            (
+                OrderType.TAKE_PROFIT_MARKET,
+                take_profit,
+                take_profit_client_algo_id,
+            ),
         ):
             if trigger is None:
                 continue
@@ -141,6 +147,7 @@ class InMemoryProtectionClient(BinanceFuturesExchangeClient):
                 order_type=order_type,
                 stop_price=trigger,
             )
+            assert client_algo_id is not None
             self.open_protections.append(order)
             created.append(order)
 
@@ -350,6 +357,8 @@ async def test_futures_client_creates_reduce_only_protection_orders() -> None:
         quantity=Decimal("0.01"),
         stop_loss=Decimal("49000"),
         take_profit=Decimal("52000"),
+        stop_loss_client_algo_id="bsl-00000000000000000000000000000000",
+        take_profit_client_algo_id="btp-00000000000000000000000000000000",
     )
 
     request_params = [request[2] for request in rest.requests]
@@ -367,6 +376,10 @@ async def test_futures_client_creates_reduce_only_protection_orders() -> None:
     assert [params["triggerPrice"] for params in request_params if params] == [
         "49000",
         "52000",
+    ]
+    assert [params["clientAlgoId"] for params in request_params if params] == [
+        "bsl-00000000000000000000000000000000",
+        "btp-00000000000000000000000000000000",
     ]
 
 
@@ -390,12 +403,14 @@ async def test_futures_stop_replacement_is_verified_and_idempotent() -> None:
         side=OrderSide.BUY,
         quantity=Decimal("1"),
         stop_loss=Decimal("99.7"),
+        client_algo_id="bsl-00000000000000000000000000000000",
     )
     second = await client.ensure_stop_loss_order(
         symbol="BTCUSDT",
         side=OrderSide.BUY,
         quantity=Decimal("1"),
         stop_loss=Decimal("99.7"),
+        client_algo_id="bsl-00000000000000000000000000000000",
     )
 
     assert first.order_id == second.order_id

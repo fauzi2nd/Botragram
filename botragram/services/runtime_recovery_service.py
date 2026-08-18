@@ -15,6 +15,7 @@ from botragram.enums import (
     PositionSide,
     SignalType,
     StrategyType,
+    SubmissionAttemptStatus,
     TradeMode,
 )
 from botragram.models import Position
@@ -22,9 +23,18 @@ from botragram.repositories import (
     CandleRepository,
     PositionRepository,
     SignalRepository,
+    SubmissionAttemptRepository,
 )
 from botragram.services.live_position_protection_service import (
     LivePositionProtectionService,
+)
+from botragram.services.live_post_entry_recovery_service import (
+    LiveAcknowledgedEntryRecovery,
+    LivePostEntryRecoveryResult,
+)
+from botragram.services.live_submission_recovery_service import (
+    LiveIncompleteSubmissionRecovery,
+    LiveSubmissionRecoveryResult,
 )
 from botragram.services.position_service import PositionService
 
@@ -62,6 +72,9 @@ class RuntimeRecoveryService:
     candle_repository: CandleRepository
     live_position_protection_service: LivePositionProtectionService
     first_tick_timeout_seconds: float = _FIRST_TICK_TIMEOUT_SECONDS
+    submission_attempt_repository: SubmissionAttemptRepository | None = None
+    live_submission_recovery_service: LiveIncompleteSubmissionRecovery | None = None
+    live_post_entry_recovery_service: LiveAcknowledgedEntryRecovery | None = None
 
     def __post_init__(self) -> None:
         """Validate recovery timing."""
@@ -70,6 +83,11 @@ class RuntimeRecoveryService:
 
     async def recover(self) -> bool:
         """Recover one position and resume only when every safety gate is ready."""
+        if self.trade_mode is TradeMode.LIVE:
+            self.runtime_control.set_position_protection_ready(False)
+            if not await self._recover_incomplete_live_entry():
+                return False
+
         persisted_positions = tuple(await self.position_repository.get_open_positions())
         positions = (
             await self._synchronize_live_positions(
@@ -80,6 +98,8 @@ class RuntimeRecoveryService:
         )
 
         if not positions:
+            if self.trade_mode is TradeMode.LIVE:
+                self.runtime_control.set_position_protection_ready(True)
             return False
 
         if len(positions) != 1:
@@ -93,6 +113,8 @@ class RuntimeRecoveryService:
         position = await self._restore_metadata(position=positions[0])
 
         if position is None:
+            if self.trade_mode is TradeMode.LIVE:
+                self.runtime_control.set_position_protection_ready(False)
             _LOGGER.critical(
                 "Automatic recovery blocked because position metadata could not "
                 "be reconstructed unambiguously: symbol=%s",
@@ -156,6 +178,74 @@ class RuntimeRecoveryService:
             self._require_strategy(position).value,
         )
         return True
+
+    async def _recover_incomplete_live_entry(self) -> bool:
+        """Recover a durable LIVE entry before normal position recovery runs."""
+        submission_recovery = self.live_submission_recovery_service
+        post_entry_recovery = self.live_post_entry_recovery_service
+        attempt_repository = self.submission_attempt_repository
+
+        if (
+            submission_recovery is None
+            or post_entry_recovery is None
+            or attempt_repository is None
+        ):
+            return True
+
+        try:
+            result = await submission_recovery.recover_incomplete()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception("LIVE submission recovery failed; runtime remains paused")
+            return False
+
+        if result in {
+            LiveSubmissionRecoveryResult.NOTHING_TO_RECOVER,
+            LiveSubmissionRecoveryResult.TERMINALLY_REJECTED,
+        }:
+            return True
+
+        if result in {
+            LiveSubmissionRecoveryResult.STILL_INCOMPLETE,
+            LiveSubmissionRecoveryResult.MULTIPLE_INCOMPLETE,
+        }:
+            _LOGGER.critical(
+                "LIVE startup blocked by incomplete submission recovery: result=%s",
+                result.value,
+            )
+            return False
+
+        attempts = tuple(await attempt_repository.get_incomplete())
+        if (
+            len(attempts) != 1
+            or attempts[0].status is not SubmissionAttemptStatus.ACKNOWLEDGED
+        ):
+            _LOGGER.critical(
+                "LIVE startup blocked because acknowledged recovery handoff is "
+                "not singular"
+            )
+            return False
+
+        try:
+            post_entry_result = await post_entry_recovery.recover_acknowledged(
+                attempt=attempts[0],
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "LIVE acknowledged-entry recovery failed; runtime remains paused"
+            )
+            return False
+
+        if post_entry_result is LivePostEntryRecoveryResult.COMPLETED:
+            return True
+
+        _LOGGER.critical(
+            "LIVE startup blocked because acknowledged entry position is not visible"
+        )
+        return False
 
     async def _synchronize_live_positions(
         self,
