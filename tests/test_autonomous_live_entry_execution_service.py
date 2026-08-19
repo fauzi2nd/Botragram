@@ -137,6 +137,17 @@ class _RecordingAttemptRepository(SubmissionAttemptRepository):
         self.events.append(f"attempt:{attempt.status.value}")
         self.attempts.append(attempt)
 
+    async def resolve_no_exposure(
+        self,
+        *,
+        symbol: str,
+        attempt: SubmissionAttempt,
+    ) -> None:
+        """Record the terminal no-exposure transition without changing behavior."""
+        del symbol
+        self.events.append(f"attempt:{attempt.status.value}")
+        self.attempts.append(attempt)
+
     async def get_by_client_order_id(
         self, *, client_order_id: str
     ) -> SubmissionAttempt | None:

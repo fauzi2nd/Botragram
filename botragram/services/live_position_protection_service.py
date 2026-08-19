@@ -308,6 +308,41 @@ class LivePositionProtectionService:
         )
         return order
 
+    async def probe_persisted_leg(
+        self,
+        *,
+        position: Position,
+        order_type: OrderType,
+        client_id: str,
+    ) -> str:
+        """GET-only probe of a persisted protection client identity.
+
+        Returns one of: "not_found", "active", "unexpected", "unknown".
+        Does not perform any POST or mutation.
+        """
+        try:
+            order = await self.exchange_client.get_protection_order_by_client_id(
+                symbol=position.symbol,
+                client_id=client_id,
+            )
+        except ExchangeOrderNotFoundError:
+            return "not_found"
+        except ExchangeOrderOutcomeUnknownError:
+            return "unknown"
+
+        try:
+            # Validate using existing reconciliation rules; treat failures as
+            # unexpected states that must block resolution.
+            self._validate_reconciled_leg(
+                order=order,
+                position=position,
+                order_type=order_type,
+                client_id=client_id,
+            )
+            return "active"
+        except RuntimeError:
+            return "unexpected"
+
     @staticmethod
     def _validate_reconciled_leg(
         *,

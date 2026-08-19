@@ -28,10 +28,11 @@ from typing import Final, Protocol
 # Local Imports
 # =============================================================================
 from botragram.app.runtime_control import TradingRuntimeControl
-from botragram.enums import SubmissionAttemptStatus
+from botragram.enums import OrderStatus, OrderType, SubmissionAttemptStatus
 from botragram.enums.base import BaseEnum
-from botragram.models import Position, SubmissionAttempt
+from botragram.models import Order, Position, SubmissionAttempt
 from botragram.repositories import SubmissionAttemptRepository
+from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
 
 # =============================================================================
 # Exports
@@ -65,12 +66,25 @@ class LivePositionVisibility(Protocol):
         """Persist one position with its runtime metadata."""
         ...
 
+    async def delete(self, *, symbol: str) -> bool:
+        """Delete a stored position by symbol."""
+        ...
+
 
 class LiveProtectionVerification(Protocol):
     """Verify complete exchange protection for one position."""
 
     async def ensure(self, *, position: Position) -> Position:
         """Return a position whose protection is exchange-verified."""
+        ...
+
+    async def probe_persisted_leg(
+        self, *, position: Position, order_type: OrderType, client_id: str
+    ) -> str:
+        """Probe a persisted protection identity in a GET-only manner.
+
+        Returns one of: "not_found", "active", "unexpected", "unknown".
+        """
         ...
 
 
@@ -86,6 +100,16 @@ class LiveAcknowledgedEntryRecovery(Protocol):
         ...
 
 
+class LiveOrderFetch(Protocol):
+    """Fetch an authoritative exchange order by client-assigned id."""
+
+    async def get_by_client_order_id(
+        self, *, symbol: str, client_order_id: str
+    ) -> Order:
+        """Return the authoritative order snapshot for the client id."""
+        ...
+
+
 # =============================================================================
 # Enums
 # =============================================================================
@@ -94,6 +118,7 @@ class LivePostEntryRecoveryResult(BaseEnum):
     """Outcome of recovery after an entry is durably acknowledged."""
 
     COMPLETED = "completed"
+    RESOLVED_NO_EXPOSURE = "resolved_no_exposure"
     POSITION_NOT_VISIBLE = "position_not_visible"
 
 
@@ -105,9 +130,13 @@ class LivePostEntryRecoveryService:
     """Complete one acknowledged LIVE entry without querying or creating it."""
 
     submission_attempt_repository: SubmissionAttemptRepository
+    live_recovery_repository: LiveRecoveryRepository
     position_service: LivePositionVisibility
     protection_service: LiveProtectionVerification
     runtime_control: TradingRuntimeControl
+    order_service: LiveOrderFetch | None = None
+    # Optional protection reconciler to probe persisted protection identities
+    protection_reconciler: LiveProtectionVerification | None = None
 
     async def recover_acknowledged(
         self,
@@ -142,6 +171,83 @@ class LivePostEntryRecoveryService:
                 attempt.symbol,
                 attempt.client_order_id,
             )
+            # Require a persisted authoritative position from a prior sync to
+            # prove the entry was previously visible.
+            persisted = await self.position_service.get(
+                symbol=attempt.symbol,
+                synchronize=False,
+            )
+            if persisted is None:
+                return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+            # Ensure the persisted position corresponds to this entry context.
+            if persisted.opened_at != attempt.signal_generated_at:
+                return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+            # Reconcile any persisted protection identities via GET-only probes.
+            # If any leg is active/ambiguous/unreadable, block resolution.
+            reconciler = self.protection_reconciler or self.protection_service
+            try:
+                # Stop leg
+                if persisted.stop_loss_client_algo_id is not None:
+                    stop_status = await reconciler.probe_persisted_leg(
+                        position=persisted,
+                        order_type=OrderType.STOP_MARKET,
+                        client_id=persisted.stop_loss_client_algo_id,
+                    )
+                    if stop_status != "not_found":
+                        return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+                # Take-profit leg
+                if persisted.take_profit_client_algo_id is not None:
+                    tp_status = await reconciler.probe_persisted_leg(
+                        position=persisted,
+                        order_type=OrderType.TAKE_PROFIT_MARKET,
+                        client_id=persisted.take_profit_client_algo_id,
+                    )
+                    if tp_status != "not_found":
+                        return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+            except Exception:
+                return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+            # If an order service is available, check whether the authoritative
+            # order was filled and the exchange position is conclusively zero.
+            if self.order_service is None:
+                return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+            try:
+                order = await self.order_service.get_by_client_order_id(
+                    symbol=attempt.symbol,
+                    client_order_id=attempt.client_order_id,
+                )
+            except Exception:
+                return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+            if order.status is OrderStatus.FILLED:
+                resolved_attempt = replace(
+                    attempt,
+                    status=SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE,
+                    updated_at=datetime.now(UTC),
+                )
+
+                # Perform one storage-neutral atomic transition that both
+                # persists the terminal attempt state and clears any stale
+                # persisted Position. Implementations guarantee caller-visible
+                # atomicity and do not require service-level branching.
+                await self.live_recovery_repository.resolve_no_exposure(
+                    symbol=attempt.symbol, attempt=resolved_attempt
+                )
+                # No protection POST, deletion, or replay is issued here.
+                # Set protection ready as there is no unresolved exposure.
+                self.runtime_control.set_position_protection_ready(True)
+                _LOGGER.info(
+                    "Acknowledged LIVE entry resolved with no exposure: "
+                    "symbol=%s client_order_id=%s",
+                    attempt.symbol,
+                    attempt.client_order_id,
+                )
+                return LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
+
             return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
 
         persisted_position = replace(

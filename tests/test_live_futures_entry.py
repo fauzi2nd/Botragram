@@ -33,6 +33,9 @@ from botragram.models import (
 from botragram.models.risk import PositionSize
 from botragram.services import LiveFuturesEntryService, LivePostEntryRecoveryService
 from botragram.storage.memory import MemorySubmissionAttemptRepository
+from botragram.storage.memory.live_recovery_repository import (
+    MemoryLiveRecoveryRepository,
+)
 
 _NOW = datetime(2026, 8, 17, tzinfo=UTC)
 
@@ -151,6 +154,13 @@ class FakePositionService:
         """Capture metadata persistence."""
         self.saved = position
 
+    async def delete(self, *, symbol: str) -> bool:
+        """Delete the stored position for the symbol."""
+        existed = self.position is not None and self.position.symbol == symbol
+        if existed:
+            self.position = None
+        return existed
+
 
 @dataclass(slots=True)
 class FakeProtectionService:
@@ -162,6 +172,16 @@ class FakeProtectionService:
     async def ensure(self, *, position: Position) -> Position:
         """Return verified protection or fail closed."""
         self.position = position
+        if isinstance(self.error, asyncio.CancelledError):
+            raise self.error
+        if self.error is not None:
+            raise self.error
+        return position
+
+    async def probe_persisted_leg(
+        self, *, position: Position, order_type: OrderType, client_id: str
+    ) -> str:
+        return "not_found"
         if isinstance(self.error, asyncio.CancelledError):
             raise self.error
         if self.error is not None:
@@ -384,6 +404,10 @@ async def test_completion_persistence_failure_recovers_same_acknowledged_attempt
 
     await LivePostEntryRecoveryService(
         submission_attempt_repository=repository,
+        live_recovery_repository=MemoryLiveRecoveryRepository(
+            attempt_repo=repository,
+            position_repo=positions,  # type: ignore[arg-type]
+        ),
         position_service=positions,
         protection_service=protection,
         runtime_control=control,

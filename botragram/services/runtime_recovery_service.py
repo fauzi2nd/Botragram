@@ -423,7 +423,10 @@ class RuntimeRecoveryService:
             )
             return False
 
-        if post_entry_result is LivePostEntryRecoveryResult.COMPLETED:
+        if post_entry_result in {
+            LivePostEntryRecoveryResult.COMPLETED,
+            LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE,
+        }:
             return True
 
         _LOGGER.critical(

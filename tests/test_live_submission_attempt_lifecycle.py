@@ -120,6 +120,19 @@ class RecordingSubmissionAttemptRepository(SubmissionAttemptRepository):
             raise RuntimeError(f"cannot save {attempt.status.value}")
         self.attempts[attempt.client_order_id] = attempt
 
+    async def resolve_no_exposure(
+        self,
+        *,
+        symbol: str,
+        attempt: SubmissionAttempt,
+    ) -> None:
+        """Record the terminal resolved-no-exposure transition."""
+        del symbol
+        self.events.append(f"save:{attempt.status.value}")
+        if attempt.status is self.fail_status:
+            raise RuntimeError(f"cannot save {attempt.status.value}")
+        self.attempts[attempt.client_order_id] = attempt
+
     async def get_by_client_order_id(
         self, *, client_order_id: str
     ) -> SubmissionAttempt | None:

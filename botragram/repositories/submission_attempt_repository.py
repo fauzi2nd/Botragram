@@ -18,6 +18,15 @@ class SubmissionAttemptRepository(ABC):
         """Persist or replace one attempt."""
 
     @abstractmethod
+    async def resolve_no_exposure(
+        self,
+        *,
+        symbol: str,
+        attempt: SubmissionAttempt,
+    ) -> None:
+        """Persist the terminal no-exposure state atomically for one symbol."""
+
+    @abstractmethod
     async def get_by_client_order_id(
         self, *, client_order_id: str
     ) -> SubmissionAttempt | None:

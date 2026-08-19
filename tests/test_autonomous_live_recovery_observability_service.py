@@ -120,6 +120,12 @@ async def _get_terminal_attempt_snapshot() -> AutonomousLiveRecoverySnapshot:
             status=SubmissionAttemptStatus.COMPLETED,
         )
     )
+    await repository.save(
+        attempt=replace(
+            _attempt(status=SubmissionAttemptStatus.PREPARED, symbol="XRPUSDT"),
+            status=SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE,
+        )
+    )
     return await AutonomousLiveRecoveryObservabilityService(
         submission_attempt_repository=repository,
         authorization=None,

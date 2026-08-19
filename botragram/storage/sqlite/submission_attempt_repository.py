@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from sqlite3 import Row
 
@@ -45,6 +46,29 @@ class SQLiteSubmissionAttemptRepository(SubmissionAttemptRepository):
         await self._database.execute(
             statement=_UPSERT, parameters=self._params(attempt)
         )
+
+    async def resolve_no_exposure(
+        self,
+        *,
+        symbol: str,
+        attempt: SubmissionAttempt,
+    ) -> None:
+        """Atomically clear one local exposure and persist the terminal state."""
+        resolved = replace(
+            attempt,
+            status=SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE,
+            updated_at=datetime.now(UTC),
+        )
+
+        async with self._database.transaction() as connection:
+            await connection.execute(
+                "DELETE FROM positions WHERE symbol = ?;",
+                (symbol,),
+            )
+            await connection.execute(
+                _UPSERT,
+                self._params(resolved),
+            )
 
     async def get_by_client_order_id(
         self, *, client_order_id: str

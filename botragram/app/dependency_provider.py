@@ -79,6 +79,7 @@ from botragram.repositories import (
     SubmissionAttemptRepository,
     TradeRepository,
 )
+from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
 from botragram.services import (
     AccountService,
     AutonomousLiveEntryExecutionService,
@@ -119,6 +120,9 @@ from botragram.storage.sqlite import (
     SQLiteSignalRepository,
     SQLiteSubmissionAttemptRepository,
     SQLiteTradeRepository,
+)
+from botragram.storage.sqlite.live_recovery_repository import (
+    SQLiteLiveRecoveryRepository,
 )
 from botragram.strategies.factory import StrategyFactory
 from botragram.telegram import TelegramBot
@@ -912,11 +916,35 @@ class DependencyProvider:
                 authorization=self._autonomous_live_entry_authorization,
             )
         )
+        # Wire a storage-appropriate LiveRecoveryRepository for atomic
+        # resolve_no_exposure semantics. Prefer a SQLite adapter when the
+        # configured submission_attempt_repository is SQLite-backed.
+        if isinstance(
+            self.submission_attempt_repository, SQLiteSubmissionAttemptRepository
+        ):
+            live_recovery_repo: LiveRecoveryRepository = SQLiteLiveRecoveryRepository(
+                subrepo=self.submission_attempt_repository
+            )
+        else:
+            # Import the in-memory adapter lazily to avoid importing test-only
+            # memory classes in production contexts.
+            from botragram.storage.memory.live_recovery_repository import (
+                MemoryLiveRecoveryRepository,
+            )
+
+            live_recovery_repo = MemoryLiveRecoveryRepository(
+                attempt_repo=self.submission_attempt_repository,  # type: ignore[arg-type]
+                position_repo=self.position_repository,  # type: ignore[arg-type]
+            )
+
         self._live_post_entry_recovery_service = LivePostEntryRecoveryService(
             submission_attempt_repository=self.submission_attempt_repository,
+            live_recovery_repository=live_recovery_repo,
             position_service=self.position_service,
             protection_service=self.live_position_protection_service,
             runtime_control=self.runtime_control,
+            order_service=self.order_service,
+            protection_reconciler=self.live_position_protection_service,
         )
         self._live_futures_entry_service = LiveFuturesEntryService(
             market_type=self._settings.exchange.market_type,

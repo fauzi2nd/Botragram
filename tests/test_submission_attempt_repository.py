@@ -83,5 +83,13 @@ async def _run_sqlite_submission_attempt_test() -> None:
                 == acknowledged
             )
             assert await repository.get_unresolved() == ()
+            # If an acknowledged attempt is transitioned to the resolved-no-exposure
+            # terminal state it must be excluded from incomplete lists.
+            resolved = replace(
+                acknowledged,
+                status=SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE,
+            )
+            await repository.save(attempt=resolved)
+            assert await repository.get_incomplete() == ()
         finally:
             await database.close()

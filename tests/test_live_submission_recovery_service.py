@@ -79,6 +79,23 @@ class FakeAttemptRepository(SubmissionAttemptRepository):
             for item in self.incomplete
         )
 
+    async def resolve_no_exposure(
+        self,
+        *,
+        symbol: str,
+        attempt: SubmissionAttempt,
+    ) -> None:
+        """Exercise the repository-owned no-exposure terminal transition."""
+        del symbol
+        self.saved.append(
+            replace(attempt, status=SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE)
+        )
+        self.incomplete = tuple(
+            item
+            for item in self.incomplete
+            if item.client_order_id != attempt.client_order_id
+        )
+
     async def get_by_client_order_id(
         self, *, client_order_id: str
     ) -> SubmissionAttempt | None:
