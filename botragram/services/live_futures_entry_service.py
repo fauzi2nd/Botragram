@@ -227,6 +227,7 @@ class LiveFuturesEntryService:
                 position,
                 interval=interval,
                 strategy_type=self._resolve_strategy_type(signal.strategy_name),
+                entry_client_order_id=client_order_id,
             )
             await self.position_service.save(position=persisted_position)
             _LOGGER.info(

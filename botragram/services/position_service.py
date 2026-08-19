@@ -158,6 +158,10 @@ class PositionService:
                 exchange_position.take_profit_client_algo_id
                 or stored_position.take_profit_client_algo_id
             ),
+            entry_client_order_id=(
+                exchange_position.entry_client_order_id
+                or stored_position.entry_client_order_id
+            ),
         )
 
     async def get(

@@ -28,7 +28,13 @@ from typing import Final, Protocol
 # Local Imports
 # =============================================================================
 from botragram.app.runtime_control import TradingRuntimeControl
-from botragram.enums import OrderStatus, OrderType, SubmissionAttemptStatus
+from botragram.enums import (
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+    SubmissionAttemptStatus,
+)
 from botragram.enums.base import BaseEnum
 from botragram.models import Order, Position, SubmissionAttempt
 from botragram.repositories import SubmissionAttemptRepository
@@ -180,9 +186,37 @@ class LivePostEntryRecoveryService:
             if persisted is None:
                 return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
 
-            # Ensure the persisted position corresponds to this entry context.
-            if persisted.opened_at != attempt.signal_generated_at:
+            # Position/attempt correlation gate. Fetch one authoritative order
+            # after identity mismatch is ruled out so ``order`` is always bound.
+            if (
+                persisted.entry_client_order_id is not None
+                and persisted.entry_client_order_id != attempt.client_order_id
+            ):
+                _LOGGER.warning(
+                    "Position entry identity mismatch: persisted=%s attempt=%s",
+                    persisted.entry_client_order_id,
+                    attempt.client_order_id,
+                )
                 return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+            if self.order_service is None:
+                return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+            try:
+                order = await self.order_service.get_by_client_order_id(
+                    symbol=attempt.symbol,
+                    client_order_id=attempt.client_order_id,
+                )
+            except Exception:
+                return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+            if persisted.entry_client_order_id is None:
+                if not self._legacy_correlation_proof(
+                    attempt=attempt,
+                    persisted=persisted,
+                    order=order,
+                ):
+                    return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
 
             # Reconcile any persisted protection identities via GET-only probes.
             # If any leg is active/ambiguous/unreadable, block resolution.
@@ -207,19 +241,6 @@ class LivePostEntryRecoveryService:
                     )
                     if tp_status != "not_found":
                         return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
-            except Exception:
-                return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
-
-            # If an order service is available, check whether the authoritative
-            # order was filled and the exchange position is conclusively zero.
-            if self.order_service is None:
-                return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
-
-            try:
-                order = await self.order_service.get_by_client_order_id(
-                    symbol=attempt.symbol,
-                    client_order_id=attempt.client_order_id,
-                )
             except Exception:
                 return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
 
@@ -254,6 +275,7 @@ class LivePostEntryRecoveryService:
             position,
             interval=attempt.interval,
             strategy_type=attempt.strategy_type,
+            entry_client_order_id=attempt.client_order_id,
         )
         await self.position_service.save(position=persisted_position)
         _LOGGER.info(
@@ -294,3 +316,153 @@ class LivePostEntryRecoveryService:
                 await asyncio.sleep(_POSITION_VISIBILITY_DELAY_SECONDS)
 
         return None
+
+    @staticmethod
+    def _legacy_correlation_proof(
+        *,
+        attempt: SubmissionAttempt,
+        persisted: Position,
+        order: Order,
+    ) -> bool:
+        """Return True only when NULL-identity evidence fully correlates.
+
+        Timestamps are omitted: local scratch does not contain authoritative
+        Run #2 order created_at/updated_at values, so a causal clock rule is
+        not asserted. Signal time is never used.
+
+        Quantity: Order.quantity is origQty and Order.executed_quantity is
+        executedQty. FILLED proof requires executedQty to equal the persisted
+        and attempted size. origQty may exceed executedQty; executedQty may
+        not exceed origQty.
+        """
+        if order.client_order_id is None:
+            _LOGGER.warning("Legacy correlation: order client_order_id is missing")
+            return False
+
+        if order.client_order_id != attempt.client_order_id:
+            _LOGGER.warning(
+                "Legacy correlation: client_order_id mismatch order=%s "
+                "attempt=%s",
+                order.client_order_id,
+                attempt.client_order_id,
+            )
+            return False
+
+        if attempt.exchange_order_id is None:
+            _LOGGER.warning("Legacy correlation: attempt exchange_order_id is missing")
+            return False
+
+        if order.order_id != attempt.exchange_order_id:
+            _LOGGER.warning(
+                "Legacy correlation: exchange order id mismatch order=%s "
+                "attempt=%s",
+                order.order_id,
+                attempt.exchange_order_id,
+            )
+            return False
+
+        if order.status is not OrderStatus.FILLED:
+            _LOGGER.warning(
+                "Legacy correlation: order not FILLED status=%s",
+                order.status,
+            )
+            return False
+
+        if (
+            order.symbol.upper() != attempt.symbol.upper()
+            or order.symbol.upper() != persisted.symbol.upper()
+        ):
+            _LOGGER.warning(
+                "Legacy correlation: symbol mismatch order=%s attempt=%s "
+                "persisted=%s",
+                order.symbol,
+                attempt.symbol,
+                persisted.symbol,
+            )
+            return False
+
+        if order.side is not attempt.side:
+            _LOGGER.warning(
+                "Legacy correlation: side mismatch order=%s attempt=%s",
+                order.side,
+                attempt.side,
+            )
+            return False
+
+        expected_position_side = (
+            PositionSide.LONG if attempt.side is OrderSide.BUY else PositionSide.SHORT
+        )
+        if persisted.side is not expected_position_side:
+            _LOGGER.warning(
+                "Legacy correlation: position side incompatible "
+                "attempt_side=%s persisted_position_side=%s",
+                attempt.side,
+                persisted.side,
+            )
+            return False
+
+        if order.order_type is not attempt.order_type:
+            _LOGGER.warning(
+                "Legacy correlation: order_type mismatch order=%s attempt=%s",
+                order.order_type,
+                attempt.order_type,
+            )
+            return False
+
+        if order.executed_quantity != persisted.quantity:
+            _LOGGER.warning(
+                "Legacy correlation: executed quantity mismatch executed=%s "
+                "persisted=%s",
+                order.executed_quantity,
+                persisted.quantity,
+            )
+            return False
+
+        if persisted.quantity != attempt.quantity:
+            _LOGGER.warning(
+                "Legacy correlation: persisted quantity mismatch persisted=%s "
+                "attempt=%s",
+                persisted.quantity,
+                attempt.quantity,
+            )
+            return False
+
+        if order.executed_quantity > order.quantity:
+            _LOGGER.warning(
+                "Legacy correlation: executedQty exceeds origQty executed=%s "
+                "orig=%s",
+                order.executed_quantity,
+                order.quantity,
+            )
+            return False
+
+        if persisted.interval is None or persisted.interval is not attempt.interval:
+            _LOGGER.warning(
+                "Legacy correlation: interval missing or mismatch persisted=%s "
+                "attempt=%s",
+                persisted.interval,
+                attempt.interval,
+            )
+            return False
+
+        if (
+            persisted.strategy_type is None
+            or persisted.strategy_type is not attempt.strategy_type
+        ):
+            _LOGGER.warning(
+                "Legacy correlation: strategy_type missing or mismatch "
+                "persisted=%s attempt=%s",
+                persisted.strategy_type,
+                attempt.strategy_type,
+            )
+            return False
+
+        if persisted.stop_loss_client_algo_id is None:
+            _LOGGER.warning("Legacy correlation: stop-loss identity is missing")
+            return False
+
+        if persisted.take_profit_client_algo_id is None:
+            _LOGGER.warning("Legacy correlation: take-profit identity is missing")
+            return False
+
+        return True

@@ -13,6 +13,7 @@ from botragram.app import TradingRuntimeControl
 from botragram.enums import (
     Interval,
     OrderSide,
+    OrderStatus,
     OrderType,
     PositionSide,
     StrategyType,
@@ -56,7 +57,7 @@ def _attempt(
 
 
 def _position(*, quantity: Decimal = Decimal("0.012")) -> Position:
-    """Build one exchange-authoritative position snapshot."""
+    """Build one exchange-authoritative position snapshot with durable entry identity."""
     return Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -67,6 +68,7 @@ def _position(*, quantity: Decimal = Decimal("0.012")) -> Position:
         leverage=1,
         opened_at=_NOW,
         updated_at=_NOW,
+        entry_client_order_id=_CLIENT_ORDER_ID,
     )
 
 
@@ -390,6 +392,7 @@ async def test_ambiguous_entry_order_blocks_resolution() -> None:
         opened_at=_NOW,
         updated_at=_NOW,
         stop_loss_client_algo_id="stop-1",
+        entry_client_order_id=_CLIENT_ORDER_ID,
     )
 
     result = await service.recover_acknowledged(attempt=_attempt())
@@ -450,6 +453,7 @@ async def test_persisted_stop_found_blocks_resolution() -> None:
         updated_at=_NOW,
         stop_loss_client_algo_id="stop-1",
         take_profit_client_algo_id="tp-1",
+        entry_client_order_id=_CLIENT_ORDER_ID,
     )
 
     result = await service.recover_acknowledged(attempt=_attempt())
@@ -503,6 +507,7 @@ async def test_protection_probe_unknown_blocks_resolution() -> None:
         updated_at=_NOW,
         stop_loss_client_algo_id="stop-1",
         take_profit_client_algo_id="tp-1",
+        entry_client_order_id=_CLIENT_ORDER_ID,
     )
 
     result = await service.recover_acknowledged(attempt=_attempt())
@@ -634,6 +639,7 @@ async def test_cancellation_propagates_for_various_operations() -> None:
         updated_at=_NOW,
         stop_loss_client_algo_id="stop-1",
         take_profit_client_algo_id="tp-1",
+        entry_client_order_id=_CLIENT_ORDER_ID,
     )
     repository = MemorySubmissionAttemptRepository()
     attempt = _attempt()
@@ -792,11 +798,13 @@ async def test_visible_position_restores_metadata_and_completes_attempt() -> Non
         client_order_id=_CLIENT_ORDER_ID,
     )
     assert result is LivePostEntryRecoveryResult.COMPLETED
+    assert result is not LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
     assert positions.calls == [("BTCUSDT", True)]
     assert positions.saved[0].quantity == Decimal("0.012")
     assert positions.saved[0].entry_price == Decimal("65100")
     assert positions.saved[0].interval is Interval.M15
     assert positions.saved[0].strategy_type is StrategyType.EMA_SCALPING
+    assert positions.saved[0].entry_client_order_id == _CLIENT_ORDER_ID
     assert protection.positions == positions.saved
     assert completed is not None
     assert completed.status is SubmissionAttemptStatus.COMPLETED
@@ -898,3 +906,410 @@ async def test_non_acknowledged_attempt_is_rejected_without_boundary_calls() -> 
 
     assert positions.calls == []
     assert protection.positions == []
+
+
+# =============================================================================
+# Phase 5C.4F Test Matrix: Durable entry/position correlation hardening
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Run #2-realistic timestamps (demonstrating signal!=position clock divergence)
+# ---------------------------------------------------------------------------
+_RUN2_OPENED_AT = datetime(2026, 8, 18, 11, 1, 38, 899000, tzinfo=UTC)
+_RUN2_SIGNAL_AT = datetime(2026, 8, 18, 11, 14, 59, 999000, tzinfo=UTC)
+_RUN2_ORDER_AT = datetime(2026, 8, 18, 11, 1, 38, 839000, tzinfo=UTC)
+_RUN2_CLIENT_ORDER_ID = "btg-639023b2e35c4e56801b2a61746da4dc"
+_RUN2_SYMBOL = "1000BONKUSDT"
+_RUN2_QUANTITY = Decimal("4361")
+
+
+def _run2_attempt() -> SubmissionAttempt:
+    """Build a Run #2-realistic acknowledged attempt."""
+    return SubmissionAttempt(
+        client_order_id=_RUN2_CLIENT_ORDER_ID,
+        symbol=_RUN2_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=_RUN2_QUANTITY,
+        signal_generated_at=_RUN2_SIGNAL_AT,
+        interval=Interval.M15,
+        strategy_type=StrategyType.EMA_CROSS,
+        status=SubmissionAttemptStatus.ACKNOWLEDGED,
+        created_at=_RUN2_SIGNAL_AT,
+        updated_at=_RUN2_SIGNAL_AT,
+        exchange_order_id="308703789",
+    )
+
+
+def _run2_filled_order() -> Order:
+    """Build a Run #2-realistic FILLED entry order."""
+    from botragram.enums import OrderStatus
+
+    return Order(
+        order_id="308703789",
+        client_order_id=_RUN2_CLIENT_ORDER_ID,
+        symbol=_RUN2_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=_RUN2_QUANTITY,
+        executed_quantity=_RUN2_QUANTITY,
+        price=None,
+        status=OrderStatus.FILLED,
+        created_at=_RUN2_ORDER_AT,
+        updated_at=_RUN2_ORDER_AT,
+    )
+
+
+def _run2_persisted_position(
+    *,
+    entry_client_order_id: str | None,
+) -> Position:
+    """Build a Run #2-realistic persisted position."""
+    return Position(
+        symbol=_RUN2_SYMBOL,
+        side=PositionSide.LONG,
+        quantity=_RUN2_QUANTITY,
+        entry_price=Decimal("0.02905"),
+        current_price=Decimal("0.02905"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=_RUN2_OPENED_AT,
+        updated_at=_RUN2_OPENED_AT,
+        interval=Interval.M15,
+        strategy_type=StrategyType.EMA_CROSS,
+        entry_client_order_id=entry_client_order_id,
+    )
+
+
+async def _run2_service(
+    *,
+    persisted: Position,
+    order: Order,
+) -> tuple[
+    LivePostEntryRecoveryService,
+    MemorySubmissionAttemptRepository,
+    FakePositionService,
+    TradingRuntimeControl,
+]:
+    """Build a Run #2-realistic service wired with the given persisted position."""
+    repository = MemorySubmissionAttemptRepository()
+    attempt = _run2_attempt()
+    await repository.save(attempt=attempt)
+    positions = FakePositionService(responses=[None, None])
+    positions.persisted = persisted
+    control = TradingRuntimeControl()
+    service = LivePostEntryRecoveryService(
+        submission_attempt_repository=repository,
+        live_recovery_repository=MemoryLiveRecoveryRepository(
+            attempt_repo=repository,
+            position_repo=positions,  # type: ignore[arg-type]
+        ),
+        position_service=positions,
+        protection_service=FakeProtectionService(),
+        runtime_control=control,
+        order_service=FakeOrderService(order=order),
+    )
+    return service, repository, positions, control
+
+
+# Test A: New exact identity — matching entry_client_order_id → eligible
+@pytest.mark.asyncio
+async def test_primary_exact_identity_match_resolves() -> None:
+    """A: entry_client_order_id matches attempt → eligible for further proof."""
+    from botragram.enums import OrderStatus
+
+    order = Order(
+        order_id="308703789",
+        client_order_id=_CLIENT_ORDER_ID,
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.01"),
+        executed_quantity=Decimal("0.01"),
+        price=None,
+        status=OrderStatus.FILLED,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    service, repository, positions, _, control = await _service(
+        responses=[None, None], order=FakeOrderService(order=order)  # type: ignore[return-value]
+    )
+    # position with correct durable identity
+    positions.persisted = _position(quantity=Decimal("0.01"))
+
+    result = await service.recover_acknowledged(attempt=_attempt())
+
+    assert result is LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
+    stored = await repository.get_by_client_order_id(client_order_id=_CLIENT_ORDER_ID)
+    assert stored is not None
+    assert stored.status is SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE
+
+
+# Test B: New exact identity mismatch → blocks
+@pytest.mark.asyncio
+async def test_primary_exact_identity_mismatch_blocks() -> None:
+    """B: entry_client_order_id present but mismatched → POSITION_NOT_VISIBLE."""
+    from botragram.enums import OrderStatus
+
+    order = Order(
+        order_id="xxx",
+        client_order_id=_CLIENT_ORDER_ID,
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.01"),
+        executed_quantity=Decimal("0.01"),
+        price=None,
+        status=OrderStatus.FILLED,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    service, repository, positions, _, control = await _service(
+        responses=[None, None], order=FakeOrderService(order=order)  # type: ignore[return-value]
+    )
+    # position has a WRONG entry identity
+    positions.persisted = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("0.01"),
+        entry_price=Decimal("65100"),
+        current_price=Decimal("65100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        entry_client_order_id="btg-wrongidentityvalue000000000000",
+    )
+
+    result = await service.recover_acknowledged(attempt=_attempt())
+
+    assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+    stored = await repository.get_by_client_order_id(client_order_id=_CLIENT_ORDER_ID)
+    assert stored is not None
+    assert stored.status is SubmissionAttemptStatus.ACKNOWLEDGED
+
+
+# Test C: signal_generated_at ≠ Position.opened_at but exact identity matches → must NOT block
+@pytest.mark.asyncio
+async def test_signal_timestamp_divergence_does_not_block_when_identity_matches() -> None:
+    """C: Run #2-realistic timestamps: opened_at≠signal_generated_at but identity matches.
+
+    Position.opened_at: 2026-08-18T11:01:38.899Z
+    Attempt.signal_generated_at: 2026-08-18T11:14:59.999Z
+    These are 13 minutes apart — the old check would have blocked this.
+    The new primary identity path must not block solely because of this divergence.
+    """
+    from botragram.enums import OrderStatus
+
+    filled = Order(
+        order_id="308703789",
+        client_order_id=_RUN2_CLIENT_ORDER_ID,
+        symbol=_RUN2_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=_RUN2_QUANTITY,
+        executed_quantity=_RUN2_QUANTITY,
+        price=None,
+        status=OrderStatus.FILLED,
+        created_at=_RUN2_ORDER_AT,
+        updated_at=_RUN2_ORDER_AT,
+    )
+    # Position with explicit durable identity — primary path
+    persisted = _run2_persisted_position(entry_client_order_id=_RUN2_CLIENT_ORDER_ID)
+    service, repository, positions, control = await _run2_service(
+        persisted=persisted, order=filled
+    )
+
+    result = await service.recover_acknowledged(attempt=_run2_attempt())
+
+    # Must resolve despite 13-minute timestamp divergence
+    assert result is LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
+    stored = await repository.get_by_client_order_id(
+        client_order_id=_RUN2_CLIENT_ORDER_ID
+    )
+    assert stored is not None
+    assert stored.status is SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE
+
+
+# Test D: Legacy NULL identity + complete strong correlation → resolves
+@pytest.mark.asyncio
+async def test_legacy_null_identity_with_full_correlation_resolves() -> None:
+    """D: Run #2 regression — NULL entry_client_order_id + all checks pass → resolves.
+
+    Position.opened_at: 2026-08-18T11:01:38.899Z (60ms after order fill)
+    Attempt.signal_generated_at: 2026-08-18T11:14:59.999Z (13 min later)
+    The 13-minute clock divergence is irrelevant; only exchange timestamps used.
+    """
+    persisted = _run2_persisted_position(entry_client_order_id=None)
+    service, repository, positions, control = await _run2_service(
+        persisted=persisted, order=_run2_filled_order()
+    )
+
+    result = await service.recover_acknowledged(attempt=_run2_attempt())
+
+    assert result is LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
+    stored = await repository.get_by_client_order_id(
+        client_order_id=_RUN2_CLIENT_ORDER_ID
+    )
+    assert stored is not None
+    assert stored.status is SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE
+
+
+# Test E: Legacy side mismatch → blocks
+@pytest.mark.asyncio
+async def test_legacy_side_mismatch_blocks() -> None:
+    """E: legacy path — position side incompatible with attempt side → BLOCKED."""
+    from botragram.enums import OrderStatus
+
+    bad_order = Order(
+        order_id="308703789",
+        client_order_id=_RUN2_CLIENT_ORDER_ID,
+        symbol=_RUN2_SYMBOL,
+        side=OrderSide.SELL,  # wrong side
+        order_type=OrderType.MARKET,
+        quantity=_RUN2_QUANTITY,
+        executed_quantity=_RUN2_QUANTITY,
+        price=None,
+        status=OrderStatus.FILLED,
+        created_at=_RUN2_ORDER_AT,
+        updated_at=_RUN2_ORDER_AT,
+    )
+    persisted = _run2_persisted_position(entry_client_order_id=None)
+    service, repository, positions, control = await _run2_service(
+        persisted=persisted, order=bad_order
+    )
+
+    result = await service.recover_acknowledged(attempt=_run2_attempt())
+    assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+    stored = await repository.get_by_client_order_id(
+        client_order_id=_RUN2_CLIENT_ORDER_ID
+    )
+    assert stored is not None and stored.status is SubmissionAttemptStatus.ACKNOWLEDGED
+
+
+# Test F: Legacy quantity mismatch → blocks
+@pytest.mark.asyncio
+async def test_legacy_quantity_mismatch_blocks() -> None:
+    """F: legacy path — executed quantity doesn't match persisted quantity → BLOCKED."""
+    from botragram.enums import OrderStatus
+
+    bad_order = Order(
+        order_id="308703789",
+        client_order_id=_RUN2_CLIENT_ORDER_ID,
+        symbol=_RUN2_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=_RUN2_QUANTITY,
+        executed_quantity=Decimal("1"),  # wrong quantity
+        price=None,
+        status=OrderStatus.FILLED,
+        created_at=_RUN2_ORDER_AT,
+        updated_at=_RUN2_ORDER_AT,
+    )
+    persisted = _run2_persisted_position(entry_client_order_id=None)
+    service, repository, positions, control = await _run2_service(
+        persisted=persisted, order=bad_order
+    )
+
+    result = await service.recover_acknowledged(attempt=_run2_attempt())
+    assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+
+# Test G: Legacy interval/strategy mismatch → blocks
+@pytest.mark.asyncio
+async def test_legacy_interval_mismatch_blocks() -> None:
+    """G: legacy path — persisted interval doesn't match attempt interval → BLOCKED."""
+    from dataclasses import replace as dc_replace
+
+    from botragram.enums import Interval as Iv
+
+    # persisted position with different interval
+    persisted = dc_replace(
+        _run2_persisted_position(entry_client_order_id=None),
+        interval=Iv.H1,  # wrong interval
+    )
+    service, repository, positions, control = await _run2_service(
+        persisted=persisted, order=_run2_filled_order()
+    )
+
+    result = await service.recover_acknowledged(attempt=_run2_attempt())
+    assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+
+@pytest.mark.asyncio
+async def test_legacy_strategy_mismatch_blocks() -> None:
+    """G2: legacy path — persisted strategy doesn't match attempt strategy → BLOCKED."""
+    from dataclasses import replace as dc_replace
+
+    persisted = dc_replace(
+        _run2_persisted_position(entry_client_order_id=None),
+        strategy_type=StrategyType.EMA_SCALPING,  # wrong strategy
+    )
+    service, repository, positions, control = await _run2_service(
+        persisted=persisted, order=_run2_filled_order()
+    )
+
+    result = await service.recover_acknowledged(attempt=_run2_attempt())
+    assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+
+# Test H: Legacy order-time correlation mismatch → blocks
+@pytest.mark.asyncio
+async def test_legacy_order_time_too_far_blocks() -> None:
+    """H: legacy path — opened_at is > 60s after order.created_at → BLOCKED."""
+    from botragram.enums import OrderStatus
+
+    # order.created_at is 90 seconds before position.opened_at → gap > 60s
+    from datetime import timedelta
+
+    old_order_time = _RUN2_OPENED_AT - timedelta(seconds=90)
+    bad_order = Order(
+        order_id="308703789",
+        client_order_id=_RUN2_CLIENT_ORDER_ID,
+        symbol=_RUN2_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=_RUN2_QUANTITY,
+        executed_quantity=_RUN2_QUANTITY,
+        price=None,
+        status=OrderStatus.FILLED,
+        created_at=old_order_time,
+        updated_at=old_order_time,
+    )
+    persisted = _run2_persisted_position(entry_client_order_id=None)
+    service, repository, positions, control = await _run2_service(
+        persisted=persisted, order=bad_order
+    )
+
+    result = await service.recover_acknowledged(attempt=_run2_attempt())
+    assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+
+@pytest.mark.asyncio
+async def test_legacy_opened_at_before_order_created_blocks() -> None:
+    """H2: legacy path — opened_at predates order.created_at → BLOCKED."""
+    from botragram.enums import OrderStatus
+
+    from datetime import timedelta
+
+    future_order_time = _RUN2_OPENED_AT + timedelta(seconds=10)
+    bad_order = Order(
+        order_id="308703789",
+        client_order_id=_RUN2_CLIENT_ORDER_ID,
+        symbol=_RUN2_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=_RUN2_QUANTITY,
+        executed_quantity=_RUN2_QUANTITY,
+        price=None,
+        status=OrderStatus.FILLED,
+        created_at=future_order_time,
+        updated_at=future_order_time,
+    )
+    persisted = _run2_persisted_position(entry_client_order_id=None)
+    service, repository, positions, control = await _run2_service(
+        persisted=persisted, order=bad_order
+    )
+
+    result = await service.recover_acknowledged(attempt=_run2_attempt())
+    assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE

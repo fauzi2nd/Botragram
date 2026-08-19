@@ -63,10 +63,11 @@ INSERT INTO positions (
     strategy_type,
     protection_step,
     stop_loss_client_algo_id,
-    take_profit_client_algo_id
+    take_profit_client_algo_id,
+    entry_client_order_id
 )
 VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT (
     symbol
@@ -86,7 +87,8 @@ DO UPDATE SET
     strategy_type = excluded.strategy_type,
     protection_step = excluded.protection_step,
     stop_loss_client_algo_id = excluded.stop_loss_client_algo_id,
-    take_profit_client_algo_id = excluded.take_profit_client_algo_id;
+    take_profit_client_algo_id = excluded.take_profit_client_algo_id,
+    entry_client_order_id = excluded.entry_client_order_id;
 """
 
 _UPDATE_POSITION_SQL: Final[str] = """
@@ -106,7 +108,8 @@ SET
     strategy_type = ?,
     protection_step = ?,
     stop_loss_client_algo_id = ?,
-    take_profit_client_algo_id = ?
+    take_profit_client_algo_id = ?,
+    entry_client_order_id = ?
 WHERE symbol = ?;
 """
 
@@ -127,7 +130,8 @@ SELECT
     strategy_type,
     protection_step,
     stop_loss_client_algo_id,
-    take_profit_client_algo_id
+    take_profit_client_algo_id,
+    entry_client_order_id
 FROM positions
 """
 
@@ -203,6 +207,7 @@ type PositionParameters = tuple[
     int,
     str | None,
     str | None,
+    str | None,
 ]
 
 type PositionUpdateParameters = tuple[
@@ -219,6 +224,7 @@ type PositionUpdateParameters = tuple[
     str | None,
     str | None,
     int,
+    str | None,
     str | None,
     str | None,
     str,
@@ -410,6 +416,7 @@ class SQLitePositionRepository(PositionRepository):
             position.protection_step,
             position.stop_loss_client_algo_id,
             position.take_profit_client_algo_id,
+            position.entry_client_order_id,
         )
 
     @classmethod
@@ -444,6 +451,7 @@ class SQLitePositionRepository(PositionRepository):
             position.protection_step,
             position.stop_loss_client_algo_id,
             position.take_profit_client_algo_id,
+            position.entry_client_order_id,
             cls._normalize_symbol(position.symbol),
         )
 
@@ -521,6 +529,10 @@ class SQLitePositionRepository(PositionRepository):
             take_profit_client_algo_id=cls._get_optional_string(
                 row,
                 column="take_profit_client_algo_id",
+            ),
+            entry_client_order_id=cls._get_optional_string(
+                row,
+                column="entry_client_order_id",
             ),
         )
 

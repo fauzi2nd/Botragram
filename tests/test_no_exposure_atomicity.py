@@ -320,6 +320,7 @@ async def test_sqlite_single_durable_transition_and_position_removal() -> None:
 
     # Persist prior authoritative position and attempt using same timestamp
     now = _now()
+    attempt = replace(_attempt(), signal_generated_at=now)
     position = Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -332,10 +333,10 @@ async def test_sqlite_single_durable_transition_and_position_removal() -> None:
         updated_at=now,
         interval=Interval.M15,
         strategy_type=None,
+        entry_client_order_id=attempt.client_order_id,
     )
     await pos_repo.save(position=position)
 
-    attempt = replace(_attempt(), signal_generated_at=now)
     await att_repo.save(attempt=attempt)
 
     filled = Order(
@@ -470,6 +471,7 @@ async def test_sqlite_transaction_rollback_preserves_state() -> None:
     att_repo = SQLiteSubmissionAttemptRepository(database=db)
 
     now = _now()
+    attempt = replace(_attempt(), signal_generated_at=now)
     position = Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -482,9 +484,9 @@ async def test_sqlite_transaction_rollback_preserves_state() -> None:
         updated_at=now,
         interval=Interval.M15,
         strategy_type=None,
+        entry_client_order_id=attempt.client_order_id,
     )
     await pos_repo.save(position=position)
-    attempt = replace(_attempt(), signal_generated_at=now)
     await att_repo.save(attempt=attempt)
 
     service = LivePostEntryRecoveryService(
@@ -558,6 +560,12 @@ async def test_sqlite_restart_idempotency_normal_runtime_recovery_twice() -> Non
     ord_repo = SQLiteOrderRepository(database=db)
 
     now = _now()
+    attempt = replace(
+        _attempt(),
+        signal_generated_at=now,
+        strategy_type=StrategyType.EMA_SCALPING,
+        status=SubmissionAttemptStatus.ACKNOWLEDGED,
+    )
     position = Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -572,16 +580,11 @@ async def test_sqlite_restart_idempotency_normal_runtime_recovery_twice() -> Non
         strategy_type=StrategyType.EMA_SCALPING,
         stop_loss_client_algo_id="stop-1",
         take_profit_client_algo_id="tp-1",
+        entry_client_order_id=attempt.client_order_id,
     )
     # Seed: prior persisted Position exists
     await pos_repo.save(position=position)
     # Seed: attempt = ACKNOWLEDGED
-    attempt = replace(
-        _attempt(),
-        signal_generated_at=now,
-        strategy_type=StrategyType.EMA_SCALPING,
-        status=SubmissionAttemptStatus.ACKNOWLEDGED,
-    )
     await att_repo.save(attempt=attempt)
 
     filled = Order(

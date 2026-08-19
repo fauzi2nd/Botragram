@@ -62,6 +62,7 @@ class Position:
     protection_step: int = 0
     stop_loss_client_algo_id: str | None = None
     take_profit_client_algo_id: str | None = None
+    entry_client_order_id: str | None = None
 
     def __post_init__(self) -> None:
         """Reject a shared client identity across distinct protection legs."""

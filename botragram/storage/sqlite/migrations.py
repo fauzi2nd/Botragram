@@ -65,6 +65,15 @@ _NEWER_SCHEMA_ERROR_TEMPLATE: Final[str] = (
     "supported application version {application_version}"
 )
 
+_UNSUPPORTED_TARGET_VERSION_ERROR_TEMPLATE: Final[str] = (
+    "Unsupported SQLite target schema version {target_version}"
+)
+
+_NEWER_THAN_TARGET_ERROR_TEMPLATE: Final[str] = (
+    "SQLite database schema version {database_version} is newer than "
+    "requested target version {target_version}"
+)
+
 
 # =============================================================================
 # Migration Models
@@ -334,6 +343,13 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ADD COLUMN take_profit_client_algo_id TEXT;
         """,
     ),
+    _Migration(
+        version=11,
+        script="""
+        ALTER TABLE positions
+        ADD COLUMN entry_client_order_id TEXT;
+        """,
+    ),
 )
 
 
@@ -365,20 +381,33 @@ class SQLiteMigrationManager:
 
         return _MIGRATIONS[-1].version
 
-    async def initialize(self) -> int:
+    async def initialize(
+        self,
+        *,
+        target_version: int | None = None,
+    ) -> int:
         """Create metadata tables and apply pending migrations.
+
+        Args:
+            target_version: Optional schema version to stop at. When omitted,
+                every supported migration is applied.
 
         Returns:
             Final active schema version.
 
         Raises:
-            RuntimeError: If the database schema is newer than supported.
+            ValueError: If ``target_version`` is not a defined migration.
+            RuntimeError: If the database schema is newer than supported or
+                newer than the requested target.
         """
         await self._database.execute_script(
             script=_CREATE_SCHEMA_VERSION_TABLE_SQL,
         )
 
         current_version = await self.get_current_version()
+        requested_version = self._resolve_target_version(
+            target_version=target_version,
+        )
 
         if current_version > self.latest_version:
             raise RuntimeError(
@@ -388,9 +417,20 @@ class SQLiteMigrationManager:
                 )
             )
 
+        if current_version > requested_version:
+            raise RuntimeError(
+                _NEWER_THAN_TARGET_ERROR_TEMPLATE.format(
+                    database_version=current_version,
+                    target_version=requested_version,
+                )
+            )
+
         for migration in _MIGRATIONS:
             if migration.version <= current_version:
                 continue
+
+            if migration.version > requested_version:
+                break
 
             await self._apply_migration(
                 migration=migration,
@@ -398,6 +438,26 @@ class SQLiteMigrationManager:
             current_version = migration.version
 
         return current_version
+
+    def _resolve_target_version(
+        self,
+        *,
+        target_version: int | None,
+    ) -> int:
+        """Return the schema version this initialize call should reach."""
+        if target_version is None:
+            return self.latest_version
+
+        known_versions = {migration.version for migration in _MIGRATIONS}
+
+        if target_version not in known_versions:
+            raise ValueError(
+                _UNSUPPORTED_TARGET_VERSION_ERROR_TEMPLATE.format(
+                    target_version=target_version,
+                )
+            )
+
+        return target_version
 
     async def get_current_version(self) -> int:
         """Return the currently applied database schema version."""
