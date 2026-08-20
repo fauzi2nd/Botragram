@@ -171,6 +171,7 @@ async def _run_migration_idempotent_test() -> None:
         finally:
             await db.close()
 
+
 def test_sqlite_v10_to_v11_migration_preserves_legacy_position() -> None:
     """Upgrade a real v10 row to v11 without losing position metadata."""
     asyncio.run(_run_v10_to_v11_migration_test())

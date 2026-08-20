@@ -515,6 +515,7 @@ async def test_sqlite_transaction_rollback_preserves_state() -> None:
     assert stored.status is SubmissionAttemptStatus.ACKNOWLEDGED
     await db.close()
 
+
 @pytest.mark.asyncio
 async def test_sqlite_restart_idempotency_normal_runtime_recovery_twice() -> None:
     """Dedicated restart-idempotency regression using the NORMAL

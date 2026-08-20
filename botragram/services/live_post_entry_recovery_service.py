@@ -341,8 +341,7 @@ class LivePostEntryRecoveryService:
 
         if order.client_order_id != attempt.client_order_id:
             _LOGGER.warning(
-                "Legacy correlation: client_order_id mismatch order=%s "
-                "attempt=%s",
+                "Legacy correlation: client_order_id mismatch order=%s attempt=%s",
                 order.client_order_id,
                 attempt.client_order_id,
             )
@@ -354,8 +353,7 @@ class LivePostEntryRecoveryService:
 
         if order.order_id != attempt.exchange_order_id:
             _LOGGER.warning(
-                "Legacy correlation: exchange order id mismatch order=%s "
-                "attempt=%s",
+                "Legacy correlation: exchange order id mismatch order=%s attempt=%s",
                 order.order_id,
                 attempt.exchange_order_id,
             )
@@ -373,8 +371,7 @@ class LivePostEntryRecoveryService:
             or order.symbol.upper() != persisted.symbol.upper()
         ):
             _LOGGER.warning(
-                "Legacy correlation: symbol mismatch order=%s attempt=%s "
-                "persisted=%s",
+                "Legacy correlation: symbol mismatch order=%s attempt=%s persisted=%s",
                 order.symbol,
                 attempt.symbol,
                 persisted.symbol,
@@ -429,8 +426,7 @@ class LivePostEntryRecoveryService:
 
         if order.executed_quantity > order.quantity:
             _LOGGER.warning(
-                "Legacy correlation: executedQty exceeds origQty executed=%s "
-                "orig=%s",
+                "Legacy correlation: executedQty exceeds origQty executed=%s orig=%s",
                 order.executed_quantity,
                 order.quantity,
             )

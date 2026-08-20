@@ -13,7 +13,6 @@ from botragram.app import TradingRuntimeControl
 from botragram.enums import (
     Interval,
     OrderSide,
-    OrderStatus,
     OrderType,
     PositionSide,
     StrategyType,
@@ -57,7 +56,7 @@ def _attempt(
 
 
 def _position(*, quantity: Decimal = Decimal("0.012")) -> Position:
-    """Build one exchange-authoritative position snapshot with durable entry identity."""
+    """Build one authoritative position snapshot with durable entry identity."""
     return Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -798,7 +797,6 @@ async def test_visible_position_restores_metadata_and_completes_attempt() -> Non
         client_order_id=_CLIENT_ORDER_ID,
     )
     assert result is LivePostEntryRecoveryResult.COMPLETED
-    assert result is not LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
     assert positions.calls == [("BTCUSDT", True)]
     assert positions.saved[0].quantity == Decimal("0.012")
     assert positions.saved[0].entry_price == Decimal("65100")
@@ -1033,8 +1031,9 @@ async def test_primary_exact_identity_match_resolves() -> None:
         created_at=_NOW,
         updated_at=_NOW,
     )
-    service, repository, positions, _, control = await _service(
-        responses=[None, None], order=FakeOrderService(order=order)  # type: ignore[return-value]
+    service, repository, positions, _, _ = await _service(
+        responses=[None, None],
+        order=FakeOrderService(order=order),
     )
     # position with correct durable identity
     positions.persisted = _position(quantity=Decimal("0.01"))
@@ -1066,8 +1065,9 @@ async def test_primary_exact_identity_mismatch_blocks() -> None:
         created_at=_NOW,
         updated_at=_NOW,
     )
-    service, repository, positions, _, control = await _service(
-        responses=[None, None], order=FakeOrderService(order=order)  # type: ignore[return-value]
+    service, repository, positions, _, _ = await _service(
+        responses=[None, None],
+        order=FakeOrderService(order=order),
     )
     # position has a WRONG entry identity
     positions.persisted = Position(
@@ -1091,15 +1091,17 @@ async def test_primary_exact_identity_mismatch_blocks() -> None:
     assert stored.status is SubmissionAttemptStatus.ACKNOWLEDGED
 
 
-# Test C: signal_generated_at ≠ Position.opened_at but exact identity matches → must NOT block
+# Test C: timestamp divergence with exact identity must not block
 @pytest.mark.asyncio
-async def test_signal_timestamp_divergence_does_not_block_when_identity_matches() -> None:
-    """C: Run #2-realistic timestamps: opened_at≠signal_generated_at but identity matches.
+async def test_signal_timestamp_divergence_does_not_block_when_identity_matches() -> (
+    None
+):
+    """C: Timestamp divergence must not block an exact identity match.
 
     Position.opened_at: 2026-08-18T11:01:38.899Z
     Attempt.signal_generated_at: 2026-08-18T11:14:59.999Z
-    These are 13 minutes apart — the old check would have blocked this.
-    The new primary identity path must not block solely because of this divergence.
+    These are 13 minutes apart; the old check would have blocked this.
+    The primary identity path must not block solely because of this divergence.
     """
     from botragram.enums import OrderStatus
 
@@ -1118,9 +1120,7 @@ async def test_signal_timestamp_divergence_does_not_block_when_identity_matches(
     )
     # Position with explicit durable identity — primary path
     persisted = _run2_persisted_position(entry_client_order_id=_RUN2_CLIENT_ORDER_ID)
-    service, repository, positions, control = await _run2_service(
-        persisted=persisted, order=filled
-    )
+    service, repository, _, _ = await _run2_service(persisted=persisted, order=filled)
 
     result = await service.recover_acknowledged(attempt=_run2_attempt())
 
@@ -1143,7 +1143,7 @@ async def test_legacy_null_identity_with_full_correlation_resolves() -> None:
     durable entry and persisted-position evidence.
     """
     persisted = _run2_persisted_position(entry_client_order_id=None)
-    service, repository, positions, control = await _run2_service(
+    service, repository, _, _ = await _run2_service(
         persisted=persisted, order=_run2_filled_order()
     )
 
@@ -1177,7 +1177,7 @@ async def test_legacy_side_mismatch_blocks() -> None:
         updated_at=_RUN2_ORDER_AT,
     )
     persisted = _run2_persisted_position(entry_client_order_id=None)
-    service, repository, positions, control = await _run2_service(
+    service, repository, _, _ = await _run2_service(
         persisted=persisted, order=bad_order
     )
 
@@ -1209,9 +1209,7 @@ async def test_legacy_quantity_mismatch_blocks() -> None:
         updated_at=_RUN2_ORDER_AT,
     )
     persisted = _run2_persisted_position(entry_client_order_id=None)
-    service, repository, positions, control = await _run2_service(
-        persisted=persisted, order=bad_order
-    )
+    service, _, _, _ = await _run2_service(persisted=persisted, order=bad_order)
 
     result = await service.recover_acknowledged(attempt=_run2_attempt())
     assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
@@ -1230,7 +1228,7 @@ async def test_legacy_interval_mismatch_blocks() -> None:
         _run2_persisted_position(entry_client_order_id=None),
         interval=Iv.H1,  # wrong interval
     )
-    service, repository, positions, control = await _run2_service(
+    service, _, _, _ = await _run2_service(
         persisted=persisted, order=_run2_filled_order()
     )
 
@@ -1247,7 +1245,7 @@ async def test_legacy_strategy_mismatch_blocks() -> None:
         _run2_persisted_position(entry_client_order_id=None),
         strategy_type=StrategyType.EMA_SCALPING,  # wrong strategy
     )
-    service, repository, positions, control = await _run2_service(
+    service, _, _, _ = await _run2_service(
         persisted=persisted, order=_run2_filled_order()
     )
 
