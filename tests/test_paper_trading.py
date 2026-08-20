@@ -367,7 +367,8 @@ async def _run_sqlite_position_metadata_test() -> None:
         await database.connect()
 
         try:
-            version = await SQLiteMigrationManager(database=database).initialize()
+            migration_manager = SQLiteMigrationManager(database=database)
+            version = await migration_manager.initialize()
             repository = SQLitePositionRepository(database=database)
             position = Position(
                 symbol="BTCUSDT",
@@ -385,7 +386,7 @@ async def _run_sqlite_position_metadata_test() -> None:
             await repository.save(position=position)
             stored_position = await repository.get_by_symbol(symbol="BTCUSDT")
 
-            assert version == 10
+            assert version == migration_manager.latest_version
             assert stored_position == position
         finally:
             await database.close()

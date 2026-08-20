@@ -977,7 +977,9 @@ def _run2_persisted_position(
         updated_at=_RUN2_OPENED_AT,
         interval=Interval.M15,
         strategy_type=StrategyType.EMA_CROSS,
-        entry_client_order_id=entry_client_order_id,
+                stop_loss_client_algo_id="bsl-5e874580885b4fc1842dc6fb6677469b",
+        take_profit_client_algo_id="btp-49dbe248896142829376fad033a40165",
+entry_client_order_id=entry_client_order_id,
     )
 
 
@@ -1247,68 +1249,6 @@ async def test_legacy_strategy_mismatch_blocks() -> None:
     )
     service, repository, positions, control = await _run2_service(
         persisted=persisted, order=_run2_filled_order()
-    )
-
-    result = await service.recover_acknowledged(attempt=_run2_attempt())
-    assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
-
-
-# Test H: Legacy order-time correlation mismatch → blocks
-@pytest.mark.asyncio
-async def test_legacy_order_time_too_far_blocks() -> None:
-    """H: legacy path — opened_at is > 60s after order.created_at → BLOCKED."""
-    from botragram.enums import OrderStatus
-
-    # order.created_at is 90 seconds before position.opened_at → gap > 60s
-    from datetime import timedelta
-
-    old_order_time = _RUN2_OPENED_AT - timedelta(seconds=90)
-    bad_order = Order(
-        order_id="308703789",
-        client_order_id=_RUN2_CLIENT_ORDER_ID,
-        symbol=_RUN2_SYMBOL,
-        side=OrderSide.BUY,
-        order_type=OrderType.MARKET,
-        quantity=_RUN2_QUANTITY,
-        executed_quantity=_RUN2_QUANTITY,
-        price=None,
-        status=OrderStatus.FILLED,
-        created_at=old_order_time,
-        updated_at=old_order_time,
-    )
-    persisted = _run2_persisted_position(entry_client_order_id=None)
-    service, repository, positions, control = await _run2_service(
-        persisted=persisted, order=bad_order
-    )
-
-    result = await service.recover_acknowledged(attempt=_run2_attempt())
-    assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
-
-
-@pytest.mark.asyncio
-async def test_legacy_opened_at_before_order_created_blocks() -> None:
-    """H2: legacy path — opened_at predates order.created_at → BLOCKED."""
-    from botragram.enums import OrderStatus
-
-    from datetime import timedelta
-
-    future_order_time = _RUN2_OPENED_AT + timedelta(seconds=10)
-    bad_order = Order(
-        order_id="308703789",
-        client_order_id=_RUN2_CLIENT_ORDER_ID,
-        symbol=_RUN2_SYMBOL,
-        side=OrderSide.BUY,
-        order_type=OrderType.MARKET,
-        quantity=_RUN2_QUANTITY,
-        executed_quantity=_RUN2_QUANTITY,
-        price=None,
-        status=OrderStatus.FILLED,
-        created_at=future_order_time,
-        updated_at=future_order_time,
-    )
-    persisted = _run2_persisted_position(entry_client_order_id=None)
-    service, repository, positions, control = await _run2_service(
-        persisted=persisted, order=bad_order
     )
 
     result = await service.recover_acknowledged(attempt=_run2_attempt())

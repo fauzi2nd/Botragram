@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from botragram.enums import PositionSide
+from botragram.enums import Interval, PositionSide, StrategyType
 from botragram.models import Position
 from botragram.storage.sqlite import (
     SQLiteDatabase,
@@ -170,3 +170,111 @@ async def _run_migration_idempotent_test() -> None:
             assert loaded.entry_client_order_id == _ENTRY_CLIENT_ORDER_ID
         finally:
             await db.close()
+
+def test_sqlite_v10_to_v11_migration_preserves_legacy_position() -> None:
+    """Upgrade a real v10 row to v11 without losing position metadata."""
+    asyncio.run(_run_v10_to_v11_migration_test())
+
+
+async def _run_v10_to_v11_migration_test() -> None:
+    """Migrate one historical positions row from schema v10 to v11."""
+    with TemporaryDirectory() as temporary_directory:
+        database = SQLiteDatabase(
+            database_path=Path(temporary_directory) / "migration-v10-v11.db",
+        )
+        await database.connect()
+
+        try:
+            manager = SQLiteMigrationManager(database=database)
+
+            version_10 = await manager.initialize(target_version=10)
+            assert version_10 == 10
+
+            columns_before = await database.fetch_all(
+                statement="PRAGMA table_info(positions)",
+            )
+            assert "entry_client_order_id" not in {
+                str(row["name"]) for row in columns_before
+            }
+
+            await database.execute(
+                statement="""
+                INSERT INTO positions (
+                    symbol,
+                    side,
+                    quantity,
+                    entry_price,
+                    current_price,
+                    unrealized_pnl,
+                    leverage,
+                    opened_at,
+                    updated_at,
+                    stop_loss,
+                    take_profit,
+                    interval,
+                    strategy_type,
+                    protection_step,
+                    stop_loss_client_algo_id,
+                    take_profit_client_algo_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                parameters=(
+                    "1000BONKUSDT",
+                    PositionSide.LONG.value,
+                    "4361",
+                    "0.00229",
+                    "0.00229",
+                    "0",
+                    1,
+                    _NOW.isoformat(),
+                    _NOW.isoformat(),
+                    None,
+                    None,
+                    Interval.M15.value,
+                    StrategyType.EMA_CROSS.value,
+                    0,
+                    "bsl-5e874580885b4fc1842dc6fb6677469b",
+                    "btp-49dbe248896142829376fad033a40165",
+                ),
+            )
+
+            version_11 = await manager.initialize()
+            assert version_11 == manager.latest_version
+            assert version_11 == 11
+
+            repository = SQLitePositionRepository(database=database)
+            loaded = await repository.get_by_symbol(symbol="1000BONKUSDT")
+
+            assert loaded is not None
+            assert loaded.symbol == "1000BONKUSDT"
+            assert loaded.side is PositionSide.LONG
+            assert loaded.quantity == Decimal("4361")
+            assert loaded.interval is Interval.M15
+            assert loaded.strategy_type is StrategyType.EMA_CROSS
+            assert (
+                loaded.stop_loss_client_algo_id
+                == "bsl-5e874580885b4fc1842dc6fb6677469b"
+            )
+            assert (
+                loaded.take_profit_client_algo_id
+                == "btp-49dbe248896142829376fad033a40165"
+            )
+            assert loaded.entry_client_order_id is None
+
+            columns_after = await database.fetch_all(
+                statement="PRAGMA table_info(positions)",
+            )
+            assert "entry_client_order_id" in {
+                str(row["name"]) for row in columns_after
+            }
+
+            version_again = await manager.initialize()
+            assert version_again == 11
+
+            loaded_again = await repository.get_by_symbol(
+                symbol="1000BONKUSDT",
+            )
+            assert loaded_again == loaded
+        finally:
+            await database.close()

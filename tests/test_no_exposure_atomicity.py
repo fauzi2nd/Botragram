@@ -379,6 +379,7 @@ async def test_sqlite_single_durable_transition_and_position_removal() -> None:
     )
     assert stored is not None
     assert stored.status is SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE
+    await db.close()
 
 
 @pytest.mark.asyncio
@@ -512,7 +513,7 @@ async def test_sqlite_transaction_rollback_preserves_state() -> None:
     )
     assert stored is not None
     assert stored.status is SubmissionAttemptStatus.ACKNOWLEDGED
-
+    await db.close()
 
 @pytest.mark.asyncio
 async def test_sqlite_restart_idempotency_normal_runtime_recovery_twice() -> None:
@@ -740,3 +741,4 @@ async def test_sqlite_restart_idempotency_normal_runtime_recovery_twice() -> Non
     # 10. portfolio remains zero
     exchange_positions_2 = await exchange.get_positions()
     assert len(exchange_positions_2) == 0
+    await db.close()
