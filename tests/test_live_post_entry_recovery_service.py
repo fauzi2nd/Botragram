@@ -977,9 +977,9 @@ def _run2_persisted_position(
         updated_at=_RUN2_OPENED_AT,
         interval=Interval.M15,
         strategy_type=StrategyType.EMA_CROSS,
-                stop_loss_client_algo_id="bsl-5e874580885b4fc1842dc6fb6677469b",
+        stop_loss_client_algo_id="bsl-5e874580885b4fc1842dc6fb6677469b",
         take_profit_client_algo_id="btp-49dbe248896142829376fad033a40165",
-entry_client_order_id=entry_client_order_id,
+        entry_client_order_id=entry_client_order_id,
     )
 
 
@@ -1138,9 +1138,9 @@ async def test_signal_timestamp_divergence_does_not_block_when_identity_matches(
 async def test_legacy_null_identity_with_full_correlation_resolves() -> None:
     """D: Run #2 regression — NULL entry_client_order_id + all checks pass → resolves.
 
-    Position.opened_at: 2026-08-18T11:01:38.899Z (60ms after order fill)
-    Attempt.signal_generated_at: 2026-08-18T11:14:59.999Z (13 min later)
-    The 13-minute clock divergence is irrelevant; only exchange timestamps used.
+    Signal and position timestamps come from unrelated clocks and are not
+    used as identity proof. Legacy correlation relies on deterministic
+    durable entry and persisted-position evidence.
     """
     persisted = _run2_persisted_position(entry_client_order_id=None)
     service, repository, positions, control = await _run2_service(
