@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 # =============================================================================
@@ -33,6 +33,7 @@ import pytest
 from botragram.enums import Interval, SignalType
 from botragram.models import Candle, Signal
 from botragram.services import OpportunityDiscoveryService
+from botragram.strategies.trend import EMACrossStrategy
 
 # =============================================================================
 # Constants
@@ -48,9 +49,13 @@ class FakeMarketService:
     """Provide a deterministic and unordered market universe."""
 
     symbols: tuple[str, ...]
+    candles_by_symbol: dict[str, tuple[Candle, ...]] = field(
+        default_factory=dict[str, tuple[Candle, ...]]
+    )
     failing_symbol: str | None = None
     block_candles: bool = False
     requested_symbols: list[str] = field(default_factory=list[str])
+    requested_limits: list[int] = field(default_factory=list[int])
     persist_values: list[bool] = field(default_factory=list[bool])
     candle_started: asyncio.Event = field(default_factory=asyncio.Event)
     active_candle_requests: int = 0
@@ -69,10 +74,10 @@ class FakeMarketService:
         limit: int,
         persist: bool = True,
     ) -> tuple[Candle, ...]:
-        """Return one symbol-identifying candle."""
+        """Return deterministic candles for one symbol."""
         assert interval is Interval.M15
-        assert limit == 100
         self.requested_symbols.append(symbol)
+        self.requested_limits.append(limit)
         self.persist_values.append(persist)
         self.active_candle_requests += 1
         self.maximum_active_candle_requests = max(
@@ -90,7 +95,10 @@ class FakeMarketService:
                 await asyncio.Event().wait()
 
             await asyncio.sleep(0)
-            return (_create_candle(symbol=symbol),)
+            return self.candles_by_symbol.get(
+                symbol,
+                (_create_candle(symbol=symbol),),
+            )
         finally:
             self.active_candle_requests -= 1
 
@@ -101,28 +109,51 @@ class FakeStrategyService:
 
     signals: dict[str, Signal]
     saved_symbols: list[str] = field(default_factory=list[str])
+    saved_candles: list[tuple[Candle, ...]] = field(
+        default_factory=list[tuple[Candle, ...]]
+    )
 
     async def generate_and_save(self, *, candles: Sequence[Candle]) -> Signal:
         """Return and record the signal for the candle symbol."""
         symbol = candles[0].symbol
         self.saved_symbols.append(symbol)
+        self.saved_candles.append(tuple(candles))
         return self.signals[symbol]
+
+
+@dataclass(slots=True)
+class EmaCrossStrategyService:
+    """Generate real EMA-cross signals while recording strategy input."""
+
+    strategy: EMACrossStrategy = field(default_factory=EMACrossStrategy)
+    saved_candles: tuple[Candle, ...] = ()
+
+    async def generate_and_save(self, *, candles: Sequence[Candle]) -> Signal:
+        """Generate one EMA-cross signal without persistence side effects."""
+        self.saved_candles = tuple(candles)
+        return self.strategy.generate_signal(candles=candles)
 
 
 # =============================================================================
 # Test Helpers
 # =============================================================================
-def _create_candle(*, symbol: str) -> Candle:
+def _create_candle(
+    *,
+    symbol: str,
+    open_time: datetime = _NOW,
+    close_time: datetime = _NOW,
+    close_price: Decimal = Decimal("100"),
+) -> Candle:
     """Create a minimal valid candle for one symbol."""
     return Candle(
         symbol=symbol,
         interval=Interval.M15,
-        open_time=_NOW,
-        close_time=_NOW,
-        open_price=Decimal("100"),
-        high_price=Decimal("100"),
-        low_price=Decimal("100"),
-        close_price=Decimal("100"),
+        open_time=open_time,
+        close_time=close_time,
+        open_price=close_price,
+        high_price=close_price,
+        low_price=close_price,
+        close_price=close_price,
         volume=Decimal("1"),
     )
 
@@ -132,6 +163,7 @@ def _create_signal(
     symbol: str,
     signal_type: SignalType,
     confidence: str,
+    generated_at: datetime = _NOW,
 ) -> Signal:
     """Create one deterministic strategy signal."""
     return Signal(
@@ -140,7 +172,7 @@ def _create_signal(
         price=Decimal("100"),
         confidence=Decimal(confidence),
         strategy_name="test_strategy",
-        generated_at=_NOW,
+        generated_at=generated_at,
     )
 
 
@@ -191,6 +223,7 @@ async def _run_discovery_test() -> None:
     service = OpportunityDiscoveryService(
         market_service=market_service,
         strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
     )
 
     opportunities = await service.discover(
@@ -214,6 +247,7 @@ async def _run_discovery_test() -> None:
         "XRPUSDT",
     ]
     assert market_service.persist_values == [False, False, False, False]
+    assert market_service.requested_limits == [101, 101, 101, 101]
     assert market_service.maximum_active_candle_requests == 1
     assert [signal.symbol for signal in opportunities] == ["ADAUSDT", "ETHUSDT"]
 
@@ -230,6 +264,7 @@ async def _run_invalid_bounds_test() -> None:
     service = OpportunityDiscoveryService(
         market_service=market_service,
         strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
     )
 
     try:
@@ -260,6 +295,7 @@ async def _run_empty_universe_test() -> None:
     service = OpportunityDiscoveryService(
         market_service=market_service,
         strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
     )
 
     opportunities = await service.discover(
@@ -295,6 +331,7 @@ async def _run_all_hold_signals_test() -> None:
     service = OpportunityDiscoveryService(
         market_service=market_service,
         strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
     )
 
     opportunities = await service.discover(
@@ -332,6 +369,7 @@ async def _run_symbol_failure_test() -> None:
     service = OpportunityDiscoveryService(
         market_service=market_service,
         strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
     )
 
     with pytest.raises(RuntimeError, match="BTCUSDT"):
@@ -362,6 +400,7 @@ async def _run_cancellation_test() -> None:
     service = OpportunityDiscoveryService(
         market_service=market_service,
         strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
     )
     task = asyncio.create_task(
         service.discover(
@@ -380,3 +419,255 @@ async def _run_cancellation_test() -> None:
 
     assert market_service.active_candle_requests == 0
     assert strategy_service.saved_symbols == []
+
+
+def test_discovery_excludes_a_current_open_candle() -> None:
+    """Never pass a candle whose close is later than the decision time."""
+    asyncio.run(_run_open_candle_exclusion_test())
+
+
+async def _run_open_candle_exclusion_test() -> None:
+    """Filter the currently-open candle before strategy evaluation."""
+    closed = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW - timedelta(milliseconds=1),
+    )
+    open_candle = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW,
+        close_time=_NOW + timedelta(minutes=15) - timedelta(milliseconds=1),
+        close_price=Decimal("120"),
+    )
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={"BTCUSDT": (closed, open_candle)},
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.HOLD,
+                confidence="1",
+                generated_at=closed.close_time,
+            )
+        }
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    opportunities = await service.discover(
+        quote_asset="USDT",
+        interval=Interval.M15,
+        candle_limit=1,
+        max_symbols=1,
+        top_n=1,
+    )
+
+    assert opportunities == ()
+    assert market_service.requested_limits == [2]
+    assert strategy_service.saved_candles == [(closed,)]
+
+
+def test_discovery_includes_a_candle_closing_exactly_at_as_of() -> None:
+    """Treat a candle closing exactly at the decision time as closed."""
+    asyncio.run(_run_exact_close_boundary_test())
+
+
+async def _run_exact_close_boundary_test() -> None:
+    """Include the inclusive close-time boundary."""
+    boundary_candle = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW,
+    )
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={"BTCUSDT": (boundary_candle,)},
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.HOLD,
+                confidence="1",
+            )
+        }
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    await service.discover(
+        quote_asset="USDT",
+        interval=Interval.M15,
+        candle_limit=1,
+        max_symbols=1,
+        top_n=1,
+    )
+
+    assert strategy_service.saved_candles == [(boundary_candle,)]
+
+
+def test_discovery_requests_one_extra_candle_to_preserve_closed_window() -> None:
+    """Request one extra venue candle before removing the current open bar."""
+    asyncio.run(_run_extra_candle_window_test())
+
+
+async def _run_extra_candle_window_test() -> None:
+    """Retain the requested count of closed candles when one open bar exists."""
+    first = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW - timedelta(minutes=30),
+        close_time=_NOW - timedelta(minutes=15, milliseconds=1),
+    )
+    second = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW,
+    )
+    open_candle = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW,
+        close_time=_NOW + timedelta(minutes=15) - timedelta(milliseconds=1),
+    )
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={"BTCUSDT": (first, second, open_candle)},
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.HOLD,
+                confidence="1",
+            )
+        }
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    await service.discover(
+        quote_asset="USDT",
+        interval=Interval.M15,
+        candle_limit=2,
+        max_symbols=1,
+        top_n=1,
+    )
+
+    assert market_service.requested_limits == [3]
+    assert strategy_service.saved_candles == [(first, second)]
+
+
+def test_open_candle_ema_crossover_cannot_create_an_opportunity() -> None:
+    """Prove a crossover that exists only on the open bar cannot drive entry."""
+    asyncio.run(_run_open_candle_ema_crossover_test())
+
+
+async def _run_open_candle_ema_crossover_test() -> None:
+    """Use the real EMA-cross strategy on a closed flat window plus open spike."""
+    symbol = "BTCUSDT"
+    start = _NOW - timedelta(minutes=22 * 15)
+    closed_candles = tuple(
+        _create_candle(
+            symbol=symbol,
+            open_time=start + timedelta(minutes=index * 15),
+            close_time=(
+                start + timedelta(minutes=(index + 1) * 15) - timedelta(milliseconds=1)
+            ),
+        )
+        for index in range(22)
+    )
+    open_candle = _create_candle(
+        symbol=symbol,
+        open_time=_NOW,
+        close_time=_NOW + timedelta(minutes=15) - timedelta(milliseconds=1),
+        close_price=Decimal("120"),
+    )
+
+    raw_signal = EMACrossStrategy().generate_signal(
+        candles=(*closed_candles, open_candle),
+    )
+    assert raw_signal.signal_type is SignalType.BUY
+
+    market_service = FakeMarketService(
+        symbols=(symbol,),
+        candles_by_symbol={symbol: (*closed_candles, open_candle)},
+    )
+    strategy_service = EmaCrossStrategyService()
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    opportunities = await service.discover(
+        quote_asset="USDT",
+        interval=Interval.M15,
+        candle_limit=22,
+        max_symbols=1,
+        top_n=1,
+    )
+
+    assert opportunities == ()
+    assert market_service.requested_limits == [23]
+    assert strategy_service.saved_candles == closed_candles
+    assert (
+        strategy_service.strategy.generate_signal(
+            candles=strategy_service.saved_candles,
+        ).signal_type
+        is SignalType.HOLD
+    )
+
+
+def test_discovery_rejects_a_future_dated_generated_signal() -> None:
+    """Fail closed if a strategy returns a signal later than discovery as-of."""
+    asyncio.run(_run_future_dated_signal_test())
+
+
+async def _run_future_dated_signal_test() -> None:
+    """Reject a future actionable signal even after candle filtering."""
+    candle = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW,
+    )
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={"BTCUSDT": (candle,)},
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.BUY,
+                confidence="1",
+                generated_at=_NOW + timedelta(microseconds=1),
+            )
+        }
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="after the discovery decision time",
+    ):
+        await service.discover(
+            quote_asset="USDT",
+            interval=Interval.M15,
+            candle_limit=1,
+            max_symbols=1,
+            top_n=1,
+        )
