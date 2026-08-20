@@ -150,6 +150,11 @@ class FakePositionService:
         self.synchronized = synchronize
         return self.position
 
+    async def observe(self, *, symbol: str) -> Position | None:
+        """Return the authoritative position without mutating persistence."""
+        assert symbol == "BTCUSDT"
+        return self.position
+
     async def save(self, *, position: Position) -> None:
         """Capture metadata persistence."""
         self.saved = position

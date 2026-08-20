@@ -198,25 +198,18 @@ class _FakeExchangeClient(BaseExchangeClient):
         raise NotImplementedError
 
     async def get_positions(self, *, symbol: str | None = None) -> Sequence[Position]:
+        positions = tuple(
+            position for position in self.positions if position.quantity > Decimal("0")
+        )
+
         if symbol is None:
-            return tuple(p for p in self.positions if p.quantity > Decimal("0"))
-        matching = tuple(p for p in self.positions if p.symbol == symbol.upper())
-        if matching:
-            return matching
-        return (
-            Position(
-                symbol=symbol.upper(),
-                side=PositionSide.LONG,
-                quantity=Decimal("0"),
-                entry_price=Decimal("65000"),
-                current_price=Decimal("65000"),
-                unrealized_pnl=Decimal("0"),
-                leverage=1,
-                opened_at=_now(),
-                updated_at=_now(),
-                interval=Interval.M15,
-                strategy_type=None,
-            ),
+            return positions
+
+        normalized_symbol = symbol.upper()
+        return tuple(
+            position
+            for position in positions
+            if position.symbol.upper() == normalized_symbol
         )
 
     async def close_position(self, *, symbol: str) -> Order:  # pragma: no cover
@@ -742,4 +735,71 @@ async def test_sqlite_restart_idempotency_normal_runtime_recovery_twice() -> Non
     # 10. portfolio remains zero
     exchange_positions_2 = await exchange.get_positions()
     assert len(exchange_positions_2) == 0
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_failed_correlation_preserves_stale_position() -> None:
+    """A failed no-exposure proof must preserve all durable recovery evidence."""
+    db = SQLiteDatabase(database_path=":memory:")
+    await db.connect()
+    manager = SQLiteMigrationManager(database=db)
+    await manager.initialize()
+
+    position_repository = SQLitePositionRepository(database=db)
+    attempt_repository = SQLiteSubmissionAttemptRepository(database=db)
+    exchange = _FakeExchangeClient()
+
+    now = _now()
+    attempt = _attempt()
+    stale_position = Position(
+        symbol=attempt.symbol,
+        side=PositionSide.LONG,
+        quantity=attempt.quantity,
+        entry_price=Decimal("65000"),
+        current_price=Decimal("65000"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=now,
+        updated_at=now,
+        interval=attempt.interval,
+        strategy_type=attempt.strategy_type,
+        entry_client_order_id="different-entry-identity",
+    )
+
+    await position_repository.save(position=stale_position)
+    await attempt_repository.save(attempt=attempt)
+
+    service = LivePostEntryRecoveryService(
+        submission_attempt_repository=attempt_repository,
+        live_recovery_repository=SQLiteLiveRecoveryRepository(
+            subrepo=attempt_repository,
+        ),
+        position_service=PositionService(
+            position_engine=PositionEngine(exchange_client=exchange),
+            position_repository=position_repository,
+        ),
+        protection_service=FakeProtectionService(),
+        runtime_control=TradingRuntimeControl(),
+    )
+
+    result = await service.recover_acknowledged(attempt=attempt)
+
+    assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+    stored_attempt = await attempt_repository.get_by_client_order_id(
+        client_order_id=attempt.client_order_id,
+    )
+    assert stored_attempt is not None
+    assert stored_attempt.status is SubmissionAttemptStatus.ACKNOWLEDGED
+
+    persisted_position = await position_repository.get_by_symbol(
+        symbol=attempt.symbol,
+    )
+    assert persisted_position is not None
+    assert persisted_position.entry_client_order_id == "different-entry-identity"
+
+    assert exchange.post_calls == 0
+    assert exchange.delete_calls == 0
+
     await db.close()

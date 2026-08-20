@@ -87,14 +87,10 @@ class FakePositionService:
         When `synchronize` is False return the durable persisted value.
         When True, return from the configured visibility `responses`.
         """
-        self.calls.append((symbol, synchronize))
-        if not synchronize:
-            return self.persisted
+        if synchronize:
+            return await self.observe(symbol=symbol)
 
-        response = self.responses.pop(0)
-        if isinstance(response, BaseException):
-            raise response
-        return response
+        return self.persisted
 
     async def save(self, *, position: Position) -> None:
         """Capture persisted runtime metadata."""
@@ -106,6 +102,16 @@ class FakePositionService:
         if existed:
             self.persisted = None
         return existed
+
+    async def observe(self, *, symbol: str) -> Position | None:
+        """Return the next authoritative position without mutating persistence."""
+        self.calls.append((symbol, True))
+
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+
+        return response
 
 
 @dataclass(slots=True)

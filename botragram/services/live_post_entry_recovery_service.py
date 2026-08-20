@@ -76,6 +76,10 @@ class LivePositionVisibility(Protocol):
         """Delete a stored position by symbol."""
         ...
 
+    async def observe(self, *, symbol: str) -> Position | None:
+        """Read authoritative position state without mutating persistence."""
+        ...
+
 
 class LiveProtectionVerification(Protocol):
     """Verify complete exchange protection for one position."""
@@ -305,9 +309,8 @@ class LivePostEntryRecoveryService:
     async def _get_visible_position(self, *, symbol: str) -> Position | None:
         """Return a bounded authoritative positive-quantity position snapshot."""
         for visibility_attempt in range(_POSITION_VISIBILITY_MAX_ATTEMPTS):
-            position = await self.position_service.get(
+            position = await self.position_service.observe(
                 symbol=symbol,
-                synchronize=True,
             )
             if position is not None and position.quantity > _DECIMAL_ZERO:
                 return position

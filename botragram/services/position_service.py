@@ -229,6 +229,35 @@ class PositionService:
         """Return the number of stored positions."""
         return await self.position_repository.count()
 
+    async def observe(
+        self,
+        *,
+        symbol: str,
+    ) -> Position | None:
+        """Read one authoritative exchange position without mutating storage."""
+        normalized_symbol = self._normalize_symbol(symbol)
+
+        stored_position = await self.position_repository.get_by_symbol(
+            symbol=normalized_symbol,
+        )
+        exchange_positions = tuple(
+            await self.position_engine.get_positions(
+                symbol=normalized_symbol,
+            )
+        )
+        exchange_position = self._find_position(
+            positions=exchange_positions,
+            symbol=normalized_symbol,
+        )
+
+        if exchange_position is None:
+            return None
+
+        return self._merge_local_metadata(
+            exchange_position=exchange_position,
+            stored_position=stored_position,
+        )
+
     @staticmethod
     def _find_position(
         *,
