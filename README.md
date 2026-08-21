@@ -92,7 +92,7 @@ Recovery remains restart/operator-driven by default. Phase 5C.3C adds one
 strictly bounded in-process recovery opportunity for TESTNET autonomous LIVE:
 after a typed `SUBMISSION_BLOCKED` or `EXECUTION_UNSAFE` result, the runner pauses,
 marks protection readiness false, and may invoke the existing
-`RuntimeRecoveryService` once per runner process. The failed candidate is never
+`RuntimeRecoveryService` once per runner lifecycle. The failed candidate is never
 replayed. Recovery uses the same durable submission/protection identities and
 existing read-first reconciliation boundaries; there is no generic entry,
 protection, or delete mutation retry. Only a complete recovery that actively
@@ -145,10 +145,19 @@ Crash-window policy is likewise read-first and fail-closed:
 
 Autonomous intents and candidate batches are transient process-local values. They
 are neither persisted nor replayed after a crash, unsafe result, or restart.
-After safe recovery the system performs a fresh discovery pass; it does not
-execute stale pre-recovery signals. There is no durable opportunity/signal
-deduplication today. Duplicate economic exposure is instead prevented by fresh
-authoritative same-symbol and portfolio-capacity risk checks.
+After safe recovery the system performs a fresh discovery pass rather than
+replaying process-local values.
+
+For autonomous LIVE only, every ranked actionable closed-candle candidate is
+atomically claimed in durable SQLite state before its first risk evaluation.
+The claim identity is `(symbol, interval, strategy_name, signal_generated_at)`;
+direction, price, and confidence are deliberately not part of the identity.
+Rediscovery of an existing claim produces a safe no-entry result before risk,
+intent, or exchange execution. A later candle or a different interval remains a
+new opportunity. The claim is a replay-denial record only: it grants no entry
+authorization, does not weaken fresh portfolio/risk checks, and is not used by
+PAPER workflows. This boundary intentionally prefers losing an opportunity after
+a crash over submitting a second entry attempt from the same closed candle.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an

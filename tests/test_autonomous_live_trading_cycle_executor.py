@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -92,6 +92,32 @@ class _Discovery:
 
 
 @dataclass(slots=True)
+class _OpportunityClaims:
+    """Atomically remember closed-candle opportunity identities across executors."""
+
+    claimed: set[tuple[str, Interval, str, datetime]] = field(
+        default_factory=set[tuple[str, Interval, str, datetime]]
+    )
+    calls: list[tuple[str, Interval, str, datetime]] = field(
+        default_factory=list[tuple[str, Interval, str, datetime]]
+    )
+
+    async def claim(self, *, signal: Signal, interval: Interval) -> bool:
+        """Return true only for the first exact closed-candle identity."""
+        identity = (
+            signal.symbol,
+            interval,
+            signal.strategy_name,
+            signal.generated_at,
+        )
+        self.calls.append(identity)
+        if identity in self.claimed:
+            return False
+        self.claimed.add(identity)
+        return True
+
+
+@dataclass(slots=True)
 class _RiskEvaluation:
     """Return current decisions in candidate-processing order."""
 
@@ -159,10 +185,12 @@ def _executor(
     signals: tuple[Signal, ...],
     decisions: dict[str, TradingDecision],
     statuses: dict[str, AutonomousLiveEntryExecutionStatus],
+    claims: _OpportunityClaims | None = None,
 ) -> tuple[AutonomousLiveTradingCycleExecutor, _RiskEvaluation, _Execution]:
     """Build the complete production-orchestration boundary with fakes."""
     risk = _RiskEvaluation(decisions=decisions)
     execution = _Execution(statuses=statuses)
+    claim_repository = claims if claims is not None else _OpportunityClaims()
     return (
         AutonomousLiveTradingCycleExecutor(
             discovery_service=_Discovery(signals=signals),
@@ -172,6 +200,7 @@ def _executor(
                 environment=ExchangeEnvironment.TESTNET,
             ),
             execution_service=execution,
+            opportunity_claim_repository=claim_repository,
             authorization=_authorization(),
             quote_asset="USDT",
             max_symbols=3,
@@ -254,6 +283,163 @@ def test_terminal_exchange_rejection_allows_next_candidate_sequentially() -> Non
     assert [result.executed for result in results] == [False, True]
 
 
+def test_existing_closed_candle_claim_skips_risk_and_execution() -> None:
+    """A durable claim must suppress the exact candidate before fresh risk I/O."""
+    btc = _signal(symbol="BTCUSDT")
+    eth = _signal(symbol="ETHUSDT")
+    claims = _OpportunityClaims(
+        claimed={(btc.symbol, Interval.M15, btc.strategy_name, btc.generated_at)}
+    )
+    executor, risk, execution = _executor(
+        signals=(btc, eth),
+        decisions={
+            btc.symbol: _decision(signal=btc),
+            eth.symbol: _decision(signal=eth),
+        },
+        statuses={
+            eth.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED,
+        },
+        claims=claims,
+    )
+
+    results = asyncio.run(
+        executor.execute_global(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert risk.calls == ["ETHUSDT"]
+    assert execution.calls == ["ETHUSDT"]
+    assert [result.executed for result in results] == [False, True]
+    assert results[0].reason == "closed_candle_opportunity_already_claimed"
+
+
+def test_claim_survives_executor_restart_for_same_closed_candle() -> None:
+    """A second executor must not retry an opportunity claimed by the first."""
+    btc = _signal(symbol="BTCUSDT")
+    claims = _OpportunityClaims()
+    first, first_risk, first_execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={btc.symbol: AutonomousLiveEntryExecutionStatus.EXCHANGE_REJECTED},
+        claims=claims,
+    )
+
+    first_results = asyncio.run(
+        first.execute_global(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert first_risk.calls == ["BTCUSDT"]
+    assert first_execution.calls == ["BTCUSDT"]
+    assert len(first_results) == 1
+
+    second, second_risk, second_execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+        },
+        claims=claims,
+    )
+    second_results = asyncio.run(
+        second.execute_global(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert second_risk.calls == []
+    assert second_execution.calls == []
+    assert len(second_results) == 1
+    assert not second_results[0].executed
+    assert second_results[0].reason == "closed_candle_opportunity_already_claimed"
+
+
+def test_later_closed_candle_remains_eligible_after_prior_claim() -> None:
+    """Replay denial must not suppress a fresh generated-at candle identity."""
+    previous = _signal(symbol="BTCUSDT")
+    current = replace(previous, generated_at=_NOW + timedelta(minutes=15))
+    claims = _OpportunityClaims(
+        claimed={
+            (
+                previous.symbol,
+                Interval.M15,
+                previous.strategy_name,
+                previous.generated_at,
+            )
+        }
+    )
+    executor, risk, execution = _executor(
+        signals=(current,),
+        decisions={current.symbol: _decision(signal=current)},
+        statuses={
+            current.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+        },
+        claims=claims,
+    )
+
+    results = asyncio.run(
+        executor.execute_global(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert risk.calls == ["BTCUSDT"]
+    assert execution.calls == ["BTCUSDT"]
+    assert len(results) == 1
+    assert results[0].executed
+
+
+def test_claim_is_durable_before_risk_failure_window() -> None:
+    """A crash-like risk failure after claim must burn only that old opportunity."""
+
+    @dataclass(slots=True)
+    class _FailingRisk:
+        calls: int = 0
+
+        async def evaluate(self, *, signal: Signal) -> LiveEntryRiskEvaluation:
+            del signal
+            self.calls += 1
+            raise RuntimeError("injected risk failure after durable claim")
+
+    btc = _signal(symbol="BTCUSDT")
+    claims = _OpportunityClaims()
+    failing_risk = _FailingRisk()
+    execution = _Execution(
+        statuses={btc.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED}
+    )
+    first = AutonomousLiveTradingCycleExecutor(
+        discovery_service=_Discovery(signals=(btc,)),
+        risk_evaluation_service=failing_risk,
+        intent_service=AutonomousLiveEntryIntentService(
+            execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+            environment=ExchangeEnvironment.TESTNET,
+        ),
+        execution_service=execution,
+        opportunity_claim_repository=claims,
+        authorization=_authorization(),
+        quote_asset="USDT",
+        max_symbols=1,
+        top_n=1,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    with pytest.raises(RuntimeError, match="injected risk failure"):
+        asyncio.run(first.execute_global(interval=Interval.M15, candle_limit=100))
+
+    assert failing_risk.calls == 1
+    assert execution.calls == []
+
+    second, second_risk, second_execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+        },
+        claims=claims,
+    )
+    results = asyncio.run(
+        second.execute_global(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert second_risk.calls == []
+    assert second_execution.calls == []
+    assert results[0].reason == "closed_candle_opportunity_already_claimed"
+
+
 def test_cancellation_during_discovery_propagates_without_execution() -> None:
     """Cancellation is never converted into a safe or unsafe workflow result."""
 
@@ -283,6 +469,7 @@ def test_cancellation_during_discovery_propagates_without_execution() -> None:
                 environment=ExchangeEnvironment.TESTNET,
             ),
             execution_service=execution,
+            opportunity_claim_repository=_OpportunityClaims(),
             authorization=_authorization(),
             quote_asset="USDT",
             max_symbols=1,

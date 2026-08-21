@@ -240,8 +240,7 @@ async def _run_v10_to_v11_migration_test() -> None:
                 ),
             )
 
-            version_11 = await manager.initialize()
-            assert version_11 == manager.latest_version
+            version_11 = await manager.initialize(target_version=11)
             assert version_11 == 11
 
             repository = SQLitePositionRepository(database=database)
@@ -270,7 +269,7 @@ async def _run_v10_to_v11_migration_test() -> None:
                 str(row["name"]) for row in columns_after
             }
 
-            version_again = await manager.initialize()
+            version_again = await manager.initialize(target_version=11)
             assert version_again == 11
 
             loaded_again = await repository.get_by_symbol(

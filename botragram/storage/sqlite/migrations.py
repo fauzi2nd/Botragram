@@ -350,6 +350,29 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ADD COLUMN entry_client_order_id TEXT;
         """,
     ),
+    _Migration(
+        version=12,
+        script="""
+        CREATE TABLE IF NOT EXISTS autonomous_live_opportunity_claims (
+            symbol TEXT NOT NULL,
+            interval TEXT NOT NULL,
+            strategy_name TEXT NOT NULL,
+            signal_generated_at TEXT NOT NULL,
+
+            PRIMARY KEY (
+                symbol,
+                interval,
+                strategy_name,
+                signal_generated_at
+            )
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_autonomous_live_opportunity_claims_time
+        ON autonomous_live_opportunity_claims (
+            signal_generated_at
+        );
+        """,
+    ),
 )
 
 

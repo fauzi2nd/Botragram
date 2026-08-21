@@ -71,6 +71,7 @@ from botragram.models import (
     LiveRuntimePositionContext,
 )
 from botragram.repositories import (
+    AutonomousLiveOpportunityClaimRepository,
     CandleRepository,
     ExecutionAuthorizationRepository,
     OrderRepository,
@@ -113,6 +114,7 @@ from botragram.services.live_market_stream_service import MarketTickListener
 from botragram.services.trading_service import TradingService
 from botragram.storage.memory import MemoryExecutionAuthorizationRepository
 from botragram.storage.sqlite import (
+    SQLiteAutonomousLiveOpportunityClaimRepository,
     SQLiteCandleRepository,
     SQLiteDatabase,
     SQLiteMigrationManager,
@@ -154,6 +156,7 @@ class DependencyProvider:
         "_autonomous_live_entry_authorization",
         "_autonomous_live_entry_execution_service",
         "_autonomous_live_entry_intent_service",
+        "_autonomous_live_opportunity_claim_repository",
         "_autonomous_live_recovery_observability_service",
         "_live_entry_risk_evaluation_service",
         "_autonomous_paper_execution_service",
@@ -294,6 +297,9 @@ class DependencyProvider:
             ExecutionAuthorizationRepository | None
         ) = None
         self._signal_repository: SignalRepository | None = None
+        self._autonomous_live_opportunity_claim_repository: (
+            AutonomousLiveOpportunityClaimRepository | None
+        ) = None
         self._submission_attempt_repository: SubmissionAttemptRepository | None = None
         self._order_repository: OrderRepository | None = None
         self._trade_repository: TradeRepository | None = None
@@ -597,6 +603,13 @@ class DependencyProvider:
         return self._require(self._signal_repository)
 
     @property
+    def autonomous_live_opportunity_claim_repository(
+        self,
+    ) -> AutonomousLiveOpportunityClaimRepository:
+        """Return durable TESTNET autonomous closed-candle replay denial."""
+        return self._require(self._autonomous_live_opportunity_claim_repository)
+
+    @property
     def order_repository(self) -> OrderRepository:
         """Return the configured order repository."""
         return self._require(self._order_repository)
@@ -809,6 +822,9 @@ class DependencyProvider:
         """Construct SQLite repository implementations."""
         self._candle_repository = SQLiteCandleRepository(database=database)
         self._signal_repository = SQLiteSignalRepository(database=database)
+        self._autonomous_live_opportunity_claim_repository = (
+            SQLiteAutonomousLiveOpportunityClaimRepository(database=database)
+        )
         self._submission_attempt_repository = SQLiteSubmissionAttemptRepository(
             database=database
         )
@@ -1048,6 +1064,9 @@ class DependencyProvider:
                 risk_evaluation_service=self.live_entry_risk_evaluation_service,
                 intent_service=intent_service,
                 execution_service=execution_service,
+                opportunity_claim_repository=(
+                    self.autonomous_live_opportunity_claim_repository
+                ),
                 authorization=authorization,
                 quote_asset=market.quote_asset,
                 max_symbols=market.discovery_max_symbols,
@@ -1205,6 +1224,7 @@ class DependencyProvider:
         self._execution_authorization_service = None
         self._human_confirmed_paper_execution_service = None
         self._signal_repository = None
+        self._autonomous_live_opportunity_claim_repository = None
         self._submission_attempt_repository = None
         self._order_repository = None
         self._trade_repository = None

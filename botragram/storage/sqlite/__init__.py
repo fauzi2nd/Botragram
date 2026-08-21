@@ -16,6 +16,9 @@ from __future__ import annotations
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.storage.sqlite.autonomous_live_opportunity_claim_repository import (
+    SQLiteAutonomousLiveOpportunityClaimRepository,
+)
 from botragram.storage.sqlite.candle_repository import (
     SQLiteCandleRepository,
 )
@@ -38,6 +41,7 @@ from botragram.storage.sqlite.trade_repository import (
 )
 
 __all__ = [
+    "SQLiteAutonomousLiveOpportunityClaimRepository",
     "SQLiteCandleRepository",
     "SQLiteDatabase",
     "SQLiteMigrationManager",

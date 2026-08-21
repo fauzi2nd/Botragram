@@ -80,6 +80,9 @@ _DEFAULT_PAPER_ACCOUNT_BALANCE: Final[Decimal] = Decimal("10000")
 _DEFAULT_HEARTBEAT_INTERVAL_SECONDS: Final[float] = 30.0
 _DEFAULT_AUTONOMOUS_LIVE_HEALTH_CHECK_INTERVAL_SECONDS: Final[float] = 1.0
 _RESULT_REASON_UNAVAILABLE: Final[str] = "No reason provided"
+_AUTONOMOUS_LIVE_CLOSED_CANDLE_REPLAY_REASON: Final[str] = (
+    "closed_candle_opportunity_already_claimed"
+)
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
@@ -105,6 +108,14 @@ class _AutonomousLiveRuntimeHealthUnsafeError(RuntimeError):
 # =============================================================================
 # Runtime Contracts
 # =============================================================================
+class _AutonomousLiveOpportunityClaimProvider(Protocol):
+    """Atomically deny replay of one exact autonomous LIVE closed candle."""
+
+    async def claim(self, *, signal: Signal, interval: Interval) -> bool:
+        """Return true only when the closed-candle identity was newly claimed."""
+        ...
+
+
 class TradingCycleExecutor(Protocol):
     """Execute one complete runtime trading cycle."""
 
@@ -533,6 +544,7 @@ class AutonomousLiveTradingCycleExecutor:
     risk_evaluation_service: LiveEntryRiskEvaluationProvider
     intent_service: AutonomousLiveIntentProvider
     execution_service: AutonomousLiveEntryExecutionProvider
+    opportunity_claim_repository: _AutonomousLiveOpportunityClaimProvider
     authorization: AutonomousLiveEntryAuthorization
     quote_asset: str
     max_symbols: int
@@ -569,6 +581,14 @@ class AutonomousLiveTradingCycleExecutor:
         results: list[TradingResult] = []
 
         for signal in signals:
+            claimed = await self.opportunity_claim_repository.claim(
+                signal=signal,
+                interval=interval,
+            )
+            if not claimed:
+                results.append(self._closed_candle_replay_result(signal=signal))
+                continue
+
             evaluation = await self.risk_evaluation_service.evaluate(signal=signal)
             decision = evaluation.decision
             intent_result = self.intent_service.authorize(
@@ -636,6 +656,22 @@ class AutonomousLiveTradingCycleExecutor:
         return await self.execute_global(
             interval=interval,
             candle_limit=candle_limit,
+        )
+
+    @staticmethod
+    def _closed_candle_replay_result(*, signal: Signal) -> TradingResult:
+        """Return one safe result without repeating risk or entry work."""
+        decision = TradingDecision(
+            should_execute=False,
+            signal=signal,
+            risk_result=None,
+            reason=_AUTONOMOUS_LIVE_CLOSED_CANDLE_REPLAY_REASON,
+        )
+        return TradingResult(
+            executed=False,
+            decision=decision,
+            order=None,
+            reason=_AUTONOMOUS_LIVE_CLOSED_CANDLE_REPLAY_REASON,
         )
 
     @staticmethod
