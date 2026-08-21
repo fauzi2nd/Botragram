@@ -264,6 +264,14 @@ class TradingRuntimeObserver(Protocol):
         ...
 
 
+class _AutonomousLiveRuntimeRecovery(Protocol):
+    """Attempt existing runtime recovery without replaying a candidate."""
+
+    async def recover(self) -> bool:
+        """Return whether complete LIVE runtime readiness was restored safely."""
+        ...
+
+
 class MultiContextActivationPreconditionProvider(Protocol):
     """Build current LIVE multi-context activation state without runner I/O."""
 
@@ -749,6 +757,8 @@ class TradingRunner:
     multi_context_activation_precondition_provider: (
         MultiContextActivationPreconditionProvider | None
     ) = None
+    autonomous_live_recovery_provider: _AutonomousLiveRuntimeRecovery | None = None
+    maximum_autonomous_live_recovery_attempts: int = 1
     live_management_authorization: (
         LiveRecoveredPositionManagementAuthorization | None
     ) = None
@@ -800,6 +810,11 @@ class TradingRunner:
 
         if self.heartbeat_interval_seconds <= 0:
             raise ValueError("Heartbeat interval must be greater than zero")
+
+        if self.maximum_autonomous_live_recovery_attempts <= 0:
+            raise ValueError(
+                "Maximum autonomous LIVE recovery attempts must be greater than zero"
+            )
 
         if (
             self.live_management_authorization is not None
@@ -966,6 +981,7 @@ class TradingRunner:
 
         try:
             consecutive_failures = 0
+            autonomous_live_recovery_attempts = 0
             await self._notify_started()
 
             while not self._stop_event.is_set():
@@ -1023,7 +1039,35 @@ class TradingRunner:
                         error=error,
                         consecutive_failures=1,
                     )
-                    break
+
+                    if self.autonomous_live_recovery_provider is None:
+                        break
+
+                    if (
+                        autonomous_live_recovery_attempts
+                        >= self.maximum_autonomous_live_recovery_attempts
+                    ):
+                        _LOGGER.critical(
+                            "Autonomous LIVE in-process recovery budget exhausted: "
+                            "attempts=%d",
+                            autonomous_live_recovery_attempts,
+                        )
+                        break
+
+                    autonomous_live_recovery_attempts += 1
+                    recovered = await self._recover_autonomous_live_runtime(
+                        error=error,
+                        attempt=autonomous_live_recovery_attempts,
+                    )
+                    if not recovered:
+                        break
+
+                    consecutive_failures = 0
+                    self._global_next_eligible_monotonic = (
+                        monotonic() + self._get_global_cadence_seconds()
+                    )
+                    await self._wait_for_global_cycle()
+                    continue
                 except Exception as error:
                     consecutive_failures += 1
                     _LOGGER.warning(
@@ -1074,6 +1118,65 @@ class TradingRunner:
             )
         except TimeoutError:
             return
+
+    async def _recover_autonomous_live_runtime(
+        self,
+        *,
+        error: AutonomousLiveCycleUnsafeError,
+        attempt: int,
+    ) -> bool:
+        """Run one bounded autonomous-LIVE recovery pass without candidate replay."""
+        if (
+            self.trade_mode is not TradeMode.LIVE
+            or not self._is_global_cycle_executor()
+        ):
+            _LOGGER.critical(
+                "Autonomous LIVE in-process recovery rejected outside global LIVE mode"
+            )
+            return False
+
+        provider = self.autonomous_live_recovery_provider
+        if provider is None:
+            return False
+
+        _LOGGER.warning(
+            "Autonomous LIVE in-process recovery started: attempt=%d/%d error_type=%s",
+            attempt,
+            self.maximum_autonomous_live_recovery_attempts,
+            type(error).__name__,
+        )
+        try:
+            recovered = await provider.recover()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Autonomous LIVE in-process recovery raised unexpectedly: attempt=%d",
+                attempt,
+            )
+            return False
+
+        if not recovered:
+            _LOGGER.critical(
+                "Autonomous LIVE in-process recovery did not restore safe runtime: "
+                "attempt=%d",
+                attempt,
+            )
+            return False
+
+        if self.runtime_control.is_paused:
+            _LOGGER.critical(
+                "Autonomous LIVE recovery reported success but runtime remained "
+                "paused: attempt=%d",
+                attempt,
+            )
+            return False
+
+        _LOGGER.warning(
+            "Autonomous LIVE in-process recovery completed safely: attempt=%d",
+            attempt,
+        )
+        return True
 
     async def _heartbeat_loop(self) -> None:
         """Log periodic liveness while the runtime remains active."""

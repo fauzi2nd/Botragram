@@ -76,25 +76,30 @@ authoritative MARKET rules, rounds quantity **down** to the step grid, and
 validates min/max quantity plus applicable minimum notional against a fresh
 market reference price. Invalid venue quantity creates zero PREPARED records and
 zero mutations; it never increases approved exposure. Phase 5C real TESTNET
-acceptance remains pending.
+acceptance completed in `v0.5.0`.
 
 Futures STOP/TAKE_PROFIT triggers use the same authoritative PRICE_FILTER grid
 for initial protection and stepped STOP replacement. Durable position trigger
 prices are final venue values, and restart reconciliation requires exact trigger
 matches through each durable client identity. A stepped candidate that rounds to
 the existing trigger creates no identity, POST, or cancellation; invalid stepped
-candidates leave the existing verified STOP untouched. Phase 5C acceptance
-remains blocked pending recovery-state resolution and a fresh TESTNET soak.
+candidates leave the existing verified STOP untouched. Phase 5C recovery-state
+and fresh TESTNET acceptance completed in `v0.5.0`.
 
 ### Autonomous TESTNET recovery policy
 
-Recovery is restart/operator-driven in the current release. There is no
-background self-healing, no automatic stream/monitor reconstruction, and no
-automatic mutation retry. The application remains alive for read-only operator
-visibility, but an unsafe autonomous cycle pauses new entry until a later
-restart/recovery boundary. Bounded GET reconciliation already inside the durable
-submission/protection contracts remains allowed; entry, protection, and delete
-mutations are never generically retried.
+Recovery remains restart/operator-driven by default. Phase 5C.3C adds one
+strictly bounded in-process recovery opportunity for TESTNET autonomous LIVE:
+after a typed `SUBMISSION_BLOCKED` or `EXECUTION_UNSAFE` result, the runner pauses,
+marks protection readiness false, and may invoke the existing
+`RuntimeRecoveryService` once per runner process. The failed candidate is never
+replayed. Recovery uses the same durable submission/protection identities and
+existing read-first reconciliation boundaries; there is no generic entry,
+protection, or delete mutation retry. Only a complete recovery that actively
+resumes runtime readiness may continue only after the normal global cadence,
+so the failed cycle is not immediately rediscovered. A failed recovery or any
+later unsafe result exhausts the in-process budget and requires restart/operator
+recovery.
 
 Startup always runs in this order before autonomous discovery is eligible:
 
@@ -178,9 +183,11 @@ Before any extended TESTNET soak, an operator must verify all of the following:
   process-local stream, monitor, or runner task remains active.
 - MAINNET autonomous configuration is rejected before mutation.
 
-Bounded in-process autonomous recovery (Phase 5C.3C) remains deferred pending
-this TESTNET soak evidence. No stream/monitor rebuild, mutation retry, or
-self-healing behavior is enabled.
+Bounded in-process autonomous recovery (Phase 5C.3C) is enabled only for the
+TESTNET autonomous-LIVE runner and is limited to one existing runtime-recovery
+pass per process. It does not replay transient intents or candidate batches, and
+it does not introduce generic mutation retries. If safe runtime readiness cannot
+be re-established, the runner remains fail closed for operator/restart recovery.
 
 ### Dedicated autonomous TESTNET soak profile
 
