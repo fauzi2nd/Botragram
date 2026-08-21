@@ -232,6 +232,10 @@ class OpportunityDiscoveryService:
             raise RuntimeError(
                 "Strategy signal name does not match explicit strategy context"
             )
+        if signal.price != latest_closed_candle.close_price:
+            raise RuntimeError(
+                "Strategy signal price does not match latest closed candle"
+            )
 
         latest_close_time = cls._normalize_utc_datetime(
             value=latest_closed_candle.close_time,

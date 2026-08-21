@@ -162,11 +162,12 @@ a crash over submitting a second entry attempt from the same closed candle.
 Autonomous LIVE discovery additionally binds each candidate to the executor's
 explicit strategy context before the durable claim. Every strategy candle must
 match the scanned symbol and requested interval; the generated signal must keep
-that symbol, use the exact explicit strategy name, and set `generated_at` to the
-latest closed candle's `close_time` after UTC normalization. Any provenance
-mismatch fails closed during discovery, before durable claim, risk evaluation,
-intent authorization, or exchange execution. Existing non-LIVE discovery may
-continue to omit the explicit strategy context and use its configured default.
+that symbol, use the exact explicit strategy name, set `price` to the latest
+closed candle's `close_price`, and set `generated_at` to that candle's
+`close_time` after UTC normalization. Any provenance mismatch fails closed
+during discovery, before durable claim, risk evaluation, intent authorization,
+or exchange execution. Existing non-LIVE discovery may continue to omit the
+explicit strategy context and use its configured default.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an

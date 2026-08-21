@@ -182,12 +182,13 @@ def _create_signal(
     confidence: str,
     generated_at: datetime = _NOW,
     strategy_name: str = "test_strategy",
+    price: Decimal = Decimal("100"),
 ) -> Signal:
     """Create one deterministic strategy signal."""
     return Signal(
         symbol=symbol,
         signal_type=signal_type,
-        price=Decimal("100"),
+        price=price,
         confidence=Decimal(confidence),
         strategy_name=strategy_name,
         generated_at=generated_at,
@@ -884,6 +885,51 @@ async def _run_wrong_signal_strategy_test() -> None:
     )
 
     with pytest.raises(RuntimeError, match="Strategy signal name"):
+        await service.discover(
+            quote_asset="USDT",
+            interval=Interval.M15,
+            candle_limit=1,
+            max_symbols=1,
+            top_n=1,
+            strategy_type=StrategyType.EMA_CROSS,
+        )
+
+
+def test_explicit_provenance_rejects_wrong_signal_price() -> None:
+    """Reject a signal whose price does not match the latest closed candle."""
+    asyncio.run(_run_wrong_signal_price_test())
+
+
+async def _run_wrong_signal_price_test() -> None:
+    candle = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW,
+        close_price=Decimal("100"),
+    )
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={"BTCUSDT": (candle,)},
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.BUY,
+                confidence="1",
+                generated_at=candle.close_time,
+                strategy_name=StrategyType.EMA_CROSS.value,
+                price=Decimal("101"),
+            )
+        }
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="Strategy signal price"):
         await service.discover(
             quote_asset="USDT",
             interval=Interval.M15,
