@@ -85,8 +85,14 @@ class _Discovery:
     signals: tuple[Signal, ...]
     calls: int = 0
 
-    async def discover(self, **_: object) -> Sequence[Signal]:
-        """Return the configured deterministic candidates."""
+    async def discover(
+        self,
+        *,
+        strategy_type: StrategyType,
+        **_: object,
+    ) -> Sequence[Signal]:
+        """Return candidates only for the executor's explicit strategy."""
+        assert strategy_type is StrategyType.EMA_CROSS
         self.calls += 1
         return self.signals
 

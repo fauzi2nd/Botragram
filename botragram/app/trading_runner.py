@@ -206,8 +206,9 @@ class OpportunityDiscoveryProvider(Protocol):
         candle_limit: int,
         max_symbols: int,
         top_n: int,
+        strategy_type: StrategyType,
     ) -> Sequence[Signal]:
-        """Return ranked actionable signals."""
+        """Return ranked actionable signals for one explicit strategy."""
         ...
 
 
@@ -535,9 +536,10 @@ class AutonomousPaperTradingCycleExecutor:
 class AutonomousLiveTradingCycleExecutor:
     """Compose ranked TESTNET discovery with sequential protected LIVE entry.
 
-    It has no exchange client or persistence dependency. Each candidate first
-    receives a fresh canonical decision for intent authorization, then the
-    protected-entry adapter repeats authoritative mutation-time validation.
+    It has no exchange client dependency. Discovery binds each candidate to
+    the executor's explicit closed-candle strategy context before the durable
+    replay claim, fresh canonical risk decision, intent authorization, and
+    protected-entry mutation boundary.
     """
 
     discovery_service: OpportunityDiscoveryProvider
@@ -577,6 +579,7 @@ class AutonomousLiveTradingCycleExecutor:
             candle_limit=candle_limit,
             max_symbols=self.max_symbols,
             top_n=self.top_n,
+            strategy_type=self.strategy_type,
         )
         results: list[TradingResult] = []
 

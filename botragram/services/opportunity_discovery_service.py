@@ -24,7 +24,7 @@ from typing import Protocol
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import Interval, SignalType
+from botragram.enums import Interval, SignalType, StrategyType
 from botragram.models import Candle, Signal
 
 __all__ = [
@@ -68,7 +68,12 @@ class DiscoveryMarketDataProvider(Protocol):
 class DiscoveryStrategyProvider(Protocol):
     """Generate and persist one strategy signal."""
 
-    async def generate_and_save(self, *, candles: Sequence[Candle]) -> Signal:
+    async def generate_and_save(
+        self,
+        *,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> Signal:
         """Generate and persist the signal for ordered candles."""
         ...
 
@@ -92,6 +97,7 @@ class OpportunityDiscoveryService:
         candle_limit: int,
         max_symbols: int,
         top_n: int,
+        strategy_type: StrategyType | None = None,
     ) -> Sequence[Signal]:
         """Return the highest-confidence actionable entry signals.
 
@@ -101,6 +107,9 @@ class OpportunityDiscoveryService:
             candle_limit: Number of closed historical candles per symbol.
             max_symbols: Maximum number of normalized symbols to analyze.
             top_n: Maximum number of ranked opportunities to return.
+            strategy_type: Explicit strategy provenance required by autonomous
+                LIVE. Omitted callers preserve the configured default strategy
+                behavior used by existing non-LIVE discovery workflows.
 
         Returns:
             Actionable BUY and SELL signals ordered by descending confidence and
@@ -148,8 +157,16 @@ class OpportunityDiscoveryService:
                     f"No closed candles available for discovery: {symbol}"
                 )
 
+            if strategy_type is not None:
+                self._validate_closed_candle_provenance(
+                    candles=closed_candles,
+                    symbol=symbol,
+                    interval=interval,
+                )
+
             signal = await self.strategy_service.generate_and_save(
                 candles=closed_candles,
+                strategy_type=strategy_type,
             )
             signal_generated_at = self._normalize_utc_datetime(
                 value=signal.generated_at,
@@ -158,6 +175,15 @@ class OpportunityDiscoveryService:
             if signal_generated_at > as_of:
                 raise RuntimeError(
                     "Strategy generated a signal after the discovery decision time"
+                )
+
+            if strategy_type is not None:
+                self._validate_signal_provenance(
+                    signal=signal,
+                    signal_generated_at=signal_generated_at,
+                    symbol=symbol,
+                    latest_closed_candle=closed_candles[-1],
+                    strategy_type=strategy_type,
                 )
 
             if signal.signal_type in _ACTIONABLE_ENTRY_SIGNAL_TYPES:
@@ -169,6 +195,52 @@ class OpportunityDiscoveryService:
                 key=lambda signal: (-signal.confidence, signal.symbol),
             )[:top_n]
         )
+
+    @classmethod
+    def _validate_closed_candle_provenance(
+        cls,
+        *,
+        candles: Sequence[Candle],
+        symbol: str,
+        interval: Interval,
+    ) -> None:
+        """Require every strategy candle to match the discovery context."""
+        for candle in candles:
+            if cls._normalize_symbol(candle.symbol) != symbol:
+                raise RuntimeError(
+                    "Closed-candle symbol does not match discovery symbol"
+                )
+            if candle.interval is not interval:
+                raise RuntimeError(
+                    "Closed-candle interval does not match discovery interval"
+                )
+
+    @classmethod
+    def _validate_signal_provenance(
+        cls,
+        *,
+        signal: Signal,
+        signal_generated_at: datetime,
+        symbol: str,
+        latest_closed_candle: Candle,
+        strategy_type: StrategyType,
+    ) -> None:
+        """Bind one generated signal to the exact closed-candle context."""
+        if cls._normalize_symbol(signal.symbol) != symbol:
+            raise RuntimeError("Strategy signal symbol does not match discovery symbol")
+        if signal.strategy_name != strategy_type.value:
+            raise RuntimeError(
+                "Strategy signal name does not match explicit strategy context"
+            )
+
+        latest_close_time = cls._normalize_utc_datetime(
+            value=latest_closed_candle.close_time,
+            name="Latest closed candle close_time",
+        )
+        if signal_generated_at != latest_close_time:
+            raise RuntimeError(
+                "Strategy signal generated_at does not match latest closed candle"
+            )
 
     @classmethod
     def _select_closed_candles(
@@ -197,6 +269,14 @@ class OpportunityDiscoveryService:
             raise ValueError(f"{name} must be timezone-aware")
 
         return value.astimezone(UTC)
+
+    @staticmethod
+    def _normalize_symbol(symbol: str) -> str:
+        """Normalize and validate one discovery symbol."""
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            raise ValueError("Discovery symbol must not be empty")
+        return normalized_symbol
 
     @staticmethod
     def _normalize_quote_asset(quote_asset: str) -> str:
