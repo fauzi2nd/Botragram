@@ -151,6 +151,7 @@ class OpportunityDiscoveryService:
                 candles=candles,
                 as_of=as_of,
                 candle_limit=candle_limit,
+                require_strict_sequence=strategy_type is not None,
             )
             if not closed_candles:
                 raise RuntimeError(
@@ -216,6 +217,40 @@ class OpportunityDiscoveryService:
                 )
 
     @classmethod
+    def _validate_closed_candle_sequence(
+        cls,
+        *,
+        candles: Sequence[Candle],
+    ) -> None:
+        """Require valid candle windows and strictly increasing time identities."""
+        previous_open_time: datetime | None = None
+        previous_close_time: datetime | None = None
+
+        for candle in candles:
+            open_time = cls._normalize_utc_datetime(
+                value=candle.open_time,
+                name="Closed candle open_time",
+            )
+            close_time = cls._normalize_utc_datetime(
+                value=candle.close_time,
+                name="Closed candle close_time",
+            )
+
+            if open_time >= close_time:
+                raise RuntimeError("Closed-candle open_time must be before close_time")
+            if previous_open_time is not None and open_time <= previous_open_time:
+                raise RuntimeError(
+                    "Closed-candle open_time sequence must be strictly increasing"
+                )
+            if previous_close_time is not None and close_time <= previous_close_time:
+                raise RuntimeError(
+                    "Closed-candle close_time sequence must be strictly increasing"
+                )
+
+            previous_open_time = open_time
+            previous_close_time = close_time
+
+    @classmethod
     def _validate_signal_provenance(
         cls,
         *,
@@ -253,6 +288,7 @@ class OpportunityDiscoveryService:
         candles: Sequence[Candle],
         as_of: datetime,
         candle_limit: int,
+        require_strict_sequence: bool = False,
     ) -> tuple[Candle, ...]:
         """Return the latest bounded candles closed by the decision time."""
         closed_candles = tuple(
@@ -264,6 +300,8 @@ class OpportunityDiscoveryService:
             )
             <= as_of
         )
+        if require_strict_sequence:
+            cls._validate_closed_candle_sequence(candles=closed_candles)
         return closed_candles[-candle_limit:]
 
     @staticmethod

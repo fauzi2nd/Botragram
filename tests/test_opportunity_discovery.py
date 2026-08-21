@@ -811,6 +811,132 @@ async def _run_wrong_candle_interval_test() -> None:
     assert strategy_service.saved_symbols == []
 
 
+def test_explicit_provenance_rejects_invalid_closed_candle_window() -> None:
+    """Reject a closed candle whose open time is not before its close time."""
+    asyncio.run(_run_invalid_closed_candle_window_test())
+
+
+async def _run_invalid_closed_candle_window_test() -> None:
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={
+            "BTCUSDT": (
+                _create_candle(
+                    symbol="BTCUSDT",
+                    open_time=_NOW,
+                    close_time=_NOW,
+                ),
+            )
+        },
+    )
+    strategy_service = FakeStrategyService(signals={})
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="open_time must be before close_time"):
+        await service.discover(
+            quote_asset="USDT",
+            interval=Interval.M15,
+            candle_limit=1,
+            max_symbols=1,
+            top_n=1,
+            strategy_type=StrategyType.EMA_CROSS,
+        )
+
+    assert strategy_service.saved_symbols == []
+
+
+def test_explicit_provenance_rejects_non_increasing_candle_open_time() -> None:
+    """Reject duplicate or reversed open-time identities before strategy use."""
+    asyncio.run(_run_non_increasing_candle_open_time_test())
+
+
+async def _run_non_increasing_candle_open_time_test() -> None:
+    duplicate_open = _NOW - timedelta(minutes=30)
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={
+            "BTCUSDT": (
+                _create_candle(
+                    symbol="BTCUSDT",
+                    open_time=duplicate_open,
+                    close_time=_NOW - timedelta(minutes=15),
+                ),
+                _create_candle(
+                    symbol="BTCUSDT",
+                    open_time=duplicate_open,
+                    close_time=_NOW,
+                ),
+            )
+        },
+    )
+    strategy_service = FakeStrategyService(signals={})
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="open_time sequence"):
+        await service.discover(
+            quote_asset="USDT",
+            interval=Interval.M15,
+            candle_limit=1,
+            max_symbols=1,
+            top_n=1,
+            strategy_type=StrategyType.EMA_CROSS,
+        )
+
+    assert strategy_service.saved_symbols == []
+
+
+def test_explicit_provenance_rejects_non_increasing_candle_close_time() -> None:
+    """Reject duplicate or reversed close-time identities before strategy use."""
+    asyncio.run(_run_non_increasing_candle_close_time_test())
+
+
+async def _run_non_increasing_candle_close_time_test() -> None:
+    duplicate_close = _NOW - timedelta(minutes=15)
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={
+            "BTCUSDT": (
+                _create_candle(
+                    symbol="BTCUSDT",
+                    open_time=_NOW - timedelta(minutes=30),
+                    close_time=duplicate_close,
+                ),
+                _create_candle(
+                    symbol="BTCUSDT",
+                    open_time=_NOW - timedelta(minutes=20),
+                    close_time=duplicate_close,
+                ),
+            )
+        },
+    )
+    strategy_service = FakeStrategyService(signals={})
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="close_time sequence"):
+        await service.discover(
+            quote_asset="USDT",
+            interval=Interval.M15,
+            candle_limit=1,
+            max_symbols=1,
+            top_n=1,
+            strategy_type=StrategyType.EMA_CROSS,
+        )
+
+    assert strategy_service.saved_symbols == []
+
+
 def test_explicit_provenance_rejects_wrong_signal_symbol() -> None:
     """Reject a strategy result that changes the scanned symbol identity."""
     asyncio.run(_run_wrong_signal_symbol_test())
