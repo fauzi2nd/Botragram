@@ -266,14 +266,15 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             order_type=OrderType(
                 self._to_string(payload.get("orderType", payload.get("type"))).lower(),
             ),
-            status=OrderStatus(
-                self._to_string(
-                    payload.get("algoStatus", payload.get("status"))
-                ).lower(),
+            status=self._map_algo_order_status(
+                payload.get("algoStatus", payload.get("status"))
             ),
             quantity=self._to_decimal(payload.get("quantity", payload.get("origQty"))),
             executed_quantity=self._to_decimal(
-                payload.get("actualQuantity", payload.get("executedQty"))
+                payload.get(
+                    "actualQty",
+                    payload.get("actualQuantity", payload.get("executedQty")),
+                )
             ),
             price=self._to_optional_decimal(
                 payload.get("algoPrice", payload.get("price"))
@@ -289,6 +290,32 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             ),
             client_order_id=self._to_optional_string(payload.get("clientAlgoId")),
         )
+
+    @staticmethod
+    def _map_algo_order_status(value: object) -> OrderStatus:
+        """Normalize Binance conditional-algo lifecycle states.
+
+        Binance USD-M conditional orders expose algo-specific states in addition
+        to standard order statuses. ``ACTIVE`` remains open protection, while
+        ``TRIGGERED`` means the conditional leg has already fired and is mapped
+        to an in-progress status so protection recovery cannot mistake it for a
+        still-pending trigger. ``FINISHED`` is normalized to FILLED.
+        """
+        normalized = BinanceExchangeMapper._to_string(value).strip().lower()
+
+        if normalized == "active":
+            return OrderStatus.NEW
+
+        if normalized == "triggered":
+            return OrderStatus.PARTIALLY_FILLED
+
+        if normalized == "finished":
+            return OrderStatus.FILLED
+
+        if normalized == "failed":
+            return OrderStatus.REJECTED
+
+        return OrderStatus(normalized)
 
     def map_position(
         self,

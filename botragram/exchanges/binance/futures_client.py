@@ -443,6 +443,35 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             ) from error
         return self._mapper.map_algo_order(self._require_mapping(payload))
 
+    async def cancel_protection_order(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+    ) -> None:
+        """Cancel one Futures conditional order by exact durable client identity.
+
+        The DELETE is attempted at most once. Any transport or HTTP uncertainty
+        is surfaced so the caller can reconcile exclusively through GET reads.
+        """
+        self._normalize_symbol(symbol)
+        try:
+            await self._rest.delete(
+                _ALGO_ORDER_ENDPOINT,
+                params={
+                    "clientAlgoId": self._normalize_client_order_id(client_id),
+                },
+                authenticated=True,
+            )
+        except BinanceRestResponseError as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                "Binance Futures protection cancellation outcome is unknown"
+            ) from error
+        except (aiohttp.ClientError, TimeoutError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                "Binance Futures protection cancellation outcome is unknown"
+            ) from error
+
     async def ensure_stop_loss_order(
         self,
         *,

@@ -1473,3 +1473,45 @@ async def test_live_startup_propagates_submission_recovery_cancellation() -> Non
 
     assert post_entry_recovery.attempts == []
     assert control.is_paused
+
+
+@dataclass(slots=True)
+class _FailingNaturalExitRecovery:
+    """Fail deterministically before normal LIVE portfolio recovery."""
+
+    calls: int = 0
+
+    async def reconcile(self) -> None:
+        """Record one startup guard invocation and fail closed."""
+        self.calls += 1
+        raise RuntimeError("configured orphan-protection recovery failure")
+
+
+def test_live_runtime_recovery_fails_closed_on_natural_exit_guard() -> None:
+    """Never activate a clean autonomous cycle when orphan recovery fails."""
+    repository = MemoryPositionRepository()
+    exchange = RecoveryExchangeClient(
+        positions=(),
+        position_repository=repository,
+    )
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=repository,
+        autonomous_live_entry_authorization=AutonomousLiveEntryAuthorization(
+            environment=ExchangeEnvironment.TESTNET,
+            explicit_opt_in=True,
+        ),
+    )
+    natural_exit_recovery = _FailingNaturalExitRecovery()
+    guarded_service = replace(
+        service,
+        live_natural_exit_recovery_service=natural_exit_recovery,
+    )
+
+    recovered = asyncio.run(guarded_service.recover())
+
+    assert not recovered
+    assert natural_exit_recovery.calls == 1
+    assert control.is_paused
+    assert "position protection" in control.get_missing_startup_requirements()

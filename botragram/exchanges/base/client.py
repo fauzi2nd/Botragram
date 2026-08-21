@@ -225,6 +225,21 @@ class BaseExchangeClient(ABC):
     ) -> Order:
         """Return one conditional protection order by client identity."""
 
+    async def cancel_protection_order(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+    ) -> None:
+        """Cancel one conditional protection order by durable client identity.
+
+        Futures connectors with a dedicated conditional-order endpoint override
+        this boundary. Connectors that do not support conditional protection
+        cancellation fail closed instead of routing to an unrelated order API.
+        """
+        del symbol, client_id
+        raise NotImplementedError("Protection-order cancellation is not supported")
+
     @abstractmethod
     async def ensure_stop_loss_order(
         self,

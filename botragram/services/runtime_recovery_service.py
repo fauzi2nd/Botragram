@@ -98,6 +98,14 @@ class LiveMarketStreamOwner(Protocol):
         ...
 
 
+class LiveNaturalExitRecovery(Protocol):
+    """Reconcile natural exits before normal LIVE portfolio recovery."""
+
+    async def reconcile(self) -> None:
+        """Remove proven orphan protection or fail closed."""
+        ...
+
+
 class LiveProtectionMonitorOwner(Protocol):
     """Own independent per-position protection monitors during recovery."""
 
@@ -133,6 +141,7 @@ class RuntimeRecoveryService:
     submission_attempt_repository: SubmissionAttemptRepository | None = None
     live_submission_recovery_service: LiveIncompleteSubmissionRecovery | None = None
     live_post_entry_recovery_service: LiveAcknowledgedEntryRecovery | None = None
+    live_natural_exit_recovery_service: LiveNaturalExitRecovery | None = None
     autonomous_live_entry_authorization: AutonomousLiveEntryAuthorization | None = None
 
     def __post_init__(self) -> None:
@@ -155,6 +164,9 @@ class RuntimeRecoveryService:
                 _LOGGER.critical(
                     "Automatic live position recovery currently requires FUTURES"
                 )
+                return False
+
+            if not await self._recover_natural_live_exit():
                 return False
 
             portfolio_result = await self.live_portfolio_recovery_service.recover()
@@ -362,6 +374,24 @@ class RuntimeRecoveryService:
                 len(self.market_stream_service.stream_states),
             )
         return is_cleared
+
+    async def _recover_natural_live_exit(self) -> bool:
+        """Reconcile natural exits before normal LIVE portfolio recovery."""
+        service = self.live_natural_exit_recovery_service
+        if service is None:
+            return True
+
+        try:
+            await service.reconcile()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "LIVE natural-exit recovery failed; runtime remains paused"
+            )
+            return False
+
+        return True
 
     async def _recover_incomplete_live_entry(self) -> bool:
         """Recover a durable LIVE entry before normal position recovery runs."""

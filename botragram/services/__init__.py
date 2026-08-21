@@ -26,6 +26,9 @@ from botragram.services.live_market_stream_service import (
     LiveMarketStreamService,
     MarketTickListener,
 )
+from botragram.services.live_natural_exit_recovery_service import (
+    LiveNaturalExitRecoveryService,
+)
 from botragram.services.live_portfolio_recovery_service import (
     LivePortfolioRecoveryService,
 )
@@ -74,6 +77,7 @@ __all__ = [
     "LiveEntryRiskEvaluationService",
     "LiveMarketStreamService",
     "MarketTickListener",
+    "LiveNaturalExitRecoveryService",
     "LivePostEntryRecoveryResult",
     "LivePostEntryRecoveryService",
     "LivePositionProtectionService",

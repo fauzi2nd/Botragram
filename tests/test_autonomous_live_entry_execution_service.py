@@ -591,3 +591,41 @@ async def _run_cancellation_test() -> None:
         await task
 
     assert protected_entry.calls == []
+
+
+@dataclass(slots=True)
+class _FailingNaturalExitRiskGuard:
+    """Fail before any fresh balance/portfolio risk reads can proceed."""
+
+    calls: int = 0
+
+    async def reconcile(self) -> None:
+        """Record one entry-time guard invocation and fail closed."""
+        self.calls += 1
+        raise RuntimeError("configured orphan-protection entry guard failure")
+
+
+def test_natural_exit_guard_blocks_fresh_live_entry_risk_evaluation() -> None:
+    """An unresolved orphan must block before balance, portfolio, or POST work."""
+    accounts = _FakeAccountService(balances=[Decimal("500")])
+    positions = _FakePositionService(portfolios=[()])
+    natural_exit_recovery = _FailingNaturalExitRiskGuard()
+    service = LiveEntryRiskEvaluationService(
+        account_service=accounts,
+        position_service=positions,
+        trading_engine=TradingEngine(
+            risk_engine=RiskEngine(settings=RiskSettings()),
+        ),
+        balance_asset="USDT",
+        natural_exit_recovery_service=natural_exit_recovery,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="orphan-protection entry guard failure",
+    ):
+        asyncio.run(service.evaluate(signal=_create_signal()))
+
+    assert natural_exit_recovery.calls == 1
+    assert accounts.calls == 0
+    assert positions.calls == 0

@@ -32,6 +32,14 @@ class _LivePositionPortfolioProvider(Protocol):
         ...
 
 
+class _LiveNaturalExitRecovery(Protocol):
+    """Reconcile natural exits before a fresh LIVE risk decision."""
+
+    async def reconcile(self) -> None:
+        """Remove proven orphan protection or fail closed."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class LiveEntryRiskEvaluationService:
     """Evaluate one signal against a fresh authoritative LIVE portfolio."""
@@ -40,6 +48,7 @@ class LiveEntryRiskEvaluationService:
     position_service: _LivePositionPortfolioProvider
     trading_engine: TradingEngine
     balance_asset: str
+    natural_exit_recovery_service: _LiveNaturalExitRecovery | None = None
 
     def __post_init__(self) -> None:
         """Normalize and validate the balance asset boundary."""
@@ -52,6 +61,9 @@ class LiveEntryRiskEvaluationService:
 
     async def evaluate(self, *, signal: Signal) -> LiveEntryRiskEvaluation:
         """Return a fresh portfolio-aware decision for the exact signal."""
+        if self.natural_exit_recovery_service is not None:
+            await self.natural_exit_recovery_service.reconcile()
+
         positions = await self.position_service.get_all(synchronize=True)
         has_existing_position = any(
             position.symbol.upper() == signal.symbol.upper()

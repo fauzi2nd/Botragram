@@ -92,6 +92,7 @@ from botragram.services import (
     LiveEntryRiskEvaluationService,
     LiveFuturesEntryService,
     LiveMarketStreamService,
+    LiveNaturalExitRecoveryService,
     LivePortfolioRecoveryService,
     LivePositionProtectionService,
     LivePostEntryRecoveryService,
@@ -166,6 +167,7 @@ class DependencyProvider:
         "_health_service",
         "_live_futures_entry_service",
         "_live_market_stream_service",
+        "_live_natural_exit_recovery_service",
         "_live_post_entry_recovery_service",
         "_live_position_protection_service",
         "_live_protection_monitoring_service",
@@ -265,6 +267,9 @@ class DependencyProvider:
         self._health_service: HealthService | None = None
         self._live_futures_entry_service: LiveFuturesEntryService | None = None
         self._live_market_stream_service: LiveMarketStreamService | None = None
+        self._live_natural_exit_recovery_service: (
+            LiveNaturalExitRecoveryService | None
+        ) = None
         self._live_post_entry_recovery_service: LivePostEntryRecoveryService | None = (
             None
         )
@@ -495,6 +500,9 @@ class DependencyProvider:
                 live_post_entry_recovery_service=(
                     self.live_post_entry_recovery_service
                 ),
+                live_natural_exit_recovery_service=(
+                    self.live_natural_exit_recovery_service
+                ),
                 autonomous_live_entry_authorization=(
                     self._autonomous_live_entry_authorization
                     if self._settings.app.effective_execution_policy
@@ -651,6 +659,11 @@ class DependencyProvider:
     def live_position_protection_service(self) -> LivePositionProtectionService:
         """Return the shared LIVE Futures protection reconciler."""
         return self._require(self._live_position_protection_service)
+
+    @property
+    def live_natural_exit_recovery_service(self) -> LiveNaturalExitRecoveryService:
+        """Return the LIVE natural-exit and orphan-protection reconciler."""
+        return self._require(self._live_natural_exit_recovery_service)
 
     @property
     def live_portfolio_recovery_service(self) -> LivePortfolioRecoveryService:
@@ -888,11 +901,17 @@ class DependencyProvider:
             position_repository=self.position_repository,
         )
         self._account_service = AccountService(exchange_client=exchange_client)
+        self._live_natural_exit_recovery_service = LiveNaturalExitRecoveryService(
+            exchange_client=exchange_client,
+            position_repository=self.position_repository,
+            submission_attempt_repository=self.submission_attempt_repository,
+        )
         self._live_entry_risk_evaluation_service = LiveEntryRiskEvaluationService(
             account_service=self.account_service,
             position_service=self.position_service,
             trading_engine=self.trading_engine,
             balance_asset=self._settings.market.quote_asset,
+            natural_exit_recovery_service=self.live_natural_exit_recovery_service,
         )
         self._live_position_protection_service = LivePositionProtectionService(
             exchange_client=exchange_client,
@@ -1197,6 +1216,7 @@ class DependencyProvider:
         self._health_service = None
         self._live_futures_entry_service = None
         self._live_market_stream_service = None
+        self._live_natural_exit_recovery_service = None
         self._live_post_entry_recovery_service = None
         self._live_position_protection_service = None
         self._live_protection_monitoring_service = None

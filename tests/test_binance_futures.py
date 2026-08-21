@@ -515,3 +515,92 @@ async def test_futures_client_reads_and_closes_short_position() -> None:
     assert close_params["side"] == "BUY"
     assert close_params["quantity"] == "0.02"
     assert close_params["reduceOnly"] == "true"
+
+
+def test_mapper_normalizes_finished_algo_status_to_filled() -> None:
+    """Normalize Binance's terminal conditional status at the vendor boundary."""
+    order = BinanceExchangeMapper().map_algo_order(
+        {
+            "algoId": 77,
+            "clientAlgoId": "bsl-00000000000000000000000000000000",
+            "symbol": "BTCUSDT",
+            "side": "SELL",
+            "orderType": "STOP_MARKET",
+            "algoStatus": "FINISHED",
+            "quantity": "1",
+            "actualQty": "1",
+            "triggerPrice": "50000",
+            "createTime": 1_700_000_000_000,
+            "updateTime": 1_700_000_001_000,
+        }
+    )
+
+    assert order.status is OrderStatus.FILLED
+    assert order.executed_quantity == Decimal("1")
+    assert order.client_order_id == "bsl-00000000000000000000000000000000"
+
+
+def test_mapper_normalizes_triggered_algo_status_as_in_progress() -> None:
+    """Never represent an already-fired conditional leg as active protection."""
+    order = BinanceExchangeMapper().map_algo_order(
+        {
+            "algoId": 78,
+            "clientAlgoId": "bsl-00000000000000000000000000000001",
+            "symbol": "BTCUSDT",
+            "side": "SELL",
+            "orderType": "STOP_MARKET",
+            "algoStatus": "TRIGGERED",
+            "quantity": "1",
+            "actualQuantity": "0",
+            "triggerPrice": "50000",
+            "createTime": 1_700_000_000_000,
+            "updateTime": 1_700_000_001_000,
+        }
+    )
+
+    assert order.status is OrderStatus.PARTIALLY_FILLED
+
+
+def test_mapper_normalizes_failed_algo_status_to_rejected() -> None:
+    """Normalize Binance's terminal failed algo state without a vendor leak."""
+    order = BinanceExchangeMapper().map_algo_order(
+        {
+            "algoId": 79,
+            "clientAlgoId": "bsl-00000000000000000000000000000002",
+            "symbol": "BTCUSDT",
+            "side": "SELL",
+            "orderType": "STOP_MARKET",
+            "algoStatus": "FAILED",
+            "quantity": "1",
+            "actualQty": "0",
+            "triggerPrice": "50000",
+            "createTime": 1_700_000_000_000,
+            "updateTime": 1_700_000_001_000,
+        }
+    )
+
+    assert order.status is OrderStatus.REJECTED
+    assert order.executed_quantity == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_futures_client_cancels_protection_by_exact_client_identity() -> None:
+    """Use one non-retried algo DELETE keyed by the durable client identity."""
+    rest = RecordingBinanceRestClient()
+    client = _create_client(rest)
+
+    await client.cancel_protection_order(
+        symbol="btcusdt",
+        client_id="btp-00000000000000000000000000000000",
+    )
+
+    assert rest.requests == [
+        (
+            "DELETE",
+            "/fapi/v1/algoOrder",
+            {
+                "clientAlgoId": "btp-00000000000000000000000000000000",
+            },
+            True,
+        )
+    ]
