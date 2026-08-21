@@ -684,6 +684,10 @@ async def test_live_single_position_registers_one_monitor_before_runtime_resume(
     ]
     assert not control.is_paused
     assert control.stream_enabled
+    authorization = control.live_management_authorization
+    assert authorization is not None
+    assert authorization.contexts == control.runtime_contexts
+    assert not authorization.new_live_entry_allowed
 
 
 @pytest.mark.asyncio

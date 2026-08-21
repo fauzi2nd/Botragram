@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -11,15 +12,34 @@ import pytest
 
 from botragram.app import AutonomousLiveCycleUnsafeError, TradingRunner
 from botragram.app.runtime_control import TradingRuntimeControl
-from botragram.enums import Interval, OrderType, SignalType, StrategyType, TradeMode
+from botragram.enums import (
+    Interval,
+    LiveMarketStreamLifecycleStatus,
+    LiveRuntimeHealthReason,
+    LiveRuntimeHealthStatus,
+    OrderType,
+    SignalType,
+    StrategyType,
+    TradeMode,
+)
 from botragram.models import (
+    LiveMarketStreamIdentity,
+    LiveMarketStreamState,
+    LiveProtectionMonitorState,
     LiveRecoveredPositionManagementAuthorization,
+    LiveRuntimeHealthSnapshot,
+    LiveRuntimePositionContext,
     Signal,
     TradingDecision,
     TradingResult,
 )
 
 _NOW = datetime(2026, 8, 21, tzinfo=UTC)
+_CONTEXT = LiveRuntimePositionContext(
+    symbol="BTCUSDT",
+    interval=Interval.M15,
+    strategy_type=StrategyType.EMA_SCALPING,
+)
 
 
 def _safe_result() -> TradingResult:
@@ -103,6 +123,7 @@ class _RecoveryProvider:
     outcomes: list[bool] = field(default_factory=list[bool])
     resume_on_success: bool = True
     failure: BaseException | None = None
+    on_success: Callable[[], None] | None = None
     calls: int = 0
     completed: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -113,6 +134,8 @@ class _RecoveryProvider:
         if not self.outcomes:
             raise RuntimeError("Unexpected extra recovery attempt")
         outcome = self.outcomes.pop(0)
+        if outcome and self.on_success is not None:
+            self.on_success()
         if outcome and self.resume_on_success:
             self.control.set_position_protection_ready(True)
             self.control.resume_global_cycle()
@@ -120,8 +143,86 @@ class _RecoveryProvider:
         return outcome
 
 
+@dataclass(slots=True, kw_only=True)
+class _HealthProvider:
+    control: TradingRuntimeControl
+    status: LiveRuntimeHealthStatus
+    reason: LiveRuntimeHealthReason | None
+    authorization_present: bool = True
+    authorization_exact: bool = True
+    calls: int = 0
+
+    def set_active(self) -> None:
+        self.status = LiveRuntimeHealthStatus.ACTIVE
+        self.reason = None
+
+    def set_degraded(self) -> None:
+        self.status = LiveRuntimeHealthStatus.DEGRADED
+        self.reason = LiveRuntimeHealthReason.STREAM_FAILED
+
+    def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
+        self.calls += 1
+        stream_failed = self.reason is LiveRuntimeHealthReason.STREAM_FAILED
+        return LiveRuntimeHealthSnapshot(
+            status=self.status,
+            reason=self.reason,
+            contexts=(_CONTEXT,),
+            affected_contexts=(
+                (_CONTEXT,)
+                if self.status
+                in {
+                    LiveRuntimeHealthStatus.DEGRADED,
+                    LiveRuntimeHealthStatus.BLOCKED,
+                }
+                else ()
+            ),
+            authorization_present=self.authorization_present,
+            authorization_exact=self.authorization_exact,
+            runner_paused=self.control.is_paused,
+            cycle_in_progress=self.control.cycle_in_progress,
+            stream_states=(
+                LiveMarketStreamState(
+                    identity=LiveMarketStreamIdentity.from_runtime_context(
+                        context=_CONTEXT
+                    ),
+                    lifecycle_status=(
+                        LiveMarketStreamLifecycleStatus.FAILED
+                        if stream_failed
+                        else LiveMarketStreamLifecycleStatus.RUNNING
+                    ),
+                    first_tick_received=not stream_failed,
+                    event_count=1,
+                    last_price=Decimal("100"),
+                    last_event_monotonic=1.0,
+                    failure_type="RuntimeError" if stream_failed else None,
+                ),
+            ),
+            monitor_states=(
+                LiveProtectionMonitorState(
+                    context=_CONTEXT,
+                    is_active=True,
+                    failure_type=None,
+                ),
+            ),
+        )
+
+
 def _active_control() -> TradingRuntimeControl:
     control = TradingRuntimeControl()
+    control.resume_global_cycle()
+    return control
+
+
+def _active_recovered_control() -> TradingRuntimeControl:
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(contexts=(_CONTEXT,))
+    control.set_live_management_authorization(
+        authorization=LiveRecoveredPositionManagementAuthorization(
+            contexts=(_CONTEXT,),
+            runtime_management_allowed=True,
+        ),
+    )
+    control.set_position_protection_ready(True)
     control.resume_global_cycle()
     return control
 
@@ -131,9 +232,11 @@ def _runner(
     executor: _GlobalExecutor,
     control: TradingRuntimeControl,
     recovery: _RecoveryProvider | None,
+    health: _HealthProvider | None = None,
     trade_mode: TradeMode = TradeMode.LIVE,
     maximum_recovery_attempts: int = 1,
     cycle_interval_seconds: float = 0.05,
+    health_check_interval_seconds: float = 0.005,
 ) -> TradingRunner:
     return TradingRunner(
         executor=executor,
@@ -142,7 +245,9 @@ def _runner(
         trade_mode=trade_mode,
         runtime_control=control,
         autonomous_live_recovery_provider=recovery,
+        live_runtime_health_provider=health,
         maximum_autonomous_live_recovery_attempts=maximum_recovery_attempts,
+        autonomous_live_health_check_interval_seconds=health_check_interval_seconds,
         cycle_interval_seconds=cycle_interval_seconds,
         failure_retry_delay_seconds=0.001,
         heartbeat_interval_seconds=60.0,
@@ -276,6 +381,201 @@ async def _run_recovery_cancellation_test() -> None:
     assert executor.calls == 1
     assert recovery.calls == 1
     assert control.is_paused
+
+
+def test_degraded_runtime_health_recovers_before_fresh_global_cycle() -> None:
+    asyncio.run(_run_degraded_runtime_health_recovery_test())
+
+
+async def _run_degraded_runtime_health_recovery_test() -> None:
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.DEGRADED,
+        reason=LiveRuntimeHealthReason.STREAM_FAILED,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    recovery = _RecoveryProvider(
+        control=control,
+        outcomes=[True],
+        on_success=health.set_active,
+    )
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+
+    task = asyncio.create_task(runner.run())
+    await asyncio.wait_for(recovery.completed.wait(), timeout=1.0)
+    assert executor.calls == 0
+    await asyncio.sleep(0.005)
+    assert executor.calls == 0
+    await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert executor.calls == 1
+    assert recovery.calls == 1
+    assert not control.is_paused
+
+
+def test_blocked_runtime_health_never_consumes_automatic_recovery() -> None:
+    asyncio.run(_run_blocked_runtime_health_test())
+
+
+async def _run_blocked_runtime_health_test() -> None:
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.BLOCKED,
+        reason=LiveRuntimeHealthReason.RECONCILIATION_REQUIRED,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    recovery = _RecoveryProvider(control=control, outcomes=[True])
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+
+    await asyncio.wait_for(runner.run(), timeout=1.0)
+
+    assert executor.calls == 0
+    assert recovery.calls == 0
+    assert control.is_paused
+
+
+@pytest.mark.parametrize(
+    ("authorization_present", "authorization_exact"),
+    (
+        (False, False),
+        (True, False),
+    ),
+)
+def test_degraded_health_requires_exact_management_authorization(
+    authorization_present: bool,
+    authorization_exact: bool,
+) -> None:
+    asyncio.run(
+        _run_degraded_health_without_exact_authorization_test(
+            authorization_present=authorization_present,
+            authorization_exact=authorization_exact,
+        )
+    )
+
+
+async def _run_degraded_health_without_exact_authorization_test(
+    *,
+    authorization_present: bool,
+    authorization_exact: bool,
+) -> None:
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.DEGRADED,
+        reason=LiveRuntimeHealthReason.STREAM_FAILED,
+        authorization_present=authorization_present,
+        authorization_exact=authorization_exact,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    recovery = _RecoveryProvider(control=control, outcomes=[True])
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+
+    await asyncio.wait_for(runner.run(), timeout=1.0)
+
+    assert executor.calls == 0
+    assert recovery.calls == 0
+    assert control.is_paused
+
+
+def test_runtime_health_degradation_wakes_global_cadence_wait() -> None:
+    asyncio.run(_run_runtime_health_cadence_wakeup_test())
+
+
+async def _run_runtime_health_cadence_wakeup_test() -> None:
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.ACTIVE,
+        reason=None,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    recovery = _RecoveryProvider(
+        control=control,
+        outcomes=[True],
+        on_success=health.set_active,
+    )
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+        cycle_interval_seconds=0.5,
+        health_check_interval_seconds=0.005,
+    )
+
+    task = asyncio.create_task(runner.run())
+    await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
+    assert executor.calls == 1
+
+    health.set_degraded()
+    await asyncio.wait_for(recovery.completed.wait(), timeout=0.2)
+    assert executor.calls == 1
+    assert recovery.calls == 1
+
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+
+def test_cycle_and_health_failures_share_one_recovery_budget() -> None:
+    asyncio.run(_run_shared_recovery_budget_test())
+
+
+async def _run_shared_recovery_budget_test() -> None:
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.ACTIVE,
+        reason=None,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=1)
+    recovery = _RecoveryProvider(
+        control=control,
+        outcomes=[True],
+        on_success=health.set_degraded,
+    )
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+
+    await asyncio.wait_for(runner.run(), timeout=1.0)
+
+    assert executor.calls == 1
+    assert recovery.calls == 1
+    assert control.is_paused
+
+
+def test_health_check_interval_must_be_positive() -> None:
+    control = TradingRuntimeControl()
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    with pytest.raises(ValueError, match="health check interval"):
+        _runner(
+            executor=executor,
+            control=control,
+            recovery=None,
+            health_check_interval_seconds=0,
+        )
 
 
 def test_recovery_budget_must_be_positive() -> None:

@@ -136,13 +136,13 @@ def test_stop_all_clears_contexts_in_deterministic_symbol_order() -> None:
     assert service.monitor_states == ()
 
 
-def test_one_manager_failure_is_identity_specific_and_recoverable() -> None:
-    """Verify BTC failure cannot overwrite ETH state or prevent later BTC ticks."""
+def test_one_manager_failure_is_identity_specific_and_sticky() -> None:
+    """Keep BTC unhealthy until explicit runtime-owner reconstruction."""
     asyncio.run(_run_failure_isolation_test())
 
 
 async def _run_failure_isolation_test() -> None:
-    """Fail BTC once, route ETH, then clear BTC's transient failure on success."""
+    """Fail BTC once and prove later successful ticks cannot erase the failure."""
     factory = FakeManagerFactory()
     service = LiveProtectionMonitoringService(manager_factory=factory)
     service.register(context=_context(symbol="BTCUSDT"))
@@ -159,7 +159,14 @@ async def _run_failure_isolation_test() -> None:
 
     factory.managers["BTCUSDT"].error = None
     await service.on_market_tick(ticker=_ticker(symbol="BTCUSDT", price=Decimal("103")))
-    assert factory.managers["BTCUSDT"].received_prices == [Decimal("103")]
+    assert factory.managers["BTCUSDT"].received_prices == []
+    states = {state.context.symbol: state for state in service.monitor_states}
+    assert states["BTCUSDT"].failure_type == "RuntimeError"
+
+    assert service.stop(symbol="BTCUSDT")
+    assert service.register(context=_context(symbol="BTCUSDT"))
+    await service.on_market_tick(ticker=_ticker(symbol="BTCUSDT", price=Decimal("104")))
+    assert factory.managers["BTCUSDT"].received_prices == [Decimal("104")]
     states = {state.context.symbol: state for state in service.monitor_states}
     assert states["BTCUSDT"].failure_type is None
 

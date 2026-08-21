@@ -105,7 +105,11 @@ async def _run_trading(
             autonomous_live_recovery_provider=(
                 dependency_provider.runtime_recovery_service
             ),
+            live_runtime_health_provider=(
+                dependency_provider.live_runtime_health_service
+            ),
             maximum_autonomous_live_recovery_attempts=1,
+            autonomous_live_health_check_interval_seconds=1.0,
             maximum_consecutive_failures=3,
             failure_retry_delay_seconds=5.0,
         )

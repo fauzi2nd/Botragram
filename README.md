@@ -126,7 +126,8 @@ is activated. MAINNET autonomous entry remains rejected.
 | `COMPLETED` with verified protection | Authoritative portfolio recovery confirms state | A later, newly discovered candidate only | Eligible only after all recovery/readiness gates pass |
 | Multiple incomplete attempts | Do not guess or select one | No | Paused; operator/recovery intervention required |
 | Unknown portfolio metadata or failed protection | Fail closed | No | Paused |
-| Failed stream, unhealthy monitor, or reconciliation marker | Existing runtime ownership fails closed | No | Paused; no self-healing in 5C |
+| Failed/missing stream or unhealthy/missing monitor | Fresh entry is blocked; existing exact runtime recovery may run once | No generic retry | One shared bounded in-process recovery pass, then fail closed |
+| Reconciliation marker or authorization mismatch | Do not infer or repair from health text | No | Paused; restart/operator recovery required |
 
 Crash-window policy is likewise read-first and fail-closed:
 
@@ -151,7 +152,12 @@ authoritative same-symbol and portfolio-capacity risk checks.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an
-authorization source.
+authorization source. For TESTNET autonomous LIVE, a DEGRADED recovered runtime
+with the exact current management authorization may only deny a fresh cycle and
+trigger the existing bounded recovery boundary; it never grants entry
+permission. Missing or mismatched authorization cannot be masked by a concurrent
+stream/monitor degradation. BLOCKED reconciliation or authorization state
+remains restart/operator-only and cannot consume an automatic recovery pass.
 
 Operator status now additionally exposes a read-only durable autonomous recovery
 snapshot. `PREPARED`, `UNRESOLVED`, `ACKNOWLEDGED`, and multiple incomplete
@@ -183,11 +189,17 @@ Before any extended TESTNET soak, an operator must verify all of the following:
   process-local stream, monitor, or runner task remains active.
 - MAINNET autonomous configuration is rejected before mutation.
 
-Bounded in-process autonomous recovery (Phase 5C.3C) is enabled only for the
-TESTNET autonomous-LIVE runner and is limited to one existing runtime-recovery
-pass per process. It does not replay transient intents or candidate batches, and
-it does not introduce generic mutation retries. If safe runtime readiness cannot
-be re-established, the runner remains fail closed for operator/restart recovery.
+Bounded in-process autonomous recovery is enabled only for the TESTNET
+autonomous-LIVE runner and is limited to one existing runtime-recovery pass per
+runner lifecycle. The single budget is shared by typed unsafe entry outcomes and
+DEGRADED stream/monitor health. Runtime health is checked before a fresh global
+cycle and while waiting for the next cadence, so degraded ownership cannot start
+another cycle first. A failed protection-monitor owner is quarantined locally
+until runtime recovery replaces it; subsequent ticks cannot re-enter that
+manager. It does not replay transient intents or candidate batches,
+and it does not introduce generic mutation retries. BLOCKED reconciliation or
+authorization health never self-heals. If safe runtime readiness cannot be
+re-established, the runner remains fail closed for operator/restart recovery.
 
 ### Dedicated autonomous TESTNET soak profile
 

@@ -34,6 +34,7 @@ from botragram.enums import (
     Interval,
     LiveMarketStreamLifecycleStatus,
     LivePortfolioRecoveryStatus,
+    LiveRuntimeHealthStatus,
     OrderType,
     SignalType,
     StrategyType,
@@ -50,6 +51,7 @@ from botragram.models import (
     LiveMarketStreamState,
     LiveProtectionMonitorState,
     LiveRecoveredPositionManagementAuthorization,
+    LiveRuntimeHealthSnapshot,
     LiveRuntimePositionContext,
     Signal,
     TradingDecision,
@@ -76,6 +78,7 @@ __all__ = [
 _DEFAULT_CANDLE_LIMIT: Final[int] = 100
 _DEFAULT_PAPER_ACCOUNT_BALANCE: Final[Decimal] = Decimal("10000")
 _DEFAULT_HEARTBEAT_INTERVAL_SECONDS: Final[float] = 30.0
+_DEFAULT_AUTONOMOUS_LIVE_HEALTH_CHECK_INTERVAL_SECONDS: Final[float] = 1.0
 _RESULT_REASON_UNAVAILABLE: Final[str] = "No reason provided"
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
@@ -86,6 +89,17 @@ class _RecoveredPortfolioReconciliationRequiredError(RuntimeError):
 
 class AutonomousLiveCycleUnsafeError(RuntimeError):
     """Stop autonomous LIVE after an uncertain protected-entry outcome."""
+
+
+class _AutonomousLiveRuntimeHealthUnsafeError(RuntimeError):
+    """Represent one local recovered-runtime health condition fail-closed."""
+
+    def __init__(self, *, snapshot: LiveRuntimeHealthSnapshot) -> None:
+        reason = snapshot.reason.value if snapshot.reason is not None else "unknown"
+        super().__init__(
+            f"Autonomous LIVE runtime health is {snapshot.status.value}: {reason}"
+        )
+        self.snapshot = snapshot
 
 
 # =============================================================================
@@ -269,6 +283,14 @@ class _AutonomousLiveRuntimeRecovery(Protocol):
 
     async def recover(self) -> bool:
         """Return whether complete LIVE runtime readiness was restored safely."""
+        ...
+
+
+class _LiveRuntimeHealthProvider(Protocol):
+    """Expose read-only recovered LIVE health without granting authorization."""
+
+    def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
+        """Return the current local runtime-health snapshot."""
         ...
 
 
@@ -758,7 +780,11 @@ class TradingRunner:
         MultiContextActivationPreconditionProvider | None
     ) = None
     autonomous_live_recovery_provider: _AutonomousLiveRuntimeRecovery | None = None
+    live_runtime_health_provider: _LiveRuntimeHealthProvider | None = None
     maximum_autonomous_live_recovery_attempts: int = 1
+    autonomous_live_health_check_interval_seconds: float = (
+        _DEFAULT_AUTONOMOUS_LIVE_HEALTH_CHECK_INTERVAL_SECONDS
+    )
     live_management_authorization: (
         LiveRecoveredPositionManagementAuthorization | None
     ) = None
@@ -814,6 +840,11 @@ class TradingRunner:
         if self.maximum_autonomous_live_recovery_attempts <= 0:
             raise ValueError(
                 "Maximum autonomous LIVE recovery attempts must be greater than zero"
+            )
+
+        if self.autonomous_live_health_check_interval_seconds <= 0:
+            raise ValueError(
+                "Autonomous LIVE health check interval must be greater than zero"
             )
 
         if (
@@ -994,6 +1025,34 @@ class TradingRunner:
 
                 contexts: tuple[LiveRuntimePositionContext, ...] = ()
                 try:
+                    health_snapshot = self._get_autonomous_live_runtime_health_failure()
+                    if health_snapshot is not None:
+                        health_error = _AutonomousLiveRuntimeHealthUnsafeError(
+                            snapshot=health_snapshot,
+                        )
+                        recovery_allowed = (
+                            health_snapshot.status is LiveRuntimeHealthStatus.DEGRADED
+                            and health_snapshot.authorization_present
+                            and health_snapshot.authorization_exact
+                        )
+                        (
+                            recovered,
+                            autonomous_live_recovery_attempts,
+                        ) = await self._handle_autonomous_live_runtime_failure(
+                            error=health_error,
+                            attempts_used=autonomous_live_recovery_attempts,
+                            recovery_allowed=recovery_allowed,
+                        )
+                        if not recovered:
+                            break
+
+                        consecutive_failures = 0
+                        self._global_next_eligible_monotonic = (
+                            monotonic() + self._get_global_cadence_seconds()
+                        )
+                        await self._wait_for_global_cycle()
+                        continue
+
                     if self._is_global_cycle_executor():
                         results = await self._run_global_cycle()
                         self._global_next_eligible_monotonic = (
@@ -1029,35 +1088,13 @@ class TradingRunner:
                     self._pause_unauthorized_multi_context_runtime()
                     continue
                 except AutonomousLiveCycleUnsafeError as error:
-                    self.runtime_control.set_position_protection_ready(False)
-                    self.runtime_control.pause()
-                    _LOGGER.critical(
-                        "Autonomous LIVE runtime paused pending recovery: %s",
-                        error,
-                    )
-                    await self._notify_cycle_failed(
+                    (
+                        recovered,
+                        autonomous_live_recovery_attempts,
+                    ) = await self._handle_autonomous_live_runtime_failure(
                         error=error,
-                        consecutive_failures=1,
-                    )
-
-                    if self.autonomous_live_recovery_provider is None:
-                        break
-
-                    if (
-                        autonomous_live_recovery_attempts
-                        >= self.maximum_autonomous_live_recovery_attempts
-                    ):
-                        _LOGGER.critical(
-                            "Autonomous LIVE in-process recovery budget exhausted: "
-                            "attempts=%d",
-                            autonomous_live_recovery_attempts,
-                        )
-                        break
-
-                    autonomous_live_recovery_attempts += 1
-                    recovered = await self._recover_autonomous_live_runtime(
-                        error=error,
-                        attempt=autonomous_live_recovery_attempts,
+                        attempts_used=autonomous_live_recovery_attempts,
+                        recovery_allowed=True,
                     )
                     if not recovered:
                         break
@@ -1119,10 +1156,55 @@ class TradingRunner:
         except TimeoutError:
             return
 
+    async def _handle_autonomous_live_runtime_failure(
+        self,
+        *,
+        error: Exception,
+        attempts_used: int,
+        recovery_allowed: bool,
+    ) -> tuple[bool, int]:
+        """Pause first, then consume at most one shared in-process recovery pass."""
+        self.runtime_control.set_position_protection_ready(False)
+        self.runtime_control.pause()
+        _LOGGER.critical(
+            "Autonomous LIVE runtime paused pending recovery: error_type=%s detail=%s",
+            type(error).__name__,
+            error,
+        )
+        await self._notify_cycle_failed(
+            error=error,
+            consecutive_failures=1,
+        )
+
+        if not recovery_allowed:
+            _LOGGER.critical(
+                "Autonomous LIVE runtime health requires restart/operator recovery: "
+                "error_type=%s",
+                type(error).__name__,
+            )
+            return False, attempts_used
+
+        if self.autonomous_live_recovery_provider is None:
+            return False, attempts_used
+
+        if attempts_used >= self.maximum_autonomous_live_recovery_attempts:
+            _LOGGER.critical(
+                "Autonomous LIVE in-process recovery budget exhausted: attempts=%d",
+                attempts_used,
+            )
+            return False, attempts_used
+
+        attempt = attempts_used + 1
+        recovered = await self._recover_autonomous_live_runtime(
+            error=error,
+            attempt=attempt,
+        )
+        return recovered, attempt
+
     async def _recover_autonomous_live_runtime(
         self,
         *,
-        error: AutonomousLiveCycleUnsafeError,
+        error: Exception,
         attempt: int,
     ) -> bool:
         """Run one bounded autonomous-LIVE recovery pass without candidate replay."""
@@ -1461,9 +1543,57 @@ class TradingRunner:
         )
 
     async def _wait_for_global_cycle(self) -> None:
-        """Wait until one global discovery cycle is due or the runner stops."""
-        delay_seconds = max(0.0, self._global_next_eligible_monotonic - monotonic())
-        await self._wait_for_delay(delay_seconds=delay_seconds)
+        """Wait for cadence while waking early on recovered-runtime degradation."""
+        while not self._stop_event.is_set():
+            delay_seconds = max(
+                0.0,
+                self._global_next_eligible_monotonic - monotonic(),
+            )
+            if delay_seconds <= 0:
+                return
+
+            if self.runtime_control.is_paused:
+                return
+
+            if self._get_autonomous_live_runtime_health_failure() is not None:
+                return
+
+            wait_seconds = delay_seconds
+            if self._autonomous_live_runtime_health_monitoring_enabled():
+                wait_seconds = min(
+                    wait_seconds,
+                    self.autonomous_live_health_check_interval_seconds,
+                )
+
+            await self._wait_for_delay(delay_seconds=wait_seconds)
+
+    def _autonomous_live_runtime_health_monitoring_enabled(self) -> bool:
+        """Return whether local recovered-runtime health should gate fresh entry."""
+        return (
+            self.trade_mode is TradeMode.LIVE
+            and self._is_global_cycle_executor()
+            and self.live_runtime_health_provider is not None
+            and bool(self.runtime_control.runtime_contexts)
+        )
+
+    def _get_autonomous_live_runtime_health_failure(
+        self,
+    ) -> LiveRuntimeHealthSnapshot | None:
+        """Return only health states that must block a fresh autonomous cycle."""
+        if not self._autonomous_live_runtime_health_monitoring_enabled():
+            return None
+
+        provider = self.live_runtime_health_provider
+        if provider is None:
+            return None
+
+        snapshot = provider.get_snapshot()
+        if snapshot.status in {
+            LiveRuntimeHealthStatus.DEGRADED,
+            LiveRuntimeHealthStatus.BLOCKED,
+        }:
+            return snapshot
+        return None
 
     def _get_eligible_contexts(
         self,

@@ -59,7 +59,7 @@ class PositionProtectionTickHandler(Protocol):
 # =============================================================================
 @dataclass(slots=True)
 class _OwnedProtectionMonitor:
-    """Keep one manager instance and its transient failure state private."""
+    """Keep one manager instance and its sticky failure state private."""
 
     context: LiveRuntimePositionContext
     manager: PositionProtectionTickHandler
@@ -146,6 +146,9 @@ class LiveProtectionMonitoringService:
         if owned_monitor is None:
             return
 
+        if owned_monitor.failure_type is not None:
+            return
+
         try:
             await owned_monitor.manager.on_market_tick(ticker=ticker)
         except asyncio.CancelledError:
@@ -157,8 +160,9 @@ class LiveProtectionMonitoringService:
                 symbol,
                 type(owned_monitor.manager).__name__,
             )
-        else:
-            owned_monitor.failure_type = None
+        # A manager failure is intentionally sticky until runtime recovery
+        # releases this owner and registers a fresh manager. Failed ownership is
+        # quarantined above, so no later tick can re-enter an untrusted manager.
 
     def _ordered_monitors(
         self,

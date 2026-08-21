@@ -252,8 +252,14 @@ class RuntimeRecoveryService:
                 )
 
             position = portfolio_result.recovered_positions[0]
-            self.runtime_control.set_runtime_contexts(
-                contexts=(self._to_runtime_context(position=position),),
+            context = self._to_runtime_context(position=position)
+            contexts = (context,)
+            self.runtime_control.set_runtime_contexts(contexts=contexts)
+            self.runtime_control.set_live_management_authorization(
+                authorization=LiveRecoveredPositionManagementAuthorization(
+                    contexts=contexts,
+                    runtime_management_allowed=True,
+                ),
             )
         else:
             positions = tuple(await self.position_repository.get_open_positions())
