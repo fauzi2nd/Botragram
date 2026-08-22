@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final, Protocol
 
@@ -33,6 +34,11 @@ __all__ = ["AutonomousLiveEntryExecutionService"]
 
 
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+
+
+def _utc_now() -> datetime:
+    """Return the current timezone-aware UTC execution time."""
+    return datetime.now(UTC)
 
 
 class _LiveEntryRiskEvaluator(Protocol):
@@ -71,6 +77,7 @@ class AutonomousLiveEntryExecutionService:
     risk_evaluation_service: _LiveEntryRiskEvaluator
     live_futures_entry_service: _ProtectedLiveEntryExecutor
     environment: ExchangeEnvironment
+    utc_now: Callable[[], datetime] = _utc_now
 
     def __post_init__(self) -> None:
         """Normalize static TESTNET execution configuration."""
@@ -101,6 +108,12 @@ class AutonomousLiveEntryExecutionService:
         if not decision.should_execute or decision.risk_result is None:
             return AutonomousLiveEntryExecutionResult(
                 status=AutonomousLiveEntryExecutionStatus.RISK_REJECTED,
+                decision=decision,
+            )
+
+        if self._is_stale_signal(intent=intent):
+            return AutonomousLiveEntryExecutionResult(
+                status=AutonomousLiveEntryExecutionStatus.STALE_SIGNAL,
                 decision=decision,
             )
 
@@ -179,3 +192,35 @@ class AutonomousLiveEntryExecutionService:
             and authorization.environment is ExchangeEnvironment.TESTNET
             and authorization.environment is self.environment
         )
+
+    def _is_stale_signal(self, *, intent: AutonomousLiveEntryIntent) -> bool:
+        """Return whether the signal no longer represents the latest interval.
+
+        Args:
+            intent: Authorized autonomous entry carrying closed-candle provenance.
+
+        Returns:
+            True when execution reaches or exceeds the next expected close.
+
+        Raises:
+            ValueError: If the configured clock or signal timestamp is naive.
+        """
+        as_of = self._normalize_utc_datetime(
+            value=self.utc_now(),
+            name="Autonomous LIVE execution time",
+        )
+        signal_generated_at = self._normalize_utc_datetime(
+            value=intent.signal.generated_at,
+            name="Autonomous LIVE signal generated_at",
+        )
+        return as_of >= intent.interval.next_close_time(
+            close_time=signal_generated_at,
+        )
+
+    @staticmethod
+    def _normalize_utc_datetime(*, value: datetime, name: str) -> datetime:
+        """Require an aware timestamp and normalize it to UTC."""
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{name} must be timezone-aware")
+
+        return value.astimezone(UTC)

@@ -1350,6 +1350,16 @@ async def _run_calendar_month_freshness_test() -> None:
     assert strategy_service.saved_symbols == ["BTCUSDT"]
 
 
+def test_interval_monthly_next_close_preserves_end_of_month_across_leap_year() -> None:
+    """Keep monthly freshness calendar-aware for successive month ends."""
+    january_close = datetime(2024, 1, 31, 23, 59, 59, tzinfo=UTC)
+    february_close = Interval.MN1.next_close_time(close_time=january_close)
+    march_close = Interval.MN1.next_close_time(close_time=february_close)
+
+    assert february_close == datetime(2024, 2, 29, 23, 59, 59, tzinfo=UTC)
+    assert march_close == datetime(2024, 3, 31, 23, 59, 59, tzinfo=UTC)
+
+
 def test_legacy_discovery_preserves_stale_candle_behavior() -> None:
     """Keep non-explicit discovery backward compatible with stale source data."""
     asyncio.run(_run_legacy_stale_candle_test())

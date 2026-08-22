@@ -16,10 +16,9 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-from calendar import monthrange
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Protocol
 
 # =============================================================================
@@ -322,38 +321,12 @@ class OpportunityDiscoveryService:
             value=candle.close_time,
             name="Latest closed candle close_time",
         )
-        next_expected_close_time = cls._next_expected_close_time(
+        next_expected_close_time = interval.next_close_time(
             close_time=latest_close_time,
-            interval=interval,
         )
 
         if as_of >= next_expected_close_time:
             raise RuntimeError("Latest closed candle is stale for discovery interval")
-
-    @staticmethod
-    def _next_expected_close_time(
-        *,
-        close_time: datetime,
-        interval: Interval,
-    ) -> datetime:
-        """Return the next expected close while preserving calendar months."""
-        if interval is not Interval.MN1:
-            return close_time + timedelta(seconds=interval.seconds)
-
-        source_last_day = monthrange(close_time.year, close_time.month)[1]
-        next_year = close_time.year + (close_time.month // 12)
-        next_month = (close_time.month % 12) + 1
-        target_last_day = monthrange(next_year, next_month)[1]
-        target_day = (
-            target_last_day
-            if close_time.day == source_last_day
-            else min(close_time.day, target_last_day)
-        )
-        return close_time.replace(
-            year=next_year,
-            month=next_month,
-            day=target_day,
-        )
 
     @classmethod
     def _validate_signal_provenance(

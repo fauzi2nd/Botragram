@@ -179,6 +179,13 @@ validates all provenance, and only then persists it; a provenance
 mismatch leaves no invalid signal record behind and still fails before durable
 claim, risk evaluation, intent authorization, or exchange execution. Existing
 non-LIVE discovery continues to use the legacy generate-and-persist path.
+Immediately before the autonomous protected-entry delegation, the same
+closed-candle provenance is checked again against the authoritative next close:
+`now < next_close_time` is fresh, while the exact boundary is stale. A stale
+signal returns the safe typed `stale_signal` outcome without creating a
+`PREPARED` attempt, normalizing quantity, or submitting an exchange order; its
+durable closed-candle claim remains intentionally unreleased. Monthly checks use
+calendar-month rollover with end-of-month preservation.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an

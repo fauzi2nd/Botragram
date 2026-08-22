@@ -17,6 +17,7 @@ class AutonomousLiveEntryExecutionStatus(BaseEnum):
     RISK_REJECTED = "risk_rejected"
     AUTHORIZATION_REJECTED = "authorization_rejected"
     EXISTING_POSITION = "existing_position"
+    STALE_SIGNAL = "stale_signal"
     SUBMISSION_BLOCKED = "submission_blocked"
     EXCHANGE_REJECTED = "exchange_rejected"
     VENUE_RULE_REJECTED = "venue_rule_rejected"

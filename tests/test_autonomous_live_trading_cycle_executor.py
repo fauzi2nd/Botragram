@@ -289,6 +289,33 @@ def test_terminal_exchange_rejection_allows_next_candidate_sequentially() -> Non
     assert [result.executed for result in results] == [False, True]
 
 
+def test_stale_signal_is_a_safe_non_executed_result() -> None:
+    """Continue ranked processing when pre-submission signal freshness expires."""
+    btc = _signal(symbol="BTCUSDT")
+    eth = _signal(symbol="ETHUSDT")
+    executor, risk, execution = _executor(
+        signals=(btc, eth),
+        decisions={
+            btc.symbol: _decision(signal=btc),
+            eth.symbol: _decision(signal=eth),
+        },
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.STALE_SIGNAL,
+            eth.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED,
+        },
+    )
+
+    results = asyncio.run(
+        executor.execute_global(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert risk.calls == ["BTCUSDT", "ETHUSDT"]
+    assert execution.calls == ["BTCUSDT", "ETHUSDT"]
+    assert not results[0].executed
+    assert results[0].reason == "stale_signal"
+    assert results[1].executed
+
+
 def test_existing_closed_candle_claim_skips_risk_and_execution() -> None:
     """A durable claim must suppress the exact candidate before fresh risk I/O."""
     btc = _signal(symbol="BTCUSDT")

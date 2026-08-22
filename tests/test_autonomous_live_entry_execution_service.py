@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -264,9 +264,21 @@ def _create_signal(*, symbol: str = "BTCUSDT") -> Signal:
     )
 
 
-def _create_intent(*, symbol: str = "BTCUSDT") -> AutonomousLiveEntryIntent:
+def _create_intent(
+    *,
+    symbol: str = "BTCUSDT",
+    interval: Interval = Interval.M15,
+    generated_at: datetime = _NOW,
+) -> AutonomousLiveEntryIntent:
     """Create a decision-time intent with deliberately larger P0 sizing."""
-    signal = _create_signal(symbol=symbol)
+    signal = Signal(
+        symbol=symbol,
+        signal_type=SignalType.BUY,
+        price=Decimal("100"),
+        confidence=Decimal("0.9"),
+        strategy_name=StrategyType.EMA_CROSS.value,
+        generated_at=generated_at,
+    )
     decision_risk = RiskEngine(settings=RiskSettings()).evaluate(
         signal=signal,
         account_balance=Decimal("1000"),
@@ -274,7 +286,7 @@ def _create_intent(*, symbol: str = "BTCUSDT") -> AutonomousLiveEntryIntent:
     return AutonomousLiveEntryIntent(
         signal=signal,
         risk_result=decision_risk,
-        interval=Interval.M15,
+        interval=interval,
         strategy_type=StrategyType.EMA_CROSS,
     )
 
@@ -308,6 +320,7 @@ def _create_service(
     position_service: _FakePositionService,
     protected_entry_service: _FakeProtectedEntryService,
     max_open_positions: int = 2,
+    utc_now: Callable[[], datetime] = lambda: _NOW,
 ) -> AutonomousLiveEntryExecutionService:
     """Create the adapter around canonical fresh-risk dependencies."""
     return AutonomousLiveEntryExecutionService(
@@ -323,6 +336,7 @@ def _create_service(
         ),
         live_futures_entry_service=protected_entry_service,
         environment=ExchangeEnvironment.TESTNET,
+        utc_now=utc_now,
     )
 
 
@@ -374,6 +388,70 @@ def test_fresh_balance_replaces_stale_intent_risk_result() -> None:
     assert result.decision is not None
     assert result.decision.risk_result is not None
     assert result.decision.risk_result.position.quantity == Decimal("5")
+
+
+def test_signal_at_next_close_boundary_is_rejected_without_protected_entry() -> None:
+    """Never prepare or submit an entry once its closed-candle signal is stale."""
+    protected_entry = _FakeProtectedEntryService()
+    intent = _create_intent()
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+            utc_now=lambda: _NOW + timedelta(minutes=15),
+        ).execute(
+            intent=intent,
+            authorization=_create_authorization(),
+        )
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.STALE_SIGNAL
+    assert protected_entry.calls == []
+    assert result.decision is not None
+    assert result.decision.should_execute
+
+
+def test_signal_before_next_close_boundary_delegates_protected_entry() -> None:
+    """Keep the existing protected-entry path available one microsecond early."""
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+            utc_now=lambda: _NOW + timedelta(minutes=15, microseconds=-1),
+        ).execute(
+            intent=_create_intent(),
+            authorization=_create_authorization(),
+        )
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+    assert len(protected_entry.calls) == 1
+
+
+def test_monthly_signal_uses_calendar_next_close_for_pre_submission_freshness() -> None:
+    """Reject monthly signals at the calendar close, not after thirty days."""
+    signal_time = datetime(2024, 1, 31, 23, 59, 59, tzinfo=UTC)
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+            utc_now=lambda: datetime(2024, 2, 29, 23, 59, 59, tzinfo=UTC),
+        ).execute(
+            intent=_create_intent(
+                interval=Interval.MN1,
+                generated_at=signal_time,
+            ),
+            authorization=_create_authorization(),
+        )
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.STALE_SIGNAL
+    assert protected_entry.calls == []
 
 
 def test_existing_position_rejects_before_protected_entry() -> None:
@@ -521,6 +599,7 @@ def test_adapter_delegates_full_prepared_to_protected_completion_order() -> None
         ),
         live_futures_entry_service=live_entry,
         environment=ExchangeEnvironment.TESTNET,
+        utc_now=lambda: _NOW,
     )
 
     result = asyncio.run(
