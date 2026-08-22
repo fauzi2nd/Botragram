@@ -105,9 +105,10 @@ class FakeMarketService:
 
 @dataclass(slots=True)
 class FakeStrategyService:
-    """Generate configured signals and record persistence calls."""
+    """Generate configured signals and record generation/persistence calls."""
 
     signals: dict[str, Signal]
+    generated_symbols: list[str] = field(default_factory=list[str])
     saved_symbols: list[str] = field(default_factory=list[str])
     saved_candles: list[tuple[Candle, ...]] = field(
         default_factory=list[tuple[Candle, ...]]
@@ -116,18 +117,42 @@ class FakeStrategyService:
         default_factory=list[StrategyType | None]
     )
 
+    def generate_signal(
+        self,
+        *,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> Signal:
+        """Generate and record one configured signal without persistence."""
+        symbol = candles[0].symbol
+        self.generated_symbols.append(symbol)
+        self.saved_candles.append(tuple(candles))
+        self.strategy_types.append(strategy_type)
+        return self.signals[symbol]
+
+    async def save_signal(
+        self,
+        *,
+        signal: Signal,
+    ) -> None:
+        """Record one explicit persistence call."""
+        self.saved_symbols.append(signal.symbol)
+
     async def generate_and_save(
         self,
         *,
         candles: Sequence[Candle],
         strategy_type: StrategyType | None = None,
     ) -> Signal:
-        """Return and record the signal for the candle symbol."""
-        symbol = candles[0].symbol
-        self.saved_symbols.append(symbol)
-        self.saved_candles.append(tuple(candles))
-        self.strategy_types.append(strategy_type)
-        return self.signals[symbol]
+        """Generate and persist one configured signal."""
+        signal = self.generate_signal(
+            candles=candles,
+            strategy_type=strategy_type,
+        )
+        await self.save_signal(
+            signal=signal,
+        )
+        return signal
 
 
 @dataclass(slots=True)
@@ -136,8 +161,9 @@ class EmaCrossStrategyService:
 
     strategy: EMACrossStrategy = field(default_factory=EMACrossStrategy)
     saved_candles: tuple[Candle, ...] = ()
+    saved_signals: list[Signal] = field(default_factory=list[Signal])
 
-    async def generate_and_save(
+    def generate_signal(
         self,
         *,
         candles: Sequence[Candle],
@@ -148,6 +174,30 @@ class EmaCrossStrategyService:
             raise AssertionError("EMA-cross fake received the wrong strategy context")
         self.saved_candles = tuple(candles)
         return self.strategy.generate_signal(candles=candles)
+
+    async def save_signal(
+        self,
+        *,
+        signal: Signal,
+    ) -> None:
+        """Record one signal persistence call."""
+        self.saved_signals.append(signal)
+
+    async def generate_and_save(
+        self,
+        *,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> Signal:
+        """Generate and persist one EMA-cross signal."""
+        signal = self.generate_signal(
+            candles=candles,
+            strategy_type=strategy_type,
+        )
+        await self.save_signal(
+            signal=signal,
+        )
+        return signal
 
 
 # =============================================================================
@@ -731,6 +781,8 @@ async def _run_exact_provenance_test() -> None:
     )
 
     assert opportunities == (signal,)
+    assert strategy_service.generated_symbols == ["BTCUSDT"]
+    assert strategy_service.saved_symbols == ["BTCUSDT"]
     assert strategy_service.strategy_types == [StrategyType.EMA_CROSS]
 
 
@@ -978,6 +1030,9 @@ async def _run_wrong_signal_symbol_test() -> None:
             strategy_type=StrategyType.EMA_CROSS,
         )
 
+    assert strategy_service.generated_symbols == ["BTCUSDT"]
+    assert strategy_service.saved_symbols == []
+
 
 def test_explicit_provenance_rejects_wrong_signal_strategy_name() -> None:
     """Reject a signal that was not produced by the authoritative strategy."""
@@ -1019,6 +1074,9 @@ async def _run_wrong_signal_strategy_test() -> None:
             top_n=1,
             strategy_type=StrategyType.EMA_CROSS,
         )
+
+    assert strategy_service.generated_symbols == ["BTCUSDT"]
+    assert strategy_service.saved_symbols == []
 
 
 def test_explicit_provenance_rejects_wrong_signal_price() -> None:
@@ -1065,6 +1123,9 @@ async def _run_wrong_signal_price_test() -> None:
             strategy_type=StrategyType.EMA_CROSS,
         )
 
+    assert strategy_service.generated_symbols == ["BTCUSDT"]
+    assert strategy_service.saved_symbols == []
+
 
 def test_explicit_provenance_rejects_non_latest_signal_timestamp() -> None:
     """Require generated_at to identify the exact latest closed candle."""
@@ -1108,3 +1169,6 @@ async def _run_non_latest_signal_timestamp_test() -> None:
             top_n=1,
             strategy_type=StrategyType.EMA_CROSS,
         )
+
+    assert strategy_service.generated_symbols == ["BTCUSDT"]
+    assert strategy_service.saved_symbols == []

@@ -66,7 +66,24 @@ class DiscoveryMarketDataProvider(Protocol):
 
 
 class DiscoveryStrategyProvider(Protocol):
-    """Generate and persist one strategy signal."""
+    """Generate and persist strategy signals for discovery."""
+
+    def generate_signal(
+        self,
+        *,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> Signal:
+        """Generate one signal without persistence."""
+        ...
+
+    async def save_signal(
+        self,
+        *,
+        signal: Signal,
+    ) -> None:
+        """Persist one already-validated signal."""
+        ...
 
     async def generate_and_save(
         self,
@@ -74,7 +91,7 @@ class DiscoveryStrategyProvider(Protocol):
         candles: Sequence[Candle],
         strategy_type: StrategyType | None = None,
     ) -> Signal:
-        """Generate and persist the signal for ordered candles."""
+        """Generate and persist the signal for legacy discovery paths."""
         ...
 
 
@@ -165,10 +182,17 @@ class OpportunityDiscoveryService:
                     interval=interval,
                 )
 
-            signal = await self.strategy_service.generate_and_save(
-                candles=closed_candles,
-                strategy_type=strategy_type,
-            )
+            if strategy_type is None:
+                signal = await self.strategy_service.generate_and_save(
+                    candles=closed_candles,
+                    strategy_type=None,
+                )
+            else:
+                signal = self.strategy_service.generate_signal(
+                    candles=closed_candles,
+                    strategy_type=strategy_type,
+                )
+
             signal_generated_at = self._normalize_utc_datetime(
                 value=signal.generated_at,
                 name="Signal generated_at",
@@ -185,6 +209,9 @@ class OpportunityDiscoveryService:
                     symbol=symbol,
                     latest_closed_candle=closed_candles[-1],
                     strategy_type=strategy_type,
+                )
+                await self.strategy_service.save_signal(
+                    signal=signal,
                 )
 
             if signal.signal_type in _ACTIONABLE_ENTRY_SIGNAL_TYPES:

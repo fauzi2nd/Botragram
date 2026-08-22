@@ -68,6 +68,20 @@ class StrategyService:
             strategy_type=strategy_type,
         )
 
+    async def save_signal(
+        self,
+        *,
+        signal: Signal,
+    ) -> None:
+        """Persist one already-generated trading signal.
+
+        Args:
+            signal: Trading signal that has passed caller-specific validation.
+        """
+        await self.signal_repository.save(
+            signal=signal,
+        )
+
     async def generate_and_save(
         self,
         *,
@@ -88,7 +102,7 @@ class StrategyService:
             strategy_type=strategy_type,
         )
 
-        await self.signal_repository.save(
+        await self.save_signal(
             signal=signal,
         )
 
