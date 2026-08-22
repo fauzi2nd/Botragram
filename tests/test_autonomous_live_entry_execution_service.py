@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -35,6 +35,7 @@ from botragram.models import (
     RiskResult,
     Signal,
     SubmissionAttempt,
+    Ticker,
 )
 from botragram.repositories import SubmissionAttemptRepository
 from botragram.services import (
@@ -84,6 +85,24 @@ class _FakePositionService:
         value = self.portfolios[min(self.calls, len(self.portfolios) - 1)]
         self.calls += 1
         return value
+
+
+@dataclass
+class _FakeMarketService:
+    """Supply deterministic current executable market references."""
+
+    ticker: Ticker
+    preserve_ticker_symbol: bool = False
+    calls: list[str] = field(default_factory=list[str])
+
+    async def get_ticker(self, *, symbol: str) -> Ticker:
+        """Return the configured ticker after recording its requested symbol."""
+        self.calls.append(symbol)
+        return (
+            self.ticker
+            if self.preserve_ticker_symbol
+            else replace(self.ticker, symbol=symbol)
+        )
 
 
 @dataclass
@@ -264,6 +283,22 @@ def _create_signal(*, symbol: str = "BTCUSDT") -> Signal:
     )
 
 
+def _create_ticker(
+    *,
+    symbol: str = "BTCUSDT",
+    bid_price: Decimal = Decimal("99"),
+    ask_price: Decimal = Decimal("101"),
+) -> Ticker:
+    """Create one deterministic side-aware current market reference."""
+    return Ticker(
+        symbol=symbol,
+        bid_price=bid_price,
+        ask_price=ask_price,
+        last_price=Decimal("100"),
+        timestamp=_NOW,
+    )
+
+
 def _create_intent(
     *,
     symbol: str = "BTCUSDT",
@@ -321,6 +356,7 @@ def _create_service(
     protected_entry_service: _FakeProtectedEntryService,
     max_open_positions: int = 2,
     utc_now: Callable[[], datetime] = lambda: _NOW,
+    market_service: _FakeMarketService | None = None,
 ) -> AutonomousLiveEntryExecutionService:
     """Create the adapter around canonical fresh-risk dependencies."""
     return AutonomousLiveEntryExecutionService(
@@ -333,6 +369,11 @@ def _create_service(
                 )
             ),
             balance_asset="usdt",
+        ),
+        market_service=(
+            market_service
+            if market_service is not None
+            else _FakeMarketService(ticker=_create_ticker())
         ),
         live_futures_entry_service=protected_entry_service,
         environment=ExchangeEnvironment.TESTNET,
@@ -364,7 +405,7 @@ def test_authorization_is_required_before_authoritative_revalidation() -> None:
 
 
 def test_fresh_balance_replaces_stale_intent_risk_result() -> None:
-    """Delegate fresh P1 sizing, never the P0 quantity embedded in the intent."""
+    """Use fresh balance and ask pricing instead of stale intent risk sizing."""
     accounts = _FakeAccountService(balances=[Decimal("500")])
     positions = _FakePositionService(portfolios=[()])
     protected_entry = _FakeProtectedEntryService()
@@ -382,12 +423,155 @@ def test_fresh_balance_replaces_stale_intent_risk_result() -> None:
 
     assert result.status is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
     assert intent.quantity == Decimal("10")
-    assert protected_entry.calls == [
-        ("BTCUSDT", Decimal("5"), Interval.M15, OrderType.MARKET),
-    ]
     assert result.decision is not None
     assert result.decision.risk_result is not None
-    assert result.decision.risk_result.position.quantity == Decimal("5")
+    expected_signal = replace(intent.signal, price=Decimal("101"))
+    expected_fresh_risk = RiskEngine(settings=RiskSettings()).evaluate(
+        signal=expected_signal,
+        account_balance=Decimal("500"),
+    )
+    stale_balance_risk = RiskEngine(settings=RiskSettings()).evaluate(
+        signal=expected_signal,
+        account_balance=Decimal("1000"),
+    )
+
+    assert result.decision.signal is intent.signal
+    assert result.decision.signal.price == Decimal("100")
+    assert result.decision.risk_result.metrics.entry_price == Decimal("101")
+    assert (
+        result.decision.risk_result.position.quantity
+        == expected_fresh_risk.position.quantity
+    )
+    assert (
+        result.decision.risk_result.position.quantity
+        != stale_balance_risk.position.quantity
+    )
+    assert protected_entry.calls == [
+        (
+            "BTCUSDT",
+            result.decision.risk_result.position.quantity,
+            Interval.M15,
+            OrderType.MARKET,
+        ),
+    ]
+
+
+def test_risk_evaluation_without_price_override_preserves_existing_behavior() -> None:
+    """Keep non-autonomous callers priced from their original signal unchanged."""
+    signal = _create_signal()
+    evaluation = asyncio.run(
+        LiveEntryRiskEvaluationService(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            trading_engine=TradingEngine(
+                risk_engine=RiskEngine(settings=RiskSettings())
+            ),
+            balance_asset="USDT",
+        ).evaluate(signal=signal)
+    )
+
+    assert evaluation.decision.signal is signal
+    assert evaluation.decision.risk_result is not None
+    assert evaluation.decision.risk_result.metrics.entry_price == signal.price
+
+
+def test_buy_risk_uses_current_ask_while_preserving_signal_provenance() -> None:
+    """Size a BUY from ask without changing the closed-candle signal price."""
+    intent = _create_intent()
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+            market_service=_FakeMarketService(
+                ticker=_create_ticker(ask_price=Decimal("125"))
+            ),
+        ).execute(intent=intent, authorization=_create_authorization())
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+    assert result.decision is not None
+    assert result.decision.signal.price == Decimal("100")
+    assert result.decision.risk_result is not None
+    assert result.decision.risk_result.metrics.entry_price == Decimal("125")
+    assert result.decision.risk_result.position.quantity != intent.quantity
+
+
+def test_sell_risk_uses_current_bid() -> None:
+    """Size a SELL from bid rather than the closed-candle or last price."""
+    buy_intent = _create_intent()
+    sell_signal = Signal(
+        symbol=buy_intent.symbol,
+        signal_type=SignalType.SELL,
+        price=buy_intent.signal.price,
+        confidence=buy_intent.signal.confidence,
+        strategy_name=buy_intent.signal.strategy_name,
+        generated_at=buy_intent.signal.generated_at,
+    )
+    sell_intent = AutonomousLiveEntryIntent(
+        signal=sell_signal,
+        risk_result=buy_intent.risk_result,
+        interval=buy_intent.interval,
+        strategy_type=buy_intent.strategy_type,
+    )
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=_FakeProtectedEntryService(),
+            market_service=_FakeMarketService(
+                ticker=_create_ticker(bid_price=Decimal("75"), ask_price=Decimal("76"))
+            ),
+        ).execute(intent=sell_intent, authorization=_create_authorization())
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+    assert result.decision is not None
+    assert result.decision.risk_result is not None
+    assert result.decision.risk_result.metrics.entry_price == Decimal("75")
+
+
+def test_invalid_market_reference_rejects_before_risk_or_protected_entry() -> None:
+    """Fail closed when a ticker cannot prove the intended symbol and quote."""
+    accounts = _FakeAccountService(balances=[Decimal("500")])
+    positions = _FakePositionService(portfolios=[()])
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=accounts,
+            position_service=positions,
+            protected_entry_service=protected_entry,
+            market_service=_FakeMarketService(
+                ticker=_create_ticker(symbol="ETHUSDT"),
+                preserve_ticker_symbol=True,
+            ),
+        ).execute(intent=_create_intent(), authorization=_create_authorization())
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED
+    assert accounts.calls == 0
+    assert positions.calls == 0
+    assert protected_entry.calls == []
+
+
+@pytest.mark.parametrize("quote", (Decimal("NaN"), Decimal("0"), Decimal("-1")))
+def test_non_positive_or_non_finite_market_reference_rejects_before_entry(
+    quote: Decimal,
+) -> None:
+    """Reject invalid side-aware quotes without silently using last price."""
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+            market_service=_FakeMarketService(ticker=_create_ticker(ask_price=quote)),
+        ).execute(intent=_create_intent(), authorization=_create_authorization())
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED
+    assert protected_entry.calls == []
 
 
 def test_signal_at_next_close_boundary_is_rejected_without_protected_entry() -> None:
@@ -410,6 +594,8 @@ def test_signal_at_next_close_boundary_is_rejected_without_protected_entry() -> 
     assert protected_entry.calls == []
     assert result.decision is not None
     assert result.decision.should_execute
+    assert result.decision.risk_result is not None
+    assert result.decision.risk_result.metrics.entry_price == Decimal("101")
 
 
 def test_signal_before_next_close_boundary_delegates_protected_entry() -> None:
@@ -499,9 +685,10 @@ def test_batch_revalidates_capacity_after_each_completed_entry() -> None:
         AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED,
         AutonomousLiveEntryExecutionStatus.RISK_REJECTED,
     )
-    assert protected_entry.calls == [
-        ("BTCUSDT", Decimal("5"), Interval.M15, OrderType.MARKET),
-    ]
+    assert len(protected_entry.calls) == 1
+    assert protected_entry.calls[0][0] == "BTCUSDT"
+    assert protected_entry.calls[0][1] != Decimal("5")
+    assert protected_entry.calls[0][2:] == (Interval.M15, OrderType.MARKET)
 
 
 def test_submission_block_and_unsafe_execution_stop_later_intents() -> None:
@@ -597,6 +784,7 @@ def test_adapter_delegates_full_prepared_to_protected_completion_order() -> None
             ),
             balance_asset="USDT",
         ),
+        market_service=_FakeMarketService(ticker=_create_ticker()),
         live_futures_entry_service=live_entry,
         environment=ExchangeEnvironment.TESTNET,
         utc_now=lambda: _NOW,
@@ -654,6 +842,7 @@ async def _run_cancellation_test() -> None:
             ),
             balance_asset="USDT",
         ),
+        market_service=_FakeMarketService(ticker=_create_ticker()),
         live_futures_entry_service=protected_entry,
         environment=ExchangeEnvironment.TESTNET,
     )

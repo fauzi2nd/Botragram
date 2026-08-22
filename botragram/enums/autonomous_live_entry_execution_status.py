@@ -15,6 +15,7 @@ class AutonomousLiveEntryExecutionStatus(BaseEnum):
 
     EXECUTED_AND_PROTECTED = "executed_and_protected"
     RISK_REJECTED = "risk_rejected"
+    MARKET_REFERENCE_REJECTED = "market_reference_rejected"
     AUTHORIZATION_REJECTED = "authorization_rejected"
     EXISTING_POSITION = "existing_position"
     STALE_SIGNAL = "stale_signal"

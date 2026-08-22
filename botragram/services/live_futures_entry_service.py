@@ -162,7 +162,9 @@ class LiveFuturesEntryService:
                     position=replace(
                         risk_result.position,
                         quantity=normalized_quantity,
-                        notional=normalized_quantity * signal.price,
+                        notional=(
+                            normalized_quantity * risk_result.metrics.entry_price
+                        ),
                     ),
                 ),
                 order_type=order_type,

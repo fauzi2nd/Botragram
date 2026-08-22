@@ -186,6 +186,14 @@ signal returns the safe typed `stale_signal` outcome without creating a
 `PREPARED` attempt, normalizing quantity, or submitting an exchange order; its
 durable closed-candle claim remains intentionally unreleased. Monthly checks use
 calendar-month rollover with end-of-month preservation.
+Before that final risk evaluation, autonomous LIVE fetches a fresh REST ticker
+and sizes BUY entries from `ask_price` and SELL entries from `bid_price`. The
+closed-candle `Signal.price` remains immutable strategy provenance; an ephemeral
+repriced signal is used only for risk sizing, while the returned decision still
+retains the original signal. Missing, mismatched, non-finite, or non-positive
+side-aware quotes return `market_reference_rejected` before any protected-entry
+mutation. This reduces stale-price sizing risk but does not eliminate residual
+MARKET-order slippage between the REST ticker read and the actual exchange fill.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an

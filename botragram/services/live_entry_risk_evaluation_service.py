@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Protocol
 
@@ -59,8 +59,28 @@ class LiveEntryRiskEvaluationService:
 
         object.__setattr__(self, "balance_asset", normalized_asset)
 
-    async def evaluate(self, *, signal: Signal) -> LiveEntryRiskEvaluation:
-        """Return a fresh portfolio-aware decision for the exact signal."""
+    async def evaluate(
+        self,
+        *,
+        signal: Signal,
+        entry_price_override: Decimal | None = None,
+    ) -> LiveEntryRiskEvaluation:
+        """Return a fresh portfolio-aware decision for the exact signal.
+
+        Args:
+            signal: Immutable strategy provenance signal.
+            entry_price_override: Optional fresh executable price for risk sizing.
+
+        Returns:
+            Fresh risk decision retaining the original provenance signal.
+
+        Raises:
+            ValueError: If the optional execution price is not finite and positive.
+        """
+        evaluation_signal = self._get_evaluation_signal(
+            signal=signal,
+            entry_price_override=entry_price_override,
+        )
         if self.natural_exit_recovery_service is not None:
             await self.natural_exit_recovery_service.reconcile()
 
@@ -72,13 +92,32 @@ class LiveEntryRiskEvaluationService:
         )
         balance = await self.account_service.get_free_balance(asset=self.balance_asset)
         decision = self.trading_engine.evaluate(
-            signal=signal,
+            signal=evaluation_signal,
             account_balance=balance,
             has_open_position=has_existing_position,
             open_positions=positions,
         )
+        if entry_price_override is not None:
+            decision = replace(decision, signal=signal)
 
         return LiveEntryRiskEvaluation(
             decision=decision,
             has_existing_position=has_existing_position,
         )
+
+    @staticmethod
+    def _get_evaluation_signal(
+        *,
+        signal: Signal,
+        entry_price_override: Decimal | None,
+    ) -> Signal:
+        """Return a repriced ephemeral signal only when explicitly requested."""
+        if entry_price_override is None:
+            return signal
+        if (
+            not entry_price_override.is_finite()
+            or entry_price_override <= _DECIMAL_ZERO
+        ):
+            raise ValueError("LIVE entry price override must be finite and positive")
+
+        return replace(signal, price=entry_price_override)

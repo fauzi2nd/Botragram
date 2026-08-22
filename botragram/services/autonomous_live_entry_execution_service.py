@@ -14,6 +14,7 @@ from botragram.enums import (
     ExchangeEnvironment,
     Interval,
     OrderType,
+    SignalType,
 )
 from botragram.exceptions import (
     ExchangeOrderRejectedError,
@@ -28,6 +29,8 @@ from botragram.models import (
     Order,
     RiskResult,
     Signal,
+    Ticker,
+    TradingDecision,
 )
 
 __all__ = ["AutonomousLiveEntryExecutionService"]
@@ -44,8 +47,21 @@ def _utc_now() -> datetime:
 class _LiveEntryRiskEvaluator(Protocol):
     """Return one fresh authoritative LIVE entry decision."""
 
-    async def evaluate(self, *, signal: Signal) -> LiveEntryRiskEvaluation:
+    async def evaluate(
+        self,
+        *,
+        signal: Signal,
+        entry_price_override: Decimal | None = None,
+    ) -> LiveEntryRiskEvaluation:
         """Evaluate an exact signal against current LIVE state."""
+        ...
+
+
+class _LiveMarketTickerProvider(Protocol):
+    """Provide one current normalized market ticker."""
+
+    async def get_ticker(self, *, symbol: str) -> Ticker:
+        """Return the current ticker for an exact trading symbol."""
         ...
 
 
@@ -75,6 +91,7 @@ class AutonomousLiveEntryExecutionService:
     """
 
     risk_evaluation_service: _LiveEntryRiskEvaluator
+    market_service: _LiveMarketTickerProvider
     live_futures_entry_service: _ProtectedLiveEntryExecutor
     environment: ExchangeEnvironment
     utc_now: Callable[[], datetime] = _utc_now
@@ -96,7 +113,21 @@ class AutonomousLiveEntryExecutionService:
                 status=AutonomousLiveEntryExecutionStatus.AUTHORIZATION_REJECTED,
             )
 
-        evaluation = await self.risk_evaluation_service.evaluate(signal=intent.signal)
+        ticker = await self.market_service.get_ticker(symbol=intent.signal.symbol)
+        entry_price_override = self._get_entry_price_override(
+            ticker=ticker,
+            signal=intent.signal,
+        )
+        if entry_price_override is None:
+            return AutonomousLiveEntryExecutionResult(
+                status=AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED,
+                decision=self._market_reference_rejected_decision(signal=intent.signal),
+            )
+
+        evaluation = await self.risk_evaluation_service.evaluate(
+            signal=intent.signal,
+            entry_price_override=entry_price_override,
+        )
         decision = evaluation.decision
 
         if evaluation.has_existing_position:
@@ -191,6 +222,35 @@ class AutonomousLiveEntryExecutionService:
             and authorization.new_live_entry_allowed
             and authorization.environment is ExchangeEnvironment.TESTNET
             and authorization.environment is self.environment
+        )
+
+    @staticmethod
+    def _get_entry_price_override(*, ticker: Ticker, signal: Signal) -> Decimal | None:
+        """Return a valid side-aware execution reference for an entry signal."""
+        if ticker.symbol.strip().upper() != signal.symbol.strip().upper():
+            return None
+
+        match signal.signal_type:
+            case SignalType.BUY:
+                entry_price = ticker.ask_price
+            case SignalType.SELL:
+                entry_price = ticker.bid_price
+            case _:
+                return None
+
+        if not entry_price.is_finite() or entry_price <= Decimal("0"):
+            return None
+
+        return entry_price
+
+    @staticmethod
+    def _market_reference_rejected_decision(*, signal: Signal) -> TradingDecision:
+        """Return a safe decision when no executable market reference exists."""
+        return TradingDecision(
+            should_execute=False,
+            signal=signal,
+            risk_result=None,
+            reason=AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED.value,
         )
 
     def _is_stale_signal(self, *, intent: AutonomousLiveEntryIntent) -> bool:

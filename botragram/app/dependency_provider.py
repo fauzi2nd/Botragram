@@ -1161,6 +1161,7 @@ class DependencyProvider:
 
         return AutonomousLiveEntryExecutionService(
             risk_evaluation_service=self.live_entry_risk_evaluation_service,
+            market_service=self.market_service,
             live_futures_entry_service=self.live_futures_entry_service,
             environment=authorization.environment,
         )

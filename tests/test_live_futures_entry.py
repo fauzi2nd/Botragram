@@ -110,6 +110,7 @@ class FakeOrderService:
     error: BaseException | None = None
     normalization_error: BaseException | None = None
     normalized_quantity: Decimal | None = None
+    submitted_risk_result: RiskResult | None = None
     calls: int = 0
 
     async def normalize_futures_market_quantity(
@@ -121,9 +122,19 @@ class FakeOrderService:
             raise self.normalization_error
         return self.normalized_quantity or quantity
 
-    async def submit(self, **_: object) -> Order:
+    async def submit(
+        self,
+        *,
+        signal: Signal,
+        risk_result: RiskResult,
+        order_type: OrderType,
+        price: Decimal | None,
+        client_order_id: str | None = None,
+    ) -> Order:
         """Return one order or raise the configured submission failure."""
+        del signal, order_type, price, client_order_id
         self.calls += 1
+        self.submitted_risk_result = risk_result
         if self.error is not None:
             raise self.error
         return self.order
@@ -262,6 +273,40 @@ async def test_market_entry_syncs_actual_position_and_marks_protection_ready() -
     assert positions.saved.strategy_type is StrategyType.EMA_SCALPING
     assert protection.position == positions.saved
     assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_normalized_notional_uses_authoritative_risk_entry_price() -> None:
+    """Retain current risk-price sizing after venue quantity normalization."""
+    orders = FakeOrderService(normalized_quantity=Decimal("0.02"))
+    service, _ = _service(order_service=orders)
+    risk_result = RiskResult(
+        approved=True,
+        position=PositionSize(
+            quantity=Decimal("0.01"),
+            notional=Decimal("750"),
+            leverage=1,
+        ),
+        metrics=RiskMetrics(
+            entry_price=Decimal("75000"),
+            stop_loss=Decimal("74000"),
+            take_profit=Decimal("76000"),
+            risk_amount=Decimal("10"),
+            reward_amount=Decimal("10"),
+            risk_reward_ratio=Decimal("1"),
+        ),
+    )
+
+    await service.execute(
+        signal=_signal(),
+        risk_result=risk_result,
+        interval=Interval.M15,
+        order_type=OrderType.MARKET,
+        price=None,
+    )
+
+    assert orders.submitted_risk_result is not None
+    assert orders.submitted_risk_result.position.notional == Decimal("1500")
 
 
 @pytest.mark.asyncio
