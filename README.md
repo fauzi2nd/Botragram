@@ -166,10 +166,11 @@ match the scanned symbol and requested interval, keep `open_time` strictly befor
 identities across the closed-candle sequence. Its OHLC prices must be finite and
 positive, `low_price` must not exceed `high_price`, and both `open_price` and
 `close_price` must remain within that low/high range. The generated signal must
-keep the scanned symbol, use the exact explicit strategy name, set `price` to the
-latest closed candle's `close_price`, and set `generated_at` to that candle's
-`close_time` after UTC normalization. Explicit-strategy discovery generates the
-signal first, validates all provenance, and only then persists it; a provenance
+keep the scanned symbol, use the exact explicit strategy name, keep `confidence`
+finite and within the inclusive `0..1` range, set `price` to the latest closed
+candle's `close_price`, and set `generated_at` to that candle's `close_time` after
+UTC normalization. Explicit-strategy discovery generates the signal first,
+validates all provenance, and only then persists it; a provenance
 mismatch leaves no invalid signal record behind and still fails before durable
 claim, risk evaluation, intent authorization, or exchange execution. Existing
 non-LIVE discovery continues to use the legacy generate-and-persist path.

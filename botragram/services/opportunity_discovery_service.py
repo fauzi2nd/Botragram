@@ -318,6 +318,12 @@ class OpportunityDiscoveryService:
             raise RuntimeError(
                 "Strategy signal name does not match explicit strategy context"
             )
+        if not signal.confidence.is_finite():
+            raise RuntimeError("Strategy signal confidence must be finite")
+        if signal.confidence < 0 or signal.confidence > 1:
+            raise RuntimeError(
+                "Strategy signal confidence must be between zero and one"
+            )
         if signal.price != latest_closed_candle.close_price:
             raise RuntimeError(
                 "Strategy signal price does not match latest closed candle"

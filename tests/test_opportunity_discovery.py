@@ -1236,6 +1236,91 @@ async def _run_wrong_signal_price_test() -> None:
     assert strategy_service.saved_symbols == []
 
 
+@pytest.mark.parametrize(
+    ("confidence", "error_match"),
+    (
+        pytest.param(
+            "NaN",
+            "confidence must be finite",
+            id="nan",
+        ),
+        pytest.param(
+            "Infinity",
+            "confidence must be finite",
+            id="infinity",
+        ),
+        pytest.param(
+            "-0.01",
+            "confidence must be between zero and one",
+            id="negative",
+        ),
+        pytest.param(
+            "1.01",
+            "confidence must be between zero and one",
+            id="above-one",
+        ),
+    ),
+)
+def test_explicit_provenance_rejects_invalid_signal_confidence(
+    confidence: str,
+    error_match: str,
+) -> None:
+    """Reject non-finite or out-of-range confidence before signal persistence."""
+    asyncio.run(
+        _run_invalid_signal_confidence_test(
+            confidence=confidence,
+            error_match=error_match,
+        )
+    )
+
+
+async def _run_invalid_signal_confidence_test(
+    *,
+    confidence: str,
+    error_match: str,
+) -> None:
+    """Require explicit-strategy confidence to stay within normalized bounds."""
+    candle = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW,
+    )
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={"BTCUSDT": (candle,)},
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.BUY,
+                confidence=confidence,
+                generated_at=candle.close_time,
+                strategy_name=StrategyType.EMA_CROSS.value,
+                price=candle.close_price,
+            )
+        }
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    with pytest.raises(RuntimeError, match=error_match):
+        await service.discover(
+            quote_asset="USDT",
+            interval=Interval.M15,
+            candle_limit=1,
+            max_symbols=1,
+            top_n=1,
+            strategy_type=StrategyType.EMA_CROSS,
+        )
+
+    assert strategy_service.generated_symbols == ["BTCUSDT"]
+    assert strategy_service.saved_symbols == []
+
+
 def test_explicit_provenance_rejects_non_latest_signal_timestamp() -> None:
     """Require generated_at to identify the exact latest closed candle."""
     asyncio.run(_run_non_latest_signal_timestamp_test())
