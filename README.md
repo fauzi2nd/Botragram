@@ -164,9 +164,13 @@ explicit strategy context before the durable claim. Every strategy candle must
 match the scanned symbol and requested interval, keep `open_time` strictly before
 `close_time`, preserve strictly increasing `open_time` and `close_time` identities,
 and keep consecutive candle windows non-overlapping; exact touching boundaries
-and gaps remain valid. Its OHLC prices must be finite and positive, `low_price`
-must not exceed `high_price`, and both `open_price` and
-`close_price` must remain within that low/high range. The generated signal must
+and gaps remain valid. The latest closed candle must also remain fresh at the
+discovery decision time: once the next interval close is due, explicit discovery
+fails before strategy generation. Monthly freshness uses calendar-month rollover
+with end-of-month preservation rather than the approximate `Interval.MN1.seconds`
+value. Its OHLC prices must be finite and positive, `low_price` must not exceed
+`high_price`, and both `open_price` and `close_price` must remain within that
+low/high range. The generated signal must
 keep the scanned symbol, use the exact explicit strategy name, keep `confidence`
 finite and within the inclusive `0..1` range, set `price` to the latest closed
 candle's `close_price`, and set `generated_at` to that candle's `close_time` after
