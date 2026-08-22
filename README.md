@@ -163,14 +163,16 @@ Autonomous LIVE discovery additionally binds each candidate to the executor's
 explicit strategy context before the durable claim. Every strategy candle must
 match the scanned symbol and requested interval, keep `open_time` strictly before
 `close_time`, and preserve strictly increasing `open_time` and `close_time`
-identities across the closed-candle sequence. The generated signal must keep that
-symbol, use the exact explicit strategy name, set `price` to the latest closed
-candle's `close_price`, and set `generated_at` to that candle's `close_time` after
-UTC normalization. Explicit-strategy discovery generates the signal first,
-validates all provenance, and only then persists it; a provenance mismatch leaves
-no invalid signal record behind and still fails before durable claim, risk
-evaluation, intent authorization, or exchange execution. Existing non-LIVE
-discovery continues to use the legacy generate-and-persist path.
+identities across the closed-candle sequence. Its OHLC prices must be finite and
+positive, `low_price` must not exceed `high_price`, and both `open_price` and
+`close_price` must remain within that low/high range. The generated signal must
+keep the scanned symbol, use the exact explicit strategy name, set `price` to the
+latest closed candle's `close_price`, and set `generated_at` to that candle's
+`close_time` after UTC normalization. Explicit-strategy discovery generates the
+signal first, validates all provenance, and only then persists it; a provenance
+mismatch leaves no invalid signal record behind and still fails before durable
+claim, risk evaluation, intent authorization, or exchange execution. Existing
+non-LIVE discovery continues to use the legacy generate-and-persist path.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an

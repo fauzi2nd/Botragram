@@ -242,6 +242,30 @@ class OpportunityDiscoveryService:
                 raise RuntimeError(
                     "Closed-candle interval does not match discovery interval"
                 )
+            cls._validate_closed_candle_price_provenance(candle=candle)
+
+    @staticmethod
+    def _validate_closed_candle_price_provenance(*, candle: Candle) -> None:
+        """Require finite positive OHLC values with a valid candle price shape."""
+        prices = (
+            candle.open_price,
+            candle.high_price,
+            candle.low_price,
+            candle.close_price,
+        )
+
+        if any(not price.is_finite() for price in prices):
+            raise RuntimeError("Closed-candle OHLC prices must be finite")
+        if any(price <= 0 for price in prices):
+            raise RuntimeError("Closed-candle OHLC prices must be greater than zero")
+        if candle.low_price > candle.high_price:
+            raise RuntimeError("Closed-candle low_price must not exceed high_price")
+        if not candle.low_price <= candle.open_price <= candle.high_price:
+            raise RuntimeError("Closed-candle open_price must be within low/high range")
+        if not candle.low_price <= candle.close_price <= candle.high_price:
+            raise RuntimeError(
+                "Closed-candle close_price must be within low/high range"
+            )
 
     @classmethod
     def _validate_closed_candle_sequence(

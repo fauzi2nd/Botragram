@@ -209,17 +209,20 @@ def _create_candle(
     interval: Interval = Interval.M15,
     open_time: datetime = _NOW,
     close_time: datetime = _NOW,
+    open_price: Decimal | None = None,
+    high_price: Decimal | None = None,
+    low_price: Decimal | None = None,
     close_price: Decimal = Decimal("100"),
 ) -> Candle:
-    """Create a minimal valid candle for one symbol."""
+    """Create a minimal candle for one symbol with optional OHLC overrides."""
     return Candle(
         symbol=symbol,
         interval=interval,
         open_time=open_time,
         close_time=close_time,
-        open_price=close_price,
-        high_price=close_price,
-        low_price=close_price,
+        open_price=close_price if open_price is None else open_price,
+        high_price=close_price if high_price is None else high_price,
+        low_price=close_price if low_price is None else low_price,
         close_price=close_price,
         volume=Decimal("1"),
     )
@@ -860,6 +863,112 @@ async def _run_wrong_candle_interval_test() -> None:
             strategy_type=StrategyType.EMA_CROSS,
         )
 
+    assert strategy_service.saved_symbols == []
+
+
+@pytest.mark.parametrize(
+    ("candle", "error_match"),
+    (
+        pytest.param(
+            _create_candle(
+                symbol="BTCUSDT",
+                open_time=_NOW - timedelta(minutes=15),
+                close_time=_NOW,
+                high_price=Decimal("Infinity"),
+            ),
+            "OHLC prices must be finite",
+            id="non-finite",
+        ),
+        pytest.param(
+            _create_candle(
+                symbol="BTCUSDT",
+                open_time=_NOW - timedelta(minutes=15),
+                close_time=_NOW,
+                low_price=Decimal("0"),
+            ),
+            "OHLC prices must be greater than zero",
+            id="non-positive",
+        ),
+        pytest.param(
+            _create_candle(
+                symbol="BTCUSDT",
+                open_time=_NOW - timedelta(minutes=15),
+                close_time=_NOW,
+                high_price=Decimal("100"),
+                low_price=Decimal("101"),
+            ),
+            "low_price must not exceed high_price",
+            id="low-above-high",
+        ),
+        pytest.param(
+            _create_candle(
+                symbol="BTCUSDT",
+                open_time=_NOW - timedelta(minutes=15),
+                close_time=_NOW,
+                open_price=Decimal("120"),
+                high_price=Decimal("110"),
+                low_price=Decimal("90"),
+                close_price=Decimal("100"),
+            ),
+            "open_price must be within low/high range",
+            id="open-outside-range",
+        ),
+        pytest.param(
+            _create_candle(
+                symbol="BTCUSDT",
+                open_time=_NOW - timedelta(minutes=15),
+                close_time=_NOW,
+                open_price=Decimal("100"),
+                high_price=Decimal("110"),
+                low_price=Decimal("90"),
+                close_price=Decimal("120"),
+            ),
+            "close_price must be within low/high range",
+            id="close-outside-range",
+        ),
+    ),
+)
+def test_explicit_provenance_rejects_invalid_closed_candle_prices(
+    candle: Candle,
+    error_match: str,
+) -> None:
+    """Reject malformed OHLC provenance before strategy generation or save."""
+    asyncio.run(
+        _run_invalid_closed_candle_price_test(
+            candle=candle,
+            error_match=error_match,
+        )
+    )
+
+
+async def _run_invalid_closed_candle_price_test(
+    *,
+    candle: Candle,
+    error_match: str,
+) -> None:
+    """Require explicit discovery candles to have a valid OHLC price shape."""
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={"BTCUSDT": (candle,)},
+    )
+    strategy_service = FakeStrategyService(signals={})
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    with pytest.raises(RuntimeError, match=error_match):
+        await service.discover(
+            quote_asset="USDT",
+            interval=Interval.M15,
+            candle_limit=1,
+            max_symbols=1,
+            top_n=1,
+            strategy_type=StrategyType.EMA_CROSS,
+        )
+
+    assert strategy_service.generated_symbols == []
     assert strategy_service.saved_symbols == []
 
 
