@@ -297,6 +297,8 @@ class OpportunityDiscoveryService:
                 raise RuntimeError(
                     "Closed-candle close_time sequence must be strictly increasing"
                 )
+            if previous_close_time is not None and open_time < previous_close_time:
+                raise RuntimeError("Closed-candle windows must not overlap")
 
             previous_open_time = open_time
             previous_close_time = close_time

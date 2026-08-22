@@ -1098,6 +1098,110 @@ async def _run_non_increasing_candle_close_time_test() -> None:
     assert strategy_service.saved_symbols == []
 
 
+def test_explicit_provenance_rejects_overlapping_closed_candles() -> None:
+    """Reject overlapping candle windows before strategy generation."""
+    asyncio.run(_run_overlapping_closed_candles_test())
+
+
+async def _run_overlapping_closed_candles_test() -> None:
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={
+            "BTCUSDT": (
+                _create_candle(
+                    symbol="BTCUSDT",
+                    open_time=_NOW - timedelta(minutes=30),
+                    close_time=_NOW - timedelta(minutes=10),
+                ),
+                _create_candle(
+                    symbol="BTCUSDT",
+                    open_time=_NOW - timedelta(minutes=15),
+                    close_time=_NOW,
+                ),
+            )
+        },
+    )
+    strategy_service = FakeStrategyService(signals={})
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="windows must not overlap"):
+        await service.discover(
+            quote_asset="USDT",
+            interval=Interval.M15,
+            candle_limit=1,
+            max_symbols=1,
+            top_n=1,
+            strategy_type=StrategyType.EMA_CROSS,
+        )
+
+    assert strategy_service.generated_symbols == []
+    assert strategy_service.saved_symbols == []
+
+
+def test_explicit_provenance_accepts_touching_closed_candle_boundaries() -> None:
+    """Allow consecutive candle windows to meet at one exact boundary."""
+    asyncio.run(_run_touching_closed_candle_boundaries_test())
+
+
+async def _run_touching_closed_candle_boundaries_test() -> None:
+    previous_candle = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW - timedelta(minutes=30),
+        close_time=_NOW - timedelta(minutes=15),
+    )
+    latest_candle = _create_candle(
+        symbol="BTCUSDT",
+        open_time=previous_candle.close_time,
+        close_time=_NOW,
+    )
+    signal = _create_signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        confidence="1",
+        generated_at=latest_candle.close_time,
+        strategy_name=StrategyType.EMA_CROSS.value,
+        price=latest_candle.close_price,
+    )
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={
+            "BTCUSDT": (
+                previous_candle,
+                latest_candle,
+            )
+        },
+    )
+    strategy_service = FakeStrategyService(signals={"BTCUSDT": signal})
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    opportunities = await service.discover(
+        quote_asset="USDT",
+        interval=Interval.M15,
+        candle_limit=2,
+        max_symbols=1,
+        top_n=1,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    assert opportunities == (signal,)
+    assert strategy_service.generated_symbols == ["BTCUSDT"]
+    assert strategy_service.saved_symbols == ["BTCUSDT"]
+    assert strategy_service.saved_candles == [
+        (
+            previous_candle,
+            latest_candle,
+        )
+    ]
+
+
 def test_explicit_provenance_rejects_wrong_signal_symbol() -> None:
     """Reject a strategy result that changes the scanned symbol identity."""
     asyncio.run(_run_wrong_signal_symbol_test())
