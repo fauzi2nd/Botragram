@@ -194,6 +194,11 @@ retains the original signal. Missing, mismatched, non-finite, or non-positive
 side-aware quotes return `market_reference_rejected` before any protected-entry
 mutation. This reduces stale-price sizing risk but does not eliminate residual
 MARKET-order slippage between the REST ticker read and the actual exchange fill.
+The REST ticker timestamp must be timezone-aware and reach at least the signal's
+closed-candle `generated_at`; missing, naive, or pre-signal timestamps are also
+rejected before mutation. This is not a configurable age or slippage bound:
+Binance's 24-hour ticker `closeTime` establishes only response provenance, not
+the exact update age of its bid/ask quote, so residual MARKET slippage remains.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an

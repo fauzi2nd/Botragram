@@ -100,17 +100,17 @@ class BinanceExchangeMapper(BaseExchangeMapper):
     ) -> Ticker:
         """Map a Binance REST ticker payload into a Ticker model."""
         timestamp_value = payload.get("closeTime")
+        if timestamp_value is None or timestamp_value == "":
+            raise ValueError(
+                "Binance REST ticker payload must contain a valid closeTime"
+            )
 
         return Ticker(
             symbol=self._to_string(payload.get("symbol")),
             bid_price=self._to_decimal(payload.get("bidPrice")),
             ask_price=self._to_decimal(payload.get("askPrice")),
             last_price=self._to_decimal(payload.get("lastPrice")),
-            timestamp=(
-                self._to_datetime(timestamp_value)
-                if timestamp_value is not None
-                else datetime.now(tz=UTC)
-            ),
+            timestamp=self._to_datetime(timestamp_value),
         )
 
     def map_market_entry_rules(self, payload: ExchangePayload) -> ExchangeSymbolRules:

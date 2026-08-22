@@ -17,7 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import asyncio
-from datetime import timezone
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
 
 # =============================================================================
@@ -196,10 +196,39 @@ def test_binance_mapper_maps_rest_ticker_and_candle() -> None:
     assert ticker.symbol == "BTCUSDT"
     assert ticker.bid_price == Decimal("99.5")
     assert ticker.timestamp.tzinfo is timezone.utc
+    assert ticker.timestamp == datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
     assert candle.interval is Interval.M1
     assert candle.open_price == Decimal("99")
     assert candle.close_price == Decimal("101")
     assert candle.close_time.tzinfo is timezone.utc
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {
+            "symbol": "BTCUSDT",
+            "bidPrice": "99.5",
+            "askPrice": "100.5",
+            "lastPrice": "100",
+        },
+        {
+            "symbol": "BTCUSDT",
+            "bidPrice": "99.5",
+            "askPrice": "100.5",
+            "lastPrice": "100",
+            "closeTime": "",
+        },
+    ),
+)
+def test_binance_mapper_rejects_rest_ticker_without_close_time(
+    payload: dict[str, object],
+) -> None:
+    """Require exchange temporal provenance instead of fabricating local time."""
+    mapper = BinanceExchangeMapper()
+
+    with pytest.raises(ValueError, match="must contain a valid closeTime"):
+        mapper.map_ticker(payload)
 
 
 def test_binance_mapper_maps_optional_order_prices() -> None:

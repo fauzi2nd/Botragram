@@ -288,6 +288,7 @@ def _create_ticker(
     symbol: str = "BTCUSDT",
     bid_price: Decimal = Decimal("99"),
     ask_price: Decimal = Decimal("101"),
+    timestamp: datetime = _NOW,
 ) -> Ticker:
     """Create one deterministic side-aware current market reference."""
     return Ticker(
@@ -295,7 +296,7 @@ def _create_ticker(
         bid_price=bid_price,
         ask_price=ask_price,
         last_price=Decimal("100"),
-        timestamp=_NOW,
+        timestamp=timestamp,
     )
 
 
@@ -552,6 +553,74 @@ def test_invalid_market_reference_rejects_before_risk_or_protected_entry() -> No
     assert result.status is AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED
     assert accounts.calls == 0
     assert positions.calls == 0
+    assert protected_entry.calls == []
+
+
+def test_pre_signal_ticker_timestamp_rejects_before_risk_or_entry() -> None:
+    """Reject a valid quote whose timestamp predates signal provenance."""
+    accounts = _FakeAccountService(balances=[Decimal("500")])
+    positions = _FakePositionService(portfolios=[()])
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=accounts,
+            position_service=positions,
+            protected_entry_service=protected_entry,
+            market_service=_FakeMarketService(
+                ticker=_create_ticker(timestamp=_NOW - timedelta(microseconds=1))
+            ),
+        ).execute(intent=_create_intent(), authorization=_create_authorization())
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED
+    assert accounts.calls == 0
+    assert positions.calls == 0
+    assert protected_entry.calls == []
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    (
+        _NOW,
+        _NOW + timedelta(microseconds=1),
+        _NOW.astimezone(timezone(timedelta(hours=7))),
+    ),
+)
+def test_current_or_later_ticker_timestamp_allows_repriced_entry(
+    timestamp: datetime,
+) -> None:
+    """Accept equal, later, and offset-equivalent ticker provenance times."""
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+            market_service=_FakeMarketService(
+                ticker=_create_ticker(timestamp=timestamp)
+            ),
+        ).execute(intent=_create_intent(), authorization=_create_authorization())
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+    assert len(protected_entry.calls) == 1
+
+
+def test_naive_ticker_timestamp_rejects_before_protected_entry() -> None:
+    """Fail closed rather than directly comparing a naive ticker timestamp."""
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+            market_service=_FakeMarketService(
+                ticker=_create_ticker(timestamp=_NOW.replace(tzinfo=None))
+            ),
+        ).execute(intent=_create_intent(), authorization=_create_authorization())
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED
     assert protected_entry.calls == []
 
 

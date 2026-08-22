@@ -241,6 +241,17 @@ class AutonomousLiveEntryExecutionService:
         if not entry_price.is_finite() or entry_price <= Decimal("0"):
             return None
 
+        signal_generated_at = (
+            AutonomousLiveEntryExecutionService._normalize_utc_datetime(
+                value=signal.generated_at,
+                name="Autonomous LIVE signal generated_at",
+            )
+        )
+        if ticker.timestamp.tzinfo is None or ticker.timestamp.utcoffset() is None:
+            return None
+        if ticker.timestamp.astimezone(UTC) < signal_generated_at:
+            return None
+
         return entry_price
 
     @staticmethod
