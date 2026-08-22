@@ -22,6 +22,7 @@ class _Exchange:
 
     rules: ExchangeSymbolRules
     price: Decimal = Decimal("1")
+    mark_price: Decimal | None = None
     raise_rules: BaseException | None = None
 
     async def get_market_entry_rules(self, *, symbol: str) -> ExchangeSymbolRules:
@@ -41,6 +42,11 @@ class _Exchange:
             last_price=self.price,
             timestamp=datetime.now(UTC),
         )
+
+    async def get_mark_price(self, *, symbol: str) -> Decimal:
+        """Return the configured Futures MARK_PRICE reference."""
+        assert symbol == self.rules.symbol
+        return self.price if self.mark_price is None else self.mark_price
 
     async def create_order(
         self,
@@ -137,6 +143,24 @@ def test_rejects_invalid_quantity_before_order_submission(
         asyncio.run(
             engine.normalize_futures_market_quantity(
                 symbol="TESTUSDT", quantity=Decimal(quantity)
+            )
+        )
+
+
+def test_minimum_notional_uses_futures_mark_price_not_last_price() -> None:
+    """Reject when MARK_PRICE, rather than a higher last price, is insufficient."""
+    engine = OrderEngine(
+        exchange_client=_Exchange(
+            rules=_rules(step="1", minimum_notional="5"),
+            price=Decimal("10"),
+            mark_price=Decimal("1"),
+        )
+    )
+
+    with pytest.raises(VenueRuleValidationError, match="minimum notional"):
+        asyncio.run(
+            engine.normalize_futures_market_quantity(
+                symbol="TESTUSDT", quantity=Decimal("1")
             )
         )
 

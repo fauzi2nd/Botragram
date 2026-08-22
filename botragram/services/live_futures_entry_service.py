@@ -24,7 +24,9 @@ from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderRejectedError,
+    LiveEntryPreflightError,
     LiveSubmissionBlockedError,
+    VenueRuleValidationError,
 )
 from botragram.models import Order, Position, RiskResult, Signal, SubmissionAttempt
 from botragram.repositories import SubmissionAttemptRepository
@@ -119,16 +121,26 @@ class LiveFuturesEntryService:
         protection gate closes is unsafe and propagates to the runtime boundary.
         """
         self._validate_entry(order_type=order_type)
-        if await self.submission_attempt_repository.get_unresolved():
-            raise LiveSubmissionBlockedError(
-                "An unresolved LIVE submission attempt blocks entry"
+        try:
+            if await self.submission_attempt_repository.get_unresolved():
+                raise LiveSubmissionBlockedError(
+                    "An unresolved LIVE submission attempt blocks entry"
+                )
+            normalized_quantity = (
+                await self.order_service.normalize_futures_market_quantity(
+                    symbol=signal.symbol,
+                    quantity=risk_result.position.quantity,
+                )
             )
-        normalized_quantity = (
-            await self.order_service.normalize_futures_market_quantity(
-                symbol=signal.symbol,
-                quantity=risk_result.position.quantity,
-            )
-        )
+        except asyncio.CancelledError:
+            raise
+        except LiveSubmissionBlockedError, VenueRuleValidationError:
+            raise
+        except Exception as error:
+            raise LiveEntryPreflightError(
+                "LIVE entry preflight failed before protected mutation"
+            ) from error
+
         self.runtime_control.set_position_protection_ready(False)
         client_order_id = f"{_CLIENT_ORDER_ID_PREFIX}{uuid4().hex}"
         now = datetime.now(UTC)

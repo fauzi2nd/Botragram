@@ -21,7 +21,7 @@ from botragram.enums import (
     StrategyType,
     SubmissionAttemptStatus,
 )
-from botragram.exceptions import VenueRuleValidationError
+from botragram.exceptions import LiveEntryPreflightError, VenueRuleValidationError
 from botragram.models import (
     Order,
     Position,
@@ -487,3 +487,46 @@ async def test_venue_rejection_prevents_prepared_and_entry_post() -> None:
 
     assert orders.calls == 0
     assert await service.submission_attempt_repository.get_incomplete() == ()
+
+
+@pytest.mark.asyncio
+async def test_operational_preflight_failure_preserves_unmutated_entry_state() -> None:
+    """Wrap a venue read failure without creating an uncertain submission."""
+    orders = FakeOrderService(normalization_error=RuntimeError("mark price failed"))
+    service, control = _service(order_service=orders)
+
+    with pytest.raises(LiveEntryPreflightError, match="preflight failed") as error:
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert orders.calls == 0
+    assert await service.submission_attempt_repository.get_incomplete() == ()
+    assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_preflight_cancellation_propagates_without_closing_protection_gate() -> (
+    None
+):
+    """Never wrap cancellation from a pre-mutation venue read."""
+    orders = FakeOrderService(normalization_error=asyncio.CancelledError())
+    service, control = _service(order_service=orders)
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 0
+    assert await service.submission_attempt_repository.get_incomplete() == ()
+    assert "position protection" not in control.get_missing_startup_requirements()

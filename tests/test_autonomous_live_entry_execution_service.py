@@ -26,7 +26,12 @@ from botragram.enums import (
     StrategyType,
     SubmissionAttemptStatus,
 )
-from botragram.exceptions import ExchangeOrderRejectedError, LiveSubmissionBlockedError
+from botragram.exceptions import (
+    ExchangeOrderRejectedError,
+    LiveEntryPreflightError,
+    LiveSubmissionBlockedError,
+    VenueRuleValidationError,
+)
 from botragram.models import (
     AutonomousLiveEntryAuthorization,
     AutonomousLiveEntryIntent,
@@ -822,6 +827,48 @@ def test_known_exchange_rejection_is_typed_without_retry() -> None:
     )
 
     assert result.status is AutonomousLiveEntryExecutionStatus.EXCHANGE_REJECTED
+    assert len(protected_entry.calls) == 1
+
+
+def test_preflight_failure_propagates_without_unsafe_result() -> None:
+    """Keep a proven pre-mutation failure outside autonomous unsafe semantics."""
+    protected_entry = _FakeProtectedEntryService(
+        error=LiveEntryPreflightError("mark price unavailable"),
+    )
+    service = _create_service(
+        account_service=_FakeAccountService(balances=[Decimal("500")]),
+        position_service=_FakePositionService(portfolios=[()]),
+        protected_entry_service=protected_entry,
+    )
+
+    with pytest.raises(LiveEntryPreflightError, match="mark price unavailable"):
+        asyncio.run(
+            service.execute(
+                intent=_create_intent(),
+                authorization=_create_authorization(),
+            )
+        )
+
+    assert len(protected_entry.calls) == 1
+
+
+def test_venue_rejection_returns_safe_typed_result() -> None:
+    """Keep deterministic pre-POST venue rejection distinct from preflight I/O."""
+    protected_entry = _FakeProtectedEntryService(
+        error=VenueRuleValidationError("minimum notional"),
+    )
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+        ).execute(
+            intent=_create_intent(),
+            authorization=_create_authorization(),
+        )
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.VENUE_RULE_REJECTED
     assert len(protected_entry.calls) == 1
 
 

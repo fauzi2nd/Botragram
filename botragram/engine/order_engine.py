@@ -25,7 +25,7 @@ from typing import Protocol
 # =============================================================================
 from botragram.enums import OrderSide, OrderType, SignalType
 from botragram.exceptions import VenueRuleValidationError
-from botragram.models import ExchangeSymbolRules, Order, RiskResult, Signal, Ticker
+from botragram.models import ExchangeSymbolRules, Order, RiskResult, Signal
 
 __all__ = [
     "OrderEngine",
@@ -41,8 +41,8 @@ _DECIMAL_ZERO = Decimal("0")
 class OrderExchangeClient(Protocol):
     """Provide the narrow exchange operations owned by the order engine."""
 
-    async def get_ticker(self, *, symbol: str) -> Ticker:
-        """Return a current typed market reference price."""
+    async def get_mark_price(self, *, symbol: str) -> Decimal:
+        """Return the authoritative Futures MARK_PRICE reference."""
         ...
 
     async def get_market_entry_rules(self, *, symbol: str) -> ExchangeSymbolRules:
@@ -137,14 +137,14 @@ class OrderEngine:
     ) -> Decimal:
         """Normalize and validate a Futures MARKET quantity before mutation."""
         rules = await self.exchange_client.get_market_entry_rules(symbol=symbol)
-        ticker = await self.exchange_client.get_ticker(symbol=symbol)
+        mark_price = await self.exchange_client.get_mark_price(symbol=symbol)
         normalized_quantity = self._round_down(
             quantity=quantity,
             step=rules.market_quantity_step,
         )
         self._validate_market_quantity(
             quantity=normalized_quantity,
-            reference_price=ticker.last_price,
+            reference_price=mark_price,
             symbol=symbol,
             minimum_quantity=rules.market_min_quantity,
             maximum_quantity=rules.market_max_quantity,

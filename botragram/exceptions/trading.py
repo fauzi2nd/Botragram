@@ -25,6 +25,7 @@ __all__ = [
     "TradingError",
     "TradingConfigurationError",
     "TradingExecutionError",
+    "LiveEntryPreflightError",
     "LiveSubmissionBlockedError",
     "VenueRuleValidationError",
     "TradingPositionError",
@@ -46,6 +47,10 @@ class TradingConfigurationError(TradingError):
 
 class TradingExecutionError(TradingError):
     """Raised when a trading operation cannot be executed."""
+
+
+class LiveEntryPreflightError(TradingExecutionError, RuntimeError):
+    """Raised when LIVE entry preflight fails before mutation can begin."""
 
 
 class LiveSubmissionBlockedError(TradingExecutionError, RuntimeError):

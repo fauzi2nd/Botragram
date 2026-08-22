@@ -18,6 +18,7 @@ from botragram.enums import (
 )
 from botragram.exceptions import (
     ExchangeOrderRejectedError,
+    LiveEntryPreflightError,
     LiveSubmissionBlockedError,
     VenueRuleValidationError,
 )
@@ -161,6 +162,8 @@ class AutonomousLiveEntryExecutionService:
                 status=AutonomousLiveEntryExecutionStatus.SUBMISSION_BLOCKED,
                 decision=decision,
             )
+        except LiveEntryPreflightError:
+            raise
         except VenueRuleValidationError:
             return AutonomousLiveEntryExecutionResult(
                 status=AutonomousLiveEntryExecutionStatus.VENUE_RULE_REJECTED,
