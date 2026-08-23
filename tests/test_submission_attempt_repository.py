@@ -59,7 +59,7 @@ async def _run_sqlite_submission_attempt_test() -> None:
             await SQLiteMigrationManager(database=database).initialize()
             repository = SQLiteSubmissionAttemptRepository(database=database)
             attempt = _attempt()
-            await repository.save(attempt=attempt)
+            assert await repository.reserve(attempt=attempt)
 
             assert (
                 await repository.get_by_client_order_id(
@@ -93,3 +93,49 @@ async def _run_sqlite_submission_attempt_test() -> None:
             assert await repository.get_incomplete() == ()
         finally:
             await database.close()
+
+
+def test_sqlite_reservation_is_atomic_across_database_connections() -> None:
+    """Allow only one prepared owner across two repository connections."""
+    asyncio.run(_run_cross_connection_reservation_test())
+
+
+async def _run_cross_connection_reservation_test() -> None:
+    """Exercise the reservation statement against one shared SQLite database."""
+    with TemporaryDirectory() as temporary_directory:
+        database_path = Path(temporary_directory) / "attempt-reservation.db"
+        first_database = SQLiteDatabase(database_path=database_path)
+        second_database = SQLiteDatabase(database_path=database_path)
+        await first_database.connect()
+        await second_database.connect()
+
+        try:
+            await SQLiteMigrationManager(database=first_database).initialize()
+            first_repository = SQLiteSubmissionAttemptRepository(
+                database=first_database
+            )
+            second_repository = SQLiteSubmissionAttemptRepository(
+                database=second_database
+            )
+            first_attempt = _attempt()
+            second_attempt = replace(
+                first_attempt,
+                client_order_id="btg-11111111111111111111111111111111",
+            )
+
+            reserved = await asyncio.gather(
+                first_repository.reserve(attempt=first_attempt),
+                second_repository.reserve(attempt=second_attempt),
+            )
+
+            assert reserved.count(True) == 1
+            assert reserved.count(False) == 1
+            incomplete = await first_repository.get_incomplete()
+            assert len(incomplete) == 1
+            assert incomplete[0].client_order_id in {
+                first_attempt.client_order_id,
+                second_attempt.client_order_id,
+            }
+        finally:
+            await second_database.close()
+            await first_database.close()

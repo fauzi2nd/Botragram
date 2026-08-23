@@ -156,6 +156,11 @@ class _RecordingAttemptRepository(SubmissionAttemptRepository):
     events: list[str]
     attempts: list[SubmissionAttempt] = field(default_factory=_create_attempts)
 
+    async def reserve(self, *, attempt: SubmissionAttempt) -> bool:
+        """Record a successful prepared reservation for this focused path."""
+        await self.save(attempt=attempt)
+        return True
+
     async def save(self, *, attempt: SubmissionAttempt) -> None:
         """Record each durable lifecycle transition."""
         self.events.append(f"attempt:{attempt.status.value}")

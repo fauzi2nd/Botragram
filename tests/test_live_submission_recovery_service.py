@@ -71,6 +71,14 @@ class FakeAttemptRepository(SubmissionAttemptRepository):
     incomplete: tuple[SubmissionAttempt, ...] = ()
     saved: list[SubmissionAttempt] = field(default_factory=list[SubmissionAttempt])
 
+    async def reserve(self, *, attempt: SubmissionAttempt) -> bool:
+        """Retain a prepared attempt only when recovery has no incomplete work."""
+        if self.incomplete:
+            return False
+        self.incomplete = (attempt,)
+        self.saved.append(attempt)
+        return True
+
     async def save(self, *, attempt: SubmissionAttempt) -> None:
         """Record one state transition."""
         self.saved.append(attempt)

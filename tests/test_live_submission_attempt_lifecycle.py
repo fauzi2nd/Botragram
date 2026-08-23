@@ -113,6 +113,21 @@ class RecordingSubmissionAttemptRepository(SubmissionAttemptRepository):
     )
     fail_status: SubmissionAttemptStatus | None = None
 
+    async def reserve(self, *, attempt: SubmissionAttempt) -> bool:
+        """Record one prepared reservation when no lifecycle is incomplete."""
+        if any(
+            existing.status
+            in (
+                SubmissionAttemptStatus.PREPARED,
+                SubmissionAttemptStatus.UNRESOLVED,
+                SubmissionAttemptStatus.ACKNOWLEDGED,
+            )
+            for existing in self.attempts.values()
+        ):
+            return False
+        await self.save(attempt=attempt)
+        return True
+
     async def save(self, *, attempt: SubmissionAttempt) -> None:
         """Record one persistence transition or inject one deterministic failure."""
         self.events.append(f"save:{attempt.status.value}")

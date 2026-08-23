@@ -141,7 +141,6 @@ class LiveFuturesEntryService:
                 "LIVE entry preflight failed before protected mutation"
             ) from error
 
-        self.runtime_control.set_position_protection_ready(False)
         client_order_id = f"{_CLIENT_ORDER_ID_PREFIX}{uuid4().hex}"
         now = datetime.now(UTC)
         attempt = SubmissionAttempt(
@@ -159,7 +158,16 @@ class LiveFuturesEntryService:
             created_at=now,
             updated_at=now,
         )
-        await self.submission_attempt_repository.save(attempt=attempt)
+        try:
+            reserved = await self.submission_attempt_repository.reserve(attempt=attempt)
+        except BaseException:
+            self.runtime_control.set_position_protection_ready(False)
+            raise
+        if not reserved:
+            raise LiveSubmissionBlockedError(
+                "An incomplete LIVE submission attempt blocks entry"
+            )
+        self.runtime_control.set_position_protection_ready(False)
         _LOGGER.info(
             "Live Futures entry submission started: symbol=%s signal=%s",
             signal.symbol,

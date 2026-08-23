@@ -21,7 +21,11 @@ from botragram.enums import (
     StrategyType,
     SubmissionAttemptStatus,
 )
-from botragram.exceptions import LiveEntryPreflightError, VenueRuleValidationError
+from botragram.exceptions import (
+    LiveEntryPreflightError,
+    LiveSubmissionBlockedError,
+    VenueRuleValidationError,
+)
 from botragram.models import (
     Order,
     Position,
@@ -148,6 +152,50 @@ class FakeOrderService:
 
 
 @dataclass(slots=True)
+class CoordinatedFakeOrderService(FakeOrderService):
+    """Coordinate two entry calls around the durable reservation boundary."""
+
+    normalization_calls: int = 0
+    first_normalization_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    second_normalization_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    release_first_normalization: asyncio.Event = field(default_factory=asyncio.Event)
+    release_second_normalization: asyncio.Event = field(default_factory=asyncio.Event)
+    submission_started: asyncio.Event = field(default_factory=asyncio.Event)
+    release_submission: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def normalize_futures_market_quantity(
+        self, *, symbol: str, quantity: Decimal
+    ) -> Decimal:
+        """Hold both callers after their initial unresolved-state read."""
+        assert symbol == "BTCUSDT"
+        self.normalization_calls += 1
+        if self.normalization_calls == 1:
+            self.first_normalization_ready.set()
+            await self.release_first_normalization.wait()
+        else:
+            self.second_normalization_ready.set()
+            await self.release_second_normalization.wait()
+        return quantity
+
+    async def submit(
+        self,
+        *,
+        signal: Signal,
+        risk_result: RiskResult,
+        order_type: OrderType,
+        price: Decimal | None,
+        client_order_id: str | None = None,
+    ) -> Order:
+        """Hold the winning POST boundary until the loser is observed."""
+        del signal, order_type, price, client_order_id
+        self.calls += 1
+        self.submitted_risk_result = risk_result
+        self.submission_started.set()
+        await self.release_submission.wait()
+        return self.order
+
+
+@dataclass(slots=True)
 class FakePositionService:
     """Return the post-entry exchange position and capture persistence."""
 
@@ -216,12 +264,30 @@ class FailingSubmissionAttemptRepository(MemorySubmissionAttemptRepository):
         self._failed = False
         self._failure_status = failure_status
 
+    async def reserve(self, *, attempt: SubmissionAttempt) -> bool:
+        """Fail exactly once before creating the durable reservation."""
+        self._raise_configured_failure(attempt=attempt)
+        return await super().reserve(attempt=attempt)
+
     async def save(self, *, attempt: SubmissionAttempt) -> None:
-        """Fail exactly once before delegating later durable transitions."""
+        """Fail exactly once before one later lifecycle transition."""
+        self._raise_configured_failure(attempt=attempt)
+        await super().save(attempt=attempt)
+
+    def _raise_configured_failure(self, *, attempt: SubmissionAttempt) -> None:
+        """Raise the configured failure at one exact persistence operation."""
         if not self._failed and attempt.status is self._failure_status:
             self._failed = True
             raise RuntimeError(f"configured {attempt.status.value} persistence failure")
-        await super().save(attempt=attempt)
+
+
+class CancellingReservationRepository(MemorySubmissionAttemptRepository):
+    """Cancel exactly at the durable reservation boundary."""
+
+    async def reserve(self, *, attempt: SubmissionAttempt) -> bool:
+        """Simulate cancellation whose database durability is unknown."""
+        del attempt
+        raise asyncio.CancelledError()
 
 
 def _service(
@@ -414,6 +480,160 @@ async def test_prepared_persistence_failure_never_reaches_entry_post() -> None:
 
     assert orders.calls == 0
     assert await repository.get_incomplete() == ()
+    assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_entries_allow_only_one_durable_submission_owner() -> None:
+    """Block a concurrent loser before it can issue a second MARKET POST."""
+    repository = MemorySubmissionAttemptRepository()
+    orders = CoordinatedFakeOrderService()
+    first_control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    second_control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    first = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(_position()),
+        protection_service=FakeProtectionService(),
+        runtime_control=first_control,
+        submission_attempt_repository=repository,
+    )
+    second = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(_position()),
+        protection_service=FakeProtectionService(),
+        runtime_control=second_control,
+        submission_attempt_repository=repository,
+    )
+
+    first_task = asyncio.create_task(
+        first.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+    )
+    await orders.first_normalization_ready.wait()
+    second_task = asyncio.create_task(
+        second.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+    )
+    await orders.second_normalization_ready.wait()
+    orders.release_first_normalization.set()
+    await orders.submission_started.wait()
+    orders.release_second_normalization.set()
+
+    with pytest.raises(LiveSubmissionBlockedError, match="incomplete LIVE submission"):
+        await second_task
+
+    assert orders.calls == 1
+    assert "position protection" in first_control.get_missing_startup_requirements()
+    assert (
+        "position protection" not in second_control.get_missing_startup_requirements()
+    )
+    incomplete = await repository.get_incomplete()
+    assert len(incomplete) == 1
+    assert incomplete[0].status is SubmissionAttemptStatus.PREPARED
+
+    orders.release_submission.set()
+    await first_task
+    assert await repository.get_incomplete() == ()
+    assert "position protection" not in first_control.get_missing_startup_requirements()
+    assert (
+        "position protection" not in second_control.get_missing_startup_requirements()
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_entries_do_not_reopen_a_shared_protection_gate() -> None:
+    """Keep one shared gate closed while the sole reservation winner is unsafe."""
+    repository = MemorySubmissionAttemptRepository()
+    orders = CoordinatedFakeOrderService()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    first = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(_position()),
+        protection_service=FakeProtectionService(),
+        runtime_control=control,
+        submission_attempt_repository=repository,
+    )
+    second = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(_position()),
+        protection_service=FakeProtectionService(),
+        runtime_control=control,
+        submission_attempt_repository=repository,
+    )
+
+    first_task = asyncio.create_task(
+        first.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+    )
+    await orders.first_normalization_ready.wait()
+    second_task = asyncio.create_task(
+        second.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+    )
+    await orders.second_normalization_ready.wait()
+    orders.release_first_normalization.set()
+    await orders.submission_started.wait()
+    orders.release_second_normalization.set()
+
+    with pytest.raises(LiveSubmissionBlockedError, match="incomplete LIVE submission"):
+        await second_task
+
+    assert orders.calls == 1
+    assert "position protection" in control.get_missing_startup_requirements()
+
+    orders.release_submission.set()
+    await first_task
+    assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_reservation_cancellation_keeps_protection_gate_closed() -> None:
+    """Treat cancellation at durable reservation as an unsafe state, not a loser."""
+    orders = FakeOrderService()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(_position()),
+        protection_service=FakeProtectionService(),
+        runtime_control=control,
+        submission_attempt_repository=CancellingReservationRepository(),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 0
     assert "position protection" in control.get_missing_startup_requirements()
 
 

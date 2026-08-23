@@ -14,6 +14,16 @@ class SubmissionAttemptRepository(ABC):
     """Persist pre-exchange LIVE entry identities."""
 
     @abstractmethod
+    async def reserve(self, *, attempt: SubmissionAttempt) -> bool:
+        """Atomically reserve the next LIVE mutation attempt.
+
+        Returns:
+            ``True`` only when no incomplete LIVE submission was present and
+            this prepared attempt was durably created. ``False`` when an
+            incomplete attempt already owns the mutation boundary.
+        """
+
+    @abstractmethod
     async def save(self, *, attempt: SubmissionAttempt) -> None:
         """Persist or replace one attempt."""
 

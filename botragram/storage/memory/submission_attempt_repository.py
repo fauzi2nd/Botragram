@@ -26,6 +26,23 @@ class MemorySubmissionAttemptRepository(
         super().__init__()
         self._attempts: dict[str, SubmissionAttempt] = {}
 
+    async def reserve(self, *, attempt: SubmissionAttempt) -> bool:
+        """Atomically retain a prepared attempt when no lifecycle is incomplete."""
+        async with self._lock:
+            if any(
+                existing.status
+                in (
+                    SubmissionAttemptStatus.PREPARED,
+                    SubmissionAttemptStatus.UNRESOLVED,
+                    SubmissionAttemptStatus.ACKNOWLEDGED,
+                )
+                for existing in self._attempts.values()
+            ):
+                return False
+
+            self._attempts[attempt.client_order_id] = attempt
+            return True
+
     async def save(self, *, attempt: SubmissionAttempt) -> None:
         """Persist one immutable attempt."""
         async with self._lock:

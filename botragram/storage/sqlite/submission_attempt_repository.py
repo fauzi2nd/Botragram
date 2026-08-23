@@ -30,6 +30,13 @@ _UPSERT = f"""INSERT INTO submission_attempts ({_COLUMNS}) VALUES
 (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(client_order_id) DO UPDATE SET status=excluded.status,
 exchange_order_id=excluded.exchange_order_id, updated_at=excluded.updated_at;"""
+_RESERVE = f"""INSERT INTO submission_attempts ({_COLUMNS})
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM submission_attempts
+    WHERE status IN (?, ?, ?)
+);"""
 
 
 class SQLiteSubmissionAttemptRepository(SubmissionAttemptRepository):
@@ -40,6 +47,23 @@ class SQLiteSubmissionAttemptRepository(SubmissionAttemptRepository):
     def __init__(self, *, database: SQLiteDatabase) -> None:
         """Initialize the repository with one connected database."""
         self._database = database
+
+    async def reserve(self, *, attempt: SubmissionAttempt) -> bool:
+        """Atomically create one prepared attempt when no lifecycle is incomplete."""
+        affected_rows = await self._database.execute(
+            statement=_RESERVE,
+            parameters=(
+                *self._params(attempt),
+                SubmissionAttemptStatus.PREPARED.value,
+                SubmissionAttemptStatus.UNRESOLVED.value,
+                SubmissionAttemptStatus.ACKNOWLEDGED.value,
+            ),
+        )
+        if affected_rows not in {0, 1}:
+            raise RuntimeError(
+                "SQLite LIVE submission reservation affected an invalid row count"
+            )
+        return affected_rows == 1
 
     async def save(self, *, attempt: SubmissionAttempt) -> None:
         """Persist or replace one attempt lifecycle snapshot."""
