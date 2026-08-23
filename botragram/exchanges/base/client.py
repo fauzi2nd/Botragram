@@ -30,6 +30,7 @@ from botragram.models import (
     Candle,
     ExchangeSymbolRules,
     ExecutableQuote,
+    MarketUniverseEntry,
     Order,
     Position,
     Ticker,
@@ -122,6 +123,15 @@ class BaseExchangeClient(ABC):
         quote_asset: str,
     ) -> Sequence[str]:
         """Return active trading symbols for one quote asset."""
+
+    async def get_market_universe(
+        self,
+        *,
+        quote_asset: str,
+    ) -> Sequence[MarketUniverseEntry]:
+        """Return typed market-universe facts when the exchange supports them."""
+        del quote_asset
+        raise NotImplementedError("Market-universe discovery is not supported")
 
     @abstractmethod
     async def get_candles(

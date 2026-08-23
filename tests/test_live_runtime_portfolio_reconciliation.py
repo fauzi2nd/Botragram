@@ -110,7 +110,9 @@ def test_zero_portfolio_clears_contexts_and_opens_protection_gate() -> None:
         ]
     )
 
-    assert asyncio.run(service.reconcile())
+    context = asyncio.run(service.reconcile_context())
+    assert context is not None
+    assert context.contexts == ()
     assert control.runtime_contexts == ()
     assert control.live_management_authorization is None
     assert control.is_position_protection_ready
@@ -134,7 +136,9 @@ def test_reconciliation_adopts_canonical_exact_portfolio(
         [LivePortfolioRecoveryResult(status=status, recovered_positions=positions)]
     )
 
-    assert asyncio.run(service.reconcile())
+    context = asyncio.run(service.reconcile_context())
+    assert context is not None
+    assert tuple(item.symbol for item in context.contexts) == tuple(sorted(symbols))
     assert tuple(context.symbol for context in control.runtime_contexts) == tuple(
         sorted(symbols)
     )
@@ -323,7 +327,7 @@ def test_unsafe_recovery_does_not_adopt_anything() -> None:
         ]
     )
 
-    assert asyncio.run(service.reconcile()) is False
+    assert asyncio.run(service.reconcile_context()) is None
     _closed(control)
     assert streams.events == []
     assert monitors.events == []

@@ -110,6 +110,7 @@ from botragram.services import (
     RuntimeRecoveryService,
     RuntimeReporter,
     StrategyService,
+    VolumeRankedDiscoveryUniverseService,
 )
 from botragram.services.live_market_stream_service import MarketTickListener
 from botragram.services.trading_service import TradingService
@@ -1096,6 +1097,12 @@ class DependencyProvider:
             market = self._settings.market
             return AutonomousLiveTradingCycleExecutor(
                 discovery_service=self.opportunity_discovery_service,
+                discovery_universe_service=VolumeRankedDiscoveryUniverseService(
+                    market_service=self.market_service,
+                    quote_asset=market.quote_asset,
+                    universe_limit=market.discovery_universe_limit,
+                    batch_size=market.discovery_batch_size,
+                ),
                 risk_evaluation_service=self.live_entry_risk_evaluation_service,
                 intent_service=intent_service,
                 execution_service=execution_service,
@@ -1106,6 +1113,7 @@ class DependencyProvider:
                 quote_asset=market.quote_asset,
                 max_symbols=market.discovery_max_symbols,
                 top_n=market.discovery_top_n,
+                max_open_positions=self._settings.risk.max_open_positions,
                 strategy_type=self._settings.strategy.strategy_type,
                 live_runtime_portfolio_reconciler=(
                     self.live_runtime_portfolio_reconciliation_service

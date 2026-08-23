@@ -19,8 +19,10 @@ from __future__ import annotations
 from decimal import Decimal
 
 __all__ = [
+    "DEFAULT_DISCOVERY_BATCH_SIZE",
     "DEFAULT_DISCOVERY_MAX_SYMBOLS",
     "DEFAULT_DISCOVERY_TOP_N",
+    "DEFAULT_DISCOVERY_UNIVERSE_LIMIT",
     "DEFAULT_MAKER_FEE_RATE",
     "DEFAULT_TAKER_FEE_RATE",
     "DEFAULT_SLIPPAGE_RATE",
@@ -29,6 +31,8 @@ __all__ = [
 # =============================================================================
 # Market Discovery
 # =============================================================================
+DEFAULT_DISCOVERY_UNIVERSE_LIMIT: int = 100
+DEFAULT_DISCOVERY_BATCH_SIZE: int = 20
 DEFAULT_DISCOVERY_MAX_SYMBOLS: int = 20
 DEFAULT_DISCOVERY_TOP_N: int = 5
 

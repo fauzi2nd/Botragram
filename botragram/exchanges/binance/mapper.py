@@ -33,6 +33,7 @@ from botragram.models import (
     Candle,
     ExchangeSymbolRules,
     ExecutableQuote,
+    MarketUniverseEntry,
     Order,
     Position,
     Ticker,
@@ -130,6 +131,16 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             bid_price=self._to_required_decimal(payload, key="bidPrice"),
             ask_price=self._to_required_decimal(payload, key="askPrice"),
             timestamp=self._to_datetime(timestamp_value),
+        )
+
+    def map_market_universe_entry(
+        self,
+        payload: ExchangePayload,
+    ) -> MarketUniverseEntry:
+        """Map one Binance bulk 24-hour ticker into a market-universe fact."""
+        return MarketUniverseEntry(
+            symbol=self._to_string(payload.get("symbol")),
+            quote_volume=self._to_required_decimal(payload, key="quoteVolume"),
         )
 
     def map_market_entry_rules(self, payload: ExchangePayload) -> ExchangeSymbolRules:

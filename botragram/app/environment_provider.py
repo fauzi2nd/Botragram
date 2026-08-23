@@ -46,6 +46,11 @@ from botragram.constants.env import (
     ENV_BYBIT_API_KEY,
     ENV_BYBIT_API_SECRET,
     ENV_BYBIT_TESTNET,
+    ENV_DISCOVERY_BATCH_SIZE,
+    ENV_DISCOVERY_CADENCE_SECONDS,
+    ENV_DISCOVERY_UNIVERSE_LIMIT,
+    ENV_EMA_CROSS_STOP_LOSS_PCT,
+    ENV_EMA_CROSS_TAKE_PROFIT_PCT,
     ENV_EMA_SCALPING_STOP_LOSS_PCT,
     ENV_EMA_SCALPING_TAKE_PROFIT_PCT,
     ENV_EXCHANGE_API_KEY_LEGACY,
@@ -423,6 +428,20 @@ class EnvironmentProvider:
         """Return the optional explicit runtime execution policy."""
         return self._get_var(ENV_EXECUTION_POLICY)
 
+    def get_ema_cross_stop_loss_pct(self) -> str:
+        """Return the EMA cross stop-loss ratio."""
+        return self._get_var(
+            ENV_EMA_CROSS_STOP_LOSS_PCT,
+            default="0.02",
+        )
+
+    def get_ema_cross_take_profit_pct(self) -> str:
+        """Return the EMA cross take-profit ratio."""
+        return self._get_var(
+            ENV_EMA_CROSS_TAKE_PROFIT_PCT,
+            default="0.04",
+        )
+
     def get_ema_scalping_stop_loss_pct(self) -> str:
         """Return the EMA scalping stop-loss ratio."""
         return self._get_var(
@@ -448,6 +467,18 @@ class EnvironmentProvider:
     def get_market_interval(self) -> str:
         """Return the optional configured candle interval."""
         return self._get_var(ENV_MARKET_INTERVAL)
+
+    def get_discovery_universe_limit(self) -> str:
+        """Return the maximum ranked symbols retained in one sweep."""
+        return self._get_var(ENV_DISCOVERY_UNIVERSE_LIMIT, default="100")
+
+    def get_discovery_batch_size(self) -> str:
+        """Return the number of ranked symbols evaluated per global cycle."""
+        return self._get_var(ENV_DISCOVERY_BATCH_SIZE, default="20")
+
+    def get_discovery_cadence_seconds(self) -> str:
+        """Return the optional autonomous global discovery cadence."""
+        return self._get_var(ENV_DISCOVERY_CADENCE_SECONDS)
 
     def get_active_exchange(self) -> str:
         """Return the configured active exchange."""

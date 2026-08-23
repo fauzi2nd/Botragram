@@ -33,9 +33,11 @@ from botragram.exchanges.binance.futures_client import (
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.exchanges.factory import ExchangeFactory
-from botragram.models import Order
+from botragram.models import MarketUniverseEntry, Order
 
 _NOW = datetime(2026, 8, 7, tzinfo=UTC)
+_EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
+_BULK_TICKER_ENDPOINT = "/fapi/v1/ticker/24hr"
 
 
 class RecordingBinanceRestClient(BinanceRestClient):
@@ -253,6 +255,33 @@ def _create_client(
     )
 
 
+def _market_symbol(
+    symbol: str,
+    *,
+    status: str = "TRADING",
+    quote_asset: str = "USDT",
+    contract_type: str = "PERPETUAL",
+) -> JsonObject:
+    """Return one Binance Futures exchangeInfo symbol row."""
+    return {
+        "symbol": symbol,
+        "status": status,
+        "quoteAsset": quote_asset,
+        "contractType": contract_type,
+    }
+
+
+def _configure_market_universe(
+    rest: RecordingBinanceRestClient,
+    *,
+    symbols: list[JsonObject],
+    tickers: JsonResponse,
+) -> None:
+    """Configure authoritative symbols and one bulk ticker snapshot."""
+    rest.get_responses[_EXCHANGE_INFO_ENDPOINT] = {"symbols": symbols}
+    rest.get_responses[_BULK_TICKER_ENDPOINT] = tickers
+
+
 def test_factory_builds_binance_futures_client() -> None:
     """Verify market selection constructs the dedicated Futures client."""
     exchange_client, _ = ExchangeFactory.create(
@@ -332,6 +361,197 @@ async def test_futures_client_lists_active_usdt_perpetual_symbols() -> None:
 
     assert symbols == ("BTCUSDT",)
     assert rest.requests == [("GET", "/fapi/v1/exchangeInfo", None, False)]
+
+
+@pytest.mark.asyncio
+async def test_futures_market_universe_uses_bulk_volume_ranking() -> None:
+    """Call both public endpoints and rank typed facts deterministically."""
+    rest = RecordingBinanceRestClient()
+    _configure_market_universe(
+        rest,
+        symbols=[
+            _market_symbol("BTCUSDT"),
+            _market_symbol("ETHUSDT"),
+            _market_symbol("SOLUSDT"),
+        ],
+        tickers=[
+            {"symbol": "BTCUSDT", "quoteVolume": "100"},
+            {"symbol": "SOLUSDT", "quoteVolume": "500"},
+            {"symbol": "ETHUSDT", "quoteVolume": "500"},
+        ],
+    )
+    client = _create_client(rest)
+
+    universe = await client.get_market_universe(quote_asset="usdt")
+
+    assert universe == (
+        MarketUniverseEntry(symbol="ETHUSDT", quote_volume=Decimal("500")),
+        MarketUniverseEntry(symbol="SOLUSDT", quote_volume=Decimal("500")),
+        MarketUniverseEntry(symbol="BTCUSDT", quote_volume=Decimal("100")),
+    )
+    assert all(isinstance(entry, MarketUniverseEntry) for entry in universe)
+    assert rest.requests == [
+        ("GET", _EXCHANGE_INFO_ENDPOINT, None, False),
+        ("GET", _BULK_TICKER_ENDPOINT, None, False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_futures_market_universe_cross_filters_eligible_symbols() -> None:
+    """Ignore inactive, wrong-quote, dated, and unknown ticker rows."""
+    rest = RecordingBinanceRestClient()
+    _configure_market_universe(
+        rest,
+        symbols=[
+            _market_symbol("BTCUSDT"),
+            _market_symbol("OLDUSDT", status="SETTLING"),
+            _market_symbol("BTCUSDC", quote_asset="USDC"),
+            _market_symbol("ETHUSDT_260925", contract_type="CURRENT_QUARTER"),
+        ],
+        tickers=[
+            {"symbol": "BTCUSDT", "quoteVolume": "100"},
+            {"symbol": "OLDUSDT", "quoteVolume": "not-a-decimal"},
+            {"symbol": "BTCUSDC", "quoteVolume": "not-a-decimal"},
+            {"symbol": "ETHUSDT_260925", "quoteVolume": "not-a-decimal"},
+            {"symbol": "UNKNOWNUSDT", "quoteVolume": "not-a-decimal"},
+        ],
+    )
+
+    universe = await _create_client(rest).get_market_universe(quote_asset="USDT")
+
+    assert universe == (
+        MarketUniverseEntry(symbol="BTCUSDT", quote_volume=Decimal("100")),
+    )
+
+
+@pytest.mark.asyncio
+async def test_futures_market_universe_ignores_missing_active_ticker() -> None:
+    """Accept snapshot skew when one authoritative active ticker is absent."""
+    rest = RecordingBinanceRestClient()
+    _configure_market_universe(
+        rest,
+        symbols=[_market_symbol("BTCUSDT"), _market_symbol("ETHUSDT")],
+        tickers=[{"symbol": "BTCUSDT", "quoteVolume": "100"}],
+    )
+
+    universe = await _create_client(rest).get_market_universe(quote_asset="USDT")
+
+    assert tuple(entry.symbol for entry in universe) == ("BTCUSDT",)
+
+
+@pytest.mark.asyncio
+async def test_futures_market_universe_accepts_and_ranks_zero_volume() -> None:
+    """Retain zero volume and rank it below positive quote volume."""
+    rest = RecordingBinanceRestClient()
+    _configure_market_universe(
+        rest,
+        symbols=[_market_symbol("BTCUSDT"), _market_symbol("ETHUSDT")],
+        tickers=[
+            {"symbol": "BTCUSDT", "quoteVolume": "0"},
+            {"symbol": "ETHUSDT", "quoteVolume": "1"},
+        ],
+    )
+
+    universe = await _create_client(rest).get_market_universe(quote_asset="USDT")
+
+    assert tuple((entry.symbol, entry.quote_volume) for entry in universe) == (
+        ("ETHUSDT", Decimal("1")),
+        ("BTCUSDT", Decimal("0")),
+    )
+
+
+@pytest.mark.asyncio
+async def test_futures_market_universe_rejects_duplicate_eligible_ticker() -> None:
+    """Fail when two bulk rows normalize to the same eligible symbol."""
+    rest = RecordingBinanceRestClient()
+    _configure_market_universe(
+        rest,
+        symbols=[_market_symbol("BTCUSDT")],
+        tickers=[
+            {"symbol": "BTCUSDT", "quoteVolume": "100"},
+            {"symbol": " btcusdt ", "quoteVolume": "90"},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="duplicate eligible symbol"):
+        await _create_client(rest).get_market_universe(quote_asset="USDT")
+
+
+@pytest.mark.parametrize(
+    "ticker_payload",
+    (
+        {"symbol": "BTCUSDT"},
+        {"symbol": "BTCUSDT", "quoteVolume": "not-a-decimal"},
+        {"symbol": "BTCUSDT", "quoteVolume": "NaN"},
+        {"symbol": "BTCUSDT", "quoteVolume": "Infinity"},
+        {"symbol": "BTCUSDT", "quoteVolume": "-1"},
+    ),
+)
+@pytest.mark.asyncio
+async def test_futures_market_universe_rejects_invalid_eligible_volume(
+    ticker_payload: JsonObject,
+) -> None:
+    """Fail rather than manufacture a usable eligible quote volume."""
+    rest = RecordingBinanceRestClient()
+    _configure_market_universe(
+        rest,
+        symbols=[_market_symbol("BTCUSDT")],
+        tickers=[ticker_payload],
+    )
+
+    with pytest.raises(ValueError):
+        await _create_client(rest).get_market_universe(quote_asset="USDT")
+
+
+@pytest.mark.asyncio
+async def test_futures_market_universe_rejects_malformed_top_level_ticker() -> None:
+    """Require the bulk 24-hour ticker payload to be an array."""
+    rest = RecordingBinanceRestClient()
+    _configure_market_universe(
+        rest,
+        symbols=[_market_symbol("BTCUSDT")],
+        tickers={},
+    )
+
+    with pytest.raises(ValueError):
+        await _create_client(rest).get_market_universe(quote_asset="USDT")
+
+
+@pytest.mark.parametrize(
+    "ticker_rows",
+    (
+        [{"quoteVolume": "100"}],
+        ["not-a-mapping"],
+    ),
+)
+@pytest.mark.asyncio
+async def test_futures_market_universe_rejects_unprovable_ticker_identity(
+    ticker_rows: list[object],
+) -> None:
+    """Fail when a bulk row cannot prove which symbol it represents."""
+    rest = RecordingBinanceRestClient()
+    _configure_market_universe(
+        rest,
+        symbols=[_market_symbol("BTCUSDT")],
+        tickers=ticker_rows,
+    )
+
+    with pytest.raises(ValueError):
+        await _create_client(rest).get_market_universe(quote_asset="USDT")
+
+
+@pytest.mark.asyncio
+async def test_futures_market_universe_rejects_empty_usable_ranking() -> None:
+    """Fail when the bulk snapshot contains no usable eligible symbol."""
+    rest = RecordingBinanceRestClient()
+    _configure_market_universe(
+        rest,
+        symbols=[_market_symbol("BTCUSDT")],
+        tickers=[{"symbol": "UNKNOWNUSDT", "quoteVolume": "not-a-decimal"}],
+    )
+
+    with pytest.raises(ValueError, match="no usable ranked symbols"):
+        await _create_client(rest).get_market_universe(quote_asset="USDT")
 
 
 @pytest.mark.asyncio

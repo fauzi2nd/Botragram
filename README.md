@@ -52,13 +52,38 @@ while an approval remains pending. Both PAPER market-wide policies are rejected 
 AUTONOMOUS LIVE = TESTNET ONLY. The explicit `autonomous_live` execution policy
 is operational only with `TRADE_MODE=LIVE`,
 `AUTONOMOUS_LIVE_ENTRY_ENABLED=true`, and an exchange TESTNET connection.
-The existing deterministic discovery/ranking pipeline processes candidates
-sequentially. Each candidate receives a current portfolio/balance/risk decision
-before intent authorization and a fresh mutation-time validation at the protected
-entry boundary. Successful entries remain PREPARED-before-POST, exactly-one-POST
-reconciled, and must finish with verified STOP/TP protection. Unsafe mutation
-outcomes stop later candidates; recovered positions participate in capacity and
-risk. MAINNET autonomous LIVE remains rejected.
+Autonomous LIVE discovers active Binance USD-M USDT perpetual symbols from a
+typed market universe ranked by 24-hour quote volume. The ranked snapshot is
+process-local and rotates through bounded contiguous batches; the default LIVE
+configuration keeps the top 100 symbols and scans 20 per cycle, refreshing the
+universe only after a completed sweep. Every batch still evaluates only the
+latest valid CLOSED candle, never the currently forming candle. The optional
+`DISCOVERY_CADENCE_SECONDS` setting controls only autonomous global-discovery
+cadence; when unset, the existing interval-derived cadence remains unchanged.
+
+Before heavy discovery begins, canonical LIVE portfolio reconciliation proves the
+current managed portfolio. A full portfolio skips the universe refresh, candle
+scan, durable opportunity claim, risk evaluation, and entry mutation entirely.
+Candidates are still processed strictly sequentially. After every
+`EXECUTED_AND_PROTECTED` result, canonical reconciliation runs immediately; once
+capacity is full, later candidates in that batch are not claimed or submitted.
+The existing final authoritative portfolio and venue-entry checks remain in place
+as defense in depth. Successful entries remain PREPARED-before-POST,
+exactly-one-POST reconciled, and must finish with verified STOP/TP protection.
+Unsafe mutation outcomes stop later candidates; recovered positions participate
+in capacity and risk. MAINNET autonomous LIVE remains rejected.
+
+EMA cross and EMA scalping now have independent percentage-based stop-loss and
+take-profit settings. `EMA_CROSS_STOP_LOSS_PCT` and
+`EMA_CROSS_TAKE_PROFIT_PCT` apply only to EMA cross; EMA scalping keeps its own
+settings, while other strategies continue to use the explicit global fallback.
+
+The terminal's global-discovery telemetry is read-only. It reports the current
+cycle phase separately from the last completed outcome (`COMPLETED`,
+`SKIPPED_CAPACITY`, or `FAILED`), together with the ranked window, scanned count,
+actionable candidates, and whether processing stopped because capacity became
+full. `SKIPPED_CAPACITY` does not mean the runner or position management is
+paused.
 
 After the existing discovery, ranking, position, and risk gates have approved a
 candidate, the pure authorization boundary may create a transient typed entry
@@ -296,9 +321,12 @@ python -c "from botragram.app.settings_manager import SettingsManager; s = Setti
 ```
 
 The expected output is `live futures testnet autonomous_live True`. The template
-uses the existing conservative `MAX_POSITION_SIZE_USDT=10` and
-`MAX_OPEN_POSITIONS=1` risk controls. Only after this preflight succeeds should
-the separate Phase 5C acceptance soak start.
+uses the conservative `MAX_POSITION_SIZE_USDT=10` and `MAX_OPEN_POSITIONS=1` risk
+controls together with `DISCOVERY_UNIVERSE_LIMIT=100`,
+`DISCOVERY_BATCH_SIZE=20`, and a TESTNET-only `DISCOVERY_CADENCE_SECONDS=10`.
+For multi-position acceptance, change only the ignored local soak copy (for
+example `MAX_OPEN_POSITIONS=5`); do not weaken or commit the shared safe default.
+Only after the preflight succeeds should the separate acceptance soak start.
 
 ## Backtest
 

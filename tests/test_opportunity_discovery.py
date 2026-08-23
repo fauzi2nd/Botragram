@@ -61,10 +61,12 @@ class FakeMarketService:
     candle_started: asyncio.Event = field(default_factory=asyncio.Event)
     active_candle_requests: int = 0
     maximum_active_candle_requests: int = 0
+    trading_symbol_requests: int = 0
 
     async def get_trading_symbols(self, *, quote_asset: str) -> tuple[str, ...]:
         """Return the configured exchange universe."""
         assert quote_asset == "USDT"
+        self.trading_symbol_requests += 1
         return self.symbols
 
     async def get_candles(
@@ -252,6 +254,175 @@ def _create_signal(
 # =============================================================================
 # Service Tests
 # =============================================================================
+def test_explicit_batch_preserves_input_order_without_universe_lookup() -> None:
+    """Analyze each normalized explicit symbol once in first-occurrence order."""
+    asyncio.run(_run_explicit_batch_order_test())
+
+
+async def _run_explicit_batch_order_test() -> None:
+    symbols = ("ETHUSDT", "BTCUSDT", "SOLUSDT")
+    candles_by_symbol: dict[str, tuple[Candle, ...]] = {
+        symbol: (
+            _create_candle(
+                symbol=symbol,
+                open_time=_NOW - timedelta(minutes=15),
+                close_time=_NOW,
+            ),
+        )
+        for symbol in symbols
+    }
+    signals = {
+        "ETHUSDT": _create_signal(
+            symbol="ETHUSDT",
+            signal_type=SignalType.BUY,
+            confidence="0.7",
+            strategy_name=StrategyType.EMA_CROSS.value,
+        ),
+        "BTCUSDT": _create_signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            confidence="0.9",
+            strategy_name=StrategyType.EMA_CROSS.value,
+        ),
+        "SOLUSDT": _create_signal(
+            symbol="SOLUSDT",
+            signal_type=SignalType.HOLD,
+            confidence="1",
+            strategy_name=StrategyType.EMA_CROSS.value,
+        ),
+    }
+    market_service = FakeMarketService(
+        symbols=("IGNOREDUSDT",),
+        candles_by_symbol=candles_by_symbol,
+    )
+    strategy_service = FakeStrategyService(signals=signals)
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    opportunities = await service.discover_symbols(
+        symbols=(" ethusdt ", "BTCUSDT", "ETHUSDT", "solusdt"),
+        interval=Interval.M15,
+        candle_limit=1,
+        top_n=2,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    assert market_service.trading_symbol_requests == 0
+    assert market_service.requested_symbols == list(symbols)
+    assert market_service.maximum_active_candle_requests == 1
+    assert strategy_service.generated_symbols == list(symbols)
+    assert strategy_service.saved_symbols == list(symbols)
+    assert tuple(signal.symbol for signal in opportunities) == (
+        "BTCUSDT",
+        "ETHUSDT",
+    )
+
+
+@pytest.mark.parametrize(
+    "symbols",
+    (
+        (),
+        ("   ",),
+        ("BTC/USDT",),
+    ),
+)
+def test_explicit_batch_rejects_empty_or_invalid_symbols(
+    symbols: tuple[str, ...],
+) -> None:
+    """Reject unusable explicit batches before any discovery market access."""
+    market_service = FakeMarketService(symbols=("IGNOREDUSDT",))
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=FakeStrategyService(signals={}),
+        utc_now=lambda: _NOW,
+    )
+
+    with pytest.raises(ValueError):
+        asyncio.run(
+            service.discover_symbols(
+                symbols=symbols,
+                interval=Interval.M15,
+                candle_limit=1,
+                top_n=1,
+                strategy_type=StrategyType.EMA_CROSS,
+            )
+        )
+
+    assert market_service.trading_symbol_requests == 0
+    assert market_service.requested_symbols == []
+
+
+def test_explicit_batches_use_the_same_latest_closed_candle_before_next_close() -> None:
+    """Use 14:10 for separate batches at 14:10:25 while 14:10 remains open."""
+    asyncio.run(_run_cross_batch_closed_candle_test())
+
+
+async def _run_cross_batch_closed_candle_test() -> None:
+    decision_time = datetime(2026, 8, 17, 14, 10, 25, tzinfo=UTC)
+    latest_closed_time = datetime(2026, 8, 17, 14, 10, tzinfo=UTC)
+    current_close_time = datetime(2026, 8, 17, 14, 11, tzinfo=UTC)
+    symbols = ("BTCUSDT", "ETHUSDT")
+    market_service = FakeMarketService(
+        symbols=("IGNOREDUSDT",),
+        expected_interval=Interval.M1,
+        candles_by_symbol={
+            symbol: (
+                _create_candle(
+                    symbol=symbol,
+                    interval=Interval.M1,
+                    open_time=latest_closed_time - timedelta(minutes=1),
+                    close_time=latest_closed_time,
+                ),
+                _create_candle(
+                    symbol=symbol,
+                    interval=Interval.M1,
+                    open_time=latest_closed_time,
+                    close_time=current_close_time,
+                ),
+            )
+            for symbol in symbols
+        },
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            symbol: _create_signal(
+                symbol=symbol,
+                signal_type=SignalType.BUY,
+                confidence="0.9",
+                generated_at=latest_closed_time,
+                strategy_name=StrategyType.EMA_CROSS.value,
+            )
+            for symbol in symbols
+        }
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: decision_time,
+    )
+
+    for symbol in symbols:
+        opportunities = await service.discover_symbols(
+            symbols=(symbol,),
+            interval=Interval.M1,
+            candle_limit=1,
+            top_n=1,
+            strategy_type=StrategyType.EMA_CROSS,
+        )
+        assert opportunities[0].generated_at == latest_closed_time
+
+    assert market_service.trading_symbol_requests == 0
+    assert tuple(
+        candles[-1].close_time for candles in strategy_service.saved_candles
+    ) == (
+        latest_closed_time,
+        latest_closed_time,
+    )
+
+
 def test_discovery_bounds_analysis_and_ranks_actionable_signals() -> None:
     """Analyze a bounded sorted universe and return confidence-ranked entries."""
     asyncio.run(_run_discovery_test())

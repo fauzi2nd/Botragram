@@ -32,6 +32,7 @@ from botragram.models import (
     LivePortfolioRecoveryResult,
     LiveProtectionMonitorState,
     LiveRecoveredPositionManagementAuthorization,
+    LiveRuntimePortfolioContext,
     LiveRuntimePositionContext,
     Position,
 )
@@ -134,14 +135,17 @@ class LiveRuntimePortfolioReconciliationService:
             raise ValueError("First stream tick timeout must be greater than zero")
 
     async def reconcile(self) -> bool:
-        """Synchronize, protect, and adopt the complete authoritative portfolio.
+        """Return whether canonical LIVE portfolio reconciliation completed safely."""
+        return (await self.reconcile_context()) is not None
 
-        Returns:
-            Whether every authoritative position is represented by an exact
-            context, ready stream, healthy monitor, and authorization.
+    async def reconcile_context(self) -> LiveRuntimePortfolioContext | None:
+        """Synchronize and return the exact authoritative managed portfolio.
 
         Raises:
             asyncio.CancelledError: If reconciliation is cancelled.
+
+        Returns:
+            Exact managed runtime portfolio when safe, otherwise ``None``.
         """
         self.runtime_control.set_position_protection_ready(False)
         try:
@@ -152,7 +156,7 @@ class LiveRuntimePortfolioReconciliationService:
             portfolio = await self.live_portfolio_recovery_service.recover()
             if portfolio.status is LivePortfolioRecoveryStatus.UNSAFE:
                 await self._fail_closed()
-                return False
+                return None
 
             contexts = tuple(
                 sorted(
@@ -167,12 +171,13 @@ class LiveRuntimePortfolioReconciliationService:
                     ),
                 )
             )
+            portfolio_context = LiveRuntimePortfolioContext(contexts=contexts)
             if not contexts:
                 await self._remove_stale_ownership(contexts=())
                 self.runtime_control.clear_runtime_contexts()
                 self.runtime_control.clear_live_management_authorization()
                 self.runtime_control.set_position_protection_ready(True)
-                return True
+                return portfolio_context
 
             self.runtime_control.set_runtime_contexts(contexts=contexts)
             await self._remove_stale_ownership(contexts=contexts)
@@ -188,14 +193,14 @@ class LiveRuntimePortfolioReconciliationService:
                 )
             )
             self.runtime_control.set_position_protection_ready(True)
-            return True
+            return portfolio_context
         except asyncio.CancelledError:
             await self._fail_closed()
             raise
         except Exception:
             _LOGGER.exception("LIVE runtime portfolio reconciliation failed")
             await self._fail_closed()
-            return False
+            return None
 
     async def _remove_stale_ownership(
         self, *, contexts: tuple[LiveRuntimePositionContext, ...]

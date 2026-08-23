@@ -39,6 +39,7 @@ botragram/
 |   |-- application.py
 |   |-- dependency_provider.py
 |   |-- environment_provider.py
+|   |-- global_discovery_telemetry.py # Read-only ranked discovery phase/outcome snapshot
 |   |-- lifecycle.py
 |   |-- market_type_switch.py # Guarded Spot/Futures soft-restart coordination
 |   |-- runtime_control.py
@@ -81,7 +82,8 @@ botragram/
 |   `-- trading_engine.py
 |-- enums/                     # Closed domain choices, including exchange_environment.py
 |   |-- autonomous_live_entry_execution_status.py # Typed protected-entry outcome
-|   `-- autonomous_live_entry_intent_status.py # Typed autonomous intent outcome
+|   |-- autonomous_live_entry_intent_status.py # Typed autonomous intent outcome
+|   `-- global_discovery_cycle_outcome.py # Last completed discovery outcome
 |-- exceptions/                # Project-specific exception hierarchy
 |-- exchanges/
 |   |-- factory.py
@@ -110,13 +112,15 @@ botragram/
 |   |-- autonomous_live_entry_execution.py # Typed protected-entry execution result
 |   |-- autonomous_live_entry_intent.py # Transient authorized TESTNET entry intent
 |   |-- autonomous_live_recovery_snapshot.py # Immutable durable recovery status
+|   |-- discovery_universe_batch.py # Immutable contiguous ranked discovery window
 |   |-- live_entry_risk_evaluation.py # Immutable fresh LIVE risk decision
 |   `-- backtest.py            # Backtest request, trade, metrics, dan result
 |   |-- live_market_stream_identity.py # LIVE ticker subscription identity
 |   |-- live_market_stream_state.py # Immutable per-stream telemetry snapshot
 |   |-- live_runtime_health_snapshot.py # Read-only recovered LIVE health snapshot
 |   |-- live_runtime_position_context.py # One recovered LIVE runtime context
-|   `-- live_runtime_portfolio_context.py # Immutable recovered LIVE portfolio
+|   |-- live_runtime_portfolio_context.py # Immutable recovered LIVE portfolio
+|   `-- market_universe_entry.py # Binance-independent ranked market fact
 |-- repositories/              # Persistence interfaces, including submission attempts
 |-- services/
 |   |-- account_service.py
@@ -147,6 +151,7 @@ botragram/
 |   |-- runtime_recovery_service.py # Restart recovery dan live protection gate
 |   |-- runtime_reporter.py
 |   |-- strategy_service.py
+|   |-- volume_ranked_discovery_universe_service.py # Process-local ranked rotation
 |   `-- trading_service.py
 |-- storage/
 |   |-- base/

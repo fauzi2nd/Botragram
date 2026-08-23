@@ -836,6 +836,45 @@ async def test_unverified_position_or_protection_keeps_gate_closed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_post_acknowledged_venue_rule_failure_is_execution_unsafe() -> None:
+    """Never classify a protection rule failure as a safe pre-POST rejection."""
+    orders = FakeOrderService()
+    protection = FakeProtectionService(
+        error=VenueRuleValidationError(
+            "Protection trigger is invalid relative to current MARK_PRICE"
+        ),
+    )
+    repository = MemorySubmissionAttemptRepository()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(_position()),
+        protection_service=protection,
+        runtime_control=control,
+        submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
+    )
+
+    with pytest.raises(RuntimeError, match="post-entry state is unsafe") as captured:
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M1,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert isinstance(captured.value.__cause__, VenueRuleValidationError)
+    assert orders.calls == 1
+    incomplete = await repository.get_incomplete()
+    assert len(incomplete) == 1
+    assert incomplete[0].status is SubmissionAttemptStatus.ACKNOWLEDGED
+    assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
 async def test_limit_rejection_and_submission_failure_never_retry() -> None:
     """Reject asynchronous LIMIT entries and keep an ambiguous submission unsafe."""
     orders = FakeOrderService(error=RuntimeError("timeout"))

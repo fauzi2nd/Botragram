@@ -10,6 +10,7 @@ from time import monotonic
 from typing import Final
 
 from botragram.enums import OrderSide, OrderType, PositionSide, TradeMode
+from botragram.exceptions import VenueRuleValidationError
 from botragram.exchanges.base import BaseExchangeClient
 from botragram.models import Position, Ticker
 from botragram.repositories import PositionRepository
@@ -82,10 +83,24 @@ class PositionProtectionManager:
             position_with_client_id = position
             final_stop = replacement_stop
             if self.trade_mode is TradeMode.LIVE:
-                final_stop = await self._normalize_live_replacement_stop(
-                    position=position,
-                    raw_stop=replacement_stop,
-                )
+                try:
+                    final_stop = await self._normalize_live_replacement_stop(
+                        position=position,
+                        raw_stop=replacement_stop,
+                    )
+                except VenueRuleValidationError:
+                    self._retry_after_monotonic = (
+                        monotonic() + self.failure_retry_seconds
+                    )
+                    _LOGGER.warning(
+                        "Live stepped protection deferred because the replacement "
+                        "stop is not currently venue-valid: symbol=%s side=%s "
+                        "raw_stop=%s",
+                        position.symbol,
+                        position.side.value,
+                        replacement_stop,
+                    )
+                    return
                 if not self._is_tighter_stop(
                     position=position,
                     replacement_stop=final_stop,

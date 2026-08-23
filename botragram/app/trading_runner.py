@@ -49,6 +49,7 @@ from botragram.models import (
     AutonomousLiveEntryExecutionResult,
     AutonomousLiveEntryIntent,
     AutonomousLiveEntryIntentResult,
+    DiscoveryUniverseBatch,
     ExecutionAuthorization,
     LiveEntryRiskEvaluation,
     LiveMarketStreamIdentity,
@@ -56,6 +57,7 @@ from botragram.models import (
     LiveProtectionMonitorState,
     LiveRecoveredPositionManagementAuthorization,
     LiveRuntimeHealthSnapshot,
+    LiveRuntimePortfolioContext,
     LiveRuntimePositionContext,
     Signal,
     TradingDecision,
@@ -66,6 +68,7 @@ __all__ = [
     "AutonomousPaperTradingCycleExecutor",
     "AutonomousLiveCycleUnsafeError",
     "AutonomousLiveTradingCycleExecutor",
+    "GlobalDiscoveryCycleReport",
     "GlobalTradingCycleExecutor",
     "HumanConfirmedPaperTradingCycleExecutor",
     "MultiContextActivationPreconditionProvider",
@@ -106,6 +109,40 @@ class AutonomousLiveCycleUnsafeError(RuntimeError):
         """Initialize an unsafe cycle with already completed candidate results."""
         super().__init__(message)
         self.completed_results = tuple(completed_results)
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class GlobalDiscoveryCycleReport:
+    """Describe one completed autonomous global-discovery cycle factually."""
+
+    results: tuple[TradingResult, ...] = ()
+    batch: DiscoveryUniverseBatch | None = None
+    signals: tuple[Signal, ...] = ()
+    skipped_capacity: bool = False
+    stopped_by_capacity: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject contradictory capacity and discovery facts."""
+        if self.skipped_capacity and (
+            self.batch is not None
+            or self.signals
+            or self.results
+            or self.stopped_by_capacity
+        ):
+            raise ValueError(
+                "Capacity-skipped global discovery must not contain scan results"
+            )
+        if self.batch is None and self.signals:
+            raise ValueError("Discovered signals require a ranked universe batch")
+        if self.stopped_by_capacity and self.batch is None:
+            raise ValueError(
+                "Capacity-stopped discovery requires a ranked universe batch"
+            )
+
+    @property
+    def scanned_count(self) -> int:
+        """Return the exact number of ranked symbols scanned by this cycle."""
+        return len(self.batch.entries) if self.batch is not None else 0
 
 
 class _AutonomousLiveRuntimeHealthUnsafeError(RuntimeError):
@@ -168,6 +205,20 @@ class GlobalTradingCycleExecutor(Protocol):
         ...
 
 
+@runtime_checkable
+class _GlobalDiscoveryCycleReportingExecutor(Protocol):
+    """Return typed global-discovery facts without changing legacy results."""
+
+    async def execute_global_report(
+        self,
+        *,
+        interval: Interval,
+        candle_limit: int,
+    ) -> GlobalDiscoveryCycleReport:
+        """Execute one global cycle and return its immutable discovery report."""
+        ...
+
+
 class SingleSymbolExecutionProvider(Protocol):
     """Execute the existing single-symbol trading workflow."""
 
@@ -212,17 +263,31 @@ class AutonomousPaperExecutionProvider(Protocol):
 class OpportunityDiscoveryProvider(Protocol):
     """Discover deterministic actionable market opportunities."""
 
-    async def discover(
+    async def discover_symbols(
         self,
         *,
-        quote_asset: str,
+        symbols: Sequence[str],
         interval: Interval,
         candle_limit: int,
-        max_symbols: int,
         top_n: int,
         strategy_type: StrategyType,
     ) -> Sequence[Signal]:
-        """Return ranked actionable signals for one explicit strategy."""
+        """Return ranked actionable signals for one explicit symbol batch."""
+        ...
+
+
+class DiscoveryUniverseProvider(Protocol):
+    """Own process-local ranked discovery batches for autonomous LIVE."""
+
+    universe_limit: int
+    batch_size: int
+
+    async def get_current_batch(self) -> DiscoveryUniverseBatch:
+        """Return the current batch without consuming it."""
+        ...
+
+    def complete_batch(self, *, batch: DiscoveryUniverseBatch) -> None:
+        """Advance after normal discovery completion."""
         ...
 
 
@@ -323,8 +388,8 @@ class _LiveRuntimeHealthProvider(Protocol):
 class _LiveRuntimePortfolioReconciler(Protocol):
     """Reconcile authoritative LIVE exposure into local management ownership."""
 
-    async def reconcile(self) -> bool:
-        """Return whether the exact portfolio is safely managed."""
+    async def reconcile_context(self) -> LiveRuntimePortfolioContext | None:
+        """Return the exact managed portfolio, or none when reconciliation is unsafe."""
         ...
 
 
@@ -565,6 +630,7 @@ class AutonomousLiveTradingCycleExecutor:
     """
 
     discovery_service: OpportunityDiscoveryProvider
+    discovery_universe_service: DiscoveryUniverseProvider
     risk_evaluation_service: LiveEntryRiskEvaluationProvider
     intent_service: AutonomousLiveIntentProvider
     execution_service: AutonomousLiveEntryExecutionProvider
@@ -573,6 +639,7 @@ class AutonomousLiveTradingCycleExecutor:
     quote_asset: str
     max_symbols: int
     top_n: int
+    max_open_positions: int
     strategy_type: StrategyType
     live_runtime_portfolio_reconciler: _LiveRuntimePortfolioReconciler
 
@@ -585,6 +652,10 @@ class AutonomousLiveTradingCycleExecutor:
             raise ValueError("Autonomous LIVE maximum symbols must be positive")
         if self.top_n <= 0:
             raise ValueError("Autonomous LIVE top N must be positive")
+        if isinstance(self.max_open_positions, bool) or self.max_open_positions <= 0:
+            raise ValueError("Autonomous LIVE maximum open positions must be positive")
+        if self.top_n > self.discovery_universe_service.batch_size:
+            raise ValueError("Autonomous LIVE top N must not exceed batch size")
         if not self.authorization.new_live_entry_allowed:
             raise ValueError("Autonomous LIVE requires TESTNET entry authorization")
         object.__setattr__(self, "quote_asset", quote_asset)
@@ -595,23 +666,47 @@ class AutonomousLiveTradingCycleExecutor:
         interval: Interval,
         candle_limit: int,
     ) -> Sequence[TradingResult]:
-        """Discover and process ranked candidates strictly one at a time."""
-        if not await self._reconcile_live_runtime_portfolio():
+        """Preserve the established sequence-returning global executor contract."""
+        report = await self.execute_global_report(
+            interval=interval,
+            candle_limit=candle_limit,
+        )
+        return report.results
+
+    async def execute_global_report(
+        self,
+        *,
+        interval: Interval,
+        candle_limit: int,
+    ) -> GlobalDiscoveryCycleReport:
+        """Discover, process, and report one bounded autonomous LIVE cycle."""
+        portfolio = await self._reconcile_live_runtime_portfolio()
+        if portfolio is None:
             raise AutonomousLiveCycleUnsafeError(
                 "Autonomous LIVE portfolio reconciliation failed before discovery"
             )
+        if self._portfolio_is_full(portfolio=portfolio):
+            return GlobalDiscoveryCycleReport(skipped_capacity=True)
 
-        signals = await self.discovery_service.discover(
-            quote_asset=self.quote_asset,
-            interval=interval,
-            candle_limit=candle_limit,
-            max_symbols=self.max_symbols,
-            top_n=self.top_n,
-            strategy_type=self.strategy_type,
+        batch = await self.discovery_universe_service.get_current_batch()
+        signals = tuple(
+            await self.discovery_service.discover_symbols(
+                symbols=tuple(entry.symbol for entry in batch.entries),
+                interval=interval,
+                candle_limit=candle_limit,
+                top_n=self.top_n,
+                strategy_type=self.strategy_type,
+            )
         )
+        self.discovery_universe_service.complete_batch(batch=batch)
         results: list[TradingResult] = []
+        stopped_by_capacity = False
 
         for signal in signals:
+            if self._portfolio_is_full(portfolio=portfolio):
+                stopped_by_capacity = True
+                break
+
             claimed = await self.opportunity_claim_repository.claim(
                 signal=signal,
                 interval=interval,
@@ -646,13 +741,18 @@ class AutonomousLiveTradingCycleExecutor:
             if (
                 execution_result.status
                 is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
-                and not await self._reconcile_live_runtime_portfolio()
             ):
-                raise AutonomousLiveCycleUnsafeError(
-                    "Autonomous LIVE protected entry was not adopted into "
-                    "runtime management",
-                    completed_results=results,
-                )
+                reconciled_portfolio = await self._reconcile_live_runtime_portfolio()
+                if reconciled_portfolio is None:
+                    raise AutonomousLiveCycleUnsafeError(
+                        "Autonomous LIVE protected entry was not adopted into "
+                        "runtime management",
+                        completed_results=results,
+                    )
+                portfolio = reconciled_portfolio
+                if self._portfolio_is_full(portfolio=portfolio):
+                    stopped_by_capacity = True
+                    break
 
             if execution_result.status in {
                 AutonomousLiveEntryExecutionStatus.SUBMISSION_BLOCKED,
@@ -663,11 +763,22 @@ class AutonomousLiveTradingCycleExecutor:
                     f"{execution_result.status.value}"
                 )
 
-        return tuple(results)
+        return GlobalDiscoveryCycleReport(
+            results=tuple(results),
+            batch=batch,
+            signals=signals,
+            stopped_by_capacity=stopped_by_capacity,
+        )
 
-    async def _reconcile_live_runtime_portfolio(self) -> bool:
-        """Reconcile before discovery and after each protected new exposure."""
-        return await self.live_runtime_portfolio_reconciler.reconcile()
+    async def _reconcile_live_runtime_portfolio(
+        self,
+    ) -> LiveRuntimePortfolioContext | None:
+        """Return authoritative managed exposure before discovery and after entry."""
+        return await self.live_runtime_portfolio_reconciler.reconcile_context()
+
+    def _portfolio_is_full(self, *, portfolio: LiveRuntimePortfolioContext) -> bool:
+        """Return whether the authoritative managed portfolio has no entry capacity."""
+        return len(portfolio.contexts) >= self.max_open_positions
 
     async def execute(
         self,
@@ -949,6 +1060,8 @@ class TradingRunner:
             self._global_discovery_telemetry = GlobalDiscoveryTelemetry(
                 interval=self.interval,
                 max_symbols=self.executor.max_symbols,
+                universe_limit=self.executor.discovery_universe_service.universe_limit,
+                batch_size=self.executor.discovery_universe_service.batch_size,
                 top_n=self.executor.top_n,
             )
 
@@ -1655,25 +1768,37 @@ class TradingRunner:
             )
 
         self.runtime_control.begin_cycle()
+        report: GlobalDiscoveryCycleReport | None = None
         try:
-            results = tuple(
-                await executor.execute_global(
+            if isinstance(executor, _GlobalDiscoveryCycleReportingExecutor):
+                report = await executor.execute_global_report(
                     interval=self.interval,
                     candle_limit=self.candle_limit,
                 )
-            )
+                results = report.results
+            else:
+                results = tuple(
+                    await executor.execute_global(
+                        interval=self.interval,
+                        candle_limit=self.candle_limit,
+                    )
+                )
         except AutonomousLiveCycleUnsafeError as error:
             completed_results = error.completed_results
             self._log_results(context=None, results=completed_results)
             if self._global_discovery_telemetry is not None:
                 self._observe_global_discovery(
-                    operation="completing",
-                    observation=lambda current: (
-                        self._complete_global_discovery_telemetry(
-                            telemetry=current,
-                            results=completed_results,
-                        )
+                    operation="failing",
+                    observation=lambda current: current.fail_cycle(
+                        results=completed_results
                     ),
+                )
+            raise
+        except Exception:
+            if self._global_discovery_telemetry is not None:
+                self._observe_global_discovery(
+                    operation="failing",
+                    observation=lambda current: current.fail_cycle(),
                 )
             raise
         finally:
@@ -1686,6 +1811,7 @@ class TradingRunner:
                 observation=lambda current: self._complete_global_discovery_telemetry(
                     telemetry=current,
                     results=results,
+                    report=report,
                 ),
             )
         return results
@@ -1697,9 +1823,11 @@ class TradingRunner:
         """Record and log a local discovery-cycle start."""
         telemetry.begin_cycle(interval=self.interval)
         _LOGGER.info(
-            "Global discovery cycle started: interval=%s max_symbols=%s top_n=%s",
+            "Global discovery cycle started: interval=%s universe_limit=%s "
+            "batch_size=%s top_n=%s",
             self.interval.value,
-            telemetry.max_symbols,
+            telemetry.universe_limit,
+            telemetry.batch_size,
             telemetry.top_n,
         )
 
@@ -1708,13 +1836,33 @@ class TradingRunner:
         *,
         telemetry: GlobalDiscoveryTelemetry,
         results: tuple[TradingResult, ...],
+        report: GlobalDiscoveryCycleReport | None,
     ) -> None:
         """Record and log completed local telemetry without runtime authority."""
-        telemetry.complete_cycle(results=results)
+        telemetry.complete_cycle(
+            results=results,
+            batch=report.batch if report is not None else None,
+            signals=report.signals if report is not None else (),
+            skipped_capacity=(report.skipped_capacity if report is not None else False),
+            stopped_by_capacity=(
+                report.stopped_by_capacity if report is not None else False
+            ),
+        )
         snapshot = telemetry.get_snapshot()
+        outcome = (
+            snapshot.last_outcome.value
+            if snapshot.last_outcome is not None
+            else "unknown"
+        )
         _LOGGER.info(
-            "Global discovery cycle completed: actionable=%d duration_ms=%s",
+            "Global discovery cycle completed: outcome=%s scanned=%s actionable=%s "
+            "rank_start=%s rank_end=%s universe_size=%s duration_ms=%s",
+            outcome,
+            snapshot.scanned_count,
             snapshot.actionable_count,
+            snapshot.rank_start,
+            snapshot.rank_end,
+            snapshot.universe_size,
             snapshot.last_duration_ms,
         )
         for candidate in snapshot.candidates:

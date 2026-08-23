@@ -40,8 +40,10 @@ from botragram.app import (
     TradingRuntimeControl,
 )
 from botragram.app.global_discovery_telemetry import GlobalDiscoveryTelemetry
+from botragram.app.trading_runner import GlobalDiscoveryCycleReport
 from botragram.enums import (
     AuthorizationStatus,
+    GlobalDiscoveryCycleOutcome,
     Interval,
     LiveMarketStreamLifecycleStatus,
     LivePortfolioRecoveryStatus,
@@ -151,7 +153,9 @@ class FakeTradingCycleExecutor:
 class FailingCompletionTelemetry(GlobalDiscoveryTelemetry):
     """Raise after a successful global executor result is available."""
 
-    def complete_cycle(self, *, results: tuple[TradingResult, ...]) -> None:
+    def complete_cycle(
+        self, *, results: tuple[TradingResult, ...], **_: object
+    ) -> None:
         """Simulate a presentation-only completion failure."""
         del results
         self.completion_calls += 1
@@ -166,6 +170,10 @@ class SuccessfulGlobalExecutor:
 
     results: tuple[TradingResult, ...]
     calls: int = 0
+    active_cycles: int = 0
+    maximum_active_cycles: int = 0
+    stop_after_calls: int | None = None
+    stop_callback: Callable[[], None] | None = None
 
     async def execute_global(
         self,
@@ -175,8 +183,23 @@ class SuccessfulGlobalExecutor:
     ) -> tuple[TradingResult, ...]:
         """Return one known successful global-cycle result."""
         del interval, candle_limit
-        self.calls += 1
-        return self.results
+        self.active_cycles += 1
+        self.maximum_active_cycles = max(
+            self.maximum_active_cycles,
+            self.active_cycles,
+        )
+        try:
+            await asyncio.sleep(0)
+            return self.results
+        finally:
+            self.active_cycles -= 1
+            self.calls += 1
+            if (
+                self.stop_after_calls is not None
+                and self.calls >= self.stop_after_calls
+                and self.stop_callback is not None
+            ):
+                self.stop_callback()
 
     async def execute(
         self,
@@ -210,6 +233,120 @@ class SuccessfulGlobalExecutor:
             submit_order,
         )
         raise AssertionError("Global runner selected the single-context executor path")
+
+
+@dataclass(slots=True, kw_only=True)
+class ReportingGlobalExecutor:
+    """Return typed discovery facts while preserving the legacy global method."""
+
+    report: GlobalDiscoveryCycleReport
+    report_calls: int = 0
+    legacy_calls: int = 0
+
+    async def execute_global_report(
+        self,
+        *,
+        interval: Interval,
+        candle_limit: int,
+    ) -> GlobalDiscoveryCycleReport:
+        """Return one immutable report for the runner telemetry path."""
+        del interval, candle_limit
+        self.report_calls += 1
+        return self.report
+
+    async def execute_global(
+        self,
+        *,
+        interval: Interval,
+        candle_limit: int,
+    ) -> tuple[TradingResult, ...]:
+        """Remain structurally compatible without being selected by the runner."""
+        del interval, candle_limit
+        self.legacy_calls += 1
+        return self.report.results
+
+    async def execute(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
+    ) -> tuple[TradingResult, ...]:
+        """Satisfy the general runner protocol without using this path."""
+        del (
+            symbol,
+            interval,
+            candle_limit,
+            strategy_type,
+            live_management_authorization,
+            current_drawdown_pct,
+            order_type,
+            price,
+            account_balance_override,
+            synchronize_position,
+            submit_order,
+        )
+        raise AssertionError("Reporting global executor used the single-context path")
+
+
+@dataclass(slots=True, kw_only=True)
+class FailingGlobalExecutor:
+    """Raise from the global cycle after telemetry has entered SCANNING."""
+
+    error: Exception
+
+    async def execute_global(
+        self,
+        *,
+        interval: Interval,
+        candle_limit: int,
+    ) -> tuple[TradingResult, ...]:
+        """Raise the configured global-cycle error."""
+        del interval, candle_limit
+        raise self.error
+
+    async def execute(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
+    ) -> tuple[TradingResult, ...]:
+        """Satisfy the general runner protocol without using this path."""
+        del (
+            symbol,
+            interval,
+            candle_limit,
+            strategy_type,
+            live_management_authorization,
+            current_drawdown_pct,
+            order_type,
+            price,
+            account_balance_override,
+            synchronize_position,
+            submit_order,
+        )
+        raise AssertionError("Failing global executor used the single-context path")
 
 
 @dataclass(slots=True, kw_only=True)
@@ -1060,6 +1197,58 @@ def test_global_telemetry_failure_does_not_fail_successful_cycle() -> None:
     assert telemetry.completion_calls == 1
 
 
+def test_global_runner_preserves_capacity_skip_outcome_while_waiting() -> None:
+    """Keep capacity skip as the last outcome after phase returns to WAITING."""
+    telemetry = GlobalDiscoveryTelemetry(
+        interval=Interval.M1,
+        universe_limit=100,
+        batch_size=20,
+        top_n=5,
+    )
+    executor = ReportingGlobalExecutor(
+        report=GlobalDiscoveryCycleReport(skipped_capacity=True)
+    )
+    runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        global_discovery_telemetry=telemetry,
+    )
+
+    assert asyncio.run(runner.run_once()) == ()
+    snapshot = telemetry.get_snapshot()
+    assert snapshot.last_outcome is GlobalDiscoveryCycleOutcome.SKIPPED_CAPACITY
+    assert snapshot.scanned_count == 0
+    assert snapshot.actionable_count == 0
+    assert snapshot.candidates == ()
+    assert executor.report_calls == 1
+    assert executor.legacy_calls == 0
+
+    telemetry.wait_until(next_eligible_monotonic=123.0)
+    waiting = telemetry.get_snapshot()
+    assert waiting.state.value == "waiting"
+    assert waiting.last_outcome is GlobalDiscoveryCycleOutcome.SKIPPED_CAPACITY
+
+
+def test_global_runner_records_failed_cycle_outcome() -> None:
+    """Expose global-cycle failure as telemetry without swallowing the exception."""
+    telemetry = GlobalDiscoveryTelemetry(interval=Interval.M1)
+    runner = TradingRunner(
+        executor=FailingGlobalExecutor(error=RuntimeError("boom")),
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        global_discovery_telemetry=telemetry,
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        asyncio.run(runner.run_once())
+
+    snapshot = telemetry.get_snapshot()
+    assert snapshot.last_outcome is GlobalDiscoveryCycleOutcome.FAILED
+    assert snapshot.cycle_in_progress is False
+    assert snapshot.scanned_count is None
+
+
 async def _run_autonomous_paper_cycle_test() -> None:
     """Run one PAPER autonomous cycle through the selected executor."""
     expected = (_create_result(), _create_result())
@@ -1240,6 +1429,68 @@ def test_default_cycle_cadence_follows_telegram_interval_selection() -> None:
     control.select_interval(Interval.M1)
 
     assert runner.effective_cycle_interval_seconds == 60.0
+
+
+def test_autonomous_global_cadence_uses_optional_override_or_interval_default() -> None:
+    """Preserve interval cadence when absent and accept the explicit override."""
+    executor = SuccessfulGlobalExecutor(results=())
+
+    default_runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+    )
+    override_runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        cycle_interval_seconds=10,
+    )
+
+    assert default_runner.effective_cycle_interval_seconds == 60.0
+    assert override_runner.effective_cycle_interval_seconds == 10.0
+
+
+def test_autonomous_global_cadence_never_overlaps_cycles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep the sole global loop serialized even when cadence is immediately due."""
+    asyncio.run(_run_non_overlapping_global_cadence_test(monkeypatch=monkeypatch))
+
+
+async def _run_non_overlapping_global_cadence_test(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monotonic_value = 0.0
+
+    def advancing_monotonic() -> float:
+        """Move beyond each scheduled deadline without a wall-clock sleep."""
+        nonlocal monotonic_value
+        monotonic_value += 100.0
+        return monotonic_value
+
+    monkeypatch.setattr(
+        "botragram.app.trading_runner.monotonic",
+        advancing_monotonic,
+    )
+    control = TradingRuntimeControl()
+    control.resume_global_cycle()
+    executor = SuccessfulGlobalExecutor(results=(), stop_after_calls=2)
+    runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        cycle_interval_seconds=10,
+        runtime_control=control,
+    )
+    executor.stop_callback = runner.stop
+
+    await runner.run()
+
+    assert executor.calls == 2
+    assert executor.maximum_active_cycles == 1
+    assert not runner.is_running
 
 
 async def _run_runtime_selection_test() -> None:

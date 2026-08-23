@@ -87,8 +87,13 @@ _ENVIRONMENT_KEYS = (
     "BOTRAGRAM_LOG_LEVEL",
     "BOTRAGRAM_TELEGRAM_TOKEN",
     "BOTRAGRAM_TRADE_MODE",
+    "EMA_CROSS_STOP_LOSS_PCT",
+    "EMA_CROSS_TAKE_PROFIT_PCT",
     "EMA_SCALPING_STOP_LOSS_PCT",
     "EMA_SCALPING_TAKE_PROFIT_PCT",
+    "DISCOVERY_BATCH_SIZE",
+    "DISCOVERY_CADENCE_SECONDS",
+    "DISCOVERY_UNIVERSE_LIMIT",
     "EXECUTION_POLICY",
     "GEMINI_API_KEY",
     "LOG_LEVEL",
@@ -144,6 +149,11 @@ def test_configuration_defaults_are_safe_and_immutable() -> None:
     assert settings.exchange.testnet
     assert not settings.exchange.is_live
     assert settings.market.symbol == "BTCUSDT"
+    assert settings.market.discovery_max_symbols == 20
+    assert settings.market.discovery_universe_limit == 100
+    assert settings.market.discovery_batch_size == 20
+    assert settings.market.discovery_top_n == 5
+    assert settings.market.discovery_cadence_seconds is None
     assert settings.app.database_path == Path("data") / "botragram.db"
 
     with pytest.raises(FrozenInstanceError):
@@ -202,6 +212,81 @@ def test_settings_manager_rejects_invalid_market_interval(
         ).load()
 
 
+def test_settings_manager_loads_ranked_discovery_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Load explicit universe, batch, and autonomous global cadence values."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("DISCOVERY_UNIVERSE_LIMIT", "47")
+    monkeypatch.setenv("DISCOVERY_BATCH_SIZE", "7")
+    monkeypatch.setenv("DISCOVERY_CADENCE_SECONDS", "10")
+
+    settings = SettingsManager(environment_provider=provider).load_market_settings()
+
+    assert settings.discovery_universe_limit == 47
+    assert settings.discovery_batch_size == 7
+    assert settings.discovery_top_n == 5
+    assert settings.discovery_cadence_seconds == 10
+    assert settings.discovery_max_symbols == 20
+
+
+@pytest.mark.parametrize(
+    ("setting_name", "raw_value"),
+    (
+        ("DISCOVERY_UNIVERSE_LIMIT", "0"),
+        ("DISCOVERY_UNIVERSE_LIMIT", "-1"),
+        ("DISCOVERY_UNIVERSE_LIMIT", "many"),
+        ("DISCOVERY_BATCH_SIZE", "0"),
+        ("DISCOVERY_BATCH_SIZE", "-1"),
+        ("DISCOVERY_BATCH_SIZE", "many"),
+        ("DISCOVERY_CADENCE_SECONDS", "0"),
+        ("DISCOVERY_CADENCE_SECONDS", "-1"),
+        ("DISCOVERY_CADENCE_SECONDS", "often"),
+    ),
+)
+def test_settings_manager_rejects_invalid_ranked_discovery_integers(
+    setting_name: str,
+    raw_value: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Reject zero, negative, and non-integer ranked discovery values."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv(setting_name, raw_value)
+
+    with pytest.raises(ValueError, match=setting_name):
+        SettingsManager(environment_provider=provider).load_market_settings()
+
+
+def test_market_settings_preserves_legacy_top_n_independence_from_live_batch() -> None:
+    """Keep legacy discovery_top_n independent from autonomous LIVE batch policy."""
+    settings = MarketSettings(
+        discovery_universe_limit=10,
+        discovery_batch_size=5,
+        discovery_top_n=6,
+    )
+
+    assert settings.discovery_top_n == 6
+    assert settings.discovery_batch_size == 5
+
+
+def test_market_settings_rejects_batch_larger_than_ranked_universe() -> None:
+    """Require the autonomous ranked batch to fit inside its universe limit."""
+    with pytest.raises(ValueError, match="batch size must not exceed universe"):
+        MarketSettings(
+            discovery_universe_limit=4,
+            discovery_batch_size=5,
+            discovery_top_n=4,
+        )
+
+
 @pytest.mark.parametrize("maximum", (0, -1, True))
 def test_risk_settings_rejects_invalid_maximum_open_positions(
     maximum: int,
@@ -209,6 +294,48 @@ def test_risk_settings_rejects_invalid_maximum_open_positions(
     """Require a positive integer portfolio capacity."""
     with pytest.raises(ValueError, match="Maximum open positions"):
         RiskSettings(max_open_positions=maximum)
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    (
+        Decimal("0"),
+        Decimal("-0.001"),
+        Decimal("1"),
+        Decimal("1.001"),
+        Decimal("NaN"),
+        Decimal("Infinity"),
+        Decimal("-Infinity"),
+    ),
+)
+def test_risk_settings_rejects_invalid_ema_cross_exit_ratios(
+    invalid_value: Decimal,
+) -> None:
+    """Reject out-of-range and non-finite EMA cross exit ratios cleanly."""
+    with pytest.raises(ValueError, match="ema_cross_stop_loss_pct"):
+        RiskSettings(ema_cross_stop_loss_pct=invalid_value)
+
+    with pytest.raises(ValueError, match="ema_cross_take_profit_pct"):
+        RiskSettings(ema_cross_take_profit_pct=invalid_value)
+
+
+@pytest.mark.parametrize(
+    ("stop_loss_pct", "take_profit_pct"),
+    (
+        (Decimal("0.02"), Decimal("0.02")),
+        (Decimal("0.03"), Decimal("0.02")),
+    ),
+)
+def test_risk_settings_requires_ema_cross_take_profit_above_stop_loss(
+    stop_loss_pct: Decimal,
+    take_profit_pct: Decimal,
+) -> None:
+    """Require the EMA cross reward target to exceed its risk distance."""
+    with pytest.raises(ValueError, match="EMA cross take-profit"):
+        RiskSettings(
+            ema_cross_stop_loss_pct=stop_loss_pct,
+            ema_cross_take_profit_pct=take_profit_pct,
+        )
 
 
 # =============================================================================
@@ -490,6 +617,40 @@ def test_settings_manager_loads_ema_scalping_risk_profile(
     assert settings.ema_scalping_take_profit_pct == Decimal("0.009")
 
 
+def test_settings_manager_loads_ema_cross_risk_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Load exact EMA cross exit ratios from the environment."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("EMA_CROSS_STOP_LOSS_PCT", "0.001")
+    monkeypatch.setenv("EMA_CROSS_TAKE_PROFIT_PCT", "0.0015")
+
+    settings = SettingsManager(environment_provider=provider).load_risk_settings()
+
+    assert settings.ema_cross_stop_loss_pct == Decimal("0.001")
+    assert settings.ema_cross_take_profit_pct == Decimal("0.0015")
+
+
+def test_settings_manager_preserves_ema_cross_compatibility_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Preserve the v1.0.3 EMA cross exit behavior when env values are absent."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+
+    settings = SettingsManager(environment_provider=provider).load_risk_settings()
+
+    assert settings.ema_cross_stop_loss_pct == Decimal("0.02")
+    assert settings.ema_cross_take_profit_pct == Decimal("0.04")
+
+
 @pytest.mark.parametrize(
     ("profile", "testnet", "expected_api_key"),
     (
@@ -555,6 +716,9 @@ def test_explicit_soak_environment_file_builds_testnet_autonomous_authorization(
                 "EXECUTION_POLICY=autonomous_live",
                 "AUTONOMOUS_LIVE_ENTRY_ENABLED=true",
                 "MARKET_INTERVAL=1m",
+                "DISCOVERY_UNIVERSE_LIMIT=100",
+                "DISCOVERY_BATCH_SIZE=20",
+                "DISCOVERY_CADENCE_SECONDS=10",
                 "MAX_POSITION_SIZE_USDT=10",
                 "MAX_OPEN_POSITIONS=1",
             )
@@ -586,6 +750,9 @@ def test_explicit_soak_environment_file_builds_testnet_autonomous_authorization(
     assert settings.risk.max_position_size_usdt == Decimal("10")
     assert settings.risk.max_open_positions == 1
     assert settings.market.interval is Interval.M1
+    assert settings.market.discovery_universe_limit == 100
+    assert settings.market.discovery_batch_size == 20
+    assert settings.market.discovery_cadence_seconds == 10
     assert provider.autonomous_live_entry_authorization is not None
     asyncio.run(provider.close())
 

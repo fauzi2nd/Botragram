@@ -26,6 +26,7 @@ from typing import Protocol
 # =============================================================================
 from botragram.enums import Interval, SignalType, StrategyType
 from botragram.models import Candle, Signal
+from botragram.utils.validator import validate_symbol
 
 __all__ = [
     "OpportunityDiscoveryService",
@@ -155,9 +156,78 @@ class OpportunityDiscoveryService:
         symbols = await self.market_service.get_trading_symbols(
             quote_asset=normalized_quote_asset,
         )
+        selected_symbols = self._select_symbols(
+            symbols=symbols,
+            max_symbols=max_symbols,
+        )
+        return await self._discover_selected_symbols(
+            symbols=selected_symbols,
+            interval=interval,
+            candle_limit=candle_limit,
+            top_n=top_n,
+            strategy_type=strategy_type,
+            as_of=as_of,
+        )
+
+    async def discover_symbols(
+        self,
+        *,
+        symbols: Sequence[str],
+        interval: Interval,
+        candle_limit: int,
+        top_n: int,
+        strategy_type: StrategyType,
+    ) -> Sequence[Signal]:
+        """Discover an explicit ordered batch with strict strategy provenance.
+
+        Args:
+            symbols: Ranked symbols to analyze in their supplied order.
+            interval: Candle interval evaluated by the explicit strategy.
+            candle_limit: Number of closed historical candles per symbol.
+            top_n: Maximum number of ranked opportunities to return.
+            strategy_type: Required strategy identity for LIVE provenance.
+
+        Returns:
+            Actionable signals ranked by confidence and symbol.
+
+        Raises:
+            ValueError: If the explicit batch or a discovery bound is invalid.
+            RuntimeError: If market data or signal provenance is unsafe.
+            asyncio.CancelledError: Propagates cancellation without advancing
+                any caller-owned discovery-universe cursor.
+        """
+        self._validate_explicit_bounds(
+            candle_limit=candle_limit,
+            top_n=top_n,
+        )
+        selected_symbols = self._select_explicit_symbols(symbols=symbols)
+        as_of = self._normalize_utc_datetime(
+            value=self.utc_now(),
+            name="Discovery decision time",
+        )
+        return await self._discover_selected_symbols(
+            symbols=selected_symbols,
+            interval=interval,
+            candle_limit=candle_limit,
+            top_n=top_n,
+            strategy_type=strategy_type,
+            as_of=as_of,
+        )
+
+    async def _discover_selected_symbols(
+        self,
+        *,
+        symbols: Sequence[str],
+        interval: Interval,
+        candle_limit: int,
+        top_n: int,
+        strategy_type: StrategyType | None,
+        as_of: datetime,
+    ) -> tuple[Signal, ...]:
+        """Evaluate one already-normalized symbol batch sequentially."""
         actionable_signals: list[Signal] = []
 
-        for symbol in self._select_symbols(symbols=symbols, max_symbols=max_symbols):
+        for symbol in symbols:
             candles = await self.market_service.get_candles(
                 symbol=symbol,
                 interval=interval,
@@ -430,6 +500,42 @@ class OpportunityDiscoveryService:
 
         if top_n <= 0:
             raise ValueError("Top N must be greater than zero")
+
+    @staticmethod
+    def _validate_explicit_bounds(
+        *,
+        candle_limit: int,
+        top_n: int,
+    ) -> None:
+        """Validate explicit-batch bounds before any market access."""
+        if candle_limit <= 0:
+            raise ValueError("Candle limit must be greater than zero")
+
+        if top_n <= 0:
+            raise ValueError("Top N must be greater than zero")
+
+    @classmethod
+    def _select_explicit_symbols(
+        cls,
+        *,
+        symbols: Sequence[str],
+    ) -> tuple[str, ...]:
+        """Normalize and deduplicate an explicit batch without reordering it."""
+        selected_symbols: list[str] = []
+        seen_symbols: set[str] = set()
+
+        for symbol in symbols:
+            normalized_symbol = cls._normalize_symbol(symbol)
+            validate_symbol(normalized_symbol)
+            if normalized_symbol in seen_symbols:
+                continue
+            seen_symbols.add(normalized_symbol)
+            selected_symbols.append(normalized_symbol)
+
+        if not selected_symbols:
+            raise ValueError("Explicit discovery symbols must not be empty")
+
+        return tuple(selected_symbols)
 
     @staticmethod
     def _select_symbols(

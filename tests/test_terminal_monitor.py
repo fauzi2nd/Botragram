@@ -39,6 +39,7 @@ from botragram.app.global_discovery_telemetry import GlobalDiscoveryTelemetry
 from botragram.engine import PnLEngine
 from botragram.enums import (
     AutonomousLiveRecoveryStatus,
+    GlobalDiscoveryCycleOutcome,
     Interval,
     LiveMarketStreamLifecycleStatus,
     LiveRuntimeHealthReason,
@@ -50,11 +51,13 @@ from botragram.enums import (
 )
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
+    DiscoveryUniverseBatch,
     LiveMarketStreamIdentity,
     LiveMarketStreamState,
     LiveProtectionMonitorState,
     LiveRuntimeHealthSnapshot,
     LiveRuntimePositionContext,
+    MarketUniverseEntry,
     Position,
     Signal,
     TradingDecision,
@@ -297,8 +300,13 @@ def test_terminal_renders_completed_global_candidate() -> None:
     asyncio.run(_run_completed_candidate_test())
 
 
+def test_terminal_renders_capacity_skipped_global_discovery() -> None:
+    """Keep the runner waiting while the last discovery outcome shows capacity."""
+    asyncio.run(_run_capacity_skipped_global_discovery_test())
+
+
 async def _run_completed_candidate_test() -> None:
-    """Render one completed BUY candidate without inventing scanned count."""
+    """Render exact ranked-window and candidate telemetry after completion."""
     signal = Signal(
         symbol="ETHUSDT",
         signal_type=SignalType.BUY,
@@ -318,9 +326,31 @@ async def _run_completed_candidate_test() -> None:
         order=None,
         reason="risk_rejected",
     )
-    telemetry = GlobalDiscoveryTelemetry(interval=Interval.M1, max_symbols=20, top_n=5)
+    batch = DiscoveryUniverseBatch(
+        entries=(
+            MarketUniverseEntry(
+                symbol="ETHUSDT",
+                quote_volume=Decimal("1000"),
+            ),
+        ),
+        universe_size=100,
+        rank_start=21,
+        rank_end=21,
+    )
+    telemetry = GlobalDiscoveryTelemetry(
+        interval=Interval.M1,
+        max_symbols=20,
+        universe_limit=100,
+        batch_size=20,
+        top_n=5,
+    )
     telemetry.begin_cycle(interval=Interval.M1)
-    telemetry.complete_cycle(results=(result,))
+    telemetry.complete_cycle(
+        results=(result,),
+        batch=batch,
+        signals=(signal,),
+    )
+    telemetry.wait_until(next_eligible_monotonic=monotonic() + 60)
     monitor = _create_monitor(trade_mode=TradeMode.LIVE)
     monitor.global_discovery_telemetry_provider = telemetry
     status = await monitor.collect_status()
@@ -330,11 +360,53 @@ async def _run_completed_candidate_test() -> None:
     )
     rendered = output.getvalue()
 
+    assert status.global_discovery is not None
+    assert status.global_discovery.last_outcome is GlobalDiscoveryCycleOutcome.COMPLETED
+    assert status.global_discovery.scanned_count == 1
+    assert status.global_discovery.rank_start == 21
+    assert status.global_discovery.rank_end == 21
+    assert "WAITING #1" in rendered
     assert "COMPLETED" in rendered
+    assert "universe_limit=100 batch_size=20 top_n=5" in rendered
+    assert "21-21 / 100" in rendered
+    assert "Scanned" in rendered
     assert "ETHUSDT" in rendered
     assert "BUY" in rendered
     assert "confidence=0.9" in rendered
     assert "risk_rejected" in rendered
+
+
+async def _run_capacity_skipped_global_discovery_test() -> None:
+    """Render a capacity skip separately from the current runner phase."""
+    telemetry = GlobalDiscoveryTelemetry(
+        interval=Interval.M1,
+        max_symbols=20,
+        universe_limit=100,
+        batch_size=20,
+        top_n=5,
+    )
+    telemetry.begin_cycle(interval=Interval.M1)
+    telemetry.complete_cycle(results=(), skipped_capacity=True)
+    telemetry.wait_until(next_eligible_monotonic=monotonic() + 10)
+    monitor = _create_monitor(trade_mode=TradeMode.LIVE)
+    monitor.global_discovery_telemetry_provider = telemetry
+    status = await monitor.collect_status()
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=180, height=60).print(
+        monitor.render_dashboard(status)
+    )
+    rendered = output.getvalue()
+
+    assert status.global_discovery is not None
+    assert (
+        status.global_discovery.last_outcome
+        is GlobalDiscoveryCycleOutcome.SKIPPED_CAPACITY
+    )
+    assert status.global_discovery.scanned_count == 0
+    assert "WAITING #1" in rendered
+    assert "SKIPPED - CAPACITY" in rendered
+    assert "universe_limit=100 batch_size=20 top_n=5" in rendered
+    assert "Scanned" in rendered
 
 
 async def _run_zero_position_global_discovery_test() -> None:
@@ -839,6 +911,10 @@ def test_terminal_two_managed_positions_correlate_by_symbol() -> None:
     )
     assert "BTCUSDT" in rendered and "ETHUSDT" in rendered
     assert "mark=110" in rendered and "mark=180" in rendered
+    assert "Balance" in rendered
+    assert "500.00 USDT" in rendered
+    assert "Unrealized PnL" in rendered
+    assert "-10.00 USDT" in rendered
     assert rendered.count("authorization=EXACT") == 2
 
 

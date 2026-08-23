@@ -258,6 +258,12 @@ class RiskEngine:
                 self.settings.ema_scalping_take_profit_pct,
             )
 
+        if strategy_type is StrategyType.EMA_CROSS:
+            return (
+                self.settings.ema_cross_stop_loss_pct,
+                self.settings.ema_cross_take_profit_pct,
+            )
+
         return self.settings.stop_loss_pct, self.settings.take_profit_pct
 
     @staticmethod

@@ -52,6 +52,10 @@ class RiskSettings:
     ema_scalping_stop_loss_pct: Decimal = Decimal("0.005")
     ema_scalping_take_profit_pct: Decimal = Decimal("0.01")
 
+    # EMA cross exits
+    ema_cross_stop_loss_pct: Decimal = Decimal("0.02")
+    ema_cross_take_profit_pct: Decimal = Decimal("0.04")
+
     def __post_init__(self) -> None:
         """Validate global and strategy-specific risk ratios."""
         ratios = (
@@ -61,9 +65,14 @@ class RiskSettings:
             ("take_profit_pct", self.take_profit_pct),
             ("ema_scalping_stop_loss_pct", self.ema_scalping_stop_loss_pct),
             ("ema_scalping_take_profit_pct", self.ema_scalping_take_profit_pct),
+            ("ema_cross_stop_loss_pct", self.ema_cross_stop_loss_pct),
+            ("ema_cross_take_profit_pct", self.ema_cross_take_profit_pct),
         )
 
         for name, value in ratios:
+            if not value.is_finite():
+                raise ValueError(f"Risk setting {name!r} must be finite")
+
             if not Decimal("0") < value < Decimal("1"):
                 raise ValueError(f"Risk setting {name!r} must be between zero and one")
 
@@ -83,3 +92,6 @@ class RiskSettings:
             raise ValueError(
                 "EMA scalping take-profit must exceed EMA scalping stop-loss"
             )
+
+        if self.ema_cross_take_profit_pct <= self.ema_cross_stop_loss_pct:
+            raise ValueError("EMA cross take-profit must exceed EMA cross stop-loss")

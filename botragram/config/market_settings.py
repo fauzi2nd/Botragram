@@ -21,7 +21,12 @@ from dataclasses import dataclass
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.constants import DEFAULT_DISCOVERY_MAX_SYMBOLS, DEFAULT_DISCOVERY_TOP_N
+from botragram.constants import (
+    DEFAULT_DISCOVERY_BATCH_SIZE,
+    DEFAULT_DISCOVERY_MAX_SYMBOLS,
+    DEFAULT_DISCOVERY_TOP_N,
+    DEFAULT_DISCOVERY_UNIVERSE_LIMIT,
+)
 from botragram.enums import Interval
 
 __all__ = [
@@ -44,15 +49,37 @@ class MarketSettings:
     quote_asset: str = "USDT"
     interval: Interval = Interval.M15
     discovery_max_symbols: int = DEFAULT_DISCOVERY_MAX_SYMBOLS
+    discovery_universe_limit: int = DEFAULT_DISCOVERY_UNIVERSE_LIMIT
+    discovery_batch_size: int = DEFAULT_DISCOVERY_BATCH_SIZE
     discovery_top_n: int = DEFAULT_DISCOVERY_TOP_N
+    discovery_cadence_seconds: int | None = None
 
     def __post_init__(self) -> None:
         """Validate bounded market-discovery configuration."""
-        if self.discovery_max_symbols <= 0:
-            raise ValueError("Discovery maximum symbols must be greater than zero")
-
-        if self.discovery_top_n <= 0:
-            raise ValueError("Discovery top N must be greater than zero")
+        if (
+            isinstance(self.discovery_max_symbols, bool)
+            or self.discovery_max_symbols <= 0
+        ):
+            raise ValueError("Discovery maximum symbols must be a positive integer")
+        if (
+            isinstance(self.discovery_universe_limit, bool)
+            or self.discovery_universe_limit <= 0
+        ):
+            raise ValueError("Discovery universe limit must be a positive integer")
+        if (
+            isinstance(self.discovery_batch_size, bool)
+            or self.discovery_batch_size <= 0
+        ):
+            raise ValueError("Discovery batch size must be a positive integer")
+        if isinstance(self.discovery_top_n, bool) or self.discovery_top_n <= 0:
+            raise ValueError("Discovery top N must be a positive integer")
+        if self.discovery_batch_size > self.discovery_universe_limit:
+            raise ValueError("Discovery batch size must not exceed universe limit")
+        if self.discovery_cadence_seconds is not None and (
+            isinstance(self.discovery_cadence_seconds, bool)
+            or self.discovery_cadence_seconds <= 0
+        ):
+            raise ValueError("Discovery cadence must be a positive integer")
 
     @property
     def symbol(self) -> str:

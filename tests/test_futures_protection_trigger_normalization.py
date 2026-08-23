@@ -475,6 +475,65 @@ async def test_restart_verifies_exact_normalized_1000bonk_protection_without_pos
 
 
 @pytest.mark.asyncio
+async def test_restart_ignores_unowned_zero_quantity_orders_when_exact_ids_exist() -> (
+    None
+):
+    "Use durable Botragram identities instead of unrelated conditional orders."
+    position = _recovered_position()
+    exchange = ProtectionPlanExchange(rules=_rules(), mark_price=Decimal("0.002294"))
+    exchange.orders.extend(
+        (
+            replace(
+                _recovered_order(
+                    order_type=OrderType.STOP_MARKET,
+                    trigger_price=Decimal("0.0022000"),
+                    client_order_id="web_algo_coin_foreign_stop",
+                ),
+                order_id="foreign-stop",
+                quantity=Decimal("0"),
+            ),
+            replace(
+                _recovered_order(
+                    order_type=OrderType.TAKE_PROFIT_MARKET,
+                    trigger_price=Decimal("0.0024500"),
+                    client_order_id="web_algo_coin_foreign_tp",
+                ),
+                order_id="foreign-tp",
+                quantity=Decimal("0"),
+            ),
+            _recovered_order(
+                order_type=OrderType.STOP_MARKET,
+                trigger_price=Decimal("0.0022490"),
+                client_order_id=position.stop_loss_client_algo_id or "",
+            ),
+            _recovered_order(
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                trigger_price=Decimal("0.0023850"),
+                client_order_id=position.take_profit_client_algo_id or "",
+            ),
+        )
+    )
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=RecordingPositionRepository(),
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+
+    protected = await service.ensure(position=position)
+
+    assert protected.stop_loss == Decimal("0.0022490")
+    assert protected.take_profit == Decimal("0.0023850")
+    assert exchange.events.count("get_protection_by_client_id") == 2
+    assert not any(event.startswith("post:") for event in exchange.events)
+    assert {order.order_id for order in exchange.orders} == {
+        "foreign-stop",
+        "foreign-tp",
+        "recovered-stop_market",
+        "recovered-take_profit_market",
+    }
+
+
+@pytest.mark.asyncio
 async def test_restart_rejects_mismatched_normalized_protection_without_post() -> None:
     """Fail closed when an identity resolves to a trigger other than durable state."""
     position = _recovered_position()

@@ -376,7 +376,7 @@ class TerminalMonitor:
         layout.split_column(
             Layout(
                 name="summary",
-                size=24 if status.global_discovery is not None else 16,
+                size=34 if status.global_discovery is not None else 18,
             ),
             Layout(name="logs", minimum_size=8),
         )
@@ -568,8 +568,16 @@ class TerminalMonitor:
                 "Authorization Coverage",
                 "EXACT" if health.authorization_exact else "UNAVAILABLE",
             )
+            table.add_row("Balance", f"{status.balance:,.2f} {self.quote_asset}")
+            pnl_style = "green" if status.unrealized_pnl >= 0 else "red"
+            table.add_row(
+                "Unrealized PnL",
+                Text(
+                    f"{status.unrealized_pnl:+,.2f} {self.quote_asset}",
+                    style=pnl_style,
+                ),
+            )
             if not health.contexts:
-                table.add_row("Balance", f"{status.balance:,.2f} {self.quote_asset}")
                 self._add_position_rows(table=table, status=status)
                 table.add_row(
                     "Protection Gate",
@@ -699,9 +707,16 @@ class TerminalMonitor:
             "Discovery Cycle",
             f"{discovery.state.value.upper()} #{discovery.cycle_sequence}",
         )
+        table.add_row("Discovery Bounds", self._format_discovery_bounds(discovery))
+        table.add_row("Last Outcome", self._format_discovery_outcome(discovery))
+        table.add_row("Rank Window", self._format_discovery_window(discovery))
         table.add_row(
-            "Discovery Bounds",
-            f"max_symbols={discovery.max_symbols} top_n={discovery.top_n}",
+            "Scanned",
+            (
+                str(discovery.scanned_count)
+                if discovery.scanned_count is not None
+                else "-"
+            ),
         )
         table.add_row(
             "Candidates",
@@ -709,6 +724,8 @@ class TerminalMonitor:
             if discovery.actionable_count is not None
             else "-",
         )
+        if discovery.stopped_by_capacity:
+            table.add_row("Capacity Stop", "YES")
         for candidate in discovery.candidates[:5]:
             outcome = candidate.outcome or "PENDING"
             table.add_row(
@@ -719,6 +736,35 @@ class TerminalMonitor:
         if discovery.next_eligible_monotonic is not None:
             remaining = max(0, round(discovery.next_eligible_monotonic - monotonic()))
             table.add_row("Next Discovery", f"{remaining}s")
+
+    @staticmethod
+    def _format_discovery_bounds(discovery: GlobalDiscoverySnapshot) -> str:
+        """Format ranked LIVE bounds while preserving legacy telemetry labels."""
+        if discovery.universe_limit is not None and discovery.batch_size is not None:
+            return (
+                f"universe_limit={discovery.universe_limit} "
+                f"batch_size={discovery.batch_size} top_n={discovery.top_n}"
+            )
+        return f"max_symbols={discovery.max_symbols} top_n={discovery.top_n}"
+
+    @staticmethod
+    def _format_discovery_outcome(discovery: GlobalDiscoverySnapshot) -> str:
+        """Return a human-readable last cycle outcome."""
+        outcome = discovery.last_outcome
+        return outcome.value.upper().replace("_", " - ") if outcome is not None else "-"
+
+    @staticmethod
+    def _format_discovery_window(discovery: GlobalDiscoverySnapshot) -> str:
+        """Return the exact ranked window for the last completed scan."""
+        if (
+            discovery.rank_start is None
+            or discovery.rank_end is None
+            or discovery.universe_size is None
+        ):
+            return "-"
+        return (
+            f"{discovery.rank_start}-{discovery.rank_end} / {discovery.universe_size}"
+        )
 
     def _add_autonomous_entry_row(
         self, *, table: Table, status: TerminalStatus
@@ -879,10 +925,23 @@ class TerminalMonitor:
                 "State",
                 f"{discovery.state.value.upper()} #{discovery.cycle_sequence}",
             )
+            table.add_row("Last Outcome", self._format_discovery_outcome(discovery))
+            table.add_row("Bounds", self._format_discovery_bounds(discovery))
+            table.add_row("Window", self._format_discovery_window(discovery))
             table.add_row(
-                "Bounds", f"max_symbols={discovery.max_symbols} top_n={discovery.top_n}"
+                "Scanned",
+                str(discovery.scanned_count)
+                if discovery.scanned_count is not None
+                else "-",
             )
-            table.add_row("Actionable", str(discovery.actionable_count or 0))
+            table.add_row(
+                "Actionable",
+                str(discovery.actionable_count)
+                if discovery.actionable_count is not None
+                else "-",
+            )
+            if discovery.stopped_by_capacity:
+                table.add_row("Capacity Stop", "YES")
             if discovery.next_eligible_monotonic is not None:
                 remaining = max(
                     0, round(discovery.next_eligible_monotonic - monotonic())

@@ -65,6 +65,8 @@ async def _run_trading(
         GlobalDiscoveryTelemetry(
             interval=settings.market.interval,
             max_symbols=settings.market.discovery_max_symbols,
+            universe_limit=settings.market.discovery_universe_limit,
+            batch_size=settings.market.discovery_batch_size,
             top_n=settings.market.discovery_top_n,
         )
         if settings.app.effective_execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE
@@ -124,6 +126,12 @@ async def _run_trading(
             autonomous_live_health_check_interval_seconds=1.0,
             maximum_consecutive_failures=3,
             failure_retry_delay_seconds=5.0,
+            cycle_interval_seconds=(
+                settings.market.discovery_cadence_seconds
+                if settings.app.effective_execution_policy
+                is ExecutionPolicy.AUTONOMOUS_LIVE
+                else None
+            ),
             global_discovery_telemetry=global_discovery_telemetry,
         )
         await run_until_restart(

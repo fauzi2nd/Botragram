@@ -37,6 +37,7 @@ from botragram.models import (
     Candle,
     ExchangeSymbolRules,
     ExecutableQuote,
+    MarketUniverseEntry,
     Order,
     Position,
     Ticker,
@@ -148,6 +149,53 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             endpoint=_EXCHANGE_INFO_ENDPOINT,
             quote_asset=quote_asset,
             contract_type="PERPETUAL",
+        )
+
+    async def get_market_universe(
+        self,
+        *,
+        quote_asset: str,
+    ) -> Sequence[MarketUniverseEntry]:
+        """Return active perpetual symbols ranked by 24-hour quote volume."""
+        eligible_symbols = frozenset(
+            self._normalize_symbol(symbol)
+            for symbol in await self.get_trading_symbols(quote_asset=quote_asset)
+        )
+        payload = await self._rest.get(_TICKER_ENDPOINT)
+        entries: list[MarketUniverseEntry] = []
+        seen_symbols: set[str] = set()
+
+        for raw_ticker in self._require_sequence(payload):
+            ticker_payload = self._require_mapping(raw_ticker)
+            raw_symbol = ticker_payload.get("symbol")
+
+            if not isinstance(raw_symbol, str):
+                raise ValueError("Binance bulk ticker must contain a valid symbol")
+
+            normalized_symbol = self._normalize_symbol(raw_symbol)
+
+            if normalized_symbol not in eligible_symbols:
+                continue
+
+            if normalized_symbol in seen_symbols:
+                raise ValueError(
+                    "Binance bulk ticker contains duplicate eligible symbol: "
+                    f"{normalized_symbol}"
+                )
+
+            entries.append(self._mapper.map_market_universe_entry(ticker_payload))
+            seen_symbols.add(normalized_symbol)
+
+        if not entries:
+            raise ValueError(
+                "Binance market universe contains no usable ranked symbols"
+            )
+
+        return tuple(
+            sorted(
+                entries,
+                key=lambda entry: (-entry.quote_volume, entry.symbol),
+            )
         )
 
     async def get_market_entry_rules(

@@ -44,16 +44,20 @@ class LivePositionProtectionService:
         protection_orders = await self.exchange_client.get_open_protection_orders(
             symbol=position.symbol,
         )
-        stop_order = self._find_protection_order(
-            orders=protection_orders,
-            position=position,
-            order_type=OrderType.STOP_MARKET,
-        )
-        take_profit_order = self._find_protection_order(
-            orders=protection_orders,
-            position=position,
-            order_type=OrderType.TAKE_PROFIT_MARKET,
-        )
+        stop_order: Order | None = None
+        take_profit_order: Order | None = None
+        if position.stop_loss_client_algo_id is None:
+            stop_order = self._find_protection_order(
+                orders=protection_orders,
+                position=position,
+                order_type=OrderType.STOP_MARKET,
+            )
+        if position.take_profit_client_algo_id is None:
+            take_profit_order = self._find_protection_order(
+                orders=protection_orders,
+                position=position,
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+            )
 
         # A client identity retained from an earlier process cannot prove whether
         # its POST was never attempted or reached the exchange before a crash.

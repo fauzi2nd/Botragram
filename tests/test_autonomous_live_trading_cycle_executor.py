@@ -34,7 +34,11 @@ from botragram.models import (
     AutonomousLiveEntryAuthorization,
     AutonomousLiveEntryExecutionResult,
     AutonomousLiveEntryIntent,
+    DiscoveryUniverseBatch,
     LiveEntryRiskEvaluation,
+    LiveRuntimePortfolioContext,
+    LiveRuntimePositionContext,
+    MarketUniverseEntry,
     Order,
     Signal,
     TradingDecision,
@@ -84,30 +88,100 @@ class _Discovery:
 
     signals: tuple[Signal, ...]
     calls: int = 0
+    requested_symbols: list[tuple[str, ...]] = field(
+        default_factory=list[tuple[str, ...]]
+    )
 
-    async def discover(
+    async def discover_symbols(
         self,
         *,
+        symbols: Sequence[str],
         strategy_type: StrategyType,
         **_: object,
     ) -> Sequence[Signal]:
         """Return candidates only for the executor's explicit strategy."""
         assert strategy_type is StrategyType.EMA_CROSS
         self.calls += 1
+        self.requested_symbols.append(tuple(symbols))
         return self.signals
 
 
 @dataclass(slots=True)
+class _Universe:
+    """Return one non-consuming explicit ranked batch."""
+
+    symbols: tuple[str, ...]
+    universe_limit: int = 100
+    batch_size: int = 3
+    get_calls: int = 0
+    completion_calls: int = 0
+    returned_batches: list[DiscoveryUniverseBatch] = field(
+        default_factory=list[DiscoveryUniverseBatch]
+    )
+    _current_batch: DiscoveryUniverseBatch | None = None
+
+    async def get_current_batch(self) -> DiscoveryUniverseBatch:
+        """Return the same batch until normal discovery completion."""
+        self.get_calls += 1
+        if self._current_batch is None:
+            entries = tuple(
+                MarketUniverseEntry(
+                    symbol=symbol,
+                    quote_volume=Decimal(len(self.symbols) - index),
+                )
+                for index, symbol in enumerate(self.symbols)
+            )
+            self._current_batch = DiscoveryUniverseBatch(
+                entries=entries,
+                universe_size=len(entries),
+                rank_start=1,
+                rank_end=len(entries),
+            )
+        self.returned_batches.append(self._current_batch)
+        return self._current_batch
+
+    def complete_batch(self, *, batch: DiscoveryUniverseBatch) -> None:
+        """Record completion only for the selected batch."""
+        assert batch is self._current_batch
+        self.completion_calls += 1
+        self._current_batch = None
+
+
+def _portfolio_context(*symbols: str) -> LiveRuntimePortfolioContext:
+    """Build one deterministic exact managed LIVE portfolio context."""
+    return LiveRuntimePortfolioContext(
+        contexts=tuple(
+            LiveRuntimePositionContext(
+                symbol=symbol,
+                interval=Interval.M15,
+                strategy_type=StrategyType.EMA_CROSS,
+            )
+            for symbol in symbols
+        )
+    )
+
+
+@dataclass(slots=True)
 class _Reconciler:
-    """Return a deterministic portfolio-adoption readiness result."""
+    """Return deterministic authoritative managed portfolio snapshots."""
 
-    results: list[bool] = field(default_factory=lambda: [True])
+    results: list[LiveRuntimePortfolioContext | None] = field(
+        default_factory=lambda: [_portfolio_context()]
+    )
     calls: int = 0
+    last_context: LiveRuntimePortfolioContext = field(
+        default_factory=_portfolio_context
+    )
 
-    async def reconcile(self) -> bool:
-        """Record one required reconciliation and return the next readiness state."""
+    async def reconcile_context(self) -> LiveRuntimePortfolioContext | None:
+        """Record one required reconciliation and return its exact managed context."""
         self.calls += 1
-        return self.results.pop(0) if self.results else True
+        if not self.results:
+            return self.last_context
+        result = self.results.pop(0)
+        if result is not None:
+            self.last_context = result
+        return result
 
 
 @dataclass(slots=True)
@@ -213,6 +287,9 @@ def _executor(
     return (
         AutonomousLiveTradingCycleExecutor(
             discovery_service=_Discovery(signals=signals),
+            discovery_universe_service=_Universe(
+                symbols=tuple(signal.symbol for signal in signals),
+            ),
             risk_evaluation_service=risk,
             intent_service=AutonomousLiveEntryIntentService(
                 execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
@@ -225,11 +302,46 @@ def _executor(
             quote_asset="USDT",
             max_symbols=3,
             top_n=3,
+            max_open_positions=3,
             strategy_type=StrategyType.EMA_CROSS,
         ),
         risk,
         execution,
     )
+
+
+def test_live_executor_rejects_top_n_larger_than_ranked_batch() -> None:
+    """Keep the top-N/batch relationship specific to autonomous LIVE."""
+    btc = _signal(symbol="BTCUSDT")
+    executor, _, _ = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={},
+    )
+
+    with pytest.raises(ValueError, match="top N must not exceed batch size"):
+        replace(
+            executor,
+            discovery_universe_service=_Universe(
+                symbols=(btc.symbol,),
+                batch_size=1,
+            ),
+            top_n=2,
+        )
+
+
+@pytest.mark.parametrize("invalid", [0, -1, True])
+def test_live_executor_rejects_invalid_max_open_positions(invalid: int) -> None:
+    """Reject invalid autonomous LIVE portfolio-capacity configuration."""
+    btc = _signal(symbol="BTCUSDT")
+    executor, _, _ = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={},
+    )
+
+    with pytest.raises(ValueError, match="maximum open positions must be positive"):
+        replace(executor, max_open_positions=invalid)
 
 
 def test_cycle_continues_after_safe_rejection_and_is_strictly_sequential() -> None:
@@ -255,6 +367,9 @@ def test_cycle_continues_after_safe_rejection_and_is_strictly_sequential() -> No
     assert execution.calls == ["ETHUSDT"]
     assert execution.maximum_active == 1
     assert [result.executed for result in results] == [False, True]
+    discovery = executor.discovery_service
+    assert isinstance(discovery, _Discovery)
+    assert discovery.requested_symbols == [("BTCUSDT", "ETHUSDT")]
 
 
 def test_unsafe_entry_stops_later_ranked_candidates() -> None:
@@ -275,6 +390,9 @@ def test_unsafe_entry_stops_later_ranked_candidates() -> None:
 
     assert risk.calls == ["BTCUSDT"]
     assert execution.calls == ["BTCUSDT"]
+    universe = executor.discovery_universe_service
+    assert isinstance(universe, _Universe)
+    assert universe.completion_calls == 1
 
 
 def test_terminal_exchange_rejection_allows_next_candidate_sequentially() -> None:
@@ -478,6 +596,10 @@ def test_claim_is_durable_before_risk_failure_window() -> None:
     )
     first = AutonomousLiveTradingCycleExecutor(
         discovery_service=_Discovery(signals=(btc,)),
+        discovery_universe_service=_Universe(
+            symbols=(btc.symbol,),
+            batch_size=1,
+        ),
         risk_evaluation_service=failing_risk,
         intent_service=AutonomousLiveEntryIntentService(
             execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
@@ -490,6 +612,7 @@ def test_claim_is_durable_before_risk_failure_window() -> None:
         quote_asset="USDT",
         max_symbols=1,
         top_n=1,
+        max_open_positions=1,
         strategy_type=StrategyType.EMA_CROSS,
     )
 
@@ -525,7 +648,7 @@ def test_cancellation_during_discovery_propagates_without_execution() -> None:
 
         started: asyncio.Event
 
-        async def discover(self, **_: object) -> Sequence[Signal]:
+        async def discover_symbols(self, **_: object) -> Sequence[Signal]:
             """Await cancellation before yielding candidates."""
             self.started.set()
             await asyncio.Event().wait()
@@ -537,8 +660,10 @@ def test_cancellation_during_discovery_propagates_without_execution() -> None:
         risk = _RiskEvaluation(decisions={signal.symbol: _decision(signal=signal)})
         execution = _Execution(statuses={})
         started = asyncio.Event()
+        universe = _Universe(symbols=(signal.symbol,), batch_size=1)
         executor = AutonomousLiveTradingCycleExecutor(
             discovery_service=_BlockingDiscovery(started=started),
+            discovery_universe_service=universe,
             risk_evaluation_service=risk,
             intent_service=AutonomousLiveEntryIntentService(
                 execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
@@ -551,6 +676,7 @@ def test_cancellation_during_discovery_propagates_without_execution() -> None:
             quote_asset="USDT",
             max_symbols=1,
             top_n=1,
+            max_open_positions=1,
             strategy_type=StrategyType.EMA_CROSS,
         )
         task = asyncio.create_task(
@@ -562,8 +688,55 @@ def test_cancellation_during_discovery_propagates_without_execution() -> None:
             await task
         assert risk.calls == []
         assert execution.calls == []
+        assert universe.completion_calls == 0
 
     asyncio.run(run())
+
+
+def test_discovery_failure_retries_the_same_unconsumed_batch() -> None:
+    """Keep the cursor fixed until a later discovery call returns normally."""
+
+    @dataclass(slots=True)
+    class _FailingOnceDiscovery:
+        calls: list[tuple[str, ...]] = field(default_factory=list[tuple[str, ...]])
+
+        async def discover_symbols(
+            self,
+            *,
+            symbols: Sequence[str],
+            **_: object,
+        ) -> Sequence[Signal]:
+            """Fail once, then complete with no actionable candidates."""
+            self.calls.append(tuple(symbols))
+            if len(self.calls) == 1:
+                raise RuntimeError("injected candle failure")
+            return ()
+
+    btc = _signal(symbol="BTCUSDT")
+    executor, risk, execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={},
+    )
+    discovery = _FailingOnceDiscovery()
+    retrying = replace(executor, discovery_service=discovery)
+    universe = retrying.discovery_universe_service
+    assert isinstance(universe, _Universe)
+
+    with pytest.raises(RuntimeError, match="injected candle failure"):
+        asyncio.run(retrying.execute_global(interval=Interval.M15, candle_limit=100))
+
+    assert universe.completion_calls == 0
+    results = asyncio.run(
+        retrying.execute_global(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert results == ()
+    assert discovery.calls == [("BTCUSDT",), ("BTCUSDT",)]
+    assert universe.returned_batches[0] is universe.returned_batches[1]
+    assert universe.completion_calls == 1
+    assert risk.calls == []
+    assert execution.calls == []
 
 
 def test_required_reconciler_blocks_discovery_before_candidates() -> None:
@@ -577,12 +750,239 @@ def test_required_reconciler_blocks_discovery_before_candidates() -> None:
         },
     )
     blocked = replace(
-        executor, live_runtime_portfolio_reconciler=_Reconciler(results=[False])
+        executor, live_runtime_portfolio_reconciler=_Reconciler(results=[None])
     )
 
     with pytest.raises(AutonomousLiveCycleUnsafeError, match="before discovery"):
         asyncio.run(blocked.execute_global(interval=Interval.M15, candle_limit=100))
 
+    assert risk.calls == []
+    assert execution.calls == []
+
+
+@pytest.mark.parametrize("maximum", [1, 3, 5])
+def test_full_authoritative_portfolio_skips_discovery_before_any_claim(
+    maximum: int,
+) -> None:
+    """A full reconciled portfolio must avoid all expensive discovery and claims."""
+    btc = _signal(symbol="BTCUSDT")
+    claims = _OpportunityClaims()
+    executor, risk, execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+        },
+        claims=claims,
+    )
+    symbols = tuple(f"OPEN{index}USDT" for index in range(maximum))
+    reconciler = _Reconciler(results=[_portfolio_context(*symbols)])
+    blocked = replace(
+        executor,
+        live_runtime_portfolio_reconciler=reconciler,
+        max_open_positions=maximum,
+    )
+    universe = blocked.discovery_universe_service
+    discovery = blocked.discovery_service
+    assert isinstance(universe, _Universe)
+    assert isinstance(discovery, _Discovery)
+
+    report = asyncio.run(
+        blocked.execute_global_report(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert report.results == ()
+    assert report.skipped_capacity is True
+    assert report.batch is None
+    assert report.scanned_count == 0
+    assert report.signals == ()
+    assert report.stopped_by_capacity is False
+    assert reconciler.calls == 1
+    assert universe.get_calls == 0
+    assert universe.completion_calls == 0
+    assert discovery.calls == 0
+    assert claims.calls == []
+    assert risk.calls == []
+    assert execution.calls == []
+
+
+def test_zero_to_three_fills_sequentially_without_fourth_candidate_claim() -> None:
+    """Fill three slots one at a time and stop before claiming a fourth candidate."""
+    btc = _signal(symbol="BTCUSDT")
+    eth = _signal(symbol="ETHUSDT")
+    sol = _signal(symbol="SOLUSDT")
+    xrp = _signal(symbol="XRPUSDT")
+    claims = _OpportunityClaims()
+    executor, risk, execution = _executor(
+        signals=(btc, eth, sol, xrp),
+        decisions={
+            signal.symbol: _decision(signal=signal) for signal in (btc, eth, sol, xrp)
+        },
+        statuses={
+            signal.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+            for signal in (btc, eth, sol, xrp)
+        },
+        claims=claims,
+    )
+    reconciler = _Reconciler(
+        results=[
+            _portfolio_context(),
+            _portfolio_context("BTCUSDT"),
+            _portfolio_context("BTCUSDT", "ETHUSDT"),
+            _portfolio_context("BTCUSDT", "ETHUSDT", "SOLUSDT"),
+        ]
+    )
+    bounded = replace(
+        executor,
+        discovery_universe_service=_Universe(
+            symbols=(btc.symbol, eth.symbol, sol.symbol, xrp.symbol),
+            batch_size=4,
+        ),
+        live_runtime_portfolio_reconciler=reconciler,
+        max_symbols=4,
+        max_open_positions=3,
+        top_n=4,
+    )
+
+    report = asyncio.run(
+        bounded.execute_global_report(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert [result.executed for result in report.results] == [True, True, True]
+    assert report.batch is not None
+    assert report.scanned_count == 4
+    assert tuple(signal.symbol for signal in report.signals) == (
+        "BTCUSDT",
+        "ETHUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+    )
+    assert report.stopped_by_capacity is True
+    assert [identity[0] for identity in claims.calls] == [
+        "BTCUSDT",
+        "ETHUSDT",
+        "SOLUSDT",
+    ]
+    assert risk.calls == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    assert execution.calls == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    assert execution.maximum_active == 1
+    assert reconciler.calls == 4
+
+
+def test_partial_capacity_reopens_discovery_and_refills_one_slot() -> None:
+    """A later 3-to-2 reconciliation must resume discovery and refill to three."""
+    btc = _signal(symbol="BTCUSDT")
+    claims = _OpportunityClaims()
+    executor, risk, execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+        },
+        claims=claims,
+    )
+    reconciler = _Reconciler(
+        results=[
+            _portfolio_context("OPEN1USDT", "OPEN2USDT", "OPEN3USDT"),
+            _portfolio_context("OPEN1USDT", "OPEN2USDT"),
+            _portfolio_context("OPEN1USDT", "OPEN2USDT", "BTCUSDT"),
+        ]
+    )
+    bounded = replace(
+        executor,
+        live_runtime_portfolio_reconciler=reconciler,
+        max_open_positions=3,
+    )
+    universe = bounded.discovery_universe_service
+    assert isinstance(universe, _Universe)
+
+    first = asyncio.run(bounded.execute_global(interval=Interval.M15, candle_limit=100))
+    second = asyncio.run(
+        bounded.execute_global(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert first == ()
+    assert [result.executed for result in second] == [True]
+    assert universe.get_calls == 1
+    assert universe.completion_calls == 1
+    assert [identity[0] for identity in claims.calls] == ["BTCUSDT"]
+    assert risk.calls == ["BTCUSDT"]
+    assert execution.calls == ["BTCUSDT"]
+    assert reconciler.calls == 3
+
+
+def test_post_entry_capacity_fill_stops_before_later_candidate_claim() -> None:
+    """Stop the candidate batch immediately after exact adoption fills capacity."""
+    btc = _signal(symbol="BTCUSDT")
+    eth = _signal(symbol="ETHUSDT")
+    sol = _signal(symbol="SOLUSDT")
+    claims = _OpportunityClaims()
+    executor, risk, execution = _executor(
+        signals=(btc, eth, sol),
+        decisions={
+            btc.symbol: _decision(signal=btc, approved=False),
+            eth.symbol: _decision(signal=eth),
+            sol.symbol: _decision(signal=sol),
+        },
+        statuses={
+            eth.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED,
+            sol.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED,
+        },
+        claims=claims,
+    )
+    reconciler = _Reconciler(
+        results=[
+            _portfolio_context("OPEN1USDT", "OPEN2USDT"),
+            _portfolio_context("OPEN1USDT", "OPEN2USDT", "ETHUSDT"),
+        ]
+    )
+    bounded = replace(
+        executor,
+        live_runtime_portfolio_reconciler=reconciler,
+        max_open_positions=3,
+    )
+
+    results = asyncio.run(
+        bounded.execute_global(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert [result.executed for result in results] == [False, True]
+    assert [identity[0] for identity in claims.calls] == ["BTCUSDT", "ETHUSDT"]
+    assert risk.calls == ["BTCUSDT", "ETHUSDT"]
+    assert execution.calls == ["ETHUSDT"]
+    assert reconciler.calls == 2
+
+
+def test_over_capacity_authoritative_portfolio_is_managed_but_adds_no_exposure() -> (
+    None
+):
+    """Treat an already over-capacity exact portfolio as full without truncating it."""
+    btc = _signal(symbol="BTCUSDT")
+    claims = _OpportunityClaims()
+    executor, risk, execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={},
+        claims=claims,
+    )
+    reconciler = _Reconciler(
+        results=[_portfolio_context("AUSDT", "BUSDT", "CUSDT", "DUSDT")]
+    )
+    blocked = replace(
+        executor,
+        live_runtime_portfolio_reconciler=reconciler,
+        max_open_positions=3,
+    )
+
+    assert (
+        asyncio.run(blocked.execute_global(interval=Interval.M15, candle_limit=100))
+        == ()
+    )
+    assert (
+        reconciler.last_context.contexts
+        == _portfolio_context("AUSDT", "BUSDT", "CUSDT", "DUSDT").contexts
+    )
+    assert claims.calls == []
     assert risk.calls == []
     assert execution.calls == []
 
@@ -606,7 +1006,9 @@ def test_adoption_failure_preserves_protected_entry_and_blocks_later_candidate()
     )
     unsafe = replace(
         executor,
-        live_runtime_portfolio_reconciler=_Reconciler(results=[True, False]),
+        live_runtime_portfolio_reconciler=_Reconciler(
+            results=[_portfolio_context(), None]
+        ),
     )
 
     with pytest.raises(AutonomousLiveCycleUnsafeError, match="not adopted") as error:

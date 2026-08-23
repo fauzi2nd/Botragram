@@ -176,19 +176,45 @@ class SettingsManager:
 
     def load_market_settings(self) -> MarketSettings:
         """Load market settings while preserving the safe default interval."""
-        raw_interval = self._environment_provider.get_market_interval()
+        environment = self._environment_provider
+        raw_interval = environment.get_market_interval()
+        raw_discovery_cadence = environment.get_discovery_cadence_seconds()
         return MarketSettings(
             interval=(
                 self._parse_market_interval(raw_value=raw_interval)
                 if raw_interval
                 else Interval.M15
-            )
+            ),
+            discovery_universe_limit=self._parse_positive_int(
+                raw_value=environment.get_discovery_universe_limit(),
+                setting_name="DISCOVERY_UNIVERSE_LIMIT",
+            ),
+            discovery_batch_size=self._parse_positive_int(
+                raw_value=environment.get_discovery_batch_size(),
+                setting_name="DISCOVERY_BATCH_SIZE",
+            ),
+            discovery_cadence_seconds=(
+                self._parse_positive_int(
+                    raw_value=raw_discovery_cadence,
+                    setting_name="DISCOVERY_CADENCE_SECONDS",
+                )
+                if raw_discovery_cadence
+                else None
+            ),
         )
 
     def load_risk_settings(self) -> RiskSettings:
         """Load validated strategy-specific risk settings."""
         environment = self._environment_provider
         return RiskSettings(
+            ema_cross_stop_loss_pct=self._parse_decimal(
+                raw_value=environment.get_ema_cross_stop_loss_pct(),
+                setting_name="EMA_CROSS_STOP_LOSS_PCT",
+            ),
+            ema_cross_take_profit_pct=self._parse_decimal(
+                raw_value=environment.get_ema_cross_take_profit_pct(),
+                setting_name="EMA_CROSS_TAKE_PROFIT_PCT",
+            ),
             ema_scalping_stop_loss_pct=self._parse_decimal(
                 raw_value=environment.get_ema_scalping_stop_loss_pct(),
                 setting_name="EMA_SCALPING_STOP_LOSS_PCT",

@@ -34,6 +34,7 @@ from botragram.enums.environment_profile import EnvironmentProfile
 from botragram.enums.exchange_environment import ExchangeEnvironment
 from botragram.enums.exchange_type import ExchangeType
 from botragram.enums.execution_policy import ExecutionPolicy
+from botragram.enums.global_discovery_cycle_outcome import GlobalDiscoveryCycleOutcome
 from botragram.enums.global_discovery_cycle_state import GlobalDiscoveryCycleState
 from botragram.enums.indicator_type import IndicatorType
 from botragram.enums.interval import Interval
@@ -85,6 +86,7 @@ __all__ = [
     "EnvironmentProfile",
     "ExchangeEnvironment",
     "ExecutionPolicy",
+    "GlobalDiscoveryCycleOutcome",
     "GlobalDiscoveryCycleState",
     # Exchange
     "ExchangeType",

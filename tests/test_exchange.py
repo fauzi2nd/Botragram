@@ -17,6 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import asyncio
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timezone
 from decimal import Decimal
 
@@ -46,6 +47,7 @@ from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.exchanges.binance.stream import BinanceStreamClient
 from botragram.exchanges.factory import ExchangeFactory
+from botragram.models import MarketUniverseEntry
 
 
 class ExchangeInfoRestClient(BinanceRestClient):
@@ -78,6 +80,47 @@ class ExchangeInfoRestClient(BinanceRestClient):
                 {"symbol": "ETHBTC", "status": "TRADING", "quoteAsset": "BTC"},
             ]
         }
+
+
+# =============================================================================
+# Market Universe Model Tests
+# =============================================================================
+def test_market_universe_entry_normalizes_symbol_and_accepts_zero() -> None:
+    """Preserve a zero-volume fact while normalizing its immutable identity."""
+    entry = MarketUniverseEntry(
+        symbol=" btcusdt ",
+        quote_volume=Decimal("0"),
+    )
+
+    assert entry.symbol == "BTCUSDT"
+    assert entry.quote_volume == Decimal("0")
+
+    with pytest.raises(FrozenInstanceError):
+        setattr(entry, "symbol", "ETHUSDT")
+
+
+@pytest.mark.parametrize("symbol", ("", "   "))
+def test_market_universe_entry_rejects_empty_symbol(symbol: str) -> None:
+    """Require a provable symbol identity for every universe fact."""
+    with pytest.raises(ValueError, match="symbol must not be empty"):
+        MarketUniverseEntry(symbol=symbol, quote_volume=Decimal("1"))
+
+
+@pytest.mark.parametrize(
+    "quote_volume",
+    (
+        Decimal("NaN"),
+        Decimal("Infinity"),
+        Decimal("-Infinity"),
+        Decimal("-0.01"),
+    ),
+)
+def test_market_universe_entry_rejects_invalid_quote_volume(
+    quote_volume: Decimal,
+) -> None:
+    """Reject non-finite and negative quote-volume facts."""
+    with pytest.raises(ValueError):
+        MarketUniverseEntry(symbol="BTCUSDT", quote_volume=quote_volume)
 
 
 # =============================================================================
@@ -136,6 +179,17 @@ def test_binance_spot_reads_active_symbols_from_exchange_info() -> None:
 
     assert symbols == ("BTCUSDT", "ETHUSDT")
     assert rest.requested_path == "/api/v3/exchangeInfo"
+
+
+def test_binance_spot_market_universe_is_explicitly_unsupported() -> None:
+    """Keep the optional universe capability unsupported outside Futures."""
+    client = BinanceExchangeClient(
+        rest=ExchangeInfoRestClient(),
+        mapper=BinanceExchangeMapper(),
+    )
+
+    with pytest.raises(NotImplementedError, match="Market-universe discovery"):
+        asyncio.run(client.get_market_universe(quote_asset="USDT"))
 
 
 # =============================================================================
@@ -201,6 +255,21 @@ def test_binance_mapper_maps_rest_ticker_and_candle() -> None:
     assert candle.open_price == Decimal("99")
     assert candle.close_price == Decimal("101")
     assert candle.close_time.tzinfo is timezone.utc
+
+
+def test_binance_mapper_maps_market_universe_entry() -> None:
+    """Parse Binance quoteVolume as an exact normalized Decimal fact."""
+    entry = BinanceExchangeMapper().map_market_universe_entry(
+        {
+            "symbol": " btcusdt ",
+            "quoteVolume": "123.4500",
+        }
+    )
+
+    assert entry == MarketUniverseEntry(
+        symbol="BTCUSDT",
+        quote_volume=Decimal("123.4500"),
+    )
 
 
 @pytest.mark.parametrize(

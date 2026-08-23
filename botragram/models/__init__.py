@@ -38,6 +38,7 @@ from botragram.models.backtest import (
 )
 from botragram.models.balance import Balance
 from botragram.models.candle import Candle
+from botragram.models.discovery_universe_batch import DiscoveryUniverseBatch
 from botragram.models.exchange_symbol_rules import ExchangeSymbolRules
 from botragram.models.executable_quote import ExecutableQuote
 from botragram.models.execution_authorization import (
@@ -55,6 +56,7 @@ from botragram.models.live_recovered_position_management_authorization import (
 from botragram.models.live_runtime_health_snapshot import LiveRuntimeHealthSnapshot
 from botragram.models.live_runtime_portfolio_context import LiveRuntimePortfolioContext
 from botragram.models.live_runtime_position_context import LiveRuntimePositionContext
+from botragram.models.market_universe_entry import MarketUniverseEntry
 from botragram.models.notification import Notification
 from botragram.models.order import Order
 from botragram.models.position import Position
@@ -85,6 +87,7 @@ __all__ = [
     "BacktestResult",
     "BacktestTrade",
     "Candle",
+    "DiscoveryUniverseBatch",
     "ExecutionAuthorization",
     "ExecutionAuthorizationOutcome",
     "ExecutableQuote",
@@ -98,6 +101,7 @@ __all__ = [
     "LiveRuntimePortfolioContext",
     "LiveRuntimeHealthSnapshot",
     "LiveRuntimePositionContext",
+    "MarketUniverseEntry",
     "Notification",
     "Order",
     "Position",

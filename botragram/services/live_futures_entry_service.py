@@ -295,13 +295,15 @@ class LiveFuturesEntryService:
         except asyncio.CancelledError:
             _LOGGER.warning("Live Futures entry cancelled while protection is unsafe")
             raise
-        except Exception:
+        except Exception as error:
             _LOGGER.exception(
                 "Live Futures entry is unsafe; protection gate remains closed: "
                 "symbol=%s",
                 signal.symbol,
             )
-            raise
+            raise RuntimeError(
+                f"Live Futures post-entry state is unsafe: {error}"
+            ) from error
 
         try:
             await self._persist_attempt(

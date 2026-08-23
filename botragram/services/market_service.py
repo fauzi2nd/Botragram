@@ -25,7 +25,7 @@ from datetime import datetime
 # =============================================================================
 from botragram.enums import Interval
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
-from botragram.models import Candle, ExecutableQuote, Ticker
+from botragram.models import Candle, ExecutableQuote, MarketUniverseEntry, Ticker
 from botragram.repositories import CandleRepository
 
 __all__ = [
@@ -86,13 +86,18 @@ class MarketService:
         quote_asset: str,
     ) -> Sequence[str]:
         """Return exchange-supported active symbols for one quote asset."""
-        normalized_quote_asset = quote_asset.strip().upper()
-
-        if not normalized_quote_asset:
-            raise ValueError("Quote asset must not be empty")
-
         return await self.exchange_client.get_trading_symbols(
-            quote_asset=normalized_quote_asset,
+            quote_asset=self._normalize_quote_asset(quote_asset),
+        )
+
+    async def get_market_universe(
+        self,
+        *,
+        quote_asset: str,
+    ) -> Sequence[MarketUniverseEntry]:
+        """Return exchange-provided market facts for one quote asset."""
+        return await self.exchange_client.get_market_universe(
+            quote_asset=self._normalize_quote_asset(quote_asset),
         )
 
     async def get_candles(
@@ -234,6 +239,18 @@ class MarketService:
         await self.stream_client.unsubscribe(
             symbol=self._normalize_symbol(symbol),
         )
+
+    @staticmethod
+    def _normalize_quote_asset(
+        quote_asset: str,
+    ) -> str:
+        """Normalize and validate a quote asset."""
+        normalized_quote_asset = quote_asset.strip().upper()
+
+        if not normalized_quote_asset:
+            raise ValueError("Quote asset must not be empty")
+
+        return normalized_quote_asset
 
     @staticmethod
     def _normalize_symbol(

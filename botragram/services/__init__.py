@@ -66,6 +66,9 @@ from botragram.services.runtime_recovery_service import RuntimeRecoveryService
 from botragram.services.runtime_reporter import RuntimeReporter
 from botragram.services.strategy_service import StrategyService
 from botragram.services.trading_service import TradingService
+from botragram.services.volume_ranked_discovery_universe_service import (
+    VolumeRankedDiscoveryUniverseService,
+)
 
 __all__ = [
     "AccountService",
@@ -103,4 +106,5 @@ __all__ = [
     "RuntimeRecoveryService",
     "StrategyService",
     "TradingService",
+    "VolumeRankedDiscoveryUniverseService",
 ]

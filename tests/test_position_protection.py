@@ -17,7 +17,6 @@ from botragram.enums import (
     PositionSide,
     TradeMode,
 )
-from botragram.exceptions import VenueRuleValidationError
 from botragram.exchanges.binance.futures_client import (
     BinanceFuturesExchangeClient,
 )
@@ -355,8 +354,8 @@ async def test_live_stepped_same_tick_normalization_does_not_create_mutation() -
 
 
 @pytest.mark.asyncio
-async def test_invalid_live_stepped_stop_leaves_existing_protection_untouched() -> None:
-    """Fail closed before an identity, replacement POST, or old-stop removal."""
+async def test_invalid_live_stepped_stop_defers_without_losing_protection() -> None:
+    """Keep verified protection healthy when a stepped stop misses its MARK window."""
     position = _stepped_position(
         side=PositionSide.LONG,
         current_stop="0.0022490",
@@ -370,15 +369,26 @@ async def test_invalid_live_stepped_stop_leaves_existing_protection_untouched() 
         trade_mode=TradeMode.LIVE,
         position_repository=repository,
         exchange_client=exchange,
+        failure_retry_seconds=0.001,
     )
 
-    with pytest.raises(VenueRuleValidationError):
-        await manager.on_market_tick(ticker=_ticker(price="0.00226212", seconds=1))
+    await manager.on_market_tick(ticker=_ticker(price="0.00226212", seconds=1))
 
     stored = await repository.get_by_symbol(symbol=position.symbol)
     assert stored == position
     assert repository.updated_positions == []
     assert exchange.stop_replacements == []
+    assert exchange.stop_client_algo_ids == []
+
+    await asyncio.sleep(0.002)
+    exchange.mark_price = Decimal("0.00226212")
+    await manager.on_market_tick(ticker=_ticker(price="0.00226212", seconds=2))
+
+    stored = await repository.get_by_symbol(symbol=position.symbol)
+    assert stored is not None
+    assert exchange.stop_replacements == [Decimal("0.0022610")]
+    assert stored.stop_loss == Decimal("0.0022610")
+    assert stored.protection_step == 1
 
 
 @pytest.mark.asyncio

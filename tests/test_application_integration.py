@@ -59,6 +59,7 @@ from botragram.services import (
     PaperTradingService,
     RuntimeReporter,
     TradingService,
+    VolumeRankedDiscoveryUniverseService,
 )
 from botragram.telegram import TelegramBot
 
@@ -337,6 +338,25 @@ async def _run_testnet_autonomous_live_provider_test() -> None:
                 AutonomousLiveEntryExecutionService,
             )
             assert executor.discovery_service is provider.opportunity_discovery_service
+            assert isinstance(
+                executor.discovery_universe_service,
+                VolumeRankedDiscoveryUniverseService,
+            )
+            assert (
+                executor.discovery_universe_service.market_service
+                is provider.market_service
+            )
+            assert (
+                executor.discovery_universe_service.universe_limit
+                == provider.settings.market.discovery_universe_limit
+            )
+            assert (
+                executor.discovery_universe_service.batch_size
+                == provider.settings.market.discovery_batch_size
+            )
+            assert (
+                executor.max_open_positions == provider.settings.risk.max_open_positions
+            )
             assert (
                 executor.risk_evaluation_service
                 is provider.live_entry_risk_evaluation_service

@@ -104,6 +104,58 @@ def test_risk_engine_approves_and_sizes_a_buy_signal() -> None:
     assert result.metrics.risk_reward_ratio == Decimal("2")
 
 
+@pytest.mark.parametrize(
+    ("side", "expected_stop_loss", "expected_take_profit"),
+    (
+        (PositionSide.LONG, Decimal("98"), Decimal("104")),
+        (PositionSide.SHORT, Decimal("102"), Decimal("96")),
+    ),
+)
+def test_risk_engine_preserves_default_ema_cross_exit_profile(
+    side: PositionSide,
+    expected_stop_loss: Decimal,
+    expected_take_profit: Decimal,
+) -> None:
+    """Preserve v1.0.3 EMA cross protection levels for both position sides."""
+    engine = RiskEngine(settings=RiskSettings())
+
+    stop_loss, take_profit = engine.calculate_protection_levels(
+        side=side,
+        entry_price=Decimal("100"),
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    assert stop_loss == expected_stop_loss
+    assert take_profit == expected_take_profit
+
+
+def test_risk_engine_uses_overridden_ema_cross_exit_profile() -> None:
+    """Use narrow EMA cross ratios throughout the evaluated risk result."""
+    engine = RiskEngine(
+        settings=RiskSettings(
+            ema_cross_stop_loss_pct=Decimal("0.001"),
+            ema_cross_take_profit_pct=Decimal("0.0015"),
+        )
+    )
+
+    result = engine.evaluate(
+        signal=_create_signal(
+            signal_type=SignalType.SELL,
+            strategy_name=StrategyType.EMA_CROSS.value,
+        ),
+        account_balance=Decimal("1000"),
+    )
+
+    assert result.approved
+    assert result.position.quantity == Decimal("10")
+    assert result.position.notional == Decimal("1000")
+    assert result.metrics.stop_loss == Decimal("100.1")
+    assert result.metrics.take_profit == Decimal("99.85")
+    assert result.metrics.risk_amount == Decimal("1")
+    assert result.metrics.reward_amount == Decimal("1.5")
+    assert result.metrics.risk_reward_ratio == Decimal("1.5")
+
+
 def test_risk_engine_caps_position_at_configured_notional() -> None:
     """Verify calculated quantity respects maximum position size."""
     engine = RiskEngine(
@@ -135,6 +187,32 @@ def test_risk_engine_uses_dedicated_ema_scalping_exit_profile() -> None:
     assert result.metrics.stop_loss == Decimal("99.500")
     assert result.metrics.take_profit == Decimal("101.00")
     assert result.metrics.risk_reward_ratio == Decimal("2")
+
+
+@pytest.mark.parametrize(
+    "strategy_name",
+    (StrategyType.CUSTOM.value, "external_strategy"),
+)
+def test_risk_engine_preserves_global_exit_fallback(
+    strategy_name: str,
+) -> None:
+    """Keep custom and unknown strategies on the existing global exit profile."""
+    engine = RiskEngine(
+        settings=RiskSettings(
+            stop_loss_pct=Decimal("0.03"),
+            take_profit_pct=Decimal("0.06"),
+            ema_cross_stop_loss_pct=Decimal("0.001"),
+            ema_cross_take_profit_pct=Decimal("0.0015"),
+        )
+    )
+
+    result = engine.evaluate(
+        signal=_create_signal(strategy_name=strategy_name),
+        account_balance=Decimal("1000"),
+    )
+
+    assert result.metrics.stop_loss == Decimal("97")
+    assert result.metrics.take_profit == Decimal("106")
 
 
 @pytest.mark.parametrize(
