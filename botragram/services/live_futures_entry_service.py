@@ -24,6 +24,7 @@ from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderRejectedError,
+    LiveEntryExistingPositionError,
     LiveEntryPreflightError,
     LiveSubmissionBlockedError,
     VenueRuleValidationError,
@@ -173,6 +174,20 @@ class LiveFuturesEntryService:
             signal.symbol,
             signal.signal_type.value,
         )
+
+        existing_position = await self.position_service.get(
+            symbol=signal.symbol,
+            synchronize=True,
+        )
+        if existing_position is not None and existing_position.quantity > _DECIMAL_ZERO:
+            await self._persist_attempt(
+                attempt=attempt,
+                status=SubmissionAttemptStatus.BLOCKED_BY_EXISTING_POSITION,
+            )
+            self.runtime_control.set_position_protection_ready(True)
+            raise LiveEntryExistingPositionError(
+                "An active LIVE position blocks a new entry for the same symbol"
+            )
 
         try:
             order = await self.order_service.submit(

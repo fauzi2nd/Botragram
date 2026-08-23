@@ -10,6 +10,8 @@ from decimal import Decimal
 import pytest
 
 from botragram.app import TradingRuntimeControl
+from botragram.config.risk_settings import RiskSettings
+from botragram.engine import RiskEngine, TradingEngine
 from botragram.enums import (
     Interval,
     MarketType,
@@ -22,6 +24,7 @@ from botragram.enums import (
     SubmissionAttemptStatus,
 )
 from botragram.exceptions import (
+    LiveEntryExistingPositionError,
     LiveEntryPreflightError,
     LiveSubmissionBlockedError,
     VenueRuleValidationError,
@@ -35,7 +38,11 @@ from botragram.models import (
     SubmissionAttempt,
 )
 from botragram.models.risk import PositionSize
-from botragram.services import LiveFuturesEntryService, LivePostEntryRecoveryService
+from botragram.services import (
+    LiveEntryRiskEvaluationService,
+    LiveFuturesEntryService,
+    LivePostEntryRecoveryService,
+)
 from botragram.storage.memory import MemorySubmissionAttemptRepository
 from botragram.storage.memory.live_recovery_repository import (
     MemoryLiveRecoveryRepository,
@@ -200,13 +207,21 @@ class FakePositionService:
     """Return the post-entry exchange position and capture persistence."""
 
     position: Position | None
+    pre_entry_position: Position | None = None
+    error: BaseException | None = None
     synchronized: bool = False
     saved: Position | None = None
+    get_calls: int = 0
 
     async def get(self, *, symbol: str, synchronize: bool = False) -> Position | None:
         """Return the current position while recording synchronization intent."""
         assert symbol == "BTCUSDT"
         self.synchronized = synchronize
+        self.get_calls += 1
+        if self.error is not None:
+            raise self.error
+        if self.get_calls == 1:
+            return self.pre_entry_position
         return self.position
 
     async def observe(self, *, symbol: str) -> Position | None:
@@ -290,6 +305,85 @@ class CancellingReservationRepository(MemorySubmissionAttemptRepository):
         raise asyncio.CancelledError()
 
 
+class RecordingSubmissionAttemptRepository(MemorySubmissionAttemptRepository):
+    """Capture terminal attempt transitions for focused entry assertions."""
+
+    __slots__ = ("saved",)
+
+    def __init__(self) -> None:
+        """Initialize empty transition capture."""
+        super().__init__()
+        self.saved: list[SubmissionAttempt] = []
+
+    async def save(self, *, attempt: SubmissionAttempt) -> None:
+        """Record and persist one lifecycle transition."""
+        self.saved.append(attempt)
+        await super().save(attempt=attempt)
+
+
+@dataclass(slots=True)
+class SharedExchangePositionService:
+    """Expose a shared authoritative position state for stale-read regression."""
+
+    position: Position | None = None
+
+    async def get_all(self, *, synchronize: bool = False) -> tuple[Position, ...]:
+        """Return the current exchange portfolio for one risk evaluation."""
+        assert synchronize
+        return (self.position,) if self.position is not None else ()
+
+    async def get(self, *, symbol: str, synchronize: bool) -> Position | None:
+        """Return the current authoritative same-symbol position."""
+        assert symbol == "BTCUSDT"
+        assert synchronize
+        return self.position
+
+    async def save(self, *, position: Position) -> None:
+        """Persist the current exchange-authoritative position snapshot."""
+        self.position = position
+
+
+@dataclass(slots=True)
+class PositionCreatingOrderService(FakeOrderService):
+    """Expose the filled exchange position immediately after the sole POST."""
+
+    position_service: SharedExchangePositionService = field(
+        default_factory=SharedExchangePositionService
+    )
+
+    async def submit(
+        self,
+        *,
+        signal: Signal,
+        risk_result: RiskResult,
+        order_type: OrderType,
+        price: Decimal | None,
+        client_order_id: str | None = None,
+    ) -> Order:
+        """Record the POST and make its exchange position visible afterward."""
+        order = await super().submit(
+            signal=signal,
+            risk_result=risk_result,
+            order_type=order_type,
+            price=price,
+            client_order_id=client_order_id,
+        )
+        self.position_service.position = _position()
+        return order
+
+
+@dataclass(slots=True)
+class StaticBalanceService:
+    """Provide the deterministic available collateral for risk evaluation."""
+
+    balance: Decimal
+
+    async def get_free_balance(self, *, asset: str) -> Decimal:
+        """Return the configured quote balance."""
+        assert asset == "USDT"
+        return self.balance
+
+
 def _service(
     *,
     order_service: FakeOrderService | None = None,
@@ -339,6 +433,160 @@ async def test_market_entry_syncs_actual_position_and_marks_protection_ready() -
     assert positions.saved.strategy_type is StrategyType.EMA_SCALPING
     assert protection.position == positions.saved
     assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_final_position_revalidation_blocks_stale_same_symbol_entry() -> None:
+    """Do not POST after another runtime completed the same-symbol position."""
+    orders = FakeOrderService()
+    positions = FakePositionService(
+        _position(),
+        pre_entry_position=_position(),
+    )
+    repository = RecordingSubmissionAttemptRepository()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=positions,
+        protection_service=FakeProtectionService(),
+        runtime_control=control,
+        submission_attempt_repository=repository,
+    )
+
+    with pytest.raises(LiveEntryExistingPositionError, match="active LIVE position"):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert positions.synchronized
+    assert orders.calls == 0
+    assert [attempt.status for attempt in repository.saved] == [
+        SubmissionAttemptStatus.BLOCKED_BY_EXISTING_POSITION,
+    ]
+    assert await repository.get_incomplete() == ()
+    assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_stale_no_position_evaluation_cannot_post_after_completed_entry() -> None:
+    """Reject B after A fills the symbol between B's evaluation and reservation."""
+    positions = SharedExchangePositionService()
+    evaluation = await LiveEntryRiskEvaluationService(
+        account_service=StaticBalanceService(balance=Decimal("1000")),
+        position_service=positions,
+        trading_engine=TradingEngine(risk_engine=RiskEngine(settings=RiskSettings())),
+        balance_asset="USDT",
+    ).evaluate(signal=_signal())
+    assert not evaluation.has_existing_position
+    assert evaluation.decision.risk_result is not None
+
+    repository = RecordingSubmissionAttemptRepository()
+    orders = PositionCreatingOrderService(position_service=positions)
+    first = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=positions,
+        protection_service=FakeProtectionService(),
+        runtime_control=TradingRuntimeControl(market_type=MarketType.FUTURES),
+        submission_attempt_repository=repository,
+    )
+    second = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=positions,
+        protection_service=FakeProtectionService(),
+        runtime_control=TradingRuntimeControl(market_type=MarketType.FUTURES),
+        submission_attempt_repository=repository,
+    )
+
+    await first.execute(
+        signal=_signal(),
+        risk_result=evaluation.decision.risk_result,
+        interval=Interval.M15,
+        order_type=OrderType.MARKET,
+        price=None,
+    )
+
+    with pytest.raises(LiveEntryExistingPositionError):
+        await second.execute(
+            signal=_signal(),
+            risk_result=evaluation.decision.risk_result,
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 1
+    assert repository.saved[-1].status is (
+        SubmissionAttemptStatus.BLOCKED_BY_EXISTING_POSITION
+    )
+
+
+@pytest.mark.asyncio
+async def test_final_position_revalidation_failure_keeps_gate_closed() -> None:
+    """Treat an authoritative revalidation failure as unsafe rather than absent."""
+    orders = FakeOrderService()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(
+            _position(),
+            error=RuntimeError("position read failed"),
+        ),
+        protection_service=FakeProtectionService(),
+        runtime_control=control,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    with pytest.raises(RuntimeError, match="position read failed"):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 0
+    assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_final_position_revalidation_cancellation_keeps_gate_closed() -> None:
+    """Propagate final-read cancellation while retaining the prepared attempt."""
+    orders = FakeOrderService()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    repository = MemorySubmissionAttemptRepository()
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(
+            _position(),
+            error=asyncio.CancelledError(),
+        ),
+        protection_service=FakeProtectionService(),
+        runtime_control=control,
+        submission_attempt_repository=repository,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 0
+    assert len(await repository.get_incomplete()) == 1
+    assert "position protection" in control.get_missing_startup_requirements()
 
 
 @pytest.mark.asyncio

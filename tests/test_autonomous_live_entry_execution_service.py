@@ -28,6 +28,7 @@ from botragram.enums import (
 )
 from botragram.exceptions import (
     ExchangeOrderRejectedError,
+    LiveEntryExistingPositionError,
     LiveEntryPreflightError,
     LiveSubmissionBlockedError,
     VenueRuleValidationError,
@@ -200,6 +201,7 @@ class _RecordingLivePositionService:
 
     events: list[str]
     position: Position
+    get_calls: int = 0
 
     async def get_all(self, *, synchronize: bool = False) -> Sequence[Position]:
         """Return the empty authoritative pre-entry portfolio."""
@@ -208,10 +210,13 @@ class _RecordingLivePositionService:
         return ()
 
     async def get(self, *, symbol: str, synchronize: bool) -> Position | None:
-        """Return the authoritative filled position after the entry POST."""
+        """Return no position before POST and the filled position afterward."""
         assert symbol == self.position.symbol
         assert synchronize
         self.events.append("position:sync")
+        self.get_calls += 1
+        if self.get_calls == 1:
+            return None
         return self.position
 
     async def save(self, *, position: Position) -> None:
@@ -739,6 +744,26 @@ def test_existing_position_rejects_before_protected_entry() -> None:
     assert protected_entry.calls == []
 
 
+def test_final_existing_position_maps_to_safe_existing_position_result() -> None:
+    """Translate final same-symbol revalidation into the existing safe outcome."""
+    protected_entry = _FakeProtectedEntryService(
+        error=LiveEntryExistingPositionError("active position")
+    )
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+        ).execute(
+            intent=_create_intent(),
+            authorization=_create_authorization(),
+        )
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.EXISTING_POSITION
+    assert len(protected_entry.calls) == 1
+
+
 def test_batch_revalidates_capacity_after_each_completed_entry() -> None:
     """Prevent a P0 ETH intent from consuming capacity after BTC fills."""
     protected_entry = _FakeProtectedEntryService()
@@ -923,6 +948,7 @@ def test_adapter_delegates_full_prepared_to_protected_completion_order() -> None
         "portfolio:sync",
         "attempt:check",
         "attempt:prepared",
+        "position:sync",
         "order:post",
         "attempt:acknowledged",
         "position:sync",

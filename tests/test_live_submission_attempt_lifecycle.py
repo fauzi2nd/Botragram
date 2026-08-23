@@ -242,11 +242,15 @@ class FakePositionService:
     """Provide one synchronized position for the protected-entry path."""
 
     position: Position | None = field(default_factory=_position)
+    get_calls: int = 0
 
     async def get(self, *, symbol: str, synchronize: bool) -> Position | None:
-        """Return the configured position."""
+        """Return no position before POST and the fill position afterward."""
         assert symbol == "BTCUSDT"
         assert synchronize
+        self.get_calls += 1
+        if self.get_calls % 2 == 1:
+            return None
         return self.position
 
     async def save(self, *, position: Position) -> None:
