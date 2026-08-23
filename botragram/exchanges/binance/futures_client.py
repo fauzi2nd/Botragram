@@ -36,6 +36,7 @@ from botragram.models import (
     Account,
     Candle,
     ExchangeSymbolRules,
+    ExecutableQuote,
     Order,
     Position,
     Ticker,
@@ -51,6 +52,7 @@ _PING_ENDPOINT = "/fapi/v1/ping"
 _EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
 _ACCOUNT_ENDPOINT = "/fapi/v3/account"
 _TICKER_ENDPOINT = "/fapi/v1/ticker/24hr"
+_BOOK_TICKER_ENDPOINT = "/fapi/v1/ticker/bookTicker"
 _MARK_PRICE_ENDPOINT = "/fapi/v1/premiumIndex"
 _CANDLES_ENDPOINT = "/fapi/v1/klines"
 _ORDER_ENDPOINT = "/fapi/v1/order"
@@ -115,6 +117,18 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             params={"symbol": self._normalize_symbol(symbol)},
         )
         return self._mapper.map_ticker(self._require_mapping(payload))
+
+    async def get_executable_quote(
+        self,
+        *,
+        symbol: str,
+    ) -> ExecutableQuote:
+        """Return the current Futures best bid and ask for a MARKET entry."""
+        payload = await self._rest.get(
+            _BOOK_TICKER_ENDPOINT,
+            params={"symbol": self._normalize_symbol(symbol)},
+        )
+        return self._mapper.map_futures_executable_quote(self._require_mapping(payload))
 
     async def get_mark_price(self, *, symbol: str) -> Decimal:
         """Return the current Futures MARK_PRICE for conditional triggers."""

@@ -28,11 +28,11 @@ from botragram.models import (
     AutonomousLiveEntryAuthorization,
     AutonomousLiveEntryExecutionResult,
     AutonomousLiveEntryIntent,
+    ExecutableQuote,
     LiveEntryRiskEvaluation,
     Order,
     RiskResult,
     Signal,
-    Ticker,
     TradingDecision,
 )
 
@@ -60,11 +60,11 @@ class _LiveEntryRiskEvaluator(Protocol):
         ...
 
 
-class _LiveMarketTickerProvider(Protocol):
-    """Provide one current normalized market ticker."""
+class _LiveExecutableQuoteProvider(Protocol):
+    """Provide one current normalized executable market quote."""
 
-    async def get_ticker(self, *, symbol: str) -> Ticker:
-        """Return the current ticker for an exact trading symbol."""
+    async def get_executable_quote(self, *, symbol: str) -> ExecutableQuote:
+        """Return the current executable quote for an exact trading symbol."""
         ...
 
 
@@ -94,7 +94,7 @@ class AutonomousLiveEntryExecutionService:
     """
 
     risk_evaluation_service: _LiveEntryRiskEvaluator
-    market_service: _LiveMarketTickerProvider
+    market_service: _LiveExecutableQuoteProvider
     live_futures_entry_service: _ProtectedLiveEntryExecutor
     environment: ExchangeEnvironment
     utc_now: Callable[[], datetime] = _utc_now
@@ -116,9 +116,11 @@ class AutonomousLiveEntryExecutionService:
                 status=AutonomousLiveEntryExecutionStatus.AUTHORIZATION_REJECTED,
             )
 
-        ticker = await self.market_service.get_ticker(symbol=intent.signal.symbol)
+        quote = await self.market_service.get_executable_quote(
+            symbol=intent.signal.symbol
+        )
         entry_price_override = self._get_entry_price_override(
-            ticker=ticker,
+            quote=quote,
             signal=intent.signal,
         )
         if entry_price_override is None:
@@ -240,16 +242,18 @@ class AutonomousLiveEntryExecutionService:
         )
 
     @staticmethod
-    def _get_entry_price_override(*, ticker: Ticker, signal: Signal) -> Decimal | None:
+    def _get_entry_price_override(
+        *, quote: ExecutableQuote, signal: Signal
+    ) -> Decimal | None:
         """Return a valid side-aware execution reference for an entry signal."""
-        if ticker.symbol.strip().upper() != signal.symbol.strip().upper():
+        if quote.symbol.strip().upper() != signal.symbol.strip().upper():
             return None
 
         match signal.signal_type:
             case SignalType.BUY:
-                entry_price = ticker.ask_price
+                entry_price = quote.ask_price
             case SignalType.SELL:
-                entry_price = ticker.bid_price
+                entry_price = quote.bid_price
             case _:
                 return None
 
@@ -262,9 +266,7 @@ class AutonomousLiveEntryExecutionService:
                 name="Autonomous LIVE signal generated_at",
             )
         )
-        if ticker.timestamp.tzinfo is None or ticker.timestamp.utcoffset() is None:
-            return None
-        if ticker.timestamp.astimezone(UTC) < signal_generated_at:
+        if quote.timestamp.astimezone(UTC) < signal_generated_at:
             return None
 
         return entry_price

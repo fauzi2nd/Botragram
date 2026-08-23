@@ -29,6 +29,7 @@ from botragram.models import (
     Account,
     Candle,
     ExchangeSymbolRules,
+    ExecutableQuote,
     Order,
     Position,
     Ticker,
@@ -77,6 +78,25 @@ class BaseExchangeClient(ABC):
         symbol: str,
     ) -> Ticker:
         """Return the latest ticker for a trading symbol."""
+
+    async def get_executable_quote(
+        self,
+        *,
+        symbol: str,
+    ) -> ExecutableQuote:
+        """Return an exchange-provided bid/ask reference for a MARKET entry.
+
+        Clients whose ticker endpoint supplies a timestamped bid and ask may use
+        this truthful default. Product-specific clients override it when their
+        executable quote endpoint has distinct semantics.
+        """
+        ticker = await self.get_ticker(symbol=symbol)
+        return ExecutableQuote(
+            symbol=ticker.symbol,
+            bid_price=ticker.bid_price,
+            ask_price=ticker.ask_price,
+            timestamp=ticker.timestamp,
+        )
 
     async def get_mark_price(self, *, symbol: str) -> Decimal:
         """Return the current trigger reference price for a protection order.

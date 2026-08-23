@@ -25,7 +25,7 @@ from datetime import datetime
 # =============================================================================
 from botragram.enums import Interval
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
-from botragram.models import Candle, Ticker
+from botragram.models import Candle, ExecutableQuote, Ticker
 from botragram.repositories import CandleRepository
 
 __all__ = [
@@ -67,6 +67,16 @@ class MarketService:
             Latest standardized ticker.
         """
         return await self.exchange_client.get_ticker(
+            symbol=self._normalize_symbol(symbol),
+        )
+
+    async def get_executable_quote(
+        self,
+        *,
+        symbol: str,
+    ) -> ExecutableQuote:
+        """Return the current executable bid/ask quote for a trading symbol."""
+        return await self.exchange_client.get_executable_quote(
             symbol=self._normalize_symbol(symbol),
         )
 

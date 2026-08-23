@@ -39,6 +39,7 @@ from botragram.models.backtest import (
 from botragram.models.balance import Balance
 from botragram.models.candle import Candle
 from botragram.models.exchange_symbol_rules import ExchangeSymbolRules
+from botragram.models.executable_quote import ExecutableQuote
 from botragram.models.execution_authorization import (
     ExecutionAuthorization,
     ExecutionAuthorizationOutcome,
@@ -86,6 +87,7 @@ __all__ = [
     "Candle",
     "ExecutionAuthorization",
     "ExecutionAuthorizationOutcome",
+    "ExecutableQuote",
     "ExchangeSymbolRules",
     "LivePortfolioRecoveryResult",
     "LiveRecoveredPositionManagementAuthorization",

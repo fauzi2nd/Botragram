@@ -18,7 +18,7 @@ from __future__ import annotations
 # =============================================================================
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import cast
 
 # =============================================================================
@@ -32,6 +32,7 @@ from botragram.models import (
     Balance,
     Candle,
     ExchangeSymbolRules,
+    ExecutableQuote,
     Order,
     Position,
     Ticker,
@@ -110,6 +111,24 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             bid_price=self._to_decimal(payload.get("bidPrice")),
             ask_price=self._to_decimal(payload.get("askPrice")),
             last_price=self._to_decimal(payload.get("lastPrice")),
+            timestamp=self._to_datetime(timestamp_value),
+        )
+
+    def map_futures_executable_quote(
+        self,
+        payload: ExchangePayload,
+    ) -> ExecutableQuote:
+        """Map a Binance Futures book ticker into an executable quote."""
+        timestamp_value = payload.get("time")
+        if timestamp_value is None or timestamp_value == "":
+            raise ValueError(
+                "Binance Futures book ticker payload must contain a valid time"
+            )
+
+        return ExecutableQuote(
+            symbol=self._to_string(payload.get("symbol")),
+            bid_price=self._to_required_decimal(payload, key="bidPrice"),
+            ask_price=self._to_required_decimal(payload, key="askPrice"),
             timestamp=self._to_datetime(timestamp_value),
         )
 
@@ -487,6 +506,22 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             return Decimal("0")
 
         return Decimal(str(value))
+
+    @staticmethod
+    def _to_required_decimal(
+        payload: ExchangePayload,
+        *,
+        key: str,
+    ) -> Decimal:
+        """Convert a required decimal payload field without a zero fallback."""
+        value = payload.get(key)
+        if value is None or value == "":
+            raise ValueError(f"Binance payload must contain a valid {key}")
+
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError(f"Binance payload contains an invalid {key}") from error
 
     @staticmethod
     def _to_optional_decimal(

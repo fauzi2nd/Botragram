@@ -231,6 +231,77 @@ def test_binance_mapper_rejects_rest_ticker_without_close_time(
         mapper.map_ticker(payload)
 
 
+def test_binance_mapper_maps_futures_book_ticker_without_last_price() -> None:
+    """Map Futures executable bid/ask data without fabricating a last price."""
+    quote = BinanceExchangeMapper().map_futures_executable_quote(
+        {
+            "symbol": "BTCUSDT",
+            "bidPrice": "99.5",
+            "askPrice": "100.5",
+            "time": 1_700_000_000_000,
+        }
+    )
+
+    assert quote.symbol == "BTCUSDT"
+    assert quote.bid_price == Decimal("99.5")
+    assert quote.ask_price == Decimal("100.5")
+    assert quote.timestamp == datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("time", (None, ""))
+def test_binance_mapper_rejects_futures_book_ticker_without_time(
+    time: object,
+) -> None:
+    """Require timestamp provenance for a Futures executable quote."""
+    with pytest.raises(ValueError, match="must contain a valid time"):
+        BinanceExchangeMapper().map_futures_executable_quote(
+            {
+                "symbol": "BTCUSDT",
+                "bidPrice": "99.5",
+                "askPrice": "100.5",
+                "time": time,
+            }
+        )
+
+
+def test_binance_mapper_rejects_futures_book_ticker_with_invalid_time() -> None:
+    """Reject a non-numeric executable quote timestamp."""
+    with pytest.raises(ValueError):
+        BinanceExchangeMapper().map_futures_executable_quote(
+            {
+                "symbol": "BTCUSDT",
+                "bidPrice": "99.5",
+                "askPrice": "100.5",
+                "time": "not-a-time",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    (
+        ("bidPrice", None),
+        ("askPrice", ""),
+        ("bidPrice", "not-a-decimal"),
+    ),
+)
+def test_binance_mapper_rejects_malformed_futures_book_ticker_price(
+    key: str,
+    value: object,
+) -> None:
+    """Never coerce malformed executable bid or ask values into valid prices."""
+    payload: dict[str, object] = {
+        "symbol": "BTCUSDT",
+        "bidPrice": "99.5",
+        "askPrice": "100.5",
+        "time": 1_700_000_000_000,
+    }
+    payload[key] = value
+
+    with pytest.raises(ValueError, match=key):
+        BinanceExchangeMapper().map_futures_executable_quote(payload)
+
+
 def test_binance_mapper_maps_optional_order_prices() -> None:
     """Verify zero or absent Binance order prices remain optional."""
     order = BinanceExchangeMapper().map_order(

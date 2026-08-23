@@ -37,12 +37,12 @@ from botragram.exceptions import (
 from botragram.models import (
     AutonomousLiveEntryAuthorization,
     AutonomousLiveEntryIntent,
+    ExecutableQuote,
     Order,
     Position,
     RiskResult,
     Signal,
     SubmissionAttempt,
-    Ticker,
 )
 from botragram.repositories import SubmissionAttemptRepository
 from botragram.services import (
@@ -98,17 +98,17 @@ class _FakePositionService:
 class _FakeMarketService:
     """Supply deterministic current executable market references."""
 
-    ticker: Ticker
-    preserve_ticker_symbol: bool = False
+    quote: ExecutableQuote
+    preserve_quote_symbol: bool = False
     calls: list[str] = field(default_factory=list[str])
 
-    async def get_ticker(self, *, symbol: str) -> Ticker:
-        """Return the configured ticker after recording its requested symbol."""
+    async def get_executable_quote(self, *, symbol: str) -> ExecutableQuote:
+        """Return the configured quote after recording its requested symbol."""
         self.calls.append(symbol)
         return (
-            self.ticker
-            if self.preserve_ticker_symbol
-            else replace(self.ticker, symbol=symbol)
+            self.quote
+            if self.preserve_quote_symbol
+            else replace(self.quote, symbol=symbol)
         )
 
 
@@ -295,19 +295,18 @@ def _create_signal(*, symbol: str = "BTCUSDT") -> Signal:
     )
 
 
-def _create_ticker(
+def _create_executable_quote(
     *,
     symbol: str = "BTCUSDT",
     bid_price: Decimal = Decimal("99"),
     ask_price: Decimal = Decimal("101"),
     timestamp: datetime = _NOW,
-) -> Ticker:
+) -> ExecutableQuote:
     """Create one deterministic side-aware current market reference."""
-    return Ticker(
+    return ExecutableQuote(
         symbol=symbol,
         bid_price=bid_price,
         ask_price=ask_price,
-        last_price=Decimal("100"),
         timestamp=timestamp,
     )
 
@@ -386,7 +385,7 @@ def _create_service(
         market_service=(
             market_service
             if market_service is not None
-            else _FakeMarketService(ticker=_create_ticker())
+            else _FakeMarketService(quote=_create_executable_quote())
         ),
         live_futures_entry_service=protected_entry_service,
         environment=ExchangeEnvironment.TESTNET,
@@ -498,7 +497,7 @@ def test_buy_risk_uses_current_ask_while_preserving_signal_provenance() -> None:
             position_service=_FakePositionService(portfolios=[()]),
             protected_entry_service=protected_entry,
             market_service=_FakeMarketService(
-                ticker=_create_ticker(ask_price=Decimal("125"))
+                quote=_create_executable_quote(ask_price=Decimal("125"))
             ),
         ).execute(intent=intent, authorization=_create_authorization())
     )
@@ -534,7 +533,10 @@ def test_sell_risk_uses_current_bid() -> None:
             position_service=_FakePositionService(portfolios=[()]),
             protected_entry_service=_FakeProtectedEntryService(),
             market_service=_FakeMarketService(
-                ticker=_create_ticker(bid_price=Decimal("75"), ask_price=Decimal("76"))
+                quote=_create_executable_quote(
+                    bid_price=Decimal("75"),
+                    ask_price=Decimal("76"),
+                )
             ),
         ).execute(intent=sell_intent, authorization=_create_authorization())
     )
@@ -546,7 +548,7 @@ def test_sell_risk_uses_current_bid() -> None:
 
 
 def test_invalid_market_reference_rejects_before_risk_or_protected_entry() -> None:
-    """Fail closed when a ticker cannot prove the intended symbol and quote."""
+    """Fail closed when a quote cannot prove the intended symbol and price."""
     accounts = _FakeAccountService(balances=[Decimal("500")])
     positions = _FakePositionService(portfolios=[()])
     protected_entry = _FakeProtectedEntryService()
@@ -556,8 +558,8 @@ def test_invalid_market_reference_rejects_before_risk_or_protected_entry() -> No
             position_service=positions,
             protected_entry_service=protected_entry,
             market_service=_FakeMarketService(
-                ticker=_create_ticker(symbol="ETHUSDT"),
-                preserve_ticker_symbol=True,
+                quote=_create_executable_quote(symbol="ETHUSDT"),
+                preserve_quote_symbol=True,
             ),
         ).execute(intent=_create_intent(), authorization=_create_authorization())
     )
@@ -568,7 +570,7 @@ def test_invalid_market_reference_rejects_before_risk_or_protected_entry() -> No
     assert protected_entry.calls == []
 
 
-def test_pre_signal_ticker_timestamp_rejects_before_risk_or_entry() -> None:
+def test_pre_signal_quote_timestamp_rejects_before_risk_or_entry() -> None:
     """Reject a valid quote whose timestamp predates signal provenance."""
     accounts = _FakeAccountService(balances=[Decimal("500")])
     positions = _FakePositionService(portfolios=[()])
@@ -579,7 +581,9 @@ def test_pre_signal_ticker_timestamp_rejects_before_risk_or_entry() -> None:
             position_service=positions,
             protected_entry_service=protected_entry,
             market_service=_FakeMarketService(
-                ticker=_create_ticker(timestamp=_NOW - timedelta(microseconds=1))
+                quote=_create_executable_quote(
+                    timestamp=_NOW - timedelta(microseconds=1)
+                )
             ),
         ).execute(intent=_create_intent(), authorization=_create_authorization())
     )
@@ -598,10 +602,10 @@ def test_pre_signal_ticker_timestamp_rejects_before_risk_or_entry() -> None:
         _NOW.astimezone(timezone(timedelta(hours=7))),
     ),
 )
-def test_current_or_later_ticker_timestamp_allows_repriced_entry(
+def test_current_or_later_quote_timestamp_allows_repriced_entry(
     timestamp: datetime,
 ) -> None:
-    """Accept equal, later, and offset-equivalent ticker provenance times."""
+    """Accept equal, later, and offset-equivalent quote provenance times."""
     protected_entry = _FakeProtectedEntryService()
     result = asyncio.run(
         _create_service(
@@ -609,7 +613,7 @@ def test_current_or_later_ticker_timestamp_allows_repriced_entry(
             position_service=_FakePositionService(portfolios=[()]),
             protected_entry_service=protected_entry,
             market_service=_FakeMarketService(
-                ticker=_create_ticker(timestamp=timestamp)
+                quote=_create_executable_quote(timestamp=timestamp)
             ),
         ).execute(intent=_create_intent(), authorization=_create_authorization())
     )
@@ -618,22 +622,10 @@ def test_current_or_later_ticker_timestamp_allows_repriced_entry(
     assert len(protected_entry.calls) == 1
 
 
-def test_naive_ticker_timestamp_rejects_before_protected_entry() -> None:
-    """Fail closed rather than directly comparing a naive ticker timestamp."""
-    protected_entry = _FakeProtectedEntryService()
-    result = asyncio.run(
-        _create_service(
-            account_service=_FakeAccountService(balances=[Decimal("500")]),
-            position_service=_FakePositionService(portfolios=[()]),
-            protected_entry_service=protected_entry,
-            market_service=_FakeMarketService(
-                ticker=_create_ticker(timestamp=_NOW.replace(tzinfo=None))
-            ),
-        ).execute(intent=_create_intent(), authorization=_create_authorization())
-    )
-
-    assert result.status is AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED
-    assert protected_entry.calls == []
+def test_executable_quote_rejects_naive_timestamp() -> None:
+    """Require an exchange quote to retain timezone-aware provenance."""
+    with pytest.raises(ValueError, match="timestamp must be timezone-aware"):
+        _create_executable_quote(timestamp=_NOW.replace(tzinfo=None))
 
 
 @pytest.mark.parametrize("quote", (Decimal("NaN"), Decimal("0"), Decimal("-1")))
@@ -647,7 +639,9 @@ def test_non_positive_or_non_finite_market_reference_rejects_before_entry(
             account_service=_FakeAccountService(balances=[Decimal("500")]),
             position_service=_FakePositionService(portfolios=[()]),
             protected_entry_service=protected_entry,
-            market_service=_FakeMarketService(ticker=_create_ticker(ask_price=quote)),
+            market_service=_FakeMarketService(
+                quote=_create_executable_quote(ask_price=quote)
+            ),
         ).execute(intent=_create_intent(), authorization=_create_authorization())
     )
 
@@ -949,7 +943,7 @@ def test_adapter_delegates_full_prepared_to_protected_completion_order() -> None
             ),
             balance_asset="USDT",
         ),
-        market_service=_FakeMarketService(ticker=_create_ticker()),
+        market_service=_FakeMarketService(quote=_create_executable_quote()),
         live_futures_entry_service=live_entry,
         environment=ExchangeEnvironment.TESTNET,
         utc_now=lambda: _NOW,
@@ -1008,7 +1002,7 @@ async def _run_cancellation_test() -> None:
             ),
             balance_asset="USDT",
         ),
-        market_service=_FakeMarketService(ticker=_create_ticker()),
+        market_service=_FakeMarketService(quote=_create_executable_quote()),
         live_futures_entry_service=protected_entry,
         environment=ExchangeEnvironment.TESTNET,
     )

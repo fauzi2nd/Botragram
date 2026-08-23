@@ -335,6 +335,34 @@ async def test_futures_client_lists_active_usdt_perpetual_symbols() -> None:
 
 
 @pytest.mark.asyncio
+async def test_futures_client_reads_executable_quote_from_book_ticker() -> None:
+    """Use the Futures book ticker because 24-hour payloads lack bid and ask."""
+    rest = RecordingBinanceRestClient()
+    rest.get_responses["/fapi/v1/ticker/bookTicker"] = {
+        "symbol": "BTCUSDT",
+        "bidPrice": "99.5",
+        "askPrice": "100.5",
+        "time": 1_700_000_000_000,
+    }
+    client = _create_client(rest)
+
+    quote = await client.get_executable_quote(symbol=" btcusdt ")
+
+    assert quote.symbol == "BTCUSDT"
+    assert quote.bid_price == Decimal("99.5")
+    assert quote.ask_price == Decimal("100.5")
+    assert quote.timestamp == datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
+    assert rest.requests == [
+        (
+            "GET",
+            "/fapi/v1/ticker/bookTicker",
+            {"symbol": "BTCUSDT"},
+            False,
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_futures_client_creates_limit_order() -> None:
     """Verify Futures limit orders use the fapi endpoint and GTC."""
     rest = RecordingBinanceRestClient()

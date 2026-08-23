@@ -212,19 +212,19 @@ signal returns the safe typed `stale_signal` outcome without creating a
 `PREPARED` attempt, normalizing quantity, or submitting an exchange order; its
 durable closed-candle claim remains intentionally unreleased. Monthly checks use
 calendar-month rollover with end-of-month preservation.
-Before that final risk evaluation, autonomous LIVE fetches a fresh REST ticker
-and sizes BUY entries from `ask_price` and SELL entries from `bid_price`. The
+Before that final risk evaluation, autonomous LIVE fetches a fresh executable
+bid/ask quote. Binance USD-M Futures uses `/fapi/v1/ticker/bookTicker`: BUY
+entries size from `ask_price` and SELL entries size from `bid_price`. The
 closed-candle `Signal.price` remains immutable strategy provenance; an ephemeral
 repriced signal is used only for risk sizing, while the returned decision still
-retains the original signal. Missing, mismatched, non-finite, or non-positive
-side-aware quotes return `market_reference_rejected` before any protected-entry
-mutation. This reduces stale-price sizing risk but does not eliminate residual
-MARKET-order slippage between the REST ticker read and the actual exchange fill.
-The REST ticker timestamp must be timezone-aware and reach at least the signal's
-closed-candle `generated_at`; missing, naive, or pre-signal timestamps are also
-rejected before mutation. This is not a configurable age or slippage bound:
-Binance's 24-hour ticker `closeTime` establishes only response provenance, not
-the exact update age of its bid/ask quote, so residual MARKET slippage remains.
+retains the original signal. The executable quote carries exchange timestamp
+provenance from bookTicker `time`; it must be timezone-aware and reach at least
+the signal's closed-candle `generated_at`. A symbol mismatch, invalid,
+non-finite, non-positive side-aware price, or older quote returns
+`market_reference_rejected` before any protected-entry mutation. No `last_price`
+is fabricated. This is only a pre-submission executable reference, not a
+configurable age or slippage bound: residual MARKET fill/slippage risk remains,
+and Binance remains authoritative for the actual fill.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an
