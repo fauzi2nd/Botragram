@@ -78,6 +78,32 @@ market reference price. Invalid venue quantity creates zero PREPARED records and
 zero mutations; it never increases approved exposure. Phase 5C real TESTNET
 acceptance completed in `v0.5.0`.
 
+### LIVE Futures risk and margin boundary
+
+LIVE risk sizing is stop-distance based. Botragram calculates
+`allowed_risk = Binance Futures availableBalance * configured risk percentage`,
+then derives `quantity = allowed_risk / abs(entry_price - stop_loss)`. The
+resulting notional remains bounded by the configured maximum position size.
+`availableBalance` is the LIVE balance authority for this calculation.
+
+`RiskSettings.leverage` does not configure Binance LIVE leverage and does not
+change LIVE position quantity. It may be retained as local position metadata and
+used by PAPER simulation, so it must not be interpreted as authoritative Binance
+leverage.
+
+Botragram does not locally reproduce or guarantee Binance initial-margin
+admissibility before a MARKET POST. The entry preflight does not model the actual
+target-symbol Binance leverage, cross/isolated margin calculations,
+leverage/notional brackets, multi-assets margin behavior, or Binance's
+exchange-calculated initial margin. Binance remains authoritative for final
+margin acceptance. An explicit deterministic Binance order rejection is a safe
+rejected entry; transport, timeout, malformed-response, cancellation, and other
+ambiguous post-submission outcomes are fail-closed and require reconciliation.
+This boundary concerns prediction of exchange order acceptance only; it does not
+change the stop-loss risk-sizing contract. It also does not provide
+liquidation-risk, maintenance-margin, exact fee/slippage, or external/manual
+Binance-actor protection.
+
 Futures STOP/TAKE_PROFIT triggers use the same authoritative PRICE_FILTER grid
 for initial protection and stepped STOP replacement. Durable position trigger
 prices are final venue values, and restart reconciliation requires exact trigger
