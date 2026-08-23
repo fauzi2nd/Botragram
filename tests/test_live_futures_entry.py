@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -11,7 +11,7 @@ import pytest
 
 from botragram.app import TradingRuntimeControl
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine import RiskEngine, TradingEngine
+from botragram.engine import PortfolioEngine, RiskEngine, TradingEngine
 from botragram.enums import (
     Interval,
     MarketType,
@@ -25,6 +25,7 @@ from botragram.enums import (
 )
 from botragram.exceptions import (
     LiveEntryExistingPositionError,
+    LiveEntryPortfolioCapacityError,
     LiveEntryPreflightError,
     LiveSubmissionBlockedError,
     VenueRuleValidationError,
@@ -51,10 +52,10 @@ from botragram.storage.memory.live_recovery_repository import (
 _NOW = datetime(2026, 8, 17, tzinfo=UTC)
 
 
-def _signal() -> Signal:
+def _signal(*, symbol: str = "BTCUSDT") -> Signal:
     """Return one approved long signal."""
     return Signal(
-        symbol="BTCUSDT",
+        symbol=symbol,
         signal_type=SignalType.BUY,
         price=Decimal("65000"),
         confidence=Decimal("0.9"),
@@ -128,7 +129,7 @@ class FakeOrderService:
         self, *, symbol: str, quantity: Decimal
     ) -> Decimal:
         """Return the test's already-valid quantity."""
-        assert symbol == "BTCUSDT"
+        assert symbol
         if self.normalization_error is not None:
             raise self.normalization_error
         return self.normalized_quantity or quantity
@@ -220,9 +221,15 @@ class FakePositionService:
         self.get_calls += 1
         if self.error is not None:
             raise self.error
-        if self.get_calls == 1:
-            return self.pre_entry_position
         return self.position
+
+    async def get_all(self, *, synchronize: bool = False) -> tuple[Position, ...]:
+        """Return the pre-entry authoritative portfolio snapshot."""
+        assert synchronize
+        self.synchronized = synchronize
+        if self.error is not None:
+            raise self.error
+        return (self.pre_entry_position,) if self.pre_entry_position is not None else ()
 
     async def observe(self, *, symbol: str) -> Position | None:
         """Return the authoritative position without mutating persistence."""
@@ -373,6 +380,67 @@ class PositionCreatingOrderService(FakeOrderService):
 
 
 @dataclass(slots=True)
+class PortfolioPositionService:
+    """Expose shared exchange-authoritative positions for capacity tests."""
+
+    positions: tuple[Position, ...]
+    saved: Position | None = None
+
+    async def get_all(self, *, synchronize: bool = False) -> tuple[Position, ...]:
+        """Return the current authoritative portfolio."""
+        assert synchronize
+        return self.positions
+
+    async def get(self, *, symbol: str, synchronize: bool) -> Position | None:
+        """Return the current authoritative position for one symbol."""
+        assert synchronize
+        return next(
+            (position for position in self.positions if position.symbol == symbol),
+            None,
+        )
+
+    async def save(self, *, position: Position) -> None:
+        """Persist the post-entry runtime metadata in the shared snapshot."""
+        self.saved = position
+        self.positions = tuple(
+            candidate
+            for candidate in self.positions
+            if candidate.symbol != position.symbol
+        ) + (position,)
+
+
+@dataclass(slots=True)
+class PortfolioPositionCreatingOrderService(FakeOrderService):
+    """Expose the submitted symbol as an active exchange position immediately."""
+
+    position_service: PortfolioPositionService = field(
+        default_factory=lambda: PortfolioPositionService(positions=())
+    )
+
+    async def submit(
+        self,
+        *,
+        signal: Signal,
+        risk_result: RiskResult,
+        order_type: OrderType,
+        price: Decimal | None,
+        client_order_id: str | None = None,
+    ) -> Order:
+        """Record the POST and expose its active exchange position."""
+        order = await super().submit(
+            signal=signal,
+            risk_result=risk_result,
+            order_type=order_type,
+            price=price,
+            client_order_id=client_order_id,
+        )
+        await self.position_service.save(
+            position=replace(_position(), symbol=signal.symbol),
+        )
+        return order
+
+
+@dataclass(slots=True)
 class StaticBalanceService:
     """Provide the deterministic available collateral for risk evaluation."""
 
@@ -401,6 +469,8 @@ def _service(
             protection_service=protection_service or FakeProtectionService(),
             runtime_control=control,
             submission_attempt_repository=MemorySubmissionAttemptRepository(),
+            portfolio_engine=PortfolioEngine(),
+            max_open_positions=1,
         ),
         control,
     )
@@ -452,6 +522,8 @@ async def test_final_position_revalidation_blocks_stale_same_symbol_entry() -> N
         protection_service=FakeProtectionService(),
         runtime_control=control,
         submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
 
     with pytest.raises(LiveEntryExistingPositionError, match="active LIVE position"):
@@ -494,6 +566,8 @@ async def test_stale_no_position_evaluation_cannot_post_after_completed_entry() 
         protection_service=FakeProtectionService(),
         runtime_control=TradingRuntimeControl(market_type=MarketType.FUTURES),
         submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
     second = LiveFuturesEntryService(
         market_type=MarketType.FUTURES,
@@ -502,6 +576,8 @@ async def test_stale_no_position_evaluation_cannot_post_after_completed_entry() 
         protection_service=FakeProtectionService(),
         runtime_control=TradingRuntimeControl(market_type=MarketType.FUTURES),
         submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
 
     await first.execute(
@@ -528,6 +604,108 @@ async def test_stale_no_position_evaluation_cannot_post_after_completed_entry() 
 
 
 @pytest.mark.asyncio
+async def test_stale_capacity_cannot_post_after_different_symbol_completion() -> None:
+    """Reject B when A consumes the final portfolio slot before B reserves."""
+    positions = PortfolioPositionService(positions=(_position(),))
+    risk_engine = RiskEngine(settings=RiskSettings(max_open_positions=2))
+    evaluation = await LiveEntryRiskEvaluationService(
+        account_service=StaticBalanceService(balance=Decimal("1000")),
+        position_service=positions,
+        trading_engine=TradingEngine(risk_engine=risk_engine),
+        balance_asset="USDT",
+    ).evaluate(signal=_signal(symbol="SOLUSDT"))
+    assert evaluation.decision.should_execute
+    assert evaluation.decision.risk_result is not None
+
+    repository = RecordingSubmissionAttemptRepository()
+    orders = PortfolioPositionCreatingOrderService(position_service=positions)
+    first_control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    first = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=positions,
+        protection_service=FakeProtectionService(),
+        runtime_control=first_control,
+        submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=2,
+    )
+    second_control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    second = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=positions,
+        protection_service=FakeProtectionService(),
+        runtime_control=second_control,
+        submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=2,
+    )
+
+    await first.execute(
+        signal=_signal(symbol="ETHUSDT"),
+        risk_result=evaluation.decision.risk_result,
+        interval=Interval.M15,
+        order_type=OrderType.MARKET,
+        price=None,
+    )
+
+    with pytest.raises(LiveEntryPortfolioCapacityError, match="position capacity"):
+        await second.execute(
+            signal=_signal(symbol="SOLUSDT"),
+            risk_result=evaluation.decision.risk_result,
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 1
+    assert repository.saved[-1].status is (
+        SubmissionAttemptStatus.BLOCKED_BY_PORTFOLIO_CAPACITY
+    )
+    assert await repository.get_incomplete() == ()
+    assert (
+        "position protection" not in second_control.get_missing_startup_requirements()
+    )
+
+
+@pytest.mark.asyncio
+async def test_capacity_terminal_persistence_failure_keeps_gate_closed() -> None:
+    """Retain PREPARED when capacity terminalization cannot be persisted."""
+    repository = FailingSubmissionAttemptRepository(
+        failure_status=SubmissionAttemptStatus.BLOCKED_BY_PORTFOLIO_CAPACITY
+    )
+    orders = FakeOrderService()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(
+            _position(),
+            pre_entry_position=_position(),
+        ),
+        protection_service=FakeProtectionService(),
+        runtime_control=control,
+        submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
+    )
+
+    with pytest.raises(RuntimeError, match="blocked_by_portfolio_capacity"):
+        await service.execute(
+            signal=_signal(symbol="ETHUSDT"),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 0
+    assert len(await repository.get_incomplete()) == 1
+    assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
 async def test_final_position_revalidation_failure_keeps_gate_closed() -> None:
     """Treat an authoritative revalidation failure as unsafe rather than absent."""
     orders = FakeOrderService()
@@ -542,6 +720,8 @@ async def test_final_position_revalidation_failure_keeps_gate_closed() -> None:
         protection_service=FakeProtectionService(),
         runtime_control=control,
         submission_attempt_repository=MemorySubmissionAttemptRepository(),
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
 
     with pytest.raises(RuntimeError, match="position read failed"):
@@ -573,6 +753,8 @@ async def test_final_position_revalidation_cancellation_keeps_gate_closed() -> N
         protection_service=FakeProtectionService(),
         runtime_control=control,
         submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
 
     with pytest.raises(asyncio.CancelledError):
@@ -715,6 +897,8 @@ async def test_prepared_persistence_failure_never_reaches_entry_post() -> None:
         protection_service=FakeProtectionService(),
         runtime_control=control,
         submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
 
     with pytest.raises(RuntimeError, match="prepared persistence failure"):
@@ -745,6 +929,8 @@ async def test_concurrent_entries_allow_only_one_durable_submission_owner() -> N
         protection_service=FakeProtectionService(),
         runtime_control=first_control,
         submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
     second = LiveFuturesEntryService(
         market_type=MarketType.FUTURES,
@@ -753,6 +939,8 @@ async def test_concurrent_entries_allow_only_one_durable_submission_owner() -> N
         protection_service=FakeProtectionService(),
         runtime_control=second_control,
         submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
 
     first_task = asyncio.create_task(
@@ -813,6 +1001,8 @@ async def test_concurrent_entries_do_not_reopen_a_shared_protection_gate() -> No
         protection_service=FakeProtectionService(),
         runtime_control=control,
         submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
     second = LiveFuturesEntryService(
         market_type=MarketType.FUTURES,
@@ -821,6 +1011,8 @@ async def test_concurrent_entries_do_not_reopen_a_shared_protection_gate() -> No
         protection_service=FakeProtectionService(),
         runtime_control=control,
         submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
 
     first_task = asyncio.create_task(
@@ -870,6 +1062,8 @@ async def test_reservation_cancellation_keeps_protection_gate_closed() -> None:
         protection_service=FakeProtectionService(),
         runtime_control=control,
         submission_attempt_repository=CancellingReservationRepository(),
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
 
     with pytest.raises(asyncio.CancelledError):
@@ -904,6 +1098,8 @@ async def test_completion_persistence_failure_recovers_same_acknowledged_attempt
         protection_service=protection,
         runtime_control=control,
         submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
 
     with pytest.raises(RuntimeError, match="completed persistence failure"):

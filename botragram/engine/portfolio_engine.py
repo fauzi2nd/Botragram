@@ -218,6 +218,29 @@ class PortfolioEngine:
 
         return sum(1 for position in positions if position.quantity > _DECIMAL_ZERO)
 
+    def can_open_position(
+        self,
+        *,
+        positions: Sequence[Position],
+        max_open_positions: int,
+    ) -> bool:
+        """Return whether one additional active position fits the capacity.
+
+        Args:
+            positions: Authoritative portfolio snapshot.
+            max_open_positions: Configured maximum number of active positions.
+
+        Returns:
+            True when the portfolio remains below the configured capacity.
+
+        Raises:
+            ValueError: If the maximum is not a positive integer.
+        """
+        if isinstance(max_open_positions, bool) or max_open_positions <= 0:
+            raise ValueError("Maximum open positions must be greater than zero")
+
+        return self.count_open_positions(positions=positions) < max_open_positions
+
     def has_position(
         self,
         *,

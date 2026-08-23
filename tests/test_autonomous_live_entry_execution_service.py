@@ -12,7 +12,7 @@ import pytest
 
 from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine import RiskEngine, TradingEngine
+from botragram.engine import PortfolioEngine, RiskEngine, TradingEngine
 from botragram.enums import (
     AutonomousLiveEntryExecutionStatus,
     ExchangeEnvironment,
@@ -29,6 +29,7 @@ from botragram.enums import (
 from botragram.exceptions import (
     ExchangeOrderRejectedError,
     LiveEntryExistingPositionError,
+    LiveEntryPortfolioCapacityError,
     LiveEntryPreflightError,
     LiveSubmissionBlockedError,
     VenueRuleValidationError,
@@ -201,7 +202,6 @@ class _RecordingLivePositionService:
 
     events: list[str]
     position: Position
-    get_calls: int = 0
 
     async def get_all(self, *, synchronize: bool = False) -> Sequence[Position]:
         """Return the empty authoritative pre-entry portfolio."""
@@ -210,13 +210,10 @@ class _RecordingLivePositionService:
         return ()
 
     async def get(self, *, symbol: str, synchronize: bool) -> Position | None:
-        """Return no position before POST and the filled position afterward."""
+        """Return the filled position after the entry POST."""
         assert symbol == self.position.symbol
         assert synchronize
         self.events.append("position:sync")
-        self.get_calls += 1
-        if self.get_calls == 1:
-            return None
         return self.position
 
     async def save(self, *, position: Position) -> None:
@@ -764,6 +761,26 @@ def test_final_existing_position_maps_to_safe_existing_position_result() -> None
     assert len(protected_entry.calls) == 1
 
 
+def test_final_portfolio_capacity_maps_to_risk_rejected_result() -> None:
+    """Translate final capacity exhaustion into a deterministic risk outcome."""
+    protected_entry = _FakeProtectedEntryService(
+        error=LiveEntryPortfolioCapacityError("portfolio full")
+    )
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+        ).execute(
+            intent=_create_intent(),
+            authorization=_create_authorization(),
+        )
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.RISK_REJECTED
+    assert len(protected_entry.calls) == 1
+
+
 def test_batch_revalidates_capacity_after_each_completed_entry() -> None:
     """Prevent a P0 ETH intent from consuming capacity after BTC fills."""
     protected_entry = _FakeProtectedEntryService()
@@ -920,6 +937,8 @@ def test_adapter_delegates_full_prepared_to_protected_completion_order() -> None
         protection_service=_RecordingProtectionService(events=events),
         runtime_control=TradingRuntimeControl(),
         submission_attempt_repository=attempts,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
     )
     service = AutonomousLiveEntryExecutionService(
         risk_evaluation_service=LiveEntryRiskEvaluationService(
@@ -948,7 +967,7 @@ def test_adapter_delegates_full_prepared_to_protected_completion_order() -> None
         "portfolio:sync",
         "attempt:check",
         "attempt:prepared",
-        "position:sync",
+        "portfolio:sync",
         "order:post",
         "attempt:acknowledged",
         "position:sync",

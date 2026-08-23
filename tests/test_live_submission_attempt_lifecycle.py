@@ -10,6 +10,7 @@ from decimal import Decimal
 import pytest
 
 from botragram.app import TradingRuntimeControl
+from botragram.engine import PortfolioEngine
 from botragram.enums import (
     Interval,
     MarketType,
@@ -242,16 +243,17 @@ class FakePositionService:
     """Provide one synchronized position for the protected-entry path."""
 
     position: Position | None = field(default_factory=_position)
-    get_calls: int = 0
 
     async def get(self, *, symbol: str, synchronize: bool) -> Position | None:
-        """Return no position before POST and the fill position afterward."""
+        """Return the filled exchange position after the entry POST."""
         assert symbol == "BTCUSDT"
         assert synchronize
-        self.get_calls += 1
-        if self.get_calls % 2 == 1:
-            return None
         return self.position
+
+    async def get_all(self, *, synchronize: bool) -> tuple[Position, ...]:
+        """Return the empty authoritative portfolio before the entry POST."""
+        assert synchronize
+        return ()
 
     async def save(self, *, position: Position) -> None:
         """Accept persisted runtime metadata."""
@@ -297,6 +299,8 @@ def _service(
             protection_service=protection_service or FakeProtectionService(),
             runtime_control=control,
             submission_attempt_repository=resolved_repository,
+            portfolio_engine=PortfolioEngine(),
+            max_open_positions=1,
         ),
         control,
         resolved_repository,

@@ -988,6 +988,8 @@ class DependencyProvider:
             protection_service=self.live_position_protection_service,
             runtime_control=self.runtime_control,
             submission_attempt_repository=self.submission_attempt_repository,
+            portfolio_engine=self.trading_engine.portfolio_engine,
+            max_open_positions=self._settings.risk.max_open_positions,
         )
         self._paper_trading_service = PaperTradingService(
             order_repository=self.order_repository,

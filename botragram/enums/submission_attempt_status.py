@@ -16,6 +16,7 @@ class SubmissionAttemptStatus(BaseEnum):
     PREPARED = "prepared"
     ACKNOWLEDGED = "acknowledged"
     BLOCKED_BY_EXISTING_POSITION = "blocked_by_existing_position"
+    BLOCKED_BY_PORTFOLIO_CAPACITY = "blocked_by_portfolio_capacity"
     RESOLVED_NO_EXPOSURE = "resolved_no_exposure"
     COMPLETED = "completed"
     REJECTED = "rejected"

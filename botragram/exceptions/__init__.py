@@ -71,6 +71,7 @@ from botragram.exceptions.telegram import (
 )
 from botragram.exceptions.trading import (
     LiveEntryExistingPositionError,
+    LiveEntryPortfolioCapacityError,
     LiveEntryPreflightError,
     LiveSubmissionBlockedError,
     TradingConfigurationError,
@@ -139,6 +140,7 @@ __all__ = [
     "TradingConfigurationError",
     "TradingExecutionError",
     "LiveEntryExistingPositionError",
+    "LiveEntryPortfolioCapacityError",
     "LiveEntryPreflightError",
     "LiveSubmissionBlockedError",
     "VenueRuleValidationError",

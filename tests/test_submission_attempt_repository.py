@@ -91,6 +91,20 @@ async def _run_sqlite_submission_attempt_test() -> None:
             )
             await repository.save(attempt=resolved)
             assert await repository.get_incomplete() == ()
+
+            capacity_blocked = replace(
+                acknowledged,
+                status=SubmissionAttemptStatus.BLOCKED_BY_PORTFOLIO_CAPACITY,
+            )
+            await repository.save(attempt=capacity_blocked)
+            assert await repository.get_unresolved() == ()
+            assert await repository.get_incomplete() == ()
+
+            next_attempt = replace(
+                attempt,
+                client_order_id="btg-11111111111111111111111111111111",
+            )
+            assert await repository.reserve(attempt=next_attempt)
         finally:
             await database.close()
 

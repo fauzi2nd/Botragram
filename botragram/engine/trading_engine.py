@@ -116,11 +116,9 @@ class TradingEngine:
                     reason=_OPEN_POSITION_REASON,
                 )
 
-            if (
-                self.portfolio_engine.count_open_positions(
-                    positions=open_positions,
-                )
-                >= self.risk_engine.settings.max_open_positions
+            if not self.portfolio_engine.can_open_position(
+                positions=open_positions,
+                max_open_positions=self.risk_engine.settings.max_open_positions,
             ):
                 return TradingDecision(
                     should_execute=False,

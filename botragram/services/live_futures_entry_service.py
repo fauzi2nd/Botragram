@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -11,6 +12,7 @@ from typing import Final, Protocol
 from uuid import uuid4
 
 from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.engine import PortfolioEngine
 from botragram.enums import (
     Interval,
     MarketType,
@@ -25,6 +27,7 @@ from botragram.exceptions import (
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderRejectedError,
     LiveEntryExistingPositionError,
+    LiveEntryPortfolioCapacityError,
     LiveEntryPreflightError,
     LiveSubmissionBlockedError,
     VenueRuleValidationError,
@@ -83,6 +86,10 @@ class LivePositionSynchronization(Protocol):
         """Return one optionally synchronized position."""
         ...
 
+    async def get_all(self, *, synchronize: bool) -> Sequence[Position]:
+        """Return the optionally synchronized authoritative portfolio."""
+        ...
+
     async def save(self, *, position: Position) -> None:
         """Persist one position with runtime metadata."""
         ...
@@ -106,6 +113,8 @@ class LiveFuturesEntryService:
     protection_service: LiveProtectionReconciliation
     runtime_control: TradingRuntimeControl
     submission_attempt_repository: SubmissionAttemptRepository
+    portfolio_engine: PortfolioEngine
+    max_open_positions: int
 
     async def execute(
         self,
@@ -175,11 +184,13 @@ class LiveFuturesEntryService:
             signal.signal_type.value,
         )
 
-        existing_position = await self.position_service.get(
-            symbol=signal.symbol,
+        positions = await self.position_service.get_all(
             synchronize=True,
         )
-        if existing_position is not None and existing_position.quantity > _DECIMAL_ZERO:
+        if self.portfolio_engine.has_position(
+            positions=positions,
+            symbol=signal.symbol,
+        ):
             await self._persist_attempt(
                 attempt=attempt,
                 status=SubmissionAttemptStatus.BLOCKED_BY_EXISTING_POSITION,
@@ -187,6 +198,18 @@ class LiveFuturesEntryService:
             self.runtime_control.set_position_protection_ready(True)
             raise LiveEntryExistingPositionError(
                 "An active LIVE position blocks a new entry for the same symbol"
+            )
+        if not self.portfolio_engine.can_open_position(
+            positions=positions,
+            max_open_positions=self.max_open_positions,
+        ):
+            await self._persist_attempt(
+                attempt=attempt,
+                status=SubmissionAttemptStatus.BLOCKED_BY_PORTFOLIO_CAPACITY,
+            )
+            self.runtime_control.set_position_protection_ready(True)
+            raise LiveEntryPortfolioCapacityError(
+                "The active LIVE portfolio has reached its position capacity"
             )
 
         try:
