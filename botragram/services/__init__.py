@@ -43,6 +43,9 @@ from botragram.services.live_protection_monitoring_service import (
     LiveProtectionMonitoringService,
 )
 from botragram.services.live_runtime_health_service import LiveRuntimeHealthService
+from botragram.services.live_runtime_portfolio_reconciliation_service import (
+    LiveRuntimePortfolioReconciliationService,
+)
 from botragram.services.live_submission_recovery_service import (
     LiveSubmissionRecoveryResult,
     LiveSubmissionRecoveryService,
@@ -84,6 +87,7 @@ __all__ = [
     "LiveProtectionMonitoringService",
     "LivePortfolioRecoveryService",
     "LiveRuntimeHealthService",
+    "LiveRuntimePortfolioReconciliationService",
     "LiveSubmissionRecoveryResult",
     "LiveSubmissionRecoveryService",
     "HumanConfirmedPaperExecutionService",

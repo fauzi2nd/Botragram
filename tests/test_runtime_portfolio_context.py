@@ -9,7 +9,11 @@ import pytest
 
 from botragram.app import TradingRuntimeControl
 from botragram.enums import Interval, StrategyType
-from botragram.models import LiveRuntimePortfolioContext, LiveRuntimePositionContext
+from botragram.models import (
+    LiveRecoveredPositionManagementAuthorization,
+    LiveRuntimePortfolioContext,
+    LiveRuntimePositionContext,
+)
 
 
 def _context(
@@ -92,3 +96,64 @@ def test_clear_contexts_resets_single_and_multiple_runtime_state() -> None:
     assert control.strategy_type is StrategyType.EMA_CROSS
     assert not control.get_stream_telemetry().enabled
     assert control.get_stream_telemetry().event_count == 0
+
+
+def test_single_managed_live_context_resumes_without_legacy_configuration() -> None:
+    """Activate one exact managed LIVE context without Telegram confirmations."""
+    control = TradingRuntimeControl()
+    contexts = (_context("BTCUSDT"),)
+    control.set_runtime_contexts(contexts=contexts)
+    control.set_position_protection_ready(False)
+    control.set_position_protection_ready(True)
+    control.set_live_management_authorization(
+        authorization=LiveRecoveredPositionManagementAuthorization(
+            contexts=contexts,
+            runtime_management_allowed=True,
+        )
+    )
+
+    assert control.get_missing_configuration_requirements() == (
+        "exchange",
+        "market type",
+        "symbol",
+        "interval",
+        "strategy",
+    )
+    assert control.resume()
+    assert not control.is_paused
+
+
+def test_single_managed_live_context_requires_ready_protection() -> None:
+    """Reject authorized managed LIVE activation while protection is closed."""
+    control = TradingRuntimeControl()
+    contexts = (_context("BTCUSDT"),)
+    control.set_runtime_contexts(contexts=contexts)
+    control.set_live_management_authorization(
+        authorization=LiveRecoveredPositionManagementAuthorization(
+            contexts=contexts,
+            runtime_management_allowed=True,
+        )
+    )
+    control.set_position_protection_ready(False)
+
+    with pytest.raises(RuntimeError, match="verified position protection"):
+        control.resume()
+    assert control.is_paused
+
+
+def test_single_context_without_live_authorization_keeps_legacy_requirements() -> None:
+    """Preserve manual and PAPER startup gates without LIVE authorization."""
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(contexts=(_context("BTCUSDT"),))
+
+    assert control.get_missing_startup_requirements() == (
+        "exchange",
+        "market type",
+        "symbol",
+        "interval",
+        "strategy",
+        "stream subscription",
+    )
+    with pytest.raises(RuntimeError, match="Startup configuration incomplete"):
+        control.resume()
+    assert control.is_paused

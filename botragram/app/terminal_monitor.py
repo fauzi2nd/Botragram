@@ -46,9 +46,14 @@ from botragram.app.runtime_control import (
     TradingRuntimeControl,
 )
 from botragram.engine import PnLEngine
-from botragram.enums import LiveRuntimeHealthStatus, TradeMode
+from botragram.enums import (
+    LiveMarketStreamLifecycleStatus,
+    LiveRuntimeHealthStatus,
+    TradeMode,
+)
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
+    LiveMarketStreamState,
     LiveRuntimeHealthSnapshot,
     Position,
 )
@@ -315,7 +320,9 @@ class TerminalMonitor:
         stream = self.runtime_control.get_stream_telemetry()
         health_service = self.live_runtime_health_service
         live_runtime_health = (
-            health_service.get_snapshot() if health_service is not None else None
+            health_service.get_snapshot()
+            if self.trade_mode is TradeMode.LIVE and health_service is not None
+            else None
         )
         recovery_service = self.autonomous_live_recovery_observability_service
         autonomous_live_recovery = (
@@ -373,9 +380,14 @@ class TerminalMonitor:
             ),
             Layout(name="logs", minimum_size=8),
         )
+        right = Layout(name="right")
         layout["summary"].split_row(
             Layout(self._build_status_panel(status), name="status"),
-            Layout(self._build_stream_panel(status), name="stream"),
+            right,
+        )
+        right.split_column(
+            Layout(self._build_stream_panel(status), name="managed_positions"),
+            Layout(self._build_discovery_panel(status), name="discovery"),
         )
         layout["logs"].update(self._build_log_panel())
         return layout
@@ -420,20 +432,41 @@ class TerminalMonitor:
             live_runtime_health is None or len(live_runtime_health.contexts) <= 1
         )
 
+        stream_states = (
+            live_runtime_health.stream_states if live_runtime_health is not None else ()
+        )
         for position in positions:
-            stream_price = (
-                stream.last_price
-                if can_use_singular_stream
-                and stream.enabled
-                and position.symbol == self.runtime_control.symbol
-                else None
+            stream_price = self._get_matching_stream_price(
+                position=position,
+                stream_states=stream_states,
             )
+            if stream_price is None and can_use_singular_stream and stream.enabled:
+                if position.symbol == self.runtime_control.symbol:
+                    stream_price = stream.last_price
             total += self.pnl_engine.calculate_unrealized(
                 position=position,
                 current_price=stream_price,
             )
 
         return total
+
+    @staticmethod
+    def _get_matching_stream_price(
+        *,
+        position: Position,
+        stream_states: Sequence[LiveMarketStreamState],
+    ) -> Decimal | None:
+        """Return a ready stream price only for the matching position symbol."""
+        for state in stream_states:
+            if state.identity.symbol != position.symbol:
+                continue
+            if (
+                state.lifecycle_status is LiveMarketStreamLifecycleStatus.RUNNING
+                and state.first_tick_received
+                and state.last_price is not None
+            ):
+                return state.last_price
+        return None
 
     def _calculate_stream_rate(
         self,
@@ -474,7 +507,7 @@ class TerminalMonitor:
         """Render one compact terminal telemetry line."""
         health = status.live_runtime_health
         recovery = status.autonomous_live_recovery
-        if health is not None and len(health.contexts) != 1:
+        if health is not None:
             timestamp = status.observed_at.strftime("%H:%M:%S.%f")[:-3]
             reason = health.reason.value if health.reason is not None else "NONE"
             authorization = "EXACT" if health.authorization_exact else "UNAVAILABLE"
@@ -519,17 +552,23 @@ class TerminalMonitor:
         table.add_column(style="bright_cyan", no_wrap=True)
         table.add_column(style="white")
         health = status.live_runtime_health
-        if health is not None and len(health.contexts) != 1:
+        if health is not None:
             reason = health.reason.value.upper() if health.reason is not None else "-"
-            table.add_row("Runtime", health.status.value.upper())
-            table.add_row("Reason", reason)
-            table.add_row("Contexts", str(len(health.contexts)))
             table.add_row(
-                "Authorization",
+                "Global Runner",
+                "PAUSED" if self.runtime_control.is_paused else "RUNNING",
+            )
+            table.add_row("Position Management", health.status.value.upper())
+            table.add_row("Management Reason", reason)
+            table.add_row("Portfolio Positions", str(status.position_count))
+            table.add_row("Managed Contexts", str(len(health.contexts)))
+            if status.position_count != len(health.contexts):
+                table.add_row("UNMANAGED EXPOSURE", "DETECTED")
+            table.add_row(
+                "Authorization Coverage",
                 "EXACT" if health.authorization_exact else "UNAVAILABLE",
             )
             if not health.contexts:
-                self._add_global_discovery_rows(table=table, status=status)
                 table.add_row("Balance", f"{status.balance:,.2f} {self.quote_asset}")
                 self._add_position_rows(table=table, status=status)
                 table.add_row(
@@ -571,9 +610,16 @@ class TerminalMonitor:
                 )
                 table.add_row(
                     "Context",
-                    f"{context.symbol} · {context.interval.value} · "
+                    f"{context.symbol} | {context.interval.value} | "
                     f"{context.strategy_type.value}\n"
-                    f"Stream: {stream_health} · Monitor: {monitor_health}",
+                    f"Stream: {stream_health} | Monitor: {monitor_health}",
+                )
+            if health.contexts:
+                table.add_row(
+                    "Protection Gate",
+                    "READY"
+                    if self.runtime_control.is_position_protection_ready
+                    else "CLOSED",
                 )
             recovery = status.autonomous_live_recovery
             if recovery is not None:
@@ -584,7 +630,7 @@ class TerminalMonitor:
                 self._add_autonomous_entry_row(table=table, status=status)
             return Panel(
                 table,
-                title="[bold]Status & Portfolio[/bold]",
+                title="[bold]Runtime & Safety | Status & Portfolio[/bold]",
                 border_style="cyan",
             )
         state = self._get_runtime_state(status)
@@ -602,7 +648,6 @@ class TerminalMonitor:
             f"({self.runtime_control.market_type.value.upper()})",
         )
         table.add_row("Mode", self.trade_mode.value)
-        self._add_global_discovery_rows(table=table, status=status)
         table.add_row("Symbol", self.runtime_control.symbol)
         table.add_row("Interval", self.runtime_control.interval.value)
         table.add_row("Strategy", self.runtime_control.strategy_type.value)
@@ -636,7 +681,7 @@ class TerminalMonitor:
                 table.add_row("Recovery Reason", recovery.reason.value.upper())
         return Panel(
             table,
-            title="[bold]Status & Portfolio[/bold]",
+            title="[bold]Runtime & Safety | Status & Portfolio[/bold]",
             border_style="cyan",
         )
 
@@ -664,7 +709,7 @@ class TerminalMonitor:
             if discovery.actionable_count is not None
             else "-",
         )
-        for candidate in discovery.candidates:
+        for candidate in discovery.candidates[:5]:
             outcome = candidate.outcome or "PENDING"
             table.add_row(
                 "Candidate",
@@ -681,25 +726,34 @@ class TerminalMonitor:
         """Show authorization truthfully without exposing a capability."""
         recovery = status.autonomous_live_recovery
         health = status.live_runtime_health
-        health_is_entry_safe = health is None or (
-            health.status is LiveRuntimeHealthStatus.ACTIVE
+        has_no_positions = status.position_count == 0 and (
+            health is None or not health.contexts
+        )
+        has_capacity = (
+            self.max_open_positions is None
+            or status.position_count < self.max_open_positions
+        )
+        health_is_entry_safe = has_no_positions or (
+            health is not None
+            and health.status is LiveRuntimeHealthStatus.ACTIVE
             and health.authorization_present
             and health.authorization_exact
+            and status.position_count == len(health.contexts)
         )
-        table.add_row(
-            "New LIVE Exposure",
-            (
-                "ENABLED - TESTNET"
-                if recovery is not None
-                and recovery.autonomous_entry_authorized
-                and not self.runtime_control.is_paused
-                and self.runtime_control.is_position_protection_ready
-                and health_is_entry_safe
-                else "BLOCKED"
-                if recovery is not None and recovery.autonomous_entry_authorized
-                else "DISABLED"
-            ),
+        entry_status = (
+            "BLOCKED - CAPACITY"
+            if not has_capacity
+            else "ENABLED - TESTNET"
+            if recovery is not None
+            and recovery.autonomous_entry_authorized
+            and not self.runtime_control.is_paused
+            and self.runtime_control.is_position_protection_ready
+            and health_is_entry_safe
+            else "BLOCKED"
+            if recovery is not None and recovery.autonomous_entry_authorized
+            else "DISABLED"
         )
+        table.add_row("New LIVE Exposure", entry_status)
 
     def _add_position_rows(
         self,
@@ -810,24 +864,121 @@ class TerminalMonitor:
 
         return f"{realized_pnl:+,.2f} {self.quote_asset}"
 
+    def _build_discovery_panel(self, status: TerminalStatus) -> Panel:
+        """Build bounded local global-discovery telemetry separate from safety."""
+        table = Table.grid(expand=True, padding=(0, 1))
+        table.add_column(style="bright_yellow", no_wrap=True)
+        table.add_column(style="white")
+        discovery = status.global_discovery
+        if discovery is None:
+            table.add_row("State", "NOT CONFIGURED")
+        else:
+            table.add_row("GLOBAL DISCOVERY", "LOCAL TELEMETRY")
+            table.add_row("Interval", discovery.interval.value)
+            table.add_row(
+                "State",
+                f"{discovery.state.value.upper()} #{discovery.cycle_sequence}",
+            )
+            table.add_row(
+                "Bounds", f"max_symbols={discovery.max_symbols} top_n={discovery.top_n}"
+            )
+            table.add_row("Actionable", str(discovery.actionable_count or 0))
+            if discovery.next_eligible_monotonic is not None:
+                remaining = max(
+                    0, round(discovery.next_eligible_monotonic - monotonic())
+                )
+                table.add_row("Next Discovery", f"{remaining}s")
+            for candidate in discovery.candidates[:5]:
+                table.add_row(
+                    candidate.symbol,
+                    f"{candidate.direction.value.upper()} "
+                    f"confidence={candidate.confidence:f} "
+                    f"outcome={candidate.outcome or 'PENDING'}",
+                )
+        return Panel(
+            table, title="[bold]Global Discovery[/bold]", border_style="yellow"
+        )
+
     def _build_stream_panel(self, status: TerminalStatus) -> Panel:
         """Build locally observed high-frequency stream telemetry."""
         table = Table.grid(expand=True, padding=(0, 1))
         table.add_column(style="bright_magenta", no_wrap=True)
         table.add_column(style="white")
         health_snapshot = status.live_runtime_health
-        if health_snapshot is not None and len(health_snapshot.contexts) != 1:
+        if health_snapshot is not None:
             if not health_snapshot.contexts:
-                table.add_row("Managed LIVE Streams", "NONE (no open positions)")
-            for stream_state in health_snapshot.stream_states:
-                identity = stream_state.identity
+                table.add_row("Managed LIVE Positions", "NONE (no managed positions)")
+            for context in health_snapshot.contexts:
+                position = next(
+                    (
+                        item
+                        for item in status.positions
+                        if item.symbol == context.symbol
+                    ),
+                    None,
+                )
+                stream_state = next(
+                    (
+                        item
+                        for item in health_snapshot.stream_states
+                        if item.identity.symbol == context.symbol
+                        and item.identity.interval == context.interval
+                    ),
+                    None,
+                )
+                monitor_state = next(
+                    (
+                        item
+                        for item in health_snapshot.monitor_states
+                        if item.context == context
+                    ),
+                    None,
+                )
+                if position is None:
+                    table.add_row(context.symbol, "MISSING POSITION / DIVERGENCE")
+                    continue
+                mark = (
+                    self._get_matching_stream_price(
+                        position=position,
+                        stream_states=health_snapshot.stream_states,
+                    )
+                    or position.current_price
+                )
+                stream_text = (
+                    stream_state.lifecycle_status.value.upper()
+                    if stream_state is not None
+                    else "MISSING"
+                )
+                first_tick = (
+                    "READY"
+                    if stream_state is not None and stream_state.first_tick_received
+                    else "WAITING"
+                )
+                authorization = (
+                    "EXACT" if health_snapshot.authorization_exact else "MISSING"
+                )
+                monitor_text = (
+                    "HEALTHY"
+                    if monitor_state is not None
+                    and monitor_state.is_active
+                    and monitor_state.failure_type is None
+                    else "UNHEALTHY"
+                )
                 table.add_row(
-                    f"{identity.symbol} {identity.interval.value}",
-                    stream_state.lifecycle_status.value.upper(),
+                    context.symbol,
+                    f"{position.side.value.upper()} qty={position.quantity:f} "
+                    f"entry={position.entry_price:f} mark={mark:f}\n"
+                    f"SL={self._format_optional_price(position.stop_loss)} "
+                    f"TP={self._format_optional_price(position.take_profit)}\n"
+                    f"{context.interval.value} {context.strategy_type.value} "
+                    f"stream={stream_text} "
+                    f"first_tick={first_tick} "
+                    f"monitor={monitor_text} "
+                    f"authorization={authorization}",
                 )
             return Panel(
                 table,
-                title="[bold]Recovered LIVE Streams[/bold]",
+                title="[bold]Managed LIVE Positions[/bold]",
                 border_style="magenta",
             )
         health = self._get_stream_health(status)
@@ -877,7 +1028,11 @@ class TerminalMonitor:
                     entry.message,
                 )
 
-        return Panel(table, title="[bold]Log Messages[/bold]", border_style="blue")
+        return Panel(
+            table,
+            title="[bold]Runtime Events | Log Messages[/bold]",
+            border_style="blue",
+        )
 
     def _get_runtime_state(self, status: TerminalStatus) -> str:
         """Return the runtime state shown in the status panel."""

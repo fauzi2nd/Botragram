@@ -49,6 +49,7 @@ from botragram.services import (
     LivePortfolioRecoveryService,
     LivePositionProtectionService,
     LivePostEntryRecoveryResult,
+    LiveRuntimePortfolioReconciliationService,
     LiveSubmissionRecoveryResult,
     PositionService,
     RuntimeRecoveryService,
@@ -319,6 +320,10 @@ class FakeLiveMarketStreamOwner:
         self.stopped_identities.append(identity)
         return self._states.pop(identity, None) is not None
 
+    async def stop_all(self) -> None:
+        """Release all deterministic fake stream ownership."""
+        self._states.clear()
+
 
 @dataclass(slots=True)
 class FakeLiveProtectionMonitorOwner:
@@ -364,6 +369,10 @@ class FakeLiveProtectionMonitorOwner:
         normalized_symbol = symbol.strip().upper()
         self.events.append(f"monitor_stop:{normalized_symbol}")
         return self._contexts.pop(normalized_symbol, None) is not None
+
+    def stop_all(self) -> None:
+        """Release all deterministic fake monitor ownership."""
+        self._contexts.clear()
 
 
 @dataclass(slots=True)
@@ -436,6 +445,7 @@ def _recovery_service(
     market_stream_service: FakeLiveMarketStreamOwner | None = None,
     protection_monitoring_service: FakeLiveProtectionMonitorOwner | None = None,
     autonomous_live_entry_authorization: AutonomousLiveEntryAuthorization | None = None,
+    use_canonical_reconciler: bool = False,
 ) -> tuple[RuntimeRecoveryService, TradingRuntimeControl]:
     """Build isolated recovery dependencies."""
     control = TradingRuntimeControl(
@@ -470,6 +480,17 @@ def _recovery_service(
         if protection_monitoring_service is not None
         else FakeLiveProtectionMonitorOwner()
     )
+    reconciliation_service = (
+        LiveRuntimePortfolioReconciliationService(
+            runtime_control=control,
+            live_portfolio_recovery_service=portfolio_recovery_service,
+            market_stream_service=stream_owner,
+            protection_monitoring_service=monitor_owner,
+            first_tick_timeout_seconds=0.1,
+        )
+        if use_canonical_reconciler
+        else None
+    )
     service = RuntimeRecoveryService(
         trade_mode=trade_mode,
         market_type=MarketType.FUTURES,
@@ -481,6 +502,7 @@ def _recovery_service(
         signal_repository=signal_repository or MemorySignalRepository(),
         candle_repository=candle_repository or MemoryCandleRepository(),
         live_portfolio_recovery_service=portfolio_recovery_service,
+        live_runtime_portfolio_reconciliation_service=reconciliation_service,
         submission_attempt_repository=submission_attempt_repository,
         live_submission_recovery_service=submission_recovery,
         live_post_entry_recovery_service=post_entry_recovery,
@@ -1339,6 +1361,7 @@ async def test_live_restart_adopts_proven_persisted_protection_without_post() ->
         trade_mode=TradeMode.LIVE,
         exchange=exchange,
         repository=repository,
+        use_canonical_reconciler=True,
     )
 
     assert await service.recover()
@@ -1348,6 +1371,18 @@ async def test_live_restart_adopts_proven_persisted_protection_without_post() ->
         persisted.take_profit_client_algo_id,
     ]
     assert not control.is_paused
+    assert len(control.runtime_contexts) == 1
+    authorization = control.live_management_authorization
+    assert authorization is not None
+    assert authorization.authorizes_contexts(contexts=control.runtime_contexts)
+    assert control.is_position_protection_ready
+    assert set(control.get_missing_configuration_requirements()) == {
+        "exchange",
+        "market type",
+        "symbol",
+        "interval",
+        "strategy",
+    }
 
 
 @pytest.mark.asyncio

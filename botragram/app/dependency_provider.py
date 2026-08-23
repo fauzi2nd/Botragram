@@ -99,6 +99,7 @@ from botragram.services import (
     LivePostEntryRecoveryService,
     LiveProtectionMonitoringService,
     LiveRuntimeHealthService,
+    LiveRuntimePortfolioReconciliationService,
     LiveSubmissionRecoveryService,
     MarketService,
     OpportunityDiscoveryService,
@@ -176,6 +177,7 @@ class DependencyProvider:
         "_live_protection_monitoring_service",
         "_live_portfolio_recovery_service",
         "_live_runtime_health_service",
+        "_live_runtime_portfolio_reconciliation_service",
         "_live_submission_recovery_service",
         "_initialized",
         "_market_service",
@@ -286,6 +288,9 @@ class DependencyProvider:
             None
         )
         self._live_runtime_health_service: LiveRuntimeHealthService | None = None
+        self._live_runtime_portfolio_reconciliation_service: (
+            LiveRuntimePortfolioReconciliationService | None
+        ) = None
         self._live_submission_recovery_service: LiveSubmissionRecoveryService | None = (
             None
         )
@@ -465,11 +470,29 @@ class DependencyProvider:
                 runtime_control=self.runtime_control,
                 tick_listeners=tick_listeners,
             )
+            self._live_runtime_portfolio_reconciliation_service = (
+                LiveRuntimePortfolioReconciliationService(
+                    runtime_control=self.runtime_control,
+                    live_portfolio_recovery_service=(
+                        self.live_portfolio_recovery_service
+                    ),
+                    market_stream_service=self.live_market_stream_service,
+                    protection_monitoring_service=(
+                        self.live_protection_monitoring_service
+                    ),
+                    first_tick_timeout_seconds=15.0,
+                    live_natural_exit_recovery_service=(
+                        self.live_natural_exit_recovery_service
+                    ),
+                )
+            )
             self._live_runtime_health_service = LiveRuntimeHealthService(
                 runtime_control=self.runtime_control,
                 market_stream_service=self.live_market_stream_service,
                 protection_monitoring_service=(self.live_protection_monitoring_service),
             )
+            self._trading_cycle_executor = self._build_trading_cycle_executor()
+
             query_service = TelegramQueryService(
                 symbol=self._settings.market.symbol,
                 market_service=self.market_service,
@@ -499,6 +522,9 @@ class DependencyProvider:
                 signal_repository=self.signal_repository,
                 candle_repository=self.candle_repository,
                 live_portfolio_recovery_service=(self.live_portfolio_recovery_service),
+                live_runtime_portfolio_reconciliation_service=(
+                    self.live_runtime_portfolio_reconciliation_service
+                ),
                 submission_attempt_repository=self.submission_attempt_repository,
                 live_submission_recovery_service=(
                     self.live_submission_recovery_service
@@ -682,6 +708,13 @@ class DependencyProvider:
     def live_portfolio_recovery_service(self) -> LivePortfolioRecoveryService:
         """Return the LIVE portfolio safety recovery service."""
         return self._require(self._live_portfolio_recovery_service)
+
+    @property
+    def live_runtime_portfolio_reconciliation_service(
+        self,
+    ) -> LiveRuntimePortfolioReconciliationService:
+        """Return the canonical LIVE portfolio management reconciler."""
+        return self._require(self._live_runtime_portfolio_reconciliation_service)
 
     @property
     def live_submission_recovery_service(self) -> LiveSubmissionRecoveryService:
@@ -941,6 +974,7 @@ class DependencyProvider:
             signal_repository=self.signal_repository,
             candle_repository=self.candle_repository,
         )
+
         self._live_submission_recovery_service = LiveSubmissionRecoveryService(
             submission_attempt_repository=self.submission_attempt_repository,
             order_service=self.order_service,
@@ -1035,7 +1069,6 @@ class DependencyProvider:
                     authorization_service=self.execution_authorization_service,
                 )
             )
-        self._trading_cycle_executor = self._build_trading_cycle_executor()
 
     def _build_trading_cycle_executor(self) -> TradingCycleExecutor:
         """Select a validated runtime executor without embedding trading rules."""
@@ -1074,6 +1107,9 @@ class DependencyProvider:
                 max_symbols=market.discovery_max_symbols,
                 top_n=market.discovery_top_n,
                 strategy_type=self._settings.strategy.strategy_type,
+                live_runtime_portfolio_reconciler=(
+                    self.live_runtime_portfolio_reconciliation_service
+                ),
             )
 
         if self._settings.app.trade_mode is not TradeMode.PAPER:
@@ -1245,6 +1281,7 @@ class DependencyProvider:
         self._live_protection_monitoring_service = None
         self._live_portfolio_recovery_service = None
         self._live_runtime_health_service = None
+        self._live_runtime_portfolio_reconciliation_service = None
         self._live_submission_recovery_service = None
         self._runtime_reporter = None
         self._runtime_recovery_service = None

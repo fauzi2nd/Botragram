@@ -98,6 +98,19 @@ class _Discovery:
 
 
 @dataclass(slots=True)
+class _Reconciler:
+    """Return a deterministic portfolio-adoption readiness result."""
+
+    results: list[bool] = field(default_factory=lambda: [True])
+    calls: int = 0
+
+    async def reconcile(self) -> bool:
+        """Record one required reconciliation and return the next readiness state."""
+        self.calls += 1
+        return self.results.pop(0) if self.results else True
+
+
+@dataclass(slots=True)
 class _OpportunityClaims:
     """Atomically remember closed-candle opportunity identities across executors."""
 
@@ -208,6 +221,7 @@ def _executor(
             execution_service=execution,
             opportunity_claim_repository=claim_repository,
             authorization=_authorization(),
+            live_runtime_portfolio_reconciler=_Reconciler(),
             quote_asset="USDT",
             max_symbols=3,
             top_n=3,
@@ -472,6 +486,7 @@ def test_claim_is_durable_before_risk_failure_window() -> None:
         execution_service=execution,
         opportunity_claim_repository=claims,
         authorization=_authorization(),
+        live_runtime_portfolio_reconciler=_Reconciler(),
         quote_asset="USDT",
         max_symbols=1,
         top_n=1,
@@ -532,6 +547,7 @@ def test_cancellation_during_discovery_propagates_without_execution() -> None:
             execution_service=execution,
             opportunity_claim_repository=_OpportunityClaims(),
             authorization=_authorization(),
+            live_runtime_portfolio_reconciler=_Reconciler(),
             quote_asset="USDT",
             max_symbols=1,
             top_n=1,
@@ -548,6 +564,60 @@ def test_cancellation_during_discovery_propagates_without_execution() -> None:
         assert execution.calls == []
 
     asyncio.run(run())
+
+
+def test_required_reconciler_blocks_discovery_before_candidates() -> None:
+    """Fail closed before discovery when the required portfolio read is unsafe."""
+    btc = _signal(symbol="BTCUSDT")
+    executor, risk, execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+        },
+    )
+    blocked = replace(
+        executor, live_runtime_portfolio_reconciler=_Reconciler(results=[False])
+    )
+
+    with pytest.raises(AutonomousLiveCycleUnsafeError, match="before discovery"):
+        asyncio.run(blocked.execute_global(interval=Interval.M15, candle_limit=100))
+
+    assert risk.calls == []
+    assert execution.calls == []
+
+
+def test_adoption_failure_preserves_protected_entry_and_blocks_later_candidate() -> (
+    None
+):
+    """Keep factual protected entry truth while closing the rest of the batch."""
+    btc = _signal(symbol="BTCUSDT")
+    eth = _signal(symbol="ETHUSDT")
+    executor, risk, execution = _executor(
+        signals=(btc, eth),
+        decisions={
+            btc.symbol: _decision(signal=btc),
+            eth.symbol: _decision(signal=eth),
+        },
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED,
+            eth.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED,
+        },
+    )
+    unsafe = replace(
+        executor,
+        live_runtime_portfolio_reconciler=_Reconciler(results=[True, False]),
+    )
+
+    with pytest.raises(AutonomousLiveCycleUnsafeError, match="not adopted") as error:
+        asyncio.run(unsafe.execute_global(interval=Interval.M15, candle_limit=100))
+
+    assert len(error.value.completed_results) == 1
+    assert error.value.completed_results[0].executed
+    assert error.value.completed_results[0].order is not None
+    assert error.value.completed_results[0].order.order_id == "order-BTCUSDT"
+    assert risk.calls == [btc.symbol]
+    assert execution.calls == [btc.symbol]
 
 
 def test_runner_pauses_after_unsafe_result_without_outer_retry() -> None:

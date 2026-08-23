@@ -410,7 +410,28 @@ dan authorization exact dibangun kembali dari state authoritative/durable.
 `LiveMarketStreamService` adalah pemilik lifecycle task/subscription stream
 produksi; Telegram hanya mendelegasikan operasi kompatibilitas singular kepadanya.
 Untuk `MULTIPLE_POSITIONS_SAFE`, startup membuka dan memverifikasi tick pertama
-untuk setiap runtime context secara berurutan. Setelah seluruh stream siap,
+untuk setiap runtime context secara berurutan. `LiveRuntimePortfolioReconciliationService` menjalankan rekonsiliasi natural-exit,
+portfolio otoritatif, ownership lokal, stream, monitor, dan authorization exact
+sebelum protection gate dibuka.
+
+Tiga path lifecycle memakai boundary kanonik yang sama:
+
+- Fresh autonomous entry: `EXECUTED_AND_PROTECTED` -> rekonsiliasi portfolio
+  runtime kanonik -> adopsi context, stream, dan monitor -> authorization
+  management exact. Exposure berikutnya baru eligible setelah seluruh readiness
+  terverifikasi.
+- Restart setelah kegagalan proses, jaringan, atau PC: posisi Binance yang sudah
+  terlindungi -> recovery portfolio authoritative -> reconciler kanonik yang sama
+  -> management runtime dilanjutkan.
+- Natural Binance TP/SL: rekonsiliasi global berikutnya membuktikan posisi telah
+  tertutup, melepas context serta stream/monitor lokal yang stale, mempertahankan
+  posisi surviving, membangun ulang authorization exact, dan membuka kembali
+  capacity.
+
+Posisi existing yang sudah terlindungi dipulihkan langsung saat restart; bot
+**tidak** harus menunggu natural exit untuk memulihkannya.
+
+Setelah seluruh stream siap,
 `LiveProtectionMonitoringService` mendaftarkan satu
 `PositionProtectionManager` independen per context dan merutekan tick berdasarkan
 symbol. Kegagalan parsial membersihkan hanya monitor dan stream milik attempt,

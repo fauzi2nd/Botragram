@@ -43,6 +43,9 @@ from botragram.services.live_post_entry_recovery_service import (
     LiveAcknowledgedEntryRecovery,
     LivePostEntryRecoveryResult,
 )
+from botragram.services.live_runtime_portfolio_reconciliation_service import (
+    LiveRuntimePortfolioReconciliationService,
+)
 from botragram.services.live_submission_recovery_service import (
     LiveIncompleteSubmissionRecovery,
     LiveSubmissionRecoveryResult,
@@ -137,6 +140,9 @@ class RuntimeRecoveryService:
     signal_repository: SignalRepository
     candle_repository: CandleRepository
     live_portfolio_recovery_service: LivePortfolioRecoveryService
+    live_runtime_portfolio_reconciliation_service: (
+        LiveRuntimePortfolioReconciliationService | None
+    ) = None
     first_tick_timeout_seconds: float = _FIRST_TICK_TIMEOUT_SECONDS
     submission_attempt_repository: SubmissionAttemptRepository | None = None
     live_submission_recovery_service: LiveIncompleteSubmissionRecovery | None = None
@@ -165,6 +171,29 @@ class RuntimeRecoveryService:
                     "Automatic live position recovery currently requires FUTURES"
                 )
                 return False
+
+            reconciliation_service = self.live_runtime_portfolio_reconciliation_service
+            if reconciliation_service is not None:
+                if not await reconciliation_service.reconcile():
+                    return False
+
+                if not self.runtime_control.runtime_contexts:
+                    if self.autonomous_live_entry_authorization is not None:
+                        self.runtime_control.resume_global_cycle()
+                        _LOGGER.info(
+                            "TESTNET autonomous LIVE runtime activated after clean "
+                            "portfolio reconciliation"
+                        )
+                        return True
+                    return False
+
+                self.runtime_control.resume()
+                _LOGGER.info(
+                    "LIVE portfolio management activated after reconciliation: "
+                    "count=%d",
+                    len(self.runtime_control.runtime_contexts),
+                )
+                return True
 
             if not await self._recover_natural_live_exit():
                 return False

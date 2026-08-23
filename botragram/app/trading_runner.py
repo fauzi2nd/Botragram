@@ -95,7 +95,17 @@ class _RecoveredPortfolioReconciliationRequiredError(RuntimeError):
 
 
 class AutonomousLiveCycleUnsafeError(RuntimeError):
-    """Stop autonomous LIVE after an uncertain protected-entry outcome."""
+    """Stop autonomous LIVE while preserving completed candidate truth."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        completed_results: Sequence[TradingResult] = (),
+    ) -> None:
+        """Initialize an unsafe cycle with already completed candidate results."""
+        super().__init__(message)
+        self.completed_results = tuple(completed_results)
 
 
 class _AutonomousLiveRuntimeHealthUnsafeError(RuntimeError):
@@ -307,6 +317,14 @@ class _LiveRuntimeHealthProvider(Protocol):
 
     def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
         """Return the current local runtime-health snapshot."""
+        ...
+
+
+class _LiveRuntimePortfolioReconciler(Protocol):
+    """Reconcile authoritative LIVE exposure into local management ownership."""
+
+    async def reconcile(self) -> bool:
+        """Return whether the exact portfolio is safely managed."""
         ...
 
 
@@ -556,6 +574,7 @@ class AutonomousLiveTradingCycleExecutor:
     max_symbols: int
     top_n: int
     strategy_type: StrategyType
+    live_runtime_portfolio_reconciler: _LiveRuntimePortfolioReconciler
 
     def __post_init__(self) -> None:
         """Validate the static TESTNET discovery composition."""
@@ -577,6 +596,11 @@ class AutonomousLiveTradingCycleExecutor:
         candle_limit: int,
     ) -> Sequence[TradingResult]:
         """Discover and process ranked candidates strictly one at a time."""
+        if not await self._reconcile_live_runtime_portfolio():
+            raise AutonomousLiveCycleUnsafeError(
+                "Autonomous LIVE portfolio reconciliation failed before discovery"
+            )
+
         signals = await self.discovery_service.discover(
             quote_asset=self.quote_asset,
             interval=interval,
@@ -619,6 +643,17 @@ class AutonomousLiveTradingCycleExecutor:
             )
             results.append(self._to_trading_result(result=execution_result))
 
+            if (
+                execution_result.status
+                is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+                and not await self._reconcile_live_runtime_portfolio()
+            ):
+                raise AutonomousLiveCycleUnsafeError(
+                    "Autonomous LIVE protected entry was not adopted into "
+                    "runtime management",
+                    completed_results=results,
+                )
+
             if execution_result.status in {
                 AutonomousLiveEntryExecutionStatus.SUBMISSION_BLOCKED,
                 AutonomousLiveEntryExecutionStatus.EXECUTION_UNSAFE,
@@ -629,6 +664,10 @@ class AutonomousLiveTradingCycleExecutor:
                 )
 
         return tuple(results)
+
+    async def _reconcile_live_runtime_portfolio(self) -> bool:
+        """Reconcile before discovery and after each protected new exposure."""
+        return await self.live_runtime_portfolio_reconciler.reconcile()
 
     async def execute(
         self,
@@ -1623,6 +1662,20 @@ class TradingRunner:
                     candle_limit=self.candle_limit,
                 )
             )
+        except AutonomousLiveCycleUnsafeError as error:
+            completed_results = error.completed_results
+            self._log_results(context=None, results=completed_results)
+            if self._global_discovery_telemetry is not None:
+                self._observe_global_discovery(
+                    operation="completing",
+                    observation=lambda current: (
+                        self._complete_global_discovery_telemetry(
+                            telemetry=current,
+                            results=completed_results,
+                        )
+                    ),
+                )
+            raise
         finally:
             self.runtime_control.end_cycle()
 

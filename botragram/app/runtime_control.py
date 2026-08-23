@@ -187,19 +187,19 @@ class TradingRuntimeControl:
         if not self.is_paused:
             return False
 
-        if len(self._runtime_contexts) > 1:
-            authorization = self._live_management_authorization
-            if authorization is None or not authorization.authorizes_contexts(
+        authorization = self._live_management_authorization
+        if self._runtime_contexts and authorization is not None:
+            if not authorization.authorizes_contexts(
                 contexts=self._runtime_contexts,
             ):
                 raise RuntimeError(
-                    "Multi-context runtime requires exact recovered LIVE "
+                    "Managed LIVE runtime requires exact recovered LIVE "
                     "management authorization"
                 )
 
             if not self._position_protection_ready:
                 raise RuntimeError(
-                    "Multi-context runtime requires verified position protection"
+                    "Managed LIVE runtime requires verified position protection"
                 )
 
             self._active_event.set()

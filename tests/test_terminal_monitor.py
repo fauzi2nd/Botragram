@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from io import StringIO
@@ -40,6 +40,7 @@ from botragram.engine import PnLEngine
 from botragram.enums import (
     AutonomousLiveRecoveryStatus,
     Interval,
+    LiveMarketStreamLifecycleStatus,
     LiveRuntimeHealthReason,
     LiveRuntimeHealthStatus,
     PositionSide,
@@ -49,6 +50,8 @@ from botragram.enums import (
 )
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
+    LiveMarketStreamIdentity,
+    LiveMarketStreamState,
     LiveProtectionMonitorState,
     LiveRuntimeHealthSnapshot,
     LiveRuntimePositionContext,
@@ -131,6 +134,19 @@ class FakeLiveRuntimeHealthProvider:
 
     def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
         """Return the configured read-only health snapshot."""
+        return self.snapshot
+
+
+@dataclass(slots=True, kw_only=True)
+class CountingLiveRuntimeHealthProvider:
+    """Return LIVE health while recording whether presentation requested it."""
+
+    snapshot: LiveRuntimeHealthSnapshot
+    calls: int = 0
+
+    def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
+        """Return the configured snapshot and record one read."""
+        self.calls += 1
         return self.snapshot
 
 
@@ -383,8 +399,8 @@ async def _run_zero_position_global_discovery_test() -> None:
     assert "positions=0 / max_open_positions=1" in rendered
     assert rendered.count("New LIVE Exposure") == 1
     assert "ENABLED - TESTNET" in rendered
-    assert "Managed LIVE Streams" in rendered
-    assert "NONE (no open positions)" in rendered
+    assert "Managed LIVE Positions" in rendered
+    assert "NONE (no managed positions)" in rendered
     assert "WAITING #1" in rendered
     assert "Next Discovery" in rendered
 
@@ -433,6 +449,7 @@ async def _run_terminal_multi_context_health_test() -> None:
         runtime_control=control,
         positions=(_create_position(),),
         live_runtime_health=health,
+        trade_mode=TradeMode.LIVE,
     )
 
     status = await monitor.collect_status()
@@ -577,3 +594,425 @@ def test_terminal_monitor_rejects_invalid_intervals(
             refresh_interval_seconds=refresh_interval,
             live_balance_refresh_seconds=live_balance_interval,
         )
+
+
+# =============================================================================
+# LIVE 0/1/N Correlation Regressions
+# =============================================================================
+def _live_position(
+    symbol: str,
+    *,
+    side: PositionSide = PositionSide.LONG,
+    entry: str = "100",
+    current: str = "101",
+) -> Position:
+    """Create one metadata-complete position for managed LIVE rendering."""
+    observed_at = datetime(2026, 1, 1, tzinfo=UTC)
+    return Position(
+        symbol=symbol,
+        side=side,
+        quantity=Decimal("1"),
+        entry_price=Decimal(entry),
+        current_price=Decimal(current),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=observed_at,
+        updated_at=observed_at,
+        stop_loss=Decimal("90"),
+        take_profit=Decimal("120"),
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+
+def _live_context(symbol: str) -> LiveRuntimePositionContext:
+    return LiveRuntimePositionContext(
+        symbol=symbol,
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+
+def _live_health(
+    contexts: tuple[LiveRuntimePositionContext, ...],
+    *,
+    stream_states: tuple[LiveMarketStreamState, ...] = (),
+    monitor_states: tuple[LiveProtectionMonitorState, ...] = (),
+    exact: bool = True,
+) -> LiveRuntimeHealthSnapshot:
+    has_contexts = bool(contexts)
+    return LiveRuntimeHealthSnapshot(
+        status=(
+            LiveRuntimeHealthStatus.ACTIVE
+            if has_contexts
+            else LiveRuntimeHealthStatus.INACTIVE
+        ),
+        reason=None if has_contexts else LiveRuntimeHealthReason.NO_POSITIONS,
+        contexts=contexts,
+        affected_contexts=(),
+        authorization_present=exact,
+        authorization_exact=exact,
+        runner_paused=False,
+        cycle_in_progress=False,
+        stream_states=stream_states,
+        monitor_states=monitor_states,
+    )
+
+
+def _live_stream(symbol: str, price: str) -> LiveMarketStreamState:
+    return LiveMarketStreamState(
+        identity=LiveMarketStreamIdentity(symbol=symbol, interval=Interval.M1),
+        lifecycle_status=LiveMarketStreamLifecycleStatus.RUNNING,
+        first_tick_received=True,
+        event_count=1,
+        last_price=Decimal(price),
+        last_event_monotonic=1.0,
+    )
+
+
+def _render_live(
+    *,
+    positions: tuple[Position, ...],
+    health: LiveRuntimeHealthSnapshot,
+    paused: bool = False,
+    max_open_positions: int | None = None,
+) -> str:
+    """Render one deterministic LIVE dashboard frame."""
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(contexts=health.contexts)
+    if not paused:
+        control.resume_global_cycle()
+    monitor = _create_monitor(
+        runtime_control=control,
+        positions=positions,
+        trade_mode=TradeMode.LIVE,
+        live_runtime_health=health,
+        live_balance=FakeLiveBalanceProvider(balance=Decimal("500")),
+    )
+    monitor.autonomous_live_recovery_observability_service = FakeRecoveryProvider(
+        snapshot=AutonomousLiveRecoverySnapshot(
+            status=AutonomousLiveRecoveryStatus.CLEAR,
+            reason=None,
+            incomplete_attempt_count=0,
+            attempt_status=None,
+            client_order_id=None,
+            symbol=None,
+            autonomous_entry_authorized=True,
+            new_entry_blocked_by_recovery=False,
+        )
+    )
+    monitor.max_open_positions = max_open_positions
+    status = asyncio.run(monitor.collect_status())
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=200, height=100).print(
+        monitor.render_dashboard(status)
+    )
+    return output.getvalue()
+
+
+def test_paper_monitor_ignores_injected_live_health_provider() -> None:
+    """Preserve legacy PAPER status and stream rendering under production wiring."""
+    context = _live_context("BTCUSDT")
+    health_provider = CountingLiveRuntimeHealthProvider(
+        snapshot=_live_health(
+            (context,),
+            stream_states=(_live_stream("BTCUSDT", "999"),),
+            monitor_states=(
+                LiveProtectionMonitorState(context=context, is_active=True),
+            ),
+        )
+    )
+    control = TradingRuntimeControl(symbol="BTCUSDT")
+    control.set_stream_enabled(True)
+    control.record_stream_tick(price=Decimal("110"))
+    monitor = _create_monitor(
+        runtime_control=control,
+        paper_balance=FakePaperBalanceProvider(
+            balance=Decimal("10000"),
+            realized_pnl=Decimal("46.925025"),
+        ),
+        positions=(_create_position(),),
+        trade_mode=TradeMode.PAPER,
+    )
+    monitor.live_runtime_health_service = health_provider
+
+    status = asyncio.run(monitor.collect_status())
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=180, height=60).print(
+        monitor.render_dashboard(status)
+    )
+    rendered = output.getvalue()
+
+    assert health_provider.calls == 0
+    assert status.live_runtime_health is None
+    assert status.balance == Decimal("10000")
+    assert status.realized_pnl == Decimal("46.925025")
+    assert status.unrealized_pnl == Decimal("20")
+    assert "Status & Portfolio" in rendered
+    assert "Market Stream" in rendered
+    assert "Managed LIVE Positions" not in rendered
+
+
+def test_terminal_zero_managed_positions_dashboard_is_explicit_and_safe() -> None:
+    """Render autonomous zero-position LIVE state without requiring authorization."""
+    health = _live_health((), exact=False)
+    rendered = _render_live(positions=(), health=health)
+    assert "Runtime & Safety" in rendered or "Status & Portfolio" in rendered
+    assert "Managed LIVE Positions" in rendered
+    assert "Global Discovery" in rendered
+    assert "Runtime Events" in rendered or "Log Messages" in rendered
+    assert "Global Runner" in rendered
+    assert "RUNNING" in rendered
+    assert "Position Management" in rendered
+    assert "INACTIVE" in rendered
+    assert "Portfolio Positions" in rendered
+    assert "0" in rendered
+    assert "Managed Contexts" in rendered
+    assert "Protection Gate" in rendered
+    assert "READY" in rendered
+    assert "NONE (no managed positions)" in rendered
+
+
+def test_terminal_paused_zero_position_blocks_new_exposure() -> None:
+    """A paused empty portfolio must not display enabled exposure."""
+    rendered = _render_live(
+        positions=(), health=_live_health((), exact=False), paused=True
+    )
+    assert "Global Runner" in rendered
+    assert "PAUSED" in rendered
+    assert "New LIVE Exposure" in rendered
+    assert "BLOCKED" in rendered
+    assert "ENABLED - TESTNET" not in rendered
+
+
+def test_terminal_one_managed_position_renders_exact_correlation() -> None:
+    """Render one position with its matching stream, monitor, and authorization."""
+    context = _live_context("BTCUSDT")
+    rendered = _render_live(
+        positions=(_live_position("BTCUSDT"),),
+        health=_live_health(
+            (context,),
+            stream_states=(_live_stream("BTCUSDT", "110"),),
+            monitor_states=(
+                LiveProtectionMonitorState(context=context, is_active=True),
+            ),
+        ),
+    )
+    for text in (
+        "BTCUSDT",
+        "LONG",
+        "qty=1",
+        "entry=100",
+        "mark=110",
+        "SL=",
+        "TP=",
+        "1m",
+        "ema_cross",
+        "RUNNING",
+        "first_tick=READY",
+        "HEALTHY",
+        "authorization=EXACT",
+    ):
+        assert text in rendered
+    assert "\\n" not in rendered
+
+
+def test_terminal_two_managed_positions_correlate_by_symbol() -> None:
+    """Render two symbols without singular runtime-control access."""
+    contexts = (_live_context("BTCUSDT"), _live_context("ETHUSDT"))
+    rendered = _render_live(
+        positions=(
+            _live_position("BTCUSDT"),
+            _live_position("ETHUSDT", entry="200", current="180"),
+        ),
+        health=_live_health(
+            contexts,
+            stream_states=(
+                _live_stream("BTCUSDT", "110"),
+                _live_stream("ETHUSDT", "180"),
+            ),
+            monitor_states=tuple(
+                LiveProtectionMonitorState(context=context, is_active=True)
+                for context in contexts
+            ),
+        ),
+    )
+    assert "BTCUSDT" in rendered and "ETHUSDT" in rendered
+    assert "mark=110" in rendered and "mark=180" in rendered
+    assert rendered.count("authorization=EXACT") == 2
+
+
+def test_terminal_three_managed_positions_render_without_omission() -> None:
+    """Render all three managed contexts in the bounded LIVE panel."""
+    symbols = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+    contexts = tuple(_live_context(symbol) for symbol in symbols)
+    rendered = _render_live(
+        positions=tuple(_live_position(symbol) for symbol in symbols),
+        health=_live_health(
+            contexts,
+            stream_states=tuple(_live_stream(symbol, "110") for symbol in symbols),
+            monitor_states=tuple(
+                LiveProtectionMonitorState(context=context, is_active=True)
+                for context in contexts
+            ),
+        ),
+    )
+    for symbol in symbols:
+        assert symbol in rendered
+
+
+def test_terminal_multi_position_pnl_is_exact_and_symbol_matched() -> None:
+    """Use 110 for BTC long and 180 for ETH short, totaling exactly 30."""
+    contexts = (_live_context("BTCUSDT"), _live_context("ETHUSDT"))
+    positions = (
+        _live_position("BTCUSDT", entry="100"),
+        _live_position("ETHUSDT", side=PositionSide.SHORT, entry="200", current="190"),
+    )
+    health = _live_health(
+        contexts,
+        stream_states=(_live_stream("BTCUSDT", "110"), _live_stream("ETHUSDT", "180")),
+        monitor_states=tuple(
+            LiveProtectionMonitorState(context=context, is_active=True)
+            for context in contexts
+        ),
+    )
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(contexts=contexts)
+    monitor = _create_monitor(
+        runtime_control=control,
+        positions=positions,
+        trade_mode=TradeMode.LIVE,
+        live_runtime_health=health,
+    )
+    assert asyncio.run(monitor.collect_status()).unrealized_pnl == Decimal("30")
+
+
+def test_terminal_mixed_stream_pnl_falls_back_per_symbol() -> None:
+    """Use A's ready stream and B's persisted mark independently."""
+    contexts = (_live_context("BTCUSDT"), _live_context("ETHUSDT"))
+    positions = (
+        _live_position("BTCUSDT", entry="100", current="101"),
+        _live_position("ETHUSDT", side=PositionSide.SHORT, entry="200", current="190"),
+    )
+    failed_eth = replace(
+        _live_stream("ETHUSDT", "180"),
+        first_tick_received=False,
+        lifecycle_status=LiveMarketStreamLifecycleStatus.FAILED,
+        last_price=None,
+    )
+    health = _live_health(
+        contexts,
+        stream_states=(_live_stream("BTCUSDT", "110"), failed_eth),
+        monitor_states=tuple(
+            LiveProtectionMonitorState(context=context, is_active=True)
+            for context in contexts
+        ),
+    )
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(contexts=contexts)
+    monitor = _create_monitor(
+        runtime_control=control,
+        positions=positions,
+        trade_mode=TradeMode.LIVE,
+        live_runtime_health=health,
+    )
+    assert asyncio.run(monitor.collect_status()).unrealized_pnl == Decimal("20")
+
+
+def test_terminal_context_without_local_position_shows_divergence_and_blocks() -> None:
+    """Never fabricate managed position fields for a missing local position."""
+    context = _live_context("BTCUSDT")
+    rendered = _render_live(
+        positions=(),
+        health=_live_health(
+            (context,),
+            stream_states=(_live_stream("BTCUSDT", "110"),),
+            monitor_states=(
+                LiveProtectionMonitorState(context=context, is_active=True),
+            ),
+        ),
+    )
+    assert "MISSING POSITION / DIVERGENCE" in rendered
+    assert "qty=" not in rendered
+    assert "New LIVE Exposure" in rendered and "BLOCKED" in rendered
+
+
+def test_terminal_unmanaged_local_position_is_visible_and_blocked() -> None:
+    """Show local exposure as unmanaged rather than as a healthy managed row."""
+    rendered = _render_live(
+        positions=(_live_position("BTCUSDT"),), health=_live_health((), exact=False)
+    )
+    assert "UNMANAGED EXPOSURE" in rendered
+    assert "New LIVE Exposure" in rendered and "BLOCKED" in rendered
+    assert "NONE (no managed positions)" in rendered
+
+
+def test_terminal_capacity_blocks_new_exposure() -> None:
+    """Capacity blocks new exposure even when management ownership is exact."""
+    context = _live_context("BTCUSDT")
+    rendered = _render_live(
+        positions=(_live_position("BTCUSDT"),),
+        health=_live_health(
+            (context,),
+            stream_states=(_live_stream("BTCUSDT", "110"),),
+            monitor_states=(
+                LiveProtectionMonitorState(context=context, is_active=True),
+            ),
+        ),
+        max_open_positions=1,
+    )
+    assert "New LIVE Exposure" in rendered
+    assert "BLOCKED - CAPACITY" in rendered
+
+
+def test_terminal_discovery_candidates_are_bounded_and_separate() -> None:
+    """Keep safety rows visible while limiting discovery candidates to five."""
+    telemetry = GlobalDiscoveryTelemetry(interval=Interval.M1, max_symbols=20, top_n=5)
+    telemetry.begin_cycle(interval=Interval.M1)
+    results = tuple(
+        TradingResult(
+            executed=False,
+            decision=TradingDecision(
+                should_execute=False,
+                signal=Signal(
+                    symbol=f"SYM{i}USDT",
+                    signal_type=SignalType.BUY,
+                    price=Decimal("100"),
+                    confidence=Decimal("0.9"),
+                    strategy_name="test",
+                    generated_at=datetime(2026, 1, 1, tzinfo=UTC),
+                ),
+                risk_result=None,
+                reason="rejected",
+            ),
+            order=None,
+            reason="rejected",
+        )
+        for i in range(8)
+    )
+    telemetry.complete_cycle(results=results)
+    monitor = _create_monitor(
+        trade_mode=TradeMode.LIVE, live_runtime_health=_live_health((), exact=False)
+    )
+    monitor.global_discovery_telemetry_provider = telemetry
+    status = asyncio.run(monitor.collect_status())
+    dashboard = monitor.render_dashboard(status)
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=200, height=100)
+    console.print(dashboard)
+    rendered = output.getvalue()
+    safety_output = StringIO()
+    Console(file=safety_output, force_terminal=False, width=100).print(
+        dashboard["status"].renderable
+    )
+    safety = safety_output.getvalue()
+
+    assert "Runtime & Safety" in rendered
+    assert "Managed LIVE Positions" in rendered
+    assert "Global Discovery" in rendered
+    for index in range(5):
+        assert f"SYM{index}USDT" in rendered
+    for index in range(5, 8):
+        assert f"SYM{index}USDT" not in rendered
+    assert "SYM" not in safety
+    assert "Recovered LIVE Streams" not in rendered
