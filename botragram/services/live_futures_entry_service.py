@@ -231,12 +231,6 @@ class LiveFuturesEntryService:
             )
             if order.client_order_id not in (None, client_order_id):
                 raise RuntimeError("Exchange returned a mismatched client order ID")
-        except ValueError:
-            await self._persist_attempt(
-                attempt=attempt,
-                status=SubmissionAttemptStatus.REJECTED,
-            )
-            raise
         except ExchangeOrderRejectedError:
             await self._persist_attempt(
                 attempt=attempt,

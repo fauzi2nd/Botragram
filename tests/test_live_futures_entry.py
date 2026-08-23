@@ -864,6 +864,38 @@ async def test_limit_rejection_and_submission_failure_never_retry() -> None:
 
 
 @pytest.mark.asyncio
+async def test_post_response_mapping_failure_remains_unresolved() -> None:
+    """Never classify a malformed post-response as a proven rejection."""
+    orders = FakeOrderService(error=ValueError("malformed Binance order payload"))
+    repository = RecordingSubmissionAttemptRepository()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(_position()),
+        protection_service=FakeProtectionService(),
+        runtime_control=control,
+        submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
+    )
+
+    with pytest.raises(ValueError, match="malformed Binance order payload"):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M1,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 1
+    assert repository.saved[-1].status is SubmissionAttemptStatus.UNRESOLVED
+    assert len(await repository.get_incomplete()) == 1
+    assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
 async def test_cancellation_propagates_with_protection_gate_closed() -> None:
     """Do not convert cancellation into a safe or retried entry result."""
     orders = FakeOrderService(error=asyncio.CancelledError())
