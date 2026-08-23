@@ -54,6 +54,7 @@ from botragram.constants.env import (
     ENV_GEMINI_API_KEY,
     ENV_LOG_LEVEL,
     ENV_LOG_LEVEL_LEGACY,
+    ENV_MARKET_INTERVAL,
     ENV_MAX_OPEN_POSITIONS,
     ENV_MAX_POSITION_SIZE_USDT,
     ENV_OKX_API_KEY,
@@ -443,6 +444,10 @@ class EnvironmentProvider:
     def get_max_position_size_usdt(self) -> str:
         """Return the configured maximum position notional in USDT."""
         return self._get_var(ENV_MAX_POSITION_SIZE_USDT, default="1000")
+
+    def get_market_interval(self) -> str:
+        """Return the optional configured candle interval."""
+        return self._get_var(ENV_MARKET_INTERVAL)
 
     def get_active_exchange(self) -> str:
         """Return the configured active exchange."""

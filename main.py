@@ -29,6 +29,7 @@ from botragram.app import (
     Application,
     ApplicationLifecycle,
     DependencyProvider,
+    GlobalDiscoveryTelemetry,
     RuntimeRestartCoordinator,
     SettingsManager,
     TerminalMonitor,
@@ -36,6 +37,7 @@ from botragram.app import (
     run_until_restart,
 )
 from botragram.config import Settings
+from botragram.enums import ExecutionPolicy
 from botragram.utils.logger import configure_logging, shutdown_logging
 
 __all__ = [
@@ -59,6 +61,15 @@ async def _run_trading(
     restart_coordinator: RuntimeRestartCoordinator,
 ) -> None:
     """Build and run trading orchestration after resources are initialized."""
+    global_discovery_telemetry = (
+        GlobalDiscoveryTelemetry(
+            interval=settings.market.interval,
+            max_symbols=settings.market.discovery_max_symbols,
+            top_n=settings.market.discovery_top_n,
+        )
+        if settings.app.effective_execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE
+        else None
+    )
     terminal_monitor = TerminalMonitor(
         runtime_control=dependency_provider.runtime_control,
         paper_balance_provider=dependency_provider.paper_trading_service,
@@ -67,16 +78,17 @@ async def _run_trading(
         pnl_engine=dependency_provider.pnl_engine,
         trade_mode=settings.app.trade_mode,
         quote_asset=settings.market.quote_asset,
-        live_runtime_health_service=(dependency_provider.live_runtime_health_service),
+        live_runtime_health_service=dependency_provider.live_runtime_health_service,
         autonomous_live_recovery_observability_service=(
             dependency_provider.autonomous_live_recovery_observability_service
         ),
+        global_discovery_telemetry_provider=global_discovery_telemetry,
+        max_open_positions=settings.risk.max_open_positions,
     )
     monitor_task = asyncio.create_task(
         terminal_monitor.run(),
         name="botragram-terminal-monitor",
     )
-
     try:
         await dependency_provider.runtime_recovery_service.recover()
         runtime_contexts = dependency_provider.runtime_control.runtime_contexts
@@ -112,6 +124,7 @@ async def _run_trading(
             autonomous_live_health_check_interval_seconds=1.0,
             maximum_consecutive_failures=3,
             failure_retry_delay_seconds=5.0,
+            global_discovery_telemetry=global_discovery_telemetry,
         )
         await run_until_restart(
             runner=runner,

@@ -40,12 +40,13 @@ from rich.text import Text
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.app.global_discovery_telemetry import GlobalDiscoverySnapshot
 from botragram.app.runtime_control import (
     MarketStreamTelemetry,
     TradingRuntimeControl,
 )
 from botragram.engine import PnLEngine
-from botragram.enums import TradeMode
+from botragram.enums import LiveRuntimeHealthStatus, TradeMode
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
     LiveRuntimeHealthSnapshot,
@@ -117,6 +118,14 @@ class AutonomousLiveRecoveryObservabilityProvider(Protocol):
         ...
 
 
+class GlobalDiscoveryTelemetryProvider(Protocol):
+    """Read local global-discovery telemetry without exchange I/O."""
+
+    def get_global_discovery_snapshot(self) -> GlobalDiscoverySnapshot | None:
+        """Return an immutable process-local discovery snapshot."""
+        ...
+
+
 type TerminalOutput = Callable[[str], None]
 
 
@@ -139,6 +148,7 @@ class TerminalStatus:
     positions: tuple[Position, ...] = ()
     live_runtime_health: LiveRuntimeHealthSnapshot | None = None
     autonomous_live_recovery: AutonomousLiveRecoverySnapshot | None = None
+    global_discovery: GlobalDiscoverySnapshot | None = None
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -211,6 +221,8 @@ class TerminalMonitor:
     autonomous_live_recovery_observability_service: (
         AutonomousLiveRecoveryObservabilityProvider | None
     ) = None
+    global_discovery_telemetry_provider: GlobalDiscoveryTelemetryProvider | None = None
+    max_open_positions: int | None = None
     console: Console = field(default_factory=Console)
     log_handler: DashboardLogHandler = field(default_factory=DashboardLogHandler)
     output: TerminalOutput | None = None
@@ -250,6 +262,9 @@ class TerminalMonitor:
 
         if self.live_balance_refresh_seconds <= 0:
             raise ValueError("Live balance refresh interval must be greater than zero")
+
+        if self.max_open_positions is not None and self.max_open_positions <= 0:
+            raise ValueError("Terminal maximum open positions must be positive")
 
     async def run(self) -> None:
         """Render the Rich dashboard until graceful shutdown is requested."""
@@ -308,6 +323,12 @@ class TerminalMonitor:
             if recovery_service is not None
             else None
         )
+        telemetry_provider = self.global_discovery_telemetry_provider
+        global_discovery = (
+            telemetry_provider.get_global_discovery_snapshot()
+            if telemetry_provider is not None
+            else None
+        )
         positions = tuple(await self.position_provider.get_open_positions())
         balance, realized_pnl = await self._get_portfolio_metrics(
             sample_time=sample_time,
@@ -339,13 +360,17 @@ class TerminalMonitor:
             positions=positions,
             live_runtime_health=live_runtime_health,
             autonomous_live_recovery=autonomous_live_recovery,
+            global_discovery=global_discovery,
         )
 
     def render_dashboard(self, status: TerminalStatus) -> Layout:
         """Build the three-panel Rich dashboard for one monitoring snapshot."""
         layout = Layout(name="root")
         layout.split_column(
-            Layout(name="summary", size=16),
+            Layout(
+                name="summary",
+                size=24 if status.global_discovery is not None else 16,
+            ),
             Layout(name="logs", minimum_size=8),
         )
         layout["summary"].split_row(
@@ -503,6 +528,17 @@ class TerminalMonitor:
                 "Authorization",
                 "EXACT" if health.authorization_exact else "UNAVAILABLE",
             )
+            if not health.contexts:
+                self._add_global_discovery_rows(table=table, status=status)
+                table.add_row("Balance", f"{status.balance:,.2f} {self.quote_asset}")
+                self._add_position_rows(table=table, status=status)
+                table.add_row(
+                    "Protection Gate",
+                    "READY"
+                    if self.runtime_control.is_position_protection_ready
+                    else "CLOSED",
+                )
+                self._add_autonomous_entry_row(table=table, status=status)
             for context in health.contexts:
                 stream_state = next(
                     (
@@ -544,7 +580,8 @@ class TerminalMonitor:
                 table.add_row("Autonomous Recovery", recovery.status.value.upper())
                 if recovery.reason is not None:
                     table.add_row("Recovery Reason", recovery.reason.value.upper())
-            table.add_row("New LIVE Exposure", "DISABLED")
+            if health.contexts:
+                self._add_autonomous_entry_row(table=table, status=status)
             return Panel(
                 table,
                 title="[bold]Status & Portfolio[/bold]",
@@ -565,6 +602,7 @@ class TerminalMonitor:
             f"({self.runtime_control.market_type.value.upper()})",
         )
         table.add_row("Mode", self.trade_mode.value)
+        self._add_global_discovery_rows(table=table, status=status)
         table.add_row("Symbol", self.runtime_control.symbol)
         table.add_row("Interval", self.runtime_control.interval.value)
         table.add_row("Strategy", self.runtime_control.strategy_type.value)
@@ -602,6 +640,67 @@ class TerminalMonitor:
             border_style="cyan",
         )
 
+    def _add_global_discovery_rows(
+        self, *, table: Table, status: TerminalStatus
+    ) -> None:
+        """Add authoritative local global-discovery fields when configured."""
+        discovery = status.global_discovery
+        if discovery is None:
+            return
+
+        table.add_row("Execution Scope", "GLOBAL DISCOVERY")
+        table.add_row("Market Interval", discovery.interval.value)
+        table.add_row(
+            "Discovery Cycle",
+            f"{discovery.state.value.upper()} #{discovery.cycle_sequence}",
+        )
+        table.add_row(
+            "Discovery Bounds",
+            f"max_symbols={discovery.max_symbols} top_n={discovery.top_n}",
+        )
+        table.add_row(
+            "Candidates",
+            str(discovery.actionable_count)
+            if discovery.actionable_count is not None
+            else "-",
+        )
+        for candidate in discovery.candidates:
+            outcome = candidate.outcome or "PENDING"
+            table.add_row(
+                "Candidate",
+                f"{candidate.symbol} {candidate.direction.value.upper()} "
+                f"confidence={candidate.confidence:f} outcome={outcome}",
+            )
+        if discovery.next_eligible_monotonic is not None:
+            remaining = max(0, round(discovery.next_eligible_monotonic - monotonic()))
+            table.add_row("Next Discovery", f"{remaining}s")
+
+    def _add_autonomous_entry_row(
+        self, *, table: Table, status: TerminalStatus
+    ) -> None:
+        """Show authorization truthfully without exposing a capability."""
+        recovery = status.autonomous_live_recovery
+        health = status.live_runtime_health
+        health_is_entry_safe = health is None or (
+            health.status is LiveRuntimeHealthStatus.ACTIVE
+            and health.authorization_present
+            and health.authorization_exact
+        )
+        table.add_row(
+            "New LIVE Exposure",
+            (
+                "ENABLED - TESTNET"
+                if recovery is not None
+                and recovery.autonomous_entry_authorized
+                and not self.runtime_control.is_paused
+                and self.runtime_control.is_position_protection_ready
+                and health_is_entry_safe
+                else "BLOCKED"
+                if recovery is not None and recovery.autonomous_entry_authorized
+                else "DISABLED"
+            ),
+        )
+
     def _add_position_rows(
         self,
         *,
@@ -612,6 +711,16 @@ class TerminalMonitor:
         position = self._get_display_position(status.positions)
 
         if position is None:
+            if status.global_discovery is not None:
+                maximum = (
+                    "-"
+                    if self.max_open_positions is None
+                    else str(self.max_open_positions)
+                )
+                table.add_row(
+                    "Portfolio",
+                    f"positions=0 / max_open_positions={maximum}",
+                )
             table.add_row("Position (0)", "NONE")
             table.add_row("Entry / Mark", "-")
             table.add_row("Risk @ SL", "-")
@@ -620,6 +729,14 @@ class TerminalMonitor:
 
         mark_price = self._get_position_mark_price(position=position, status=status)
         risk_amount = self._calculate_position_risk(position=position)
+        if status.global_discovery is not None:
+            maximum = (
+                "-" if self.max_open_positions is None else str(self.max_open_positions)
+            )
+            table.add_row(
+                "Portfolio",
+                f"positions={status.position_count} / max_open_positions={maximum}",
+            )
         table.add_row(
             f"Position ({status.position_count})",
             f"{position.side.value.upper()} | Qty {position.quantity:f} | "
@@ -648,6 +765,9 @@ class TerminalMonitor:
         positions: Sequence[Position],
     ) -> Position | None:
         """Return the selected-symbol position, or the first open position."""
+        if len(self.runtime_control.runtime_contexts) > 1:
+            return positions[0] if positions else None
+
         for position in positions:
             if position.symbol == self.runtime_control.symbol:
                 return position
@@ -697,6 +817,8 @@ class TerminalMonitor:
         table.add_column(style="white")
         health_snapshot = status.live_runtime_health
         if health_snapshot is not None and len(health_snapshot.contexts) != 1:
+            if not health_snapshot.contexts:
+                table.add_row("Managed LIVE Streams", "NONE (no open positions)")
             for stream_state in health_snapshot.stream_states:
                 identity = stream_state.identity
                 table.add_row(

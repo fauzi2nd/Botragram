@@ -18,12 +18,16 @@ from __future__ import annotations
 # =============================================================================
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from time import monotonic
 from typing import Final, Protocol, runtime_checkable
 
+from botragram.app.global_discovery_telemetry import (
+    GlobalDiscoverySnapshot,
+    GlobalDiscoveryTelemetry,
+)
 from botragram.app.runtime_control import TradingRuntimeControl
 
 # =============================================================================
@@ -830,6 +834,12 @@ class TradingRunner:
     maximum_consecutive_failures: int = 1
     failure_retry_delay_seconds: float = 5.0
     heartbeat_interval_seconds: float = _DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+    global_discovery_telemetry: GlobalDiscoveryTelemetry | None = None
+    _global_discovery_telemetry: GlobalDiscoveryTelemetry | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     _running: bool = field(default=False, init=False)
     _stop_event: asyncio.Event = field(
@@ -894,6 +904,15 @@ class TradingRunner:
                 "Recovered LIVE management authorization requires LIVE mode"
             )
 
+        if self.global_discovery_telemetry is not None:
+            self._global_discovery_telemetry = self.global_discovery_telemetry
+        elif isinstance(self.executor, AutonomousLiveTradingCycleExecutor):
+            self._global_discovery_telemetry = GlobalDiscoveryTelemetry(
+                interval=self.interval,
+                max_symbols=self.executor.max_symbols,
+                top_n=self.executor.top_n,
+            )
+
     @property
     def is_running(self) -> bool:
         """Return whether the continuous runtime loop is active."""
@@ -903,6 +922,11 @@ class TradingRunner:
     def order_submission_enabled(self) -> bool:
         """Return whether this runtime may submit exchange orders."""
         return self.trade_mode is TradeMode.LIVE
+
+    def get_global_discovery_snapshot(self) -> GlobalDiscoverySnapshot | None:
+        """Return immutable telemetry for autonomous global discovery, if active."""
+        telemetry = self._global_discovery_telemetry
+        return telemetry.get_snapshot() if telemetry is not None else None
 
     @property
     def effective_cycle_interval_seconds(self) -> float:
@@ -1089,6 +1113,14 @@ class TradingRunner:
                         self._global_next_eligible_monotonic = (
                             monotonic() + self._get_global_cadence_seconds()
                         )
+                        self._observe_global_discovery(
+                            operation="waiting",
+                            observation=lambda telemetry: telemetry.wait_until(
+                                next_eligible_monotonic=(
+                                    self._global_next_eligible_monotonic
+                                )
+                            ),
+                        )
                         await self._wait_for_global_cycle()
                         continue
 
@@ -1096,6 +1128,14 @@ class TradingRunner:
                         results = await self._run_global_cycle()
                         self._global_next_eligible_monotonic = (
                             monotonic() + self._get_global_cadence_seconds()
+                        )
+                        self._observe_global_discovery(
+                            operation="waiting",
+                            observation=lambda telemetry: telemetry.wait_until(
+                                next_eligible_monotonic=(
+                                    self._global_next_eligible_monotonic
+                                )
+                            ),
                         )
                         await self._notify_cycle_completed(results=results)
                         await self._wait_for_global_cycle()
@@ -1136,11 +1176,20 @@ class TradingRunner:
                         recovery_allowed=True,
                     )
                     if not recovered:
+                        self._pause_global_discovery_telemetry()
                         break
 
                     consecutive_failures = 0
                     self._global_next_eligible_monotonic = (
                         monotonic() + self._get_global_cadence_seconds()
+                    )
+                    self._observe_global_discovery(
+                        operation="waiting",
+                        observation=lambda telemetry: telemetry.wait_until(
+                            next_eligible_monotonic=(
+                                self._global_next_eligible_monotonic
+                            )
+                        ),
                     )
                     await self._wait_for_global_cycle()
                     continue
@@ -1205,6 +1254,7 @@ class TradingRunner:
         """Pause first, then consume at most one shared in-process recovery pass."""
         self.runtime_control.set_position_protection_ready(False)
         self.runtime_control.pause()
+        self._pause_global_discovery_telemetry()
         _LOGGER.critical(
             "Autonomous LIVE runtime paused pending recovery: error_type=%s detail=%s",
             type(error).__name__,
@@ -1559,6 +1609,12 @@ class TradingRunner:
         if not isinstance(executor, GlobalTradingCycleExecutor):
             raise RuntimeError("Configured executor is not market-wide")
 
+        if self._global_discovery_telemetry is not None:
+            self._observe_global_discovery(
+                operation="starting",
+                observation=self._start_global_discovery_telemetry,
+            )
+
         self.runtime_control.begin_cycle()
         try:
             results = tuple(
@@ -1571,7 +1627,52 @@ class TradingRunner:
             self.runtime_control.end_cycle()
 
         self._log_results(context=None, results=results)
+        if self._global_discovery_telemetry is not None:
+            self._observe_global_discovery(
+                operation="completing",
+                observation=lambda current: self._complete_global_discovery_telemetry(
+                    telemetry=current,
+                    results=results,
+                ),
+            )
         return results
+
+    def _start_global_discovery_telemetry(
+        self,
+        telemetry: GlobalDiscoveryTelemetry,
+    ) -> None:
+        """Record and log a local discovery-cycle start."""
+        telemetry.begin_cycle(interval=self.interval)
+        _LOGGER.info(
+            "Global discovery cycle started: interval=%s max_symbols=%s top_n=%s",
+            self.interval.value,
+            telemetry.max_symbols,
+            telemetry.top_n,
+        )
+
+    @staticmethod
+    def _complete_global_discovery_telemetry(
+        *,
+        telemetry: GlobalDiscoveryTelemetry,
+        results: tuple[TradingResult, ...],
+    ) -> None:
+        """Record and log completed local telemetry without runtime authority."""
+        telemetry.complete_cycle(results=results)
+        snapshot = telemetry.get_snapshot()
+        _LOGGER.info(
+            "Global discovery cycle completed: actionable=%d duration_ms=%s",
+            snapshot.actionable_count,
+            snapshot.last_duration_ms,
+        )
+        for candidate in snapshot.candidates:
+            _LOGGER.info(
+                "Global discovery candidate processed: symbol=%s side=%s "
+                "confidence=%s outcome=%s",
+                candidate.symbol,
+                candidate.direction.value,
+                candidate.confidence,
+                candidate.outcome,
+            )
 
     def _get_global_cadence_seconds(self) -> float:
         """Return the established global discovery cadence."""
@@ -1605,6 +1706,35 @@ class TradingRunner:
                 )
 
             await self._wait_for_delay(delay_seconds=wait_seconds)
+
+    def _pause_global_discovery_telemetry(self) -> None:
+        """Expose an existing fail-closed pause without changing its semantics."""
+        telemetry = self._global_discovery_telemetry
+        if telemetry is not None:
+            self._observe_global_discovery(
+                operation="pausing",
+                observation=lambda current: current.pause(),
+            )
+
+    def _observe_global_discovery(
+        self,
+        *,
+        operation: str,
+        observation: Callable[[GlobalDiscoveryTelemetry], None],
+    ) -> None:
+        """Run presentation-only telemetry without controlling runtime behavior."""
+        telemetry = self._global_discovery_telemetry
+        if telemetry is None:
+            return
+
+        try:
+            observation(telemetry)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Global discovery telemetry failed: operation=%s", operation
+            )
 
     def _autonomous_live_runtime_health_monitoring_enabled(self) -> bool:
         """Return whether local recovered-runtime health should gate fresh entry."""

@@ -94,6 +94,7 @@ _ENVIRONMENT_KEYS = (
     "LOG_LEVEL",
     "MAX_OPEN_POSITIONS",
     "MAX_POSITION_SIZE_USDT",
+    "MARKET_INTERVAL",
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
     "TELEGRAM_CHAT_ID",
@@ -162,6 +163,43 @@ def test_market_symbol_combines_configured_assets() -> None:
     settings = MarketSettings(base_asset="ETH", quote_asset="USDC")
 
     assert settings.symbol == "ETHUSDC"
+
+
+@pytest.mark.parametrize(
+    ("raw_interval", "expected"),
+    (("1m", Interval.M1), ("1M", Interval.MN1), ("", Interval.M15)),
+)
+def test_settings_manager_loads_configured_market_interval(
+    raw_interval: str,
+    expected: Interval,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Load an explicit supported interval and preserve the unset default."""
+    _clear_environment(monkeypatch)
+    path = tmp_path / ".env"
+    _write_environment_file(path, f"MARKET_INTERVAL={raw_interval}\n")
+
+    settings = SettingsManager(
+        environment_provider=EnvironmentProvider(env_path=str(path))
+    ).load()
+
+    assert settings.market.interval is expected
+
+
+def test_settings_manager_rejects_invalid_market_interval(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Reject an unsupported timeframe without silently changing cadence."""
+    _clear_environment(monkeypatch)
+    path = tmp_path / ".env"
+    _write_environment_file(path, "MARKET_INTERVAL=30s\n")
+
+    with pytest.raises(ValueError, match="MARKET_INTERVAL"):
+        SettingsManager(
+            environment_provider=EnvironmentProvider(env_path=str(path))
+        ).load()
 
 
 @pytest.mark.parametrize("maximum", (0, -1, True))
@@ -516,6 +554,7 @@ def test_explicit_soak_environment_file_builds_testnet_autonomous_authorization(
                 "BINANCE_MARKET_TYPE=futures",
                 "EXECUTION_POLICY=autonomous_live",
                 "AUTONOMOUS_LIVE_ENTRY_ENABLED=true",
+                "MARKET_INTERVAL=1m",
                 "MAX_POSITION_SIZE_USDT=10",
                 "MAX_OPEN_POSITIONS=1",
             )
@@ -546,6 +585,7 @@ def test_explicit_soak_environment_file_builds_testnet_autonomous_authorization(
     assert settings.app.autonomous_live_entry_enabled
     assert settings.risk.max_position_size_usdt == Decimal("10")
     assert settings.risk.max_open_positions == 1
+    assert settings.market.interval is Interval.M1
     assert provider.autonomous_live_entry_authorization is not None
     asyncio.run(provider.close())
 

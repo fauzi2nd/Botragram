@@ -32,6 +32,7 @@ from botragram.enums import (
     ExchangeEnvironment,
     ExchangeType,
     ExecutionPolicy,
+    Interval,
     LogLevel,
     MarketType,
     TradeMode,
@@ -174,8 +175,15 @@ class SettingsManager:
         )
 
     def load_market_settings(self) -> MarketSettings:
-        """Load market settings using their configured defaults."""
-        return MarketSettings()
+        """Load market settings while preserving the safe default interval."""
+        raw_interval = self._environment_provider.get_market_interval()
+        return MarketSettings(
+            interval=(
+                self._parse_market_interval(raw_value=raw_interval)
+                if raw_interval
+                else Interval.M15
+            )
+        )
 
     def load_risk_settings(self) -> RiskSettings:
         """Load validated strategy-specific risk settings."""
@@ -330,7 +338,13 @@ class SettingsManager:
 
     @staticmethod
     def _parse_enum[
-        EnumValue: (ExchangeType, ExecutionPolicy, LogLevel, MarketType, TradeMode),
+        EnumValue: (
+            ExchangeType,
+            ExecutionPolicy,
+            LogLevel,
+            MarketType,
+            TradeMode,
+        ),
     ](
         *,
         enum_type: type[EnumValue],
@@ -348,6 +362,21 @@ class SettingsManager:
                     f"Environment variable {setting_name!r} has invalid value "
                     f"{raw_value!r}"
                 ) from error
+
+    @staticmethod
+    def _parse_market_interval(*, raw_value: str) -> Interval:
+        """Parse a case-sensitive Binance candle interval.
+
+        Raises:
+            ValueError: If the configured interval is unsupported.
+        """
+        try:
+            return Interval(raw_value)
+        except ValueError as error:
+            raise ValueError(
+                "Environment variable 'MARKET_INTERVAL' has invalid value "
+                f"{raw_value!r}"
+            ) from error
 
     @staticmethod
     def _parse_chat_id(

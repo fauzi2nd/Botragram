@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from io import StringIO
+from time import monotonic
 
 # =============================================================================
 # Third-Party Imports
@@ -34,20 +35,27 @@ from rich.console import Console
 # Local Imports
 # =============================================================================
 from botragram.app import TerminalMonitor, TradingRuntimeControl
+from botragram.app.global_discovery_telemetry import GlobalDiscoveryTelemetry
 from botragram.engine import PnLEngine
 from botragram.enums import (
+    AutonomousLiveRecoveryStatus,
     Interval,
     LiveRuntimeHealthReason,
     LiveRuntimeHealthStatus,
     PositionSide,
+    SignalType,
     StrategyType,
     TradeMode,
 )
 from botragram.models import (
+    AutonomousLiveRecoverySnapshot,
     LiveProtectionMonitorState,
     LiveRuntimeHealthSnapshot,
     LiveRuntimePositionContext,
     Position,
+    Signal,
+    TradingDecision,
+    TradingResult,
 )
 from botragram.services import PaperPortfolioSnapshot
 
@@ -123,6 +131,17 @@ class FakeLiveRuntimeHealthProvider:
 
     def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
         """Return the configured read-only health snapshot."""
+        return self.snapshot
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class FakeRecoveryProvider:
+    """Return a deterministic read-only autonomous recovery snapshot."""
+
+    snapshot: AutonomousLiveRecoverySnapshot
+
+    async def get_snapshot(self) -> AutonomousLiveRecoverySnapshot:
+        """Return the configured immutable recovery snapshot."""
         return self.snapshot
 
 
@@ -250,6 +269,124 @@ async def _run_terminal_snapshot_test() -> None:
 def test_terminal_monitor_renders_three_rich_dashboard_panels() -> None:
     """Render status, stream, and buffered logs in the requested layout."""
     asyncio.run(_run_rich_dashboard_render_test())
+
+
+def test_terminal_zero_position_global_discovery_is_truthful() -> None:
+    """Show autonomous TESTNET discovery without a false BTC stream context."""
+    asyncio.run(_run_zero_position_global_discovery_test())
+
+
+def test_terminal_renders_completed_global_candidate() -> None:
+    """Render completed candidate telemetry from an existing trading result."""
+    asyncio.run(_run_completed_candidate_test())
+
+
+async def _run_completed_candidate_test() -> None:
+    """Render one completed BUY candidate without inventing scanned count."""
+    signal = Signal(
+        symbol="ETHUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100"),
+        confidence=Decimal("0.9"),
+        strategy_name="test_strategy",
+        generated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    result = TradingResult(
+        executed=False,
+        decision=TradingDecision(
+            should_execute=False,
+            signal=signal,
+            risk_result=None,
+            reason="risk_rejected",
+        ),
+        order=None,
+        reason="risk_rejected",
+    )
+    telemetry = GlobalDiscoveryTelemetry(interval=Interval.M1, max_symbols=20, top_n=5)
+    telemetry.begin_cycle(interval=Interval.M1)
+    telemetry.complete_cycle(results=(result,))
+    monitor = _create_monitor(trade_mode=TradeMode.LIVE)
+    monitor.global_discovery_telemetry_provider = telemetry
+    status = await monitor.collect_status()
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=180, height=60).print(
+        monitor.render_dashboard(status)
+    )
+    rendered = output.getvalue()
+
+    assert "COMPLETED" in rendered
+    assert "ETHUSDT" in rendered
+    assert "BUY" in rendered
+    assert "confidence=0.9" in rendered
+    assert "risk_rejected" in rendered
+
+
+async def _run_zero_position_global_discovery_test() -> None:
+    """Render a zero-position autonomous LIVE snapshot using local telemetry."""
+    health = LiveRuntimeHealthSnapshot(
+        status=LiveRuntimeHealthStatus.ACTIVE,
+        reason=None,
+        contexts=(),
+        affected_contexts=(),
+        authorization_present=True,
+        authorization_exact=True,
+        runner_paused=False,
+        cycle_in_progress=False,
+        stream_states=(),
+        monitor_states=(),
+    )
+    telemetry = GlobalDiscoveryTelemetry(
+        interval=Interval.M1,
+        max_symbols=20,
+        top_n=5,
+    )
+    telemetry.begin_cycle(interval=Interval.M1)
+    telemetry.wait_until(next_eligible_monotonic=monotonic() + 60)
+    monitor = _create_monitor(
+        trade_mode=TradeMode.LIVE,
+        live_runtime_health=health,
+        live_balance=FakeLiveBalanceProvider(balance=Decimal("321.50")),
+    )
+    monitor.global_discovery_telemetry_provider = telemetry
+    monitor.max_open_positions = 1
+    monitor.runtime_control.resume_global_cycle()
+    monitor.autonomous_live_recovery_observability_service = FakeRecoveryProvider(
+        snapshot=AutonomousLiveRecoverySnapshot(
+            status=AutonomousLiveRecoveryStatus.CLEAR,
+            reason=None,
+            incomplete_attempt_count=0,
+            attempt_status=None,
+            client_order_id=None,
+            symbol=None,
+            autonomous_entry_authorized=True,
+            new_entry_blocked_by_recovery=False,
+        )
+    )
+
+    status = await monitor.collect_status()
+    assert status.balance == Decimal("321.50")
+    assert status.global_discovery is not None
+    assert status.global_discovery.interval is Interval.M1
+    assert status.global_discovery.max_symbols == 20
+    assert status.global_discovery.top_n == 5
+    assert status.autonomous_live_recovery is not None
+    assert status.autonomous_live_recovery.autonomous_entry_authorized
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=180, height=60).print(
+        monitor.render_dashboard(status)
+    )
+    rendered = output.getvalue()
+    assert "GLOBAL DISCOVERY" in rendered
+    assert "1m" in rendered
+    assert "max_symbols=20 top_n=5" in rendered
+    assert "321.50 USDT" in rendered
+    assert "positions=0 / max_open_positions=1" in rendered
+    assert rendered.count("New LIVE Exposure") == 1
+    assert "ENABLED - TESTNET" in rendered
+    assert "Managed LIVE Streams" in rendered
+    assert "NONE (no open positions)" in rendered
+    assert "WAITING #1" in rendered
+    assert "Next Discovery" in rendered
 
 
 def test_terminal_multi_context_health_never_selects_a_singular_runtime() -> None:

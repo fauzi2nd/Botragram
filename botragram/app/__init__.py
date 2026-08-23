@@ -18,6 +18,11 @@ from __future__ import annotations
 # =============================================================================
 from botragram.app.application import Application
 from botragram.app.dependency_provider import DependencyProvider
+from botragram.app.global_discovery_telemetry import (
+    GlobalDiscoveryCandidate,
+    GlobalDiscoverySnapshot,
+    GlobalDiscoveryTelemetry,
+)
 from botragram.app.lifecycle import ApplicationLifecycle
 from botragram.app.market_type_switch import (
     MarketTypeSwitchService,
@@ -57,6 +62,9 @@ __all__ = [
     "SettingsManager",
     "SingleSymbolTradingCycleExecutor",
     "TerminalMonitor",
+    "GlobalDiscoveryCandidate",
+    "GlobalDiscoverySnapshot",
+    "GlobalDiscoveryTelemetry",
     "TerminalStatus",
     "TradingCycleExecutor",
     "TradingRunner",

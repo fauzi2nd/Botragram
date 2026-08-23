@@ -169,6 +169,11 @@ class TradingRuntimeControl:
         """Return whether new trading cycles are paused."""
         return not self._active_event.is_set()
 
+    @property
+    def is_position_protection_ready(self) -> bool:
+        """Return the read-only LIVE protection gate state."""
+        return self._position_protection_ready
+
     def pause(self) -> bool:
         """Pause future cycles and return whether state changed."""
         if self.is_paused:

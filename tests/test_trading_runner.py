@@ -39,6 +39,7 @@ from botragram.app import (
     TradingRunner,
     TradingRuntimeControl,
 )
+from botragram.app.global_discovery_telemetry import GlobalDiscoveryTelemetry
 from botragram.enums import (
     AuthorizationStatus,
     Interval,
@@ -145,6 +146,70 @@ class FakeTradingCycleExecutor:
 
         self.execution_succeeded.set()
         return (self.result,)
+
+
+class FailingCompletionTelemetry(GlobalDiscoveryTelemetry):
+    """Raise after a successful global executor result is available."""
+
+    def complete_cycle(self, *, results: tuple[TradingResult, ...]) -> None:
+        """Simulate a presentation-only completion failure."""
+        del results
+        self.completion_calls += 1
+        raise RuntimeError("telemetry completion failed")
+
+    completion_calls: int = 0
+
+
+@dataclass(slots=True, kw_only=True)
+class SuccessfulGlobalExecutor:
+    """Exercise the runner's real global-executor branch."""
+
+    results: tuple[TradingResult, ...]
+    calls: int = 0
+
+    async def execute_global(
+        self,
+        *,
+        interval: Interval,
+        candle_limit: int,
+    ) -> tuple[TradingResult, ...]:
+        """Return one known successful global-cycle result."""
+        del interval, candle_limit
+        self.calls += 1
+        return self.results
+
+    async def execute(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        candle_limit: int,
+        strategy_type: StrategyType | None = None,
+        live_management_authorization: (
+            LiveRecoveredPositionManagementAuthorization | None
+        ) = None,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        order_type: OrderType = OrderType.MARKET,
+        price: Decimal | None = None,
+        account_balance_override: Decimal | None = None,
+        synchronize_position: bool = True,
+        submit_order: bool = True,
+    ) -> tuple[TradingResult, ...]:
+        """Satisfy the general runner protocol without using this path."""
+        del (
+            symbol,
+            interval,
+            candle_limit,
+            strategy_type,
+            live_management_authorization,
+            current_drawdown_pct,
+            order_type,
+            price,
+            account_balance_override,
+            synchronize_position,
+            submit_order,
+        )
+        raise AssertionError("Global runner selected the single-context executor path")
 
 
 @dataclass(slots=True, kw_only=True)
@@ -976,6 +1041,23 @@ async def _run_live_cycle_test() -> None:
 def test_autonomous_paper_executor_receives_only_runtime_inputs() -> None:
     """Verify the runner delegates autonomous cycles without discovery rules."""
     asyncio.run(_run_autonomous_paper_cycle_test())
+
+
+def test_global_telemetry_failure_does_not_fail_successful_cycle() -> None:
+    """Keep telemetry completion failures outside the trading success boundary."""
+    expected = (_create_result(),)
+    executor = SuccessfulGlobalExecutor(results=expected)
+    telemetry = FailingCompletionTelemetry(interval=Interval.M1)
+    runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        global_discovery_telemetry=telemetry,
+    )
+
+    assert asyncio.run(runner.run_once()) == expected
+    assert executor.calls == 1
+    assert telemetry.completion_calls == 1
 
 
 async def _run_autonomous_paper_cycle_test() -> None:
