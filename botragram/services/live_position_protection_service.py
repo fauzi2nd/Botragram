@@ -25,6 +25,14 @@ __all__ = ["LivePositionProtectionService"]
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _RECONCILIATION_MAX_ATTEMPTS: Final[int] = 2
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
+_TERMINAL_PROTECTION_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
+    {
+        OrderStatus.FILLED,
+        OrderStatus.CANCELED,
+        OrderStatus.REJECTED,
+        OrderStatus.EXPIRED,
+    }
+)
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -80,7 +88,11 @@ class LivePositionProtectionService:
             (
                 normalized_stop,
                 normalized_take_profit,
-            ) = await self._normalize_initial_protection_plan(position=position)
+            ) = await self._normalize_missing_protection_plan(
+                position=position,
+                needs_stop_loss=stop_order is None,
+                needs_take_profit=take_profit_order is None,
+            )
             _LOGGER.info(
                 "Live protection reconciliation started: symbol=%s missing_stop=%s "
                 "missing_take_profit=%s",
@@ -89,6 +101,8 @@ class LivePositionProtectionService:
                 take_profit_order is None,
             )
             if stop_order is None:
+                if normalized_stop is None:
+                    raise RuntimeError("Missing STOP plan was not normalized")
                 position = self._with_missing_client_algo_ids(
                     position=replace(position, stop_loss=normalized_stop),
                     needs_stop_loss=True,
@@ -108,6 +122,8 @@ class LivePositionProtectionService:
                     order_type=OrderType.STOP_MARKET,
                 )
             if take_profit_order is None:
+                if normalized_take_profit is None:
+                    raise RuntimeError("Missing TAKE_PROFIT plan was not normalized")
                 position = self._with_missing_client_algo_ids(
                     position=replace(position, take_profit=normalized_take_profit),
                     needs_stop_loss=False,
@@ -144,41 +160,76 @@ class LivePositionProtectionService:
         )
         return protected
 
-    async def _normalize_initial_protection_plan(
+    async def _normalize_missing_protection_plan(
         self,
         *,
         position: Position,
-    ) -> tuple[Decimal, Decimal]:
-        """Return the complete validated venue-trigger plan before persistence.
+        needs_stop_loss: bool,
+        needs_take_profit: bool,
+    ) -> tuple[Decimal | None, Decimal | None]:
+        """Return fresh venue-valid triggers for only the missing protection legs.
 
-        Both legs are planned before a durable protection identity is created so
-        local rule, mark-price, or logical validation failures have no mutation
-        or persistence side effect. Persisted ``Position`` trigger fields then
-        represent final venue prices, never unrounded risk-engine intent.
+        A persisted client identity means the corresponding trigger is already
+        durable mutation intent. If that identity is authoritatively NOT_FOUND
+        after restart, reuse and revalidate that exact durable trigger rather
+        than silently recalculating it from possibly changed risk settings.
         """
-        raw_stop, raw_take_profit = self.risk_engine.calculate_protection_levels(
-            side=position.side,
-            entry_price=position.entry_price,
-            strategy_type=position.strategy_type,
-        )
+        if not needs_stop_loss and not needs_take_profit:
+            return None, None
+
+        raw_stop: Decimal | None = None
+        raw_take_profit: Decimal | None = None
+        if (needs_stop_loss and position.stop_loss_client_algo_id is None) or (
+            needs_take_profit and position.take_profit_client_algo_id is None
+        ):
+            raw_stop, raw_take_profit = self.risk_engine.calculate_protection_levels(
+                side=position.side,
+                entry_price=position.entry_price,
+                strategy_type=position.strategy_type,
+            )
+
         rules = await self.exchange_client.get_market_entry_rules(
             symbol=position.symbol,
         )
         mark_price = await self.exchange_client.get_mark_price(symbol=position.symbol)
-        return (
-            rules.normalize_protection_trigger(
-                raw_trigger_price=raw_stop,
+
+        normalized_stop: Decimal | None = None
+        if needs_stop_loss:
+            stop_source = (
+                position.stop_loss
+                if position.stop_loss_client_algo_id is not None
+                else raw_stop
+            )
+            if stop_source is None:
+                raise RuntimeError(
+                    "Persisted LIVE STOP identity is missing its durable trigger"
+                )
+            normalized_stop = rules.normalize_protection_trigger(
+                raw_trigger_price=stop_source,
                 position_side=position.side,
                 order_type=OrderType.STOP_MARKET,
                 mark_price=mark_price,
-            ),
-            rules.normalize_protection_trigger(
-                raw_trigger_price=raw_take_profit,
+            )
+
+        normalized_take_profit: Decimal | None = None
+        if needs_take_profit:
+            take_profit_source = (
+                position.take_profit
+                if position.take_profit_client_algo_id is not None
+                else raw_take_profit
+            )
+            if take_profit_source is None:
+                raise RuntimeError(
+                    "Persisted LIVE TAKE_PROFIT identity is missing its durable trigger"
+                )
+            normalized_take_profit = rules.normalize_protection_trigger(
+                raw_trigger_price=take_profit_source,
                 position_side=position.side,
                 order_type=OrderType.TAKE_PROFIT_MARKET,
                 mark_price=mark_price,
-            ),
-        )
+            )
+
+        return normalized_stop, normalized_take_profit
 
     async def _get_verified_submitted_leg(
         self,
@@ -186,17 +237,37 @@ class LivePositionProtectionService:
         position: Position,
         order_type: OrderType,
     ) -> Order:
-        """Return the newly submitted leg only after an authoritative read."""
-        orders = await self.exchange_client.get_open_protection_orders(
-            symbol=position.symbol,
+        """Verify a newly submitted leg only through its exact durable identity."""
+        client_id = (
+            position.stop_loss_client_algo_id
+            if order_type is OrderType.STOP_MARKET
+            else position.take_profit_client_algo_id
         )
-        order = self._find_protection_order(
-            orders=orders,
+        if client_id is None:
+            raise RuntimeError(
+                "Submitted protection leg is missing its client identity"
+            )
+
+        try:
+            order = await self.exchange_client.get_protection_order_by_client_id(
+                symbol=position.symbol,
+                client_id=client_id,
+            )
+        except ExchangeOrderNotFoundError as error:
+            raise RuntimeError(
+                "Exchange did not confirm submitted protection identity"
+            ) from error
+        except ExchangeOrderOutcomeUnknownError as error:
+            raise RuntimeError(
+                "Submitted protection identity could not be verified"
+            ) from error
+
+        self._validate_reconciled_leg(
+            order=order,
             position=position,
             order_type=order_type,
+            client_id=client_id,
         )
-        if order is None:
-            raise RuntimeError("Exchange did not confirm submitted protection order")
         return order
 
     async def _submit_missing_leg(
@@ -271,12 +342,13 @@ class LivePositionProtectionService:
         position: Position,
         order_type: OrderType,
         client_id: str,
-    ) -> Order:
+    ) -> Order | None:
         """Prove a pre-restart protection mutation through one authoritative GET.
 
-        A not-found or transport-uncertain result is deliberately terminal for
-        this recovery pass: the service must not infer that it is safe to POST a
-        replacement using the retained client identity.
+        A transport-uncertain result remains terminal for this recovery pass.
+        An authoritative not-found result returns ``None`` so the caller may
+        revalidate and recreate the same durable identity without inventing a
+        second mutation identity.
 
         Args:
             position: The live position that requires protection.
@@ -284,7 +356,8 @@ class LivePositionProtectionService:
             client_id: The durable exchange client identity for that leg.
 
         Returns:
-            The authoritative matching protection order.
+            The authoritative matching protection order, or ``None`` when the
+            exact durable identity is authoritatively absent.
 
         Raises:
             RuntimeError: If the protection mutation cannot be proven.
@@ -294,11 +367,16 @@ class LivePositionProtectionService:
                 symbol=position.symbol,
                 client_id=client_id,
             )
-        except ExchangeOrderNotFoundError as error:
-            raise RuntimeError(
-                "Persisted LIVE protection identity was not found; refusing "
-                "replacement POST"
-            ) from error
+        except ExchangeOrderNotFoundError:
+            _LOGGER.warning(
+                "Persisted LIVE protection identity is absent; the same durable "
+                "identity may be recreated after fresh venue validation: "
+                "symbol=%s type=%s client_id=%s",
+                position.symbol,
+                order_type.value,
+                client_id,
+            )
+            return None
         except ExchangeOrderOutcomeUnknownError as error:
             raise RuntimeError(
                 "Persisted LIVE protection identity could not be verified"
@@ -312,6 +390,71 @@ class LivePositionProtectionService:
         )
         return order
 
+    async def cancel_persisted_legs(self, *, position: Position) -> None:
+        """Cancel only exact durable protection identities and prove them absent."""
+        for order_type, client_id in (
+            (OrderType.STOP_MARKET, position.stop_loss_client_algo_id),
+            (OrderType.TAKE_PROFIT_MARKET, position.take_profit_client_algo_id),
+        ):
+            if client_id is None:
+                continue
+
+            try:
+                order = await self.exchange_client.get_protection_order_by_client_id(
+                    symbol=position.symbol,
+                    client_id=client_id,
+                )
+            except ExchangeOrderNotFoundError:
+                continue
+            except ExchangeOrderOutcomeUnknownError as error:
+                raise RuntimeError(
+                    "Persisted LIVE protection identity could not be verified "
+                    "before cleanup"
+                ) from error
+
+            self._validate_reconciled_leg_identity(
+                order=order,
+                position=position,
+                order_type=order_type,
+                client_id=client_id,
+            )
+            if order.status in _TERMINAL_PROTECTION_STATUSES:
+                continue
+            if order.status is not OrderStatus.NEW:
+                raise RuntimeError(
+                    "Persisted LIVE protection is neither active nor terminal"
+                )
+
+            ambiguous_error: ExchangeOrderOutcomeUnknownError | None = None
+            try:
+                await self.exchange_client.cancel_protection_order(
+                    symbol=position.symbol,
+                    client_id=client_id,
+                )
+            except ExchangeOrderOutcomeUnknownError as error:
+                ambiguous_error = error
+
+            for attempt in range(_RECONCILIATION_MAX_ATTEMPTS):
+                remaining = tuple(
+                    await self.exchange_client.get_open_protection_orders(
+                        symbol=position.symbol,
+                    )
+                )
+                if not any(
+                    candidate.client_order_id == client_id for candidate in remaining
+                ):
+                    break
+                if attempt + 1 < _RECONCILIATION_MAX_ATTEMPTS:
+                    await asyncio.sleep(_RECONCILIATION_DELAY_SECONDS)
+            else:
+                if ambiguous_error is not None:
+                    raise RuntimeError(
+                        "Ambiguous LIVE protection cleanup remains unresolved"
+                    ) from ambiguous_error
+                raise RuntimeError(
+                    "Exchange still reports persisted LIVE protection after cleanup"
+                )
+
     async def probe_persisted_leg(
         self,
         *,
@@ -321,7 +464,7 @@ class LivePositionProtectionService:
     ) -> str:
         """GET-only probe of a persisted protection client identity.
 
-        Returns one of: "not_found", "active", "unexpected", "unknown".
+        Returns one of: "not_found", "active", "terminal", "unexpected", "unknown".
         Does not perform any POST or mutation.
         """
         try:
@@ -335,27 +478,30 @@ class LivePositionProtectionService:
             return "unknown"
 
         try:
-            # Validate using existing reconciliation rules; treat failures as
-            # unexpected states that must block resolution.
-            self._validate_reconciled_leg(
+            self._validate_reconciled_leg_identity(
                 order=order,
                 position=position,
                 order_type=order_type,
                 client_id=client_id,
             )
-            return "active"
         except RuntimeError:
             return "unexpected"
 
+        if order.status is OrderStatus.NEW:
+            return "active"
+        if order.status in _TERMINAL_PROTECTION_STATUSES:
+            return "terminal"
+        return "unexpected"
+
     @staticmethod
-    def _validate_reconciled_leg(
+    def _validate_reconciled_leg_identity(
         *,
         order: Order,
         position: Position,
         order_type: OrderType,
         client_id: str,
     ) -> None:
-        """Reject a queried algo order that cannot cover the expected leg."""
+        """Reject a queried algo order whose durable leg identity does not match."""
         expected_trigger = (
             position.stop_loss
             if order_type is OrderType.STOP_MARKET
@@ -371,8 +517,25 @@ class LivePositionProtectionService:
             or order.stop_price is None
             or expected_trigger is None
             or order.stop_price != expected_trigger
-            or order.status is not OrderStatus.NEW
         ):
+            raise RuntimeError("Reconciled protection order does not match its leg")
+
+    @staticmethod
+    def _validate_reconciled_leg(
+        *,
+        order: Order,
+        position: Position,
+        order_type: OrderType,
+        client_id: str,
+    ) -> None:
+        """Require an exact matching protection leg that is still active."""
+        LivePositionProtectionService._validate_reconciled_leg_identity(
+            order=order,
+            position=position,
+            order_type=order_type,
+            client_id=client_id,
+        )
+        if order.status is not OrderStatus.NEW:
             raise RuntimeError("Reconciled protection order does not match its leg")
 
     @staticmethod

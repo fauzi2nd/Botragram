@@ -1015,6 +1015,8 @@ class DependencyProvider:
             runtime_control=self.runtime_control,
             order_service=self.order_service,
             protection_reconciler=self.live_position_protection_service,
+            protection_cleanup_service=self.live_position_protection_service,
+            emergency_exit_exchange=exchange_client,
         )
         self._live_futures_entry_service = LiveFuturesEntryService(
             market_type=self._settings.exchange.market_type,

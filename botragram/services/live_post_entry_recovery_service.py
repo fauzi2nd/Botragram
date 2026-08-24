@@ -36,6 +36,11 @@ from botragram.enums import (
     SubmissionAttemptStatus,
 )
 from botragram.enums.base import BaseEnum
+from botragram.exceptions import (
+    ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
+    VenueRuleValidationError,
+)
 from botragram.models import Order, Position, SubmissionAttempt
 from botragram.repositories import SubmissionAttemptRepository
 from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
@@ -93,7 +98,7 @@ class LiveProtectionVerification(Protocol):
     ) -> str:
         """Probe a persisted protection identity in a GET-only manner.
 
-        Returns one of: "not_found", "active", "unexpected", "unknown".
+        Returns one of: "not_found", "active", "terminal", "unexpected", "unknown".
         """
         ...
 
@@ -117,6 +122,27 @@ class LiveOrderFetch(Protocol):
         self, *, symbol: str, client_order_id: str
     ) -> Order:
         """Return the authoritative order snapshot for the client id."""
+        ...
+
+
+class LiveProtectionCleanup(Protocol):
+    """Cancel only exact durable protection identities."""
+
+    async def cancel_persisted_legs(self, *, position: Position) -> None:
+        """Cancel persisted STOP/TP identities and prove them absent."""
+        ...
+
+
+class LiveEmergencyExitExchange(Protocol):
+    """Submit one deterministic reduce-only emergency position close."""
+
+    async def close_position(
+        self,
+        *,
+        symbol: str,
+        client_order_id: str | None = None,
+    ) -> Order:
+        """Close one active Futures position."""
         ...
 
 
@@ -147,6 +173,8 @@ class LivePostEntryRecoveryService:
     order_service: LiveOrderFetch | None = None
     # Optional protection reconciler to probe persisted protection identities
     protection_reconciler: LiveProtectionVerification | None = None
+    protection_cleanup_service: LiveProtectionCleanup | None = None
+    emergency_exit_exchange: LiveEmergencyExitExchange | None = None
 
     async def recover_acknowledged(
         self,
@@ -222,55 +250,12 @@ class LivePostEntryRecoveryService:
                 ):
                     return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
 
-            # Reconcile any persisted protection identities via GET-only probes.
-            # If any leg is active/ambiguous/unreadable, block resolution.
-            reconciler = self.protection_reconciler or self.protection_service
-            try:
-                # Stop leg
-                if persisted.stop_loss_client_algo_id is not None:
-                    stop_status = await reconciler.probe_persisted_leg(
-                        position=persisted,
-                        order_type=OrderType.STOP_MARKET,
-                        client_id=persisted.stop_loss_client_algo_id,
-                    )
-                    if stop_status != "not_found":
-                        return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
-
-                # Take-profit leg
-                if persisted.take_profit_client_algo_id is not None:
-                    tp_status = await reconciler.probe_persisted_leg(
-                        position=persisted,
-                        order_type=OrderType.TAKE_PROFIT_MARKET,
-                        client_id=persisted.take_profit_client_algo_id,
-                    )
-                    if tp_status != "not_found":
-                        return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
-            except Exception:
-                return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
-
             if order.status is OrderStatus.FILLED:
-                resolved_attempt = replace(
-                    attempt,
-                    status=SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE,
-                    updated_at=datetime.now(UTC),
-                )
-
-                # Perform one storage-neutral atomic transition that both
-                # persists the terminal attempt state and clears any stale
-                # persisted Position. Implementations guarantee caller-visible
-                # atomicity and do not require service-level branching.
-                await self.live_recovery_repository.resolve_no_exposure(
-                    symbol=attempt.symbol, attempt=resolved_attempt
-                )
-                # No protection POST, deletion, or replay is issued here.
-                # Set protection ready as there is no unresolved exposure.
-                self.runtime_control.set_position_protection_ready(True)
-                _LOGGER.info(
-                    "Acknowledged LIVE entry resolved with no exposure: "
-                    "symbol=%s client_order_id=%s",
-                    attempt.symbol,
-                    attempt.client_order_id,
-                )
+                if not await self._reconcile_zero_exposure_protection(
+                    position=persisted,
+                ):
+                    return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+                await self._resolve_no_exposure(attempt=attempt)
                 return LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
 
             return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
@@ -290,7 +275,21 @@ class LivePostEntryRecoveryService:
             persisted_position.entry_price,
         )
 
-        await self.protection_service.ensure(position=persisted_position)
+        try:
+            await self.protection_service.ensure(position=persisted_position)
+        except VenueRuleValidationError as error:
+            _LOGGER.warning(
+                "Acknowledged LIVE entry protection plan is no longer venue-valid; "
+                "starting deterministic reduce-only recovery exit: symbol=%s",
+                persisted_position.symbol,
+            )
+            await self._recover_unprotectable_position(
+                attempt=attempt,
+                position=persisted_position,
+                cause=error,
+            )
+            return LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
+
         await self.submission_attempt_repository.save(
             attempt=replace(
                 attempt,
@@ -305,6 +304,208 @@ class LivePostEntryRecoveryService:
             attempt.client_order_id,
         )
         return LivePostEntryRecoveryResult.COMPLETED
+
+    async def _reconcile_zero_exposure_protection(
+        self,
+        *,
+        position: Position,
+    ) -> bool:
+        """Clean exact owned orphan legs after an already bounded absence proof.
+
+        ``recover_acknowledged`` reaches this helper only after
+        ``_get_visible_position`` has already produced two consecutive
+        authoritative zero-exposure observations. Do not spend another read
+        unless an owned protection mutation is actually required.
+        """
+        reconciler = self.protection_reconciler or self.protection_service
+        has_active_leg = False
+
+        try:
+            for order_type, client_id in (
+                (OrderType.STOP_MARKET, position.stop_loss_client_algo_id),
+                (OrderType.TAKE_PROFIT_MARKET, position.take_profit_client_algo_id),
+            ):
+                if client_id is None:
+                    continue
+                status = await reconciler.probe_persisted_leg(
+                    position=position,
+                    order_type=order_type,
+                    client_id=client_id,
+                )
+                if status == "active":
+                    has_active_leg = True
+                    continue
+                if status in {"not_found", "terminal"}:
+                    continue
+                return False
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "LIVE zero-exposure protection probe failed: symbol=%s",
+                position.symbol,
+            )
+            return False
+
+        if not has_active_leg:
+            return True
+
+        cleanup = self.protection_cleanup_service
+        if cleanup is None:
+            return False
+
+        if await self._get_visible_position(symbol=position.symbol) is not None:
+            return False
+
+        try:
+            await cleanup.cancel_persisted_legs(position=position)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "LIVE zero-exposure protection cleanup failed: symbol=%s",
+                position.symbol,
+            )
+            return False
+
+        return await self._get_visible_position(symbol=position.symbol) is None
+
+    async def _recover_unprotectable_position(
+        self,
+        *,
+        attempt: SubmissionAttempt,
+        position: Position,
+        cause: VenueRuleValidationError,
+    ) -> None:
+        """Close an unprotectable acknowledged entry exactly once per durable id."""
+        order_service = self.order_service
+        exchange = self.emergency_exit_exchange
+        if order_service is None or exchange is None:
+            raise RuntimeError(
+                "Restart-safe emergency exit dependencies are unavailable"
+            ) from cause
+
+        current = await self._get_visible_position(symbol=position.symbol)
+        if current is None:
+            if not await self._reconcile_zero_exposure_protection(position=position):
+                raise RuntimeError(
+                    "Zero exposure could not be proven safe after protection failure"
+                ) from cause
+            await self._resolve_no_exposure(attempt=attempt)
+            return
+
+        exit_client_id = self._emergency_exit_client_order_id(
+            entry_client_order_id=attempt.client_order_id,
+        )
+        existing_exit: Order | None = None
+        try:
+            existing_exit = await order_service.get_by_client_order_id(
+                symbol=attempt.symbol,
+                client_order_id=exit_client_id,
+            )
+        except ExchangeOrderNotFoundError:
+            existing_exit = None
+        except ExchangeOrderOutcomeUnknownError as error:
+            raise RuntimeError(
+                "Emergency exit identity could not be reconciled"
+            ) from error
+
+        if existing_exit is not None:
+            self._validate_emergency_exit_order(
+                order=existing_exit,
+                attempt=attempt,
+                position=current,
+                client_order_id=exit_client_id,
+            )
+            if existing_exit.status is not OrderStatus.FILLED:
+                raise RuntimeError(
+                    "Existing emergency exit is not in a proven FILLED state"
+                )
+        else:
+            current = await self._get_visible_position(symbol=position.symbol)
+            if current is not None:
+                try:
+                    close_order = await exchange.close_position(
+                        symbol=attempt.symbol,
+                        client_order_id=exit_client_id,
+                    )
+                except ExchangeOrderOutcomeUnknownError:
+                    if (
+                        await self._get_visible_position(symbol=position.symbol)
+                        is not None
+                    ):
+                        raise RuntimeError(
+                            "Emergency exit outcome is unknown while exposure remains"
+                        )
+                else:
+                    self._validate_emergency_exit_order(
+                        order=close_order,
+                        attempt=attempt,
+                        position=current,
+                        client_order_id=exit_client_id,
+                    )
+
+        if await self._get_visible_position(symbol=position.symbol) is not None:
+            raise RuntimeError(
+                "Emergency exit did not prove zero authoritative exposure"
+            )
+
+        if not await self._reconcile_zero_exposure_protection(position=position):
+            raise RuntimeError("Emergency exit left protection cleanup unresolved")
+
+        await self._resolve_no_exposure(attempt=attempt)
+
+    async def _resolve_no_exposure(self, *, attempt: SubmissionAttempt) -> None:
+        """Atomically terminalize one acknowledged entry after zero exposure proof."""
+        resolved_attempt = replace(
+            attempt,
+            status=SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE,
+            updated_at=datetime.now(UTC),
+        )
+        await self.live_recovery_repository.resolve_no_exposure(
+            symbol=attempt.symbol,
+            attempt=resolved_attempt,
+        )
+        self.runtime_control.set_position_protection_ready(True)
+        _LOGGER.info(
+            "Acknowledged LIVE entry resolved with no exposure: "
+            "symbol=%s client_order_id=%s",
+            attempt.symbol,
+            attempt.client_order_id,
+        )
+
+    @staticmethod
+    def _emergency_exit_client_order_id(*, entry_client_order_id: str) -> str:
+        """Derive one deterministic 36-character exit identity from btg-* entry id."""
+        if not entry_client_order_id.startswith("btg-"):
+            raise RuntimeError("Emergency exit requires a canonical btg-* entry id")
+        suffix = entry_client_order_id.removeprefix("btg-")
+        if len(suffix) != 32:
+            raise RuntimeError("Emergency exit requires a 32-character entry suffix")
+        return f"bex-{suffix}"
+
+    @staticmethod
+    def _validate_emergency_exit_order(
+        *,
+        order: Order,
+        attempt: SubmissionAttempt,
+        position: Position,
+        client_order_id: str,
+    ) -> None:
+        """Require exact deterministic identity before trusting an emergency close."""
+        closing_side = (
+            OrderSide.SELL if attempt.side is OrderSide.BUY else OrderSide.BUY
+        )
+        if (
+            order.client_order_id != client_order_id
+            or order.symbol.upper() != attempt.symbol.upper()
+            or order.side is not closing_side
+            or order.order_type is not OrderType.MARKET
+            or order.quantity < position.quantity
+        ):
+            raise RuntimeError(
+                "Emergency exit order does not match the acknowledged entry"
+            )
 
     async def _get_visible_position(self, *, symbol: str) -> Position | None:
         """Return a bounded authoritative positive-quantity position snapshot."""

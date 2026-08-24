@@ -1231,10 +1231,8 @@ async def test_live_recovery_reconciles_only_missing_protection_leg() -> None:
 
 
 @pytest.mark.asyncio
-async def test_live_restart_fails_closed_when_persisted_missing_leg_is_not_found() -> (
-    None
-):
-    """Never POST after a restart cannot prove a durable protection mutation."""
+async def test_live_restart_recreates_proven_missing_persisted_legs() -> None:
+    """Reuse durable trigger intent after exact identities are proven absent."""
     persisted = replace(
         _position(include_metadata=True),
         stop_loss=Decimal("64675"),
@@ -1251,15 +1249,24 @@ async def test_live_restart_fails_closed_when_persisted_missing_leg_is_not_found
         repository=repository,
     )
 
-    assert not await service.recover()
-    assert exchange.create_calls == 0
-    assert exchange.reconciliation_requests == [persisted.stop_loss_client_algo_id]
-    assert control.is_paused
+    assert await service.recover()
+    assert exchange.create_calls == 2
+    assert exchange.reconciliation_requests == [
+        persisted.stop_loss_client_algo_id,
+        persisted.take_profit_client_algo_id,
+        persisted.stop_loss_client_algo_id,
+        persisted.take_profit_client_algo_id,
+    ]
+    assert {order.client_order_id for order in exchange.protection_orders} == {
+        persisted.stop_loss_client_algo_id,
+        persisted.take_profit_client_algo_id,
+    }
+    assert not control.is_paused
 
 
 @pytest.mark.asyncio
 async def test_live_restart_does_not_let_an_old_stop_mask_missing_replacement() -> None:
-    """Keep startup paused when an old stop cannot prove the new durable leg."""
+    """Verify and recreate the exact current STOP identity, not a stale STOP."""
     persisted = replace(
         _position(include_metadata=True),
         stop_loss_client_algo_id="bsl-00000000000000000000000000000001",
@@ -1291,7 +1298,7 @@ async def test_live_restart_does_not_let_an_old_stop_mask_missing_replacement() 
                 quantity=persisted.quantity,
                 executed_quantity=Decimal("0"),
                 price=None,
-                stop_price=Decimal("65650"),
+                stop_price=Decimal("67600"),
                 created_at=_NOW,
                 updated_at=_NOW,
                 client_order_id=persisted.take_profit_client_algo_id,
@@ -1306,10 +1313,20 @@ async def test_live_restart_does_not_let_an_old_stop_mask_missing_replacement() 
         repository=repository,
     )
 
-    assert not await service.recover()
-    assert exchange.create_calls == 0
-    assert exchange.reconciliation_requests == [persisted.stop_loss_client_algo_id]
-    assert control.is_paused
+    assert await service.recover()
+    assert exchange.create_calls == 1
+    assert exchange.reconciliation_requests == [
+        persisted.stop_loss_client_algo_id,
+        persisted.take_profit_client_algo_id,
+        persisted.stop_loss_client_algo_id,
+    ]
+    recreated = next(
+        order
+        for order in exchange.protection_orders
+        if order.client_order_id == persisted.stop_loss_client_algo_id
+    )
+    assert recreated.stop_price == persisted.stop_loss
+    assert not control.is_paused
 
 
 @pytest.mark.asyncio

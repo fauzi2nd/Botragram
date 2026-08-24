@@ -755,7 +755,10 @@ async def test_futures_client_reads_and_closes_short_position() -> None:
     client = _create_client(rest)
 
     positions = await client.get_positions(symbol="BTCUSDT")
-    await client.close_position(symbol="BTCUSDT")
+    await client.close_position(
+        symbol="BTCUSDT",
+        client_order_id="bex-0123456789abcdef0123456789abcdef",
+    )
 
     close_params = rest.requests[-1][2]
     assert positions[0].side is PositionSide.SHORT
@@ -763,6 +766,7 @@ async def test_futures_client_reads_and_closes_short_position() -> None:
     assert close_params["side"] == "BUY"
     assert close_params["quantity"] == "0.02"
     assert close_params["reduceOnly"] == "true"
+    assert close_params["newClientOrderId"] == "bex-0123456789abcdef0123456789abcdef"
 
 
 def test_mapper_normalizes_finished_algo_status_to_filled() -> None:

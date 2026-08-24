@@ -681,6 +681,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         self,
         *,
         symbol: str,
+        client_order_id: str | None = None,
     ) -> Order:
         """Close one active one-way Futures position with a market order."""
         positions = await self.get_positions(symbol=symbol)
@@ -693,7 +694,10 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
                 "Hedge-mode positions require explicit position-side closing"
             )
 
-        return await self._close_position(positions[0])
+        return await self._close_position(
+            positions[0],
+            client_order_id=client_order_id,
+        )
 
     async def close_all_positions(self) -> Sequence[Order]:
         """Close all active one-way Futures positions."""
@@ -839,17 +843,22 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
     async def _close_position(
         self,
         position: Position,
+        *,
+        client_order_id: str | None = None,
     ) -> Order:
         """Submit a reduce-only market order for one position."""
         close_side = (
             OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
-        return await self._post_order(
-            params={
-                "symbol": position.symbol,
-                "side": close_side.value,
-                "type": OrderType.MARKET.value.upper(),
-                "quantity": self._format_decimal(position.quantity),
-                "reduceOnly": "true",
-            }
-        )
+        params: RequestParams = {
+            "symbol": position.symbol,
+            "side": close_side.value,
+            "type": OrderType.MARKET.value.upper(),
+            "quantity": self._format_decimal(position.quantity),
+            "reduceOnly": "true",
+        }
+        if client_order_id is not None:
+            params["newClientOrderId"] = self._normalize_client_order_id(
+                client_order_id
+            )
+        return await self._post_order(params=params)

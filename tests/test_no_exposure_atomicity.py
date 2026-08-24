@@ -212,7 +212,13 @@ class _FakeExchangeClient(BaseExchangeClient):
             if position.symbol.upper() == normalized_symbol
         )
 
-    async def close_position(self, *, symbol: str) -> Order:  # pragma: no cover
+    async def close_position(
+        self,
+        *,
+        symbol: str,
+        client_order_id: str | None = None,
+    ) -> Order:  # pragma: no cover
+        del symbol, client_order_id
         self.delete_calls += 1
         raise NotImplementedError
 

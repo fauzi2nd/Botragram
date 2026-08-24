@@ -519,6 +519,7 @@ class BinanceExchangeClient(BaseExchangeClient):
         self,
         *,
         symbol: str,
+        client_order_id: str | None = None,
     ) -> Order:
         """Close an active position.
 
@@ -527,6 +528,7 @@ class BinanceExchangeClient(BaseExchangeClient):
         submit the appropriate sell order explicitly.
         """
         self._normalize_symbol(symbol)
+        del client_order_id
 
         raise NotImplementedError(
             "Binance Spot position closing requires balance-aware order sizing"

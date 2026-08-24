@@ -299,8 +299,9 @@ class BaseExchangeClient(ABC):
         self,
         *,
         symbol: str,
+        client_order_id: str | None = None,
     ) -> Order:
-        """Close the active position for a trading symbol."""
+        """Close the active position with an optional durable client identity."""
 
     @abstractmethod
     async def close_all_positions(self) -> Sequence[Order]:
