@@ -6,10 +6,14 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Final, Protocol
 
 from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
-from botragram.exceptions import ExchangeOrderOutcomeUnknownError
+from botragram.exceptions import (
+    ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
+)
 from botragram.models import Order, Position
 from botragram.repositories import PositionRepository, SubmissionAttemptRepository
 
@@ -20,6 +24,14 @@ __all__ = [
 
 _RECONCILIATION_ATTEMPTS: Final[int] = 2
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
+_TERMINAL_PROTECTION_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
+    {
+        OrderStatus.FILLED,
+        OrderStatus.CANCELED,
+        OrderStatus.REJECTED,
+        OrderStatus.EXPIRED,
+    }
+)
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
@@ -40,6 +52,15 @@ class LiveNaturalExitExchange(Protocol):
         symbol: str | None = None,
     ) -> Sequence[Order]:
         """Return authoritative open conditional protection orders."""
+        ...
+
+    async def get_protection_order_by_client_id(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+    ) -> Order:
+        """Return one conditional protection order by durable identity."""
         ...
 
     async def cancel_protection_order(
@@ -145,11 +166,180 @@ class LiveNaturalExitRecoveryService:
         for position in stored_positions:
             if position.symbol.upper() in final_active_symbols:
                 continue
+            await self._reconcile_persisted_protection_before_delete(
+                position=position,
+            )
+            if await self.exchange_client.get_positions(symbol=position.symbol):
+                raise RuntimeError(
+                    "LIVE exposure reappeared before durable position deletion: "
+                    f"symbol={position.symbol}"
+                )
+            remaining_symbol_protections = tuple(
+                await self.exchange_client.get_open_protection_orders(
+                    symbol=position.symbol,
+                )
+            )
+            if remaining_symbol_protections:
+                raise RuntimeError(
+                    "LIVE protection remains before durable position deletion: "
+                    f"symbol={position.symbol} "
+                    f"count={len(remaining_symbol_protections)}"
+                )
             await self.position_repository.delete(symbol=position.symbol)
             _LOGGER.info(
                 "Natural LIVE exit reconciled: symbol=%s entry_client_order_id=%s",
                 position.symbol,
                 position.entry_client_order_id,
+            )
+
+    async def _reconcile_persisted_protection_before_delete(
+        self,
+        *,
+        position: Position,
+    ) -> None:
+        """Resolve every durable protection identity before deleting local state."""
+        legs = (
+            (
+                OrderType.STOP_MARKET,
+                position.stop_loss_client_algo_id,
+                position.stop_loss,
+            ),
+            (
+                OrderType.TAKE_PROFIT_MARKET,
+                position.take_profit_client_algo_id,
+                position.take_profit,
+            ),
+        )
+        for order_type, client_id, trigger in legs:
+            if client_id is None:
+                continue
+            await self._reconcile_persisted_leg_before_delete(
+                position=position,
+                order_type=order_type,
+                client_id=client_id,
+                trigger=trigger,
+            )
+
+    async def _reconcile_persisted_leg_before_delete(
+        self,
+        *,
+        position: Position,
+        order_type: OrderType,
+        client_id: str,
+        trigger: Decimal | None,
+    ) -> None:
+        """Make one durable protection leg provably inactive before deletion."""
+        try:
+            order = await self.exchange_client.get_protection_order_by_client_id(
+                symbol=position.symbol,
+                client_id=client_id,
+            )
+        except ExchangeOrderNotFoundError:
+            return
+        except ExchangeOrderOutcomeUnknownError as error:
+            raise RuntimeError(
+                "Persisted LIVE protection identity could not be verified "
+                "before natural-exit deletion"
+            ) from error
+
+        self._validate_persisted_leg_identity(
+            order=order,
+            position=position,
+            order_type=order_type,
+            client_id=client_id,
+            trigger=trigger,
+        )
+        if order.status in _TERMINAL_PROTECTION_STATUSES:
+            return
+        if order.status is not OrderStatus.NEW:
+            raise RuntimeError(
+                "Persisted LIVE protection is neither active nor terminal "
+                "before natural-exit deletion"
+            )
+
+        await self._cancel_and_reconcile(order=order)
+        await self._prove_persisted_leg_inactive(
+            position=position,
+            order_type=order_type,
+            client_id=client_id,
+            trigger=trigger,
+        )
+
+    async def _prove_persisted_leg_inactive(
+        self,
+        *,
+        position: Position,
+        order_type: OrderType,
+        client_id: str,
+        trigger: Decimal | None,
+    ) -> None:
+        """Prove an exact durable leg is terminal or absent after one DELETE."""
+        last_unknown: ExchangeOrderOutcomeUnknownError | None = None
+        for attempt in range(_RECONCILIATION_ATTEMPTS):
+            try:
+                order = await self.exchange_client.get_protection_order_by_client_id(
+                    symbol=position.symbol,
+                    client_id=client_id,
+                )
+            except ExchangeOrderNotFoundError:
+                return
+            except ExchangeOrderOutcomeUnknownError as error:
+                last_unknown = error
+            else:
+                last_unknown = None
+                self._validate_persisted_leg_identity(
+                    order=order,
+                    position=position,
+                    order_type=order_type,
+                    client_id=client_id,
+                    trigger=trigger,
+                )
+                if order.status in _TERMINAL_PROTECTION_STATUSES:
+                    return
+                if order.status is not OrderStatus.NEW:
+                    raise RuntimeError(
+                        "Persisted LIVE protection entered an unexpected state "
+                        "during natural-exit cleanup"
+                    )
+
+            if attempt + 1 < _RECONCILIATION_ATTEMPTS:
+                await asyncio.sleep(_RECONCILIATION_DELAY_SECONDS)
+
+        if last_unknown is not None:
+            raise RuntimeError(
+                "Persisted LIVE protection identity remains unverifiable "
+                "after natural-exit cleanup"
+            ) from last_unknown
+
+        raise RuntimeError(
+            "Persisted LIVE protection remains active after natural-exit cleanup"
+        )
+
+    @staticmethod
+    def _validate_persisted_leg_identity(
+        *,
+        order: Order,
+        position: Position,
+        order_type: OrderType,
+        client_id: str,
+        trigger: Decimal | None,
+    ) -> None:
+        """Require exact durable identity and shape without assuming active state."""
+        expected_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+        )
+        if (
+            trigger is None
+            or order.client_order_id != client_id
+            or order.symbol.upper() != position.symbol.upper()
+            or order.side is not expected_side
+            or order.order_type is not order_type
+            or order.quantity != position.quantity
+            or order.stop_price is None
+            or order.stop_price != trigger
+        ):
+            raise RuntimeError(
+                "Persisted LIVE protection does not match its durable position leg"
             )
 
     async def _cancel_and_reconcile(self, *, order: Order) -> None:

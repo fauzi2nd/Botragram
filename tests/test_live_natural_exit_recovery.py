@@ -16,7 +16,10 @@ from botragram.enums import (
     StrategyType,
     SubmissionAttemptStatus,
 )
-from botragram.exceptions import ExchangeOrderOutcomeUnknownError
+from botragram.exceptions import (
+    ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
+)
 from botragram.models import Order, Position, SubmissionAttempt
 from botragram.services import LiveNaturalExitRecoveryService
 from botragram.storage.memory import (
@@ -38,11 +41,13 @@ class FakeNaturalExitExchange:
         *,
         positions: tuple[Position, ...] = (),
         protections: tuple[Order, ...] = (),
+        exact_only_protections: tuple[Order, ...] = (),
         ambiguous_after_remove: bool = False,
         keep_after_cancel: bool = False,
     ) -> None:
         self.positions = positions
         self.protections = list(protections)
+        self.exact_only_protections = list(exact_only_protections)
         self.ambiguous_after_remove = ambiguous_after_remove
         self.keep_after_cancel = keep_after_cancel
         self.cancel_calls: list[tuple[str, str]] = []
@@ -69,6 +74,17 @@ class FakeNaturalExitExchange:
             if symbol is None or order.symbol == symbol.upper()
         )
 
+    async def get_protection_order_by_client_id(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+    ) -> Order:
+        for order in (*self.protections, *self.exact_only_protections):
+            if order.symbol == symbol.upper() and order.client_order_id == client_id:
+                return order
+        raise ExchangeOrderNotFoundError("configured protection not found")
+
     async def cancel_protection_order(
         self,
         *,
@@ -81,6 +97,11 @@ class FakeNaturalExitExchange:
             self.protections = [
                 order
                 for order in self.protections
+                if order.client_order_id != client_id
+            ]
+            self.exact_only_protections = [
+                order
+                for order in self.exact_only_protections
                 if order.client_order_id != client_id
             ]
 
@@ -355,4 +376,67 @@ async def test_reconcile_blocks_before_mutation_when_attempt_is_incomplete() -> 
 
     assert exchange.cancel_calls == []
     assert len(exchange.protections) == 1
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is not None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_exact_lookup_catches_leg_hidden_from_bulk_snapshot() -> None:
+    """Preserve durable identity when the bulk open-order view momentarily lags."""
+    repository = await _repository()
+    exchange = FakeNaturalExitExchange(
+        exact_only_protections=(
+            _protection(
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                client_id=_TP_ID,
+                trigger="0.01084",
+            ),
+        )
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    await service.reconcile()
+
+    assert exchange.cancel_calls == [(_SYMBOL, _TP_ID)]
+    assert exchange.exact_only_protections == []
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rechecks_zero_exposure_before_durable_delete() -> None:
+    """Do not delete local identity if exposure appears after final bulk snapshot."""
+
+    class ReappearingPositionExchange(FakeNaturalExitExchange):
+        def __init__(self) -> None:
+            super().__init__()
+            self.position_reads = 0
+
+        async def get_positions(
+            self,
+            *,
+            symbol: str | None = None,
+        ) -> tuple[Position, ...]:
+            self.position_reads += 1
+            if self.position_reads <= 2:
+                return ()
+            position = _position()
+            if symbol is None or position.symbol == symbol.upper():
+                return (position,)
+            return ()
+
+    repository = await _repository()
+    exchange = ReappearingPositionExchange()
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    with pytest.raises(RuntimeError, match="exposure reappeared"):
+        await service.reconcile()
+
+    assert exchange.cancel_calls == []
     assert await repository.get_by_symbol(symbol=_SYMBOL) is not None
