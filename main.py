@@ -81,6 +81,9 @@ async def _run_trading(
         trade_mode=settings.app.trade_mode,
         quote_asset=settings.market.quote_asset,
         live_runtime_health_service=dependency_provider.live_runtime_health_service,
+        live_trading_performance_service=(
+            dependency_provider.live_trading_performance_service
+        ),
         autonomous_live_recovery_observability_service=(
             dependency_provider.autonomous_live_recovery_observability_service
         ),

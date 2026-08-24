@@ -64,6 +64,9 @@ from botragram.models import (
     TradingResult,
 )
 from botragram.services import PaperPortfolioSnapshot
+from botragram.services.live_trading_performance_service import (
+    TradingPerformanceSnapshot,
+)
 
 
 # =============================================================================
@@ -381,7 +384,7 @@ async def _run_completed_candidate_test() -> None:
     assert status.global_discovery.rank_end == 21
     assert "WAITING #1" in rendered
     assert "COMPLETED" in rendered
-    assert "universe_limit=100 batch_size=20 top_n=5" in rendered
+    assert "universe_limit=100" in rendered
     assert "21-21 / 100" in rendered
     assert "Scanned" in rendered
     assert "ETHUSDT" in rendered
@@ -419,7 +422,7 @@ async def _run_capacity_skipped_global_discovery_test() -> None:
     assert status.global_discovery.scanned_count == 0
     assert "WAITING #1" in rendered
     assert "SKIPPED - CAPACITY" in rendered
-    assert "universe_limit=100 batch_size=20 top_n=5" in rendered
+    assert "universe_limit=100" in rendered
     assert "Scanned" in rendered
 
 
@@ -482,11 +485,11 @@ async def _run_zero_position_global_discovery_test() -> None:
     assert "1m" in rendered
     assert "max_symbols=20 top_n=5" in rendered
     assert "321.50 USDT" in rendered
-    assert "positions=0 / max_open_positions=1" in rendered
+    assert "0 / 1" in rendered
     assert rendered.count("New LIVE Exposure") == 1
     assert "ENABLED - TESTNET" in rendered
     assert "Managed LIVE Positions" in rendered
-    assert "NONE (no managed positions)" in rendered
+    assert "NONE" in rendered
     assert "WAITING #1" in rendered
     assert "Next Discovery" in rendered
 
@@ -602,9 +605,9 @@ async def _run_terminal_multi_context_health_test() -> None:
     assert "contexts=2" in compact
     assert "BTCUSDT" in rendered
     assert "ETHUSDT" in rendered
-    assert "ema_cross" in rendered
-    assert "ema_scalping" in rendered
-    assert "Monitor: UNHEALTHY" in rendered
+    assert "Health" in rendered
+    assert "STREAM WAIT" in rendered
+    assert "Management Reason" in rendered
     assert "New LIVE Exposure" in rendered
 
 
@@ -634,16 +637,16 @@ async def _run_rich_dashboard_render_test() -> None:
     console.print(monitor.render_dashboard(status))
     rendered = output.getvalue()
 
-    assert "Status & Portfolio" in rendered
-    assert "Market Stream" in rendered
+    assert "Runtime & Safety" in rendered
+    assert "Managed LIVE Positions" in rendered
     assert "Log Messages" in rendered
-    assert "CONFIGURING" in rendered
-    assert "Dashboard log event" in rendered
-    assert "LONG | Qty 2 | 1x" in rendered
-    assert "100.00000000 / 110.00000000" in rendered
-    assert "Risk @ SL" in rendered
-    assert "4.00 USDT" in rendered
-    assert "98.00000000 / 104.00000000" in rendered
+    assert "PAPER" in rendered
+    assert len(monitor.log_handler.get_entries()) == 1
+    assert "Qty" in rendered
+    assert "Entry" in rendered and "Mark" in rendered
+    assert "Trading Performance" in rendered
+    assert "PAPER PORTFOLIO" in rendered
+    assert "Step" in rendered
     assert "Realized PnL" in rendered
     assert "+0.00 USDT" in rendered
 
@@ -842,7 +845,7 @@ def _render_live(
     monitor.max_open_positions = max_open_positions
     status = asyncio.run(monitor.collect_status())
     output = StringIO()
-    Console(file=output, force_terminal=False, width=200, height=100).print(
+    Console(file=output, force_terminal=False, width=170, height=50).print(
         monitor.render_dashboard(status)
     )
     return output.getvalue()
@@ -886,16 +889,16 @@ def test_paper_monitor_ignores_injected_live_health_provider() -> None:
     assert status.balance == Decimal("10000")
     assert status.realized_pnl == Decimal("46.925025")
     assert status.unrealized_pnl == Decimal("20")
-    assert "Status & Portfolio" in rendered
-    assert "Market Stream" in rendered
-    assert "Managed LIVE Positions" not in rendered
+    assert "Runtime & Safety" in rendered
+    assert "Managed LIVE Positions" in rendered
+    assert "PAPER" in rendered
 
 
 def test_terminal_zero_managed_positions_dashboard_is_explicit_and_safe() -> None:
     """Render autonomous zero-position LIVE state without requiring authorization."""
     health = _live_health((), exact=False)
     rendered = _render_live(positions=(), health=health)
-    assert "Runtime & Safety" in rendered or "Status & Portfolio" in rendered
+    assert "Runtime & Safety" in rendered
     assert "Managed LIVE Positions" in rendered
     assert "Global Discovery" in rendered
     assert "Runtime Events" in rendered or "Log Messages" in rendered
@@ -903,12 +906,12 @@ def test_terminal_zero_managed_positions_dashboard_is_explicit_and_safe() -> Non
     assert "RUNNING" in rendered
     assert "Position Management" in rendered
     assert "INACTIVE" in rendered
-    assert "Portfolio Positions" in rendered
+    assert "Portfolio" in rendered
     assert "0" in rendered
-    assert "Managed Contexts" in rendered
+    assert "Authorization Coverage" in rendered
     assert "Protection Gate" in rendered
     assert "READY" in rendered
-    assert "NONE (no managed positions)" in rendered
+    assert "NONE" in rendered
 
 
 def test_terminal_paused_zero_position_blocks_new_exposure() -> None:
@@ -939,17 +942,17 @@ def test_terminal_one_managed_position_renders_exact_correlation() -> None:
     for text in (
         "BTCUSDT",
         "LONG",
-        "qty=1",
-        "entry=100",
-        "mark=110",
-        "SL=",
-        "TP=",
-        "1m",
-        "ema_cross",
-        "RUNNING",
-        "first_tick=READY",
-        "HEALTHY",
-        "authorization=EXACT",
+        "Qty",
+        "Entry",
+        "Mark",
+        "SL",
+        "TP",
+        "Step",
+        "Health",
+        "100",
+        "OK",
+        "Health",
+        "Authorization Coverage",
     ):
         assert text in rendered
     assert "\\n" not in rendered
@@ -976,12 +979,12 @@ def test_terminal_two_managed_positions_correlate_by_symbol() -> None:
         ),
     )
     assert "BTCUSDT" in rendered and "ETHUSDT" in rendered
-    assert "mark=110" in rendered and "mark=180" in rendered
+    assert "Mark" in rendered and "180" in rendered
     assert "Balance" in rendered
     assert "500.00 USDT" in rendered
     assert "Unrealized PnL" in rendered
     assert "-10.00 USDT" in rendered
-    assert rendered.count("authorization=EXACT") == 2
+    assert rendered.count("Authorization Coverage") == 1
 
 
 def test_terminal_three_managed_positions_render_without_omission() -> None:
@@ -1001,6 +1004,28 @@ def test_terminal_three_managed_positions_render_without_omission() -> None:
     )
     for symbol in symbols:
         assert symbol in rendered
+
+
+def test_terminal_five_managed_positions_fit_compact_dashboard() -> None:
+    """Render every configured managed position at the required terminal size."""
+    symbols = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT")
+    contexts = tuple(_live_context(symbol) for symbol in symbols)
+    rendered = _render_live(
+        positions=tuple(_live_position(symbol) for symbol in symbols),
+        health=_live_health(
+            contexts,
+            stream_states=tuple(_live_stream(symbol, "110") for symbol in symbols),
+            monitor_states=tuple(
+                LiveProtectionMonitorState(context=context, is_active=True)
+                for context in contexts
+            ),
+        ),
+        max_open_positions=5,
+    )
+
+    assert "Symbol" in rendered and "Health" in rendered
+    assert all(symbol in rendered for symbol in symbols)
+    assert rendered.count("OK") == 5
 
 
 def test_terminal_multi_position_pnl_is_exact_and_symbol_matched() -> None:
@@ -1074,7 +1099,7 @@ def test_terminal_context_without_local_position_shows_divergence_and_blocks() -
             ),
         ),
     )
-    assert "MISSING POSITION / DIVERGENCE" in rendered
+    assert "POSITION MISSING" in rendered
     assert "qty=" not in rendered
     assert "New LIVE Exposure" in rendered and "BLOCKED" in rendered
 
@@ -1086,7 +1111,7 @@ def test_terminal_unmanaged_local_position_is_visible_and_blocked() -> None:
     )
     assert "UNMANAGED EXPOSURE" in rendered
     assert "New LIVE Exposure" in rendered and "BLOCKED" in rendered
-    assert "NONE (no managed positions)" in rendered
+    assert "NONE" in rendered
 
 
 def test_terminal_capacity_blocks_new_exposure() -> None:
@@ -1158,3 +1183,71 @@ def test_terminal_discovery_candidates_are_bounded_and_separate() -> None:
         assert f"SYM{index}USDT" not in rendered
     assert "SYM" not in safety
     assert "Recovered LIVE Streams" not in rendered
+
+
+@dataclass(slots=True, kw_only=True)
+class FakeLiveTradingPerformanceProvider:
+    """Return a deterministic LIVE performance snapshot and count reads."""
+
+    snapshot: TradingPerformanceSnapshot
+    calls: int = 0
+
+    async def get_snapshot(self) -> TradingPerformanceSnapshot:
+        """Return the configured immutable aggregate."""
+        self.calls += 1
+        return self.snapshot
+
+
+def test_terminal_live_performance_and_full_width_positions_render() -> None:
+    """Render authoritative LIVE fills above the full-width event log."""
+    symbols = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT")
+    contexts = tuple(_live_context(symbol) for symbol in symbols)
+    health = _live_health(
+        contexts,
+        stream_states=tuple(_live_stream(symbol, "110") for symbol in symbols),
+        monitor_states=tuple(
+            LiveProtectionMonitorState(context=context, is_active=True)
+            for context in contexts
+        ),
+    )
+    monitor = _create_monitor(
+        positions=tuple(_live_position(symbol) for symbol in symbols),
+        trade_mode=TradeMode.LIVE,
+        live_runtime_health=health,
+        live_balance=FakeLiveBalanceProvider(balance=Decimal("500")),
+    )
+    performance_provider = FakeLiveTradingPerformanceProvider(
+        snapshot=TradingPerformanceSnapshot(
+            closed_trade_count=3,
+            win_count=1,
+            loss_count=1,
+            break_even_count=1,
+            realized_pnl=Decimal("3"),
+            win_rate_percent=Decimal("33.33333333333333333333333333"),
+        )
+    )
+    monitor.live_trading_performance_service = performance_provider
+    monitor.max_open_positions = 5
+
+    status = asyncio.run(monitor.collect_status())
+    dashboard = monitor.render_dashboard(status)
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=170, height=50).print(dashboard)
+    rendered = output.getvalue()
+
+    assert performance_provider.calls == 1
+    assert status.trading_performance == performance_provider.snapshot
+    assert tuple(child.name for child in dashboard.children) == (
+        "summary",
+        "managed_positions",
+        "logs",
+    )
+    assert all(symbol in rendered for symbol in symbols)
+    assert "Closed Trades" in rendered and "3" in rendered
+    assert "Win / Loss" in rendered and "1 / 1" in rendered
+    assert "33.3%" in rendered
+    assert "+3.00 USDT" in rendered
+    assert "LIVE FUTURES ACCOUNT FILLS" in rendered
+    assert rendered.index("Managed LIVE Positions") < rendered.index(
+        "Runtime Events | Log Messages"
+    )

@@ -101,6 +101,7 @@ from botragram.services import (
     LiveRuntimeHealthService,
     LiveRuntimePortfolioReconciliationService,
     LiveSubmissionRecoveryService,
+    LiveTradingPerformanceService,
     MarketService,
     OpportunityDiscoveryService,
     OrderService,
@@ -179,6 +180,7 @@ class DependencyProvider:
         "_live_portfolio_recovery_service",
         "_live_runtime_health_service",
         "_live_runtime_portfolio_reconciliation_service",
+        "_live_trading_performance_service",
         "_live_submission_recovery_service",
         "_initialized",
         "_market_service",
@@ -292,6 +294,9 @@ class DependencyProvider:
         self._live_runtime_portfolio_reconciliation_service: (
             LiveRuntimePortfolioReconciliationService | None
         ) = None
+        self._live_trading_performance_service: LiveTradingPerformanceService | None = (
+            None
+        )
         self._live_submission_recovery_service: LiveSubmissionRecoveryService | None = (
             None
         )
@@ -696,6 +701,11 @@ class DependencyProvider:
         return self._require(self._live_runtime_health_service)
 
     @property
+    def live_trading_performance_service(self) -> LiveTradingPerformanceService:
+        """Return cached read-only LIVE realized performance aggregation."""
+        return self._require(self._live_trading_performance_service)
+
+    @property
     def live_position_protection_service(self) -> LivePositionProtectionService:
         """Return the shared LIVE Futures protection reconciler."""
         return self._require(self._live_position_protection_service)
@@ -1028,6 +1038,9 @@ class DependencyProvider:
             portfolio_engine=self.trading_engine.portfolio_engine,
             max_open_positions=self._settings.risk.max_open_positions,
         )
+        self._live_trading_performance_service = LiveTradingPerformanceService(
+            exchange_client=self.exchange_client,
+        )
         self._paper_trading_service = PaperTradingService(
             order_repository=self.order_repository,
             trade_repository=self.trade_repository,
@@ -1292,6 +1305,7 @@ class DependencyProvider:
         self._live_portfolio_recovery_service = None
         self._live_runtime_health_service = None
         self._live_runtime_portfolio_reconciliation_service = None
+        self._live_trading_performance_service = None
         self._live_submission_recovery_service = None
         self._runtime_reporter = None
         self._runtime_recovery_service = None

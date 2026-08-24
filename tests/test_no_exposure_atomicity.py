@@ -116,7 +116,7 @@ class _FakeExchangeClient(BaseExchangeClient):
     ) -> Sequence[Candle]:
         return ()
 
-    async def get_trades(self, *, symbol: str, limit: int) -> Sequence[Trade]:
+    async def get_trades(self, *, symbol: str | None, limit: int) -> Sequence[Trade]:
         return ()
 
     async def create_order(

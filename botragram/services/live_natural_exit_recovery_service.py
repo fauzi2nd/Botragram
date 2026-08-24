@@ -147,6 +147,22 @@ class LiveNaturalExitRecoveryService:
                 if order.symbol.upper() not in active_symbols
             )
             if remaining_orphans:
+                refreshed_positions = tuple(await self.exchange_client.get_positions())
+                if not self._portfolio_snapshots_match(
+                    initial_positions=observed_positions,
+                    observed_positions=refreshed_positions,
+                ):
+                    await self._validate_known_portfolio_transition(
+                        initial_positions=observed_positions,
+                        observed_positions=refreshed_positions,
+                        stored_by_symbol=stored_by_symbol,
+                    )
+                    if attempt + 1 < _PORTFOLIO_STABILITY_ATTEMPTS:
+                        continue
+                    raise RuntimeError(
+                        "LIVE portfolio did not stabilize during natural-exit "
+                        "reconciliation"
+                    )
                 raise RuntimeError(
                     "LIVE orphan protection remains after reconciliation: "
                     f"count={len(remaining_orphans)}"

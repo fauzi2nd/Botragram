@@ -260,19 +260,19 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
     async def get_trades(
         self,
         *,
-        symbol: str,
+        symbol: str | None,
         limit: int,
     ) -> Sequence[Trade]:
-        """Return executed Futures account trades."""
+        """Return bounded executed Futures account trades."""
         if limit <= 0:
             raise ValueError("Trade limit must be greater than zero")
 
+        params: RequestParams = {"limit": limit}
+        if symbol is not None:
+            params["symbol"] = self._normalize_symbol(symbol)
         payload = await self._rest.get(
             _TRADES_ENDPOINT,
-            params={
-                "symbol": self._normalize_symbol(symbol),
-                "limit": limit,
-            },
+            params=params,
             authenticated=True,
         )
         return tuple(

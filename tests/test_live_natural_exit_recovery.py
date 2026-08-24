@@ -710,6 +710,33 @@ async def test_reconcile_retries_a_known_natural_exit_until_stable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconcile_retries_when_a_position_exits_after_initial_reads() -> None:
+    """Retry GET-only when a stable active position exits before final order read."""
+    position = _position()
+    repository = await _repository()
+    exchange = SnapshotNaturalExitExchange(
+        snapshots=((position,), (position,), (), (), (), ()),
+        protections=(
+            _protection(
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                client_id=_TP_ID,
+                trigger="0.01084",
+            ),
+        ),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    await service.reconcile()
+
+    assert exchange.cancel_calls == [(_SYMBOL, _TP_ID)]
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+
+
+@pytest.mark.asyncio
 async def test_reconcile_fails_closed_when_portfolio_never_stabilizes() -> None:
     """Bound changed snapshots without retrying a mutation or looping forever."""
     position = _position()

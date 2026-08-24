@@ -50,6 +50,10 @@ from botragram.services.live_submission_recovery_service import (
     LiveSubmissionRecoveryResult,
     LiveSubmissionRecoveryService,
 )
+from botragram.services.live_trading_performance_service import (
+    LiveTradingPerformanceService,
+    TradingPerformanceSnapshot,
+)
 from botragram.services.market_service import MarketService
 from botragram.services.opportunity_discovery_service import (
     OpportunityDiscoveryService,
@@ -90,6 +94,8 @@ __all__ = [
     "LiveProtectionMonitoringService",
     "LivePortfolioRecoveryService",
     "LiveRuntimeHealthService",
+    "LiveTradingPerformanceService",
+    "TradingPerformanceSnapshot",
     "LiveRuntimePortfolioReconciliationService",
     "LiveSubmissionRecoveryResult",
     "LiveSubmissionRecoveryService",

@@ -400,6 +400,7 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             fee=self._to_decimal(payload.get("commission")),
             fee_asset=self._to_string(payload.get("commissionAsset")),
             executed_at=self._to_datetime(payload.get("time")),
+            realized_pnl=self._to_optional_decimal(payload.get("realizedPnl")),
         )
 
     @staticmethod

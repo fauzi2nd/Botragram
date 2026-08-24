@@ -1045,7 +1045,6 @@ def test_mapper_preserves_triggering_algo_status_as_transitional() -> None:
     )
 
     assert order.status is OrderStatus.TRIGGERING
-    assert order.status is not OrderStatus.NEW
 
 
 @pytest.mark.asyncio

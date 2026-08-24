@@ -143,6 +143,7 @@ botragram/
 |   |-- live_runtime_portfolio_reconciliation_service.py # Canonical 0/1/N LIVE management reconciliation
 |   |-- live_runtime_health_service.py # Derived recovered LIVE health aggregation
 |   |-- live_submission_recovery_service.py # GET-only incomplete entry recovery
+|   |-- live_trading_performance_service.py # Bounded LIVE realized-fill performance
 |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |-- order_service.py
 |   |-- paper_trading_service.py

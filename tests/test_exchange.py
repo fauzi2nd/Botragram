@@ -421,6 +421,7 @@ def test_binance_mapper_maps_short_position_and_trade_fallbacks() -> None:
             "qty": "2",
             "commission": "0.1",
             "commissionAsset": "USDT",
+            "realizedPnl": "12.34",
             "time": 1_700_000_000_000,
         }
     )
@@ -429,6 +430,7 @@ def test_binance_mapper_maps_short_position_and_trade_fallbacks() -> None:
     assert position.quantity == Decimal("2")
     assert trade.side is OrderSide.SELL
     assert trade.quote_quantity == Decimal("200")
+    assert trade.realized_pnl == Decimal("12.34")
 
 
 def test_binance_mapper_rejects_malformed_payloads() -> None:

@@ -149,10 +149,10 @@ class BaseExchangeClient(ABC):
     async def get_trades(
         self,
         *,
-        symbol: str,
+        symbol: str | None,
         limit: int,
     ) -> Sequence[Trade]:
-        """Return executed trades for a symbol."""
+        """Return bounded account fills for an optional exchange symbol."""
 
     # =========================================================================
     # Orders

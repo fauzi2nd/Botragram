@@ -233,12 +233,16 @@ class BinanceExchangeClient(BaseExchangeClient):
     async def get_trades(
         self,
         *,
-        symbol: str,
+        symbol: str | None,
         limit: int,
     ) -> Sequence[Trade]:
-        """Return executed Binance Spot trades for a symbol."""
+        """Return executed Binance Spot trades for a required symbol."""
         if limit <= 0:
             raise ValueError("Trade limit must be greater than zero")
+        if symbol is None:
+            raise NotImplementedError(
+                "Binance Spot account-trade history requires a symbol"
+            )
 
         payload: object = await self._rest.get(
             _TRADES_ENDPOINT,
@@ -248,17 +252,10 @@ class BinanceExchangeClient(BaseExchangeClient):
             },
             authenticated=True,
         )
-
-        raw_trades = self._require_sequence(payload)
-
-        trades: tuple[Trade, ...] = tuple(
-            self._mapper.map_trade(
-                self._require_mapping(item),
-            )
-            for item in raw_trades
+        return tuple(
+            self._mapper.map_trade(self._require_mapping(item))
+            for item in self._require_sequence(payload)
         )
-
-        return trades
 
     # =========================================================================
     # Orders
