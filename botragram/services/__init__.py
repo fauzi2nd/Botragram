@@ -32,6 +32,9 @@ from botragram.services.live_natural_exit_recovery_service import (
 from botragram.services.live_portfolio_recovery_service import (
     LivePortfolioRecoveryService,
 )
+from botragram.services.live_position_lifecycle_coordinator import (
+    LivePositionLifecycleCoordinator,
+)
 from botragram.services.live_position_protection_service import (
     LivePositionProtectionService,
 )
@@ -90,6 +93,7 @@ __all__ = [
     "LiveNaturalExitRecoveryService",
     "LivePostEntryRecoveryResult",
     "LivePostEntryRecoveryService",
+    "LivePositionLifecycleCoordinator",
     "LivePositionProtectionService",
     "LiveProtectionMonitoringService",
     "LivePortfolioRecoveryService",

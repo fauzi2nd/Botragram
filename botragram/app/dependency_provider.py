@@ -95,6 +95,7 @@ from botragram.services import (
     LiveMarketStreamService,
     LiveNaturalExitRecoveryService,
     LivePortfolioRecoveryService,
+    LivePositionLifecycleCoordinator,
     LivePositionProtectionService,
     LivePostEntryRecoveryService,
     LiveProtectionMonitoringService,
@@ -174,6 +175,7 @@ class DependencyProvider:
         "_live_futures_entry_service",
         "_live_market_stream_service",
         "_live_natural_exit_recovery_service",
+        "_live_position_lifecycle_coordinator",
         "_live_post_entry_recovery_service",
         "_live_position_protection_service",
         "_live_protection_monitoring_service",
@@ -278,6 +280,7 @@ class DependencyProvider:
         self._live_natural_exit_recovery_service: (
             LiveNaturalExitRecoveryService | None
         ) = None
+        self._live_position_lifecycle_coordinator = LivePositionLifecycleCoordinator()
         self._live_post_entry_recovery_service: LivePostEntryRecoveryService | None = (
             None
         )
@@ -965,6 +968,7 @@ class DependencyProvider:
             exchange_client=exchange_client,
             position_repository=self.position_repository,
             submission_attempt_repository=self.submission_attempt_repository,
+            lifecycle_coordinator=self._live_position_lifecycle_coordinator,
         )
         self._live_entry_risk_evaluation_service = LiveEntryRiskEvaluationService(
             account_service=self.account_service,
@@ -1237,6 +1241,7 @@ class DependencyProvider:
             trade_mode=self._settings.app.trade_mode,
             position_repository=self.position_repository,
             exchange_client=self.exchange_client,
+            lifecycle_coordinator=self._live_position_lifecycle_coordinator,
         )
 
     @staticmethod
@@ -1299,6 +1304,7 @@ class DependencyProvider:
         self._live_futures_entry_service = None
         self._live_market_stream_service = None
         self._live_natural_exit_recovery_service = None
+        self._live_position_lifecycle_coordinator = LivePositionLifecycleCoordinator()
         self._live_post_entry_recovery_service = None
         self._live_position_protection_service = None
         self._live_protection_monitoring_service = None

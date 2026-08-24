@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final, Protocol
 
@@ -22,6 +22,9 @@ from botragram.exceptions import (
 )
 from botragram.models import Order, Position
 from botragram.repositories import PositionRepository, SubmissionAttemptRepository
+from botragram.services.live_position_lifecycle_coordinator import (
+    LivePositionLifecycleCoordinator,
+)
 
 __all__ = [
     "LiveNaturalExitRecoveryService",
@@ -92,6 +95,9 @@ class LiveNaturalExitRecoveryService:
     exchange_client: LiveNaturalExitExchange
     position_repository: PositionRepository
     submission_attempt_repository: SubmissionAttemptRepository
+    lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
+        default_factory=LivePositionLifecycleCoordinator,
+    )
 
     async def reconcile(self) -> None:
         """Remove proven orphan protection and stale local positions."""
@@ -234,23 +240,26 @@ class LiveNaturalExitRecoveryService:
         for position in stored_positions:
             if position.symbol.upper() in active_symbols:
                 continue
-            await self._reconcile_persisted_protection_before_delete(position=position)
-            if await self.exchange_client.get_positions(symbol=position.symbol):
-                raise RuntimeError(
-                    "LIVE exposure reappeared before durable position deletion: "
-                    f"symbol={position.symbol}"
+            async with self.lifecycle_coordinator.hold(symbol=position.symbol):
+                await self._reconcile_persisted_protection_before_delete(
+                    position=position,
                 )
-            remaining = tuple(
-                await self.exchange_client.get_open_protection_orders(
-                    symbol=position.symbol,
+                if await self.exchange_client.get_positions(symbol=position.symbol):
+                    raise RuntimeError(
+                        "LIVE exposure reappeared before durable position deletion: "
+                        f"symbol={position.symbol}"
+                    )
+                remaining = tuple(
+                    await self.exchange_client.get_open_protection_orders(
+                        symbol=position.symbol,
+                    )
                 )
-            )
-            if remaining:
-                raise RuntimeError(
-                    "LIVE protection remains before durable position deletion: "
-                    f"symbol={position.symbol} count={len(remaining)}"
-                )
-            await self.position_repository.delete(symbol=position.symbol)
+                if remaining:
+                    raise RuntimeError(
+                        "LIVE protection remains before durable position deletion: "
+                        f"symbol={position.symbol} count={len(remaining)}"
+                    )
+                await self.position_repository.delete(symbol=position.symbol)
             _LOGGER.info(
                 "Natural LIVE exit reconciled: symbol=%s entry_client_order_id=%s",
                 position.symbol,

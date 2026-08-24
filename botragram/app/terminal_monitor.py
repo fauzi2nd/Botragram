@@ -30,7 +30,7 @@ from typing import Final, Protocol
 # Third Party Imports
 # =============================================================================
 from rich import box
-from rich.console import Console
+from rich.console import Console, Group
 from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
@@ -862,51 +862,99 @@ class TerminalMonitor:
         return f"{realized_pnl:+,.2f} {self.quote_asset}"
 
     def _build_discovery_panel(self, status: TerminalStatus) -> Panel:
-        """Build bounded local global-discovery telemetry separate from safety."""
-        table = Table.grid(expand=True, padding=(0, 1))
-        table.add_column(style="bright_yellow", no_wrap=True)
-        table.add_column(style="white")
+        """Build operator-focused bounded global-discovery telemetry."""
         discovery = status.global_discovery
+        details = Table.grid(expand=True, padding=(0, 1))
+        details.add_column(style="bright_yellow", no_wrap=True)
+        details.add_column(style="white")
         if discovery is None:
-            table.add_row("State", "NOT CONFIGURED")
-        else:
-            table.add_row("GLOBAL DISCOVERY", "LOCAL TELEMETRY")
-            table.add_row("Interval", discovery.interval.value)
-            table.add_row(
-                "State",
-                f"{discovery.state.value.upper()} #{discovery.cycle_sequence}",
+            details.add_row("State", "NOT CONFIGURED")
+            return Panel(
+                details, title="[bold]Global Discovery[/bold]", border_style="yellow"
             )
-            table.add_row("Last Outcome", self._format_discovery_outcome(discovery))
-            table.add_row("Bounds", self._format_discovery_bounds(discovery))
-            table.add_row("Window", self._format_discovery_window(discovery))
-            table.add_row(
-                "Scanned",
-                str(discovery.scanned_count)
-                if discovery.scanned_count is not None
-                else "-",
+
+        details.add_row(
+            "State", f"{discovery.state.value.upper()} #{discovery.cycle_sequence}"
+        )
+        if discovery.last_outcome is not None:
+            details.add_row(
+                "Last Result",
+                self._format_candidate_result(discovery.last_outcome.value),
             )
-            table.add_row(
-                "Actionable",
-                str(discovery.actionable_count)
-                if discovery.actionable_count is not None
-                else "-",
+        details.add_row("Interval", discovery.interval.value)
+        details.add_row("Window", self._format_discovery_window(discovery))
+        details.add_row("Scope", self._format_discovery_scope(discovery))
+        details.add_row(
+            "Scanned",
+            str(discovery.scanned_count)
+            if discovery.scanned_count is not None
+            else "-",
+        )
+        details.add_row(
+            "Actionable",
+            str(discovery.actionable_count)
+            if discovery.actionable_count is not None
+            else "-",
+        )
+        if discovery.stopped_by_capacity:
+            details.add_row("Capacity", "REACHED")
+        if discovery.next_eligible_monotonic is not None:
+            remaining = max(0, round(discovery.next_eligible_monotonic - monotonic()))
+            details.add_row("Next", f"{remaining}s")
+
+        candidates = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False)
+        candidates.add_column("Symbol", style="bright_magenta", no_wrap=True)
+        candidates.add_column("Side", no_wrap=True)
+        candidates.add_column("Confidence", justify="right", no_wrap=True)
+        candidates.add_column("Result", no_wrap=True)
+        for candidate in discovery.candidates[:5]:
+            candidates.add_row(
+                candidate.symbol,
+                candidate.direction.value.upper(),
+                self._format_confidence(candidate.confidence),
+                self._format_candidate_result(candidate.outcome),
             )
-            if discovery.stopped_by_capacity:
-                table.add_row("Capacity Stop", "YES")
-            if discovery.next_eligible_monotonic is not None:
-                remaining = max(
-                    0, round(discovery.next_eligible_monotonic - monotonic())
-                )
-                table.add_row("Next Discovery", f"{remaining}s")
-            for candidate in discovery.candidates[:5]:
-                table.add_row(
-                    candidate.symbol,
-                    f"{candidate.direction.value.upper()} "
-                    f"confidence={candidate.confidence:f} "
-                    f"outcome={candidate.outcome or 'PENDING'}",
-                )
         return Panel(
-            table, title="[bold]Global Discovery[/bold]", border_style="yellow"
+            Group(details, candidates) if discovery.candidates else details,
+            title="[bold]Global Discovery[/bold]",
+            border_style="yellow",
+        )
+
+    @staticmethod
+    def _format_discovery_scope(discovery: GlobalDiscoverySnapshot) -> str:
+        """Format bounded scan scope without leaking telemetry field names."""
+        universe = discovery.universe_limit or discovery.max_symbols
+        parts = (
+            f"Universe {universe}" if universe is not None else "Universe -",
+            f"Batch {discovery.batch_size}"
+            if discovery.batch_size is not None
+            else "Batch -",
+            f"Top {discovery.top_n}" if discovery.top_n is not None else "Top -",
+        )
+        return " · ".join(parts)
+
+    @staticmethod
+    def _format_candidate_result(outcome: str | None) -> str:
+        """Present a discovery outcome without internal snake-case labels."""
+        labels = {
+            "blocked_by_capacity": "CAPACITY",
+            "entry_blocked": "BLOCKED",
+            "executed_and_protected": "EXECUTED",
+            "no_signal": "NO SIGNAL",
+            "risk_rejected": "RISK REJECT",
+            "skipped_capacity": "CAPACITY",
+            "venue_rule_rejected": "VENUE REJECT",
+        }
+        if outcome is None:
+            return "PENDING"
+        normalized = outcome.strip().lower()
+        return labels.get(normalized, normalized.upper().replace("_", " "))
+
+    @staticmethod
+    def _format_confidence(confidence: Decimal) -> str:
+        """Present the domain's normalized confidence as a compact percentage."""
+        return (
+            f"{TerminalMonitor._format_compact_decimal(confidence * Decimal('100'))}%"
         )
 
     def _build_performance_panel(self, status: TerminalStatus) -> Panel:
@@ -1060,8 +1108,11 @@ class TerminalMonitor:
 
     @staticmethod
     def _format_compact_decimal(value: Decimal) -> str:
-        """Format a decimal for a no-wrap table column."""
-        return format(value.normalize(), "f")
+        """Format a Decimal with stable precision and no representation noise."""
+        if value.is_zero():
+            return "0"
+        quantum = Decimal("1").scaleb(value.adjusted() - 7)
+        return format(value.quantize(quantum).normalize(), "f")
 
     def _format_compact_price(self, price: Decimal | None) -> str:
         """Format an optional protection trigger for a compact table column."""

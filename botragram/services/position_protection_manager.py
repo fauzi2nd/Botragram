@@ -26,6 +26,9 @@ from botragram.exceptions import (
 from botragram.exchanges.base import BaseExchangeClient
 from botragram.models import Order, Position, Ticker
 from botragram.repositories import PositionRepository
+from botragram.services.live_position_lifecycle_coordinator import (
+    LivePositionLifecycleCoordinator,
+)
 
 __all__ = ["PositionProtectionManager"]
 
@@ -55,6 +58,9 @@ class PositionProtectionManager:
     exchange_client: BaseExchangeClient
     position_refresh_seconds: float = _POSITION_REFRESH_SECONDS
     failure_retry_seconds: float = _FAILURE_RETRY_SECONDS
+    lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
+        default_factory=LivePositionLifecycleCoordinator,
+    )
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _cached_position: Position | None = field(default=None, init=False, repr=False)
     _last_refresh_monotonic: float = field(default=0.0, init=False, repr=False)
@@ -70,6 +76,11 @@ class PositionProtectionManager:
 
     async def on_market_tick(self, *, ticker: Ticker) -> None:
         """Advance profit protection when a stream tick crosses a new step."""
+        async with self.lifecycle_coordinator.hold(symbol=ticker.symbol):
+            await self._on_market_tick(ticker=ticker)
+
+    async def _on_market_tick(self, *, ticker: Ticker) -> None:
+        """Advance one protected position while it is lifecycle-owned."""
         async with self._lock:
             if monotonic() < self._retry_after_monotonic:
                 return
