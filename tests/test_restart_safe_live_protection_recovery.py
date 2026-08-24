@@ -20,7 +20,11 @@ from botragram.enums import (
     StrategyType,
     SubmissionAttemptStatus,
 )
-from botragram.exceptions import ExchangeOrderNotFoundError, VenueRuleValidationError
+from botragram.exceptions import (
+    ExchangeOrderNotFoundError,
+    ExchangeOrderPriceBandRejectedError,
+    VenueRuleValidationError,
+)
 from botragram.exchanges.binance.futures_client import BinanceFuturesExchangeClient
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
@@ -314,11 +318,13 @@ class AtomicRecovery(LiveRecoveryRepository):
 @dataclass(slots=True)
 class OrderLookup:
     orders: dict[str, Order]
+    calls: list[str] = field(default_factory=list[str])
 
     async def get_by_client_order_id(
         self, *, symbol: str, client_order_id: str
     ) -> Order:
         del symbol
+        self.calls.append(client_order_id)
         try:
             return self.orders[client_order_id]
         except KeyError as error:
@@ -354,6 +360,7 @@ class EmergencyExitExchange:
     positions: PositionVisibility
     lookup: OrderLookup
     preserve_client_identity: bool = True
+    price_band_rejections_remaining: int = 0
     calls: list[tuple[str, str | None]] = field(
         default_factory=list[tuple[str, str | None]]
     )
@@ -363,6 +370,11 @@ class EmergencyExitExchange:
     ) -> Order:
         self.calls.append((symbol, client_order_id))
         assert client_order_id is not None
+        if self.price_band_rejections_remaining > 0:
+            self.price_band_rejections_remaining -= 1
+            raise ExchangeOrderPriceBandRejectedError(
+                "configured venue price-band rejection"
+            )
         returned_client_id = client_order_id if self.preserve_client_identity else None
         order = _order(
             order_id="exit-1",
@@ -422,6 +434,94 @@ async def test_crossed_acknowledged_entry_closes_once_and_resolves() -> None:
     assert stored is not None
     assert stored.status is SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE
     assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_price_band_rejected_emergency_exit_reconciles_before_retry() -> None:
+    """Retry -4131 once only after proving the deterministic id is absent."""
+    attempt = _attempt()
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+    positions = PositionVisibility(current=_position(), persisted=_position())
+    lookup = OrderLookup(orders={})
+    protection = ProtectionRecovery(fail_ensure=True)
+    exit_exchange = EmergencyExitExchange(
+        positions=positions,
+        lookup=lookup,
+        price_band_rejections_remaining=1,
+    )
+    service = LivePostEntryRecoveryService(
+        submission_attempt_repository=attempts,
+        live_recovery_repository=AtomicRecovery(
+            attempts=attempts,
+            positions=positions,
+        ),
+        position_service=positions,
+        protection_service=protection,
+        runtime_control=TradingRuntimeControl(),
+        order_service=lookup,
+        protection_reconciler=protection,
+        protection_cleanup_service=protection,
+        emergency_exit_exchange=exit_exchange,
+    )
+
+    result = await service.recover_acknowledged(attempt=attempt)
+
+    stored = await attempts.get_by_client_order_id(client_order_id=_ENTRY_ID)
+    assert result is LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
+    assert exit_exchange.calls == [
+        ("BTCUSDT", _EXIT_ID),
+        ("BTCUSDT", _EXIT_ID),
+    ]
+    assert lookup.calls == [_EXIT_ID, _EXIT_ID]
+    assert positions.current is None
+    assert positions.persisted is None
+    assert stored is not None
+    assert stored.status is SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE
+
+
+@pytest.mark.asyncio
+async def test_price_band_rejected_emergency_exit_retry_is_bounded() -> None:
+    """Remain fail-closed after the single safe price-band retry is exhausted."""
+    attempt = _attempt()
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+    positions = PositionVisibility(current=_position(), persisted=_position())
+    lookup = OrderLookup(orders={})
+    protection = ProtectionRecovery(fail_ensure=True)
+    exit_exchange = EmergencyExitExchange(
+        positions=positions,
+        lookup=lookup,
+        price_band_rejections_remaining=2,
+    )
+    service = LivePostEntryRecoveryService(
+        submission_attempt_repository=attempts,
+        live_recovery_repository=AtomicRecovery(
+            attempts=attempts,
+            positions=positions,
+        ),
+        position_service=positions,
+        protection_service=protection,
+        runtime_control=TradingRuntimeControl(),
+        order_service=lookup,
+        protection_reconciler=protection,
+        protection_cleanup_service=protection,
+        emergency_exit_exchange=exit_exchange,
+    )
+
+    with pytest.raises(RuntimeError, match="venue price band"):
+        await service.recover_acknowledged(attempt=attempt)
+
+    stored = await attempts.get_by_client_order_id(client_order_id=_ENTRY_ID)
+    assert exit_exchange.calls == [
+        ("BTCUSDT", _EXIT_ID),
+        ("BTCUSDT", _EXIT_ID),
+    ]
+    assert lookup.calls == [_EXIT_ID, _EXIT_ID, _EXIT_ID]
+    assert positions.current is not None
+    assert positions.persisted is not None
+    assert stored is not None
+    assert stored.status is SubmissionAttemptStatus.ACKNOWLEDGED
 
 
 @pytest.mark.asyncio

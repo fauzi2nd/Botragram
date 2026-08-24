@@ -20,7 +20,10 @@ from botragram.enums import (
     OrderType,
     PositionSide,
 )
-from botragram.exceptions import ExchangeOrderOutcomeUnknownError
+from botragram.exceptions import (
+    ExchangeOrderOutcomeUnknownError,
+    ExchangeOrderPriceBandRejectedError,
+)
 from botragram.exchanges.base.rest import (
     JsonObject,
     JsonResponse,
@@ -31,7 +34,10 @@ from botragram.exchanges.binance.futures_client import (
     BinanceFuturesExchangeClient,
 )
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
-from botragram.exchanges.binance.rest import BinanceRestClient
+from botragram.exchanges.binance.rest import (
+    BinanceRestClient,
+    BinanceRestResponseError,
+)
 from botragram.exchanges.factory import ExchangeFactory
 from botragram.models import MarketUniverseEntry, Order
 
@@ -92,6 +98,31 @@ class RecordingBinanceRestClient(BinanceRestClient):
         del headers
         self.requests.append(("DELETE", path, params, authenticated))
         return self.delete_responses.get(path, self.response)
+
+
+class PriceBandRejectingRestClient(RecordingBinanceRestClient):
+    """Reject every order POST with Binance PERCENT_PRICE code -4131."""
+
+    async def post(
+        self,
+        path: str,
+        *,
+        params: QueryParams | None = None,
+        data: JsonObject | None = None,
+        headers: RequestHeaders | None = None,
+        authenticated: bool = False,
+    ) -> JsonResponse:
+        """Raise one explicit structured price-band rejection."""
+        del path, params, data, headers, authenticated
+        raise BinanceRestResponseError(
+            status=400,
+            payload={
+                "code": -4131,
+                "msg": "The counterparty's best price does not meet the "
+                "PERCENT_PRICE filter limit.",
+            },
+            message="configured PERCENT_PRICE rejection",
+        )
 
 
 class InMemoryProtectionClient(BinanceFuturesExchangeClient):
@@ -280,6 +311,20 @@ def _configure_market_universe(
     """Configure authoritative symbols and one bulk ticker snapshot."""
     rest.get_responses[_EXCHANGE_INFO_ENDPOINT] = {"symbols": symbols}
     rest.get_responses[_BULK_TICKER_ENDPOINT] = tickers
+
+
+@pytest.mark.asyncio
+async def test_futures_client_classifies_percent_price_order_rejection() -> None:
+    """Expose Binance -4131 as a typed price-band rejection."""
+    client = _create_client(PriceBandRejectingRestClient())
+
+    with pytest.raises(ExchangeOrderPriceBandRejectedError):
+        await client.create_order(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=Decimal("0.01"),
+        )
 
 
 def test_factory_builds_binance_futures_client() -> None:

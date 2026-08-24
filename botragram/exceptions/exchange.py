@@ -33,6 +33,7 @@ __all__ = [
     "ExchangeOrderNotFoundError",
     "ExchangeOrderOutcomeUnknownError",
     "ExchangeOrderRejectedError",
+    "ExchangeOrderPriceBandRejectedError",
     "ExchangeInsufficientBalanceError",
     "ExchangeSymbolError",
 ]
@@ -82,7 +83,11 @@ class ExchangeOrderOutcomeUnknownError(ExchangeOrderError):
 
 
 class ExchangeOrderRejectedError(ExchangeOrderError):
-    """Raised when an exchange explicitly rejects an entry mutation."""
+    """Raised when an exchange explicitly rejects an order mutation."""
+
+
+class ExchangeOrderPriceBandRejectedError(ExchangeOrderRejectedError):
+    """Raised when an order is rejected because execution violates a price band."""
 
 
 class ExchangeInsufficientBalanceError(ExchangeOrderError):

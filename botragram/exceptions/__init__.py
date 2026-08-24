@@ -40,6 +40,7 @@ from botragram.exceptions.exchange import (
     ExchangeOrderError,
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
+    ExchangeOrderPriceBandRejectedError,
     ExchangeOrderRejectedError,
     ExchangeRateLimitError,
     ExchangeRequestError,
@@ -114,6 +115,7 @@ __all__ = [
     "ExchangeOrderNotFoundError",
     "ExchangeOrderOutcomeUnknownError",
     "ExchangeOrderRejectedError",
+    "ExchangeOrderPriceBandRejectedError",
     "ExchangeInsufficientBalanceError",
     "ExchangeSymbolError",
     # Indicator Exceptions

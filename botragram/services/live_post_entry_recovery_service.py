@@ -39,6 +39,7 @@ from botragram.enums.base import BaseEnum
 from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
+    ExchangeOrderPriceBandRejectedError,
     VenueRuleValidationError,
 )
 from botragram.models import Order, Position, SubmissionAttempt
@@ -60,6 +61,8 @@ __all__ = [
 _DECIMAL_ZERO = Decimal("0")
 _POSITION_VISIBILITY_MAX_ATTEMPTS: Final[int] = 2
 _POSITION_VISIBILITY_DELAY_SECONDS: Final[float] = 0.05
+_EMERGENCY_EXIT_PRICE_BAND_MAX_SUBMISSIONS: Final[int] = 2
+_EMERGENCY_EXIT_PRICE_BAND_RETRY_DELAY_SECONDS: Final[float] = 0.25
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
@@ -422,28 +425,13 @@ class LivePostEntryRecoveryService:
                     "Existing emergency exit is not in a proven FILLED state"
                 )
         else:
-            current = await self._get_visible_position(symbol=position.symbol)
-            if current is not None:
-                try:
-                    close_order = await exchange.close_position(
-                        symbol=attempt.symbol,
-                        client_order_id=exit_client_id,
-                    )
-                except ExchangeOrderOutcomeUnknownError:
-                    if (
-                        await self._get_visible_position(symbol=position.symbol)
-                        is not None
-                    ):
-                        raise RuntimeError(
-                            "Emergency exit outcome is unknown while exposure remains"
-                        )
-                else:
-                    self._validate_emergency_exit_order(
-                        order=close_order,
-                        attempt=attempt,
-                        position=current,
-                        client_order_id=exit_client_id,
-                    )
+            await self._submit_emergency_exit(
+                attempt=attempt,
+                position=position,
+                exit_client_id=exit_client_id,
+                order_service=order_service,
+                exchange=exchange,
+            )
 
         if await self._get_visible_position(symbol=position.symbol) is not None:
             raise RuntimeError(
@@ -454,6 +442,88 @@ class LivePostEntryRecoveryService:
             raise RuntimeError("Emergency exit left protection cleanup unresolved")
 
         await self._resolve_no_exposure(attempt=attempt)
+
+    async def _submit_emergency_exit(
+        self,
+        *,
+        attempt: SubmissionAttempt,
+        position: Position,
+        exit_client_id: str,
+        order_service: LiveOrderFetch,
+        exchange: LiveEmergencyExitExchange,
+    ) -> None:
+        """Submit a deterministic emergency exit with one price-band retry."""
+        for submission_index in range(_EMERGENCY_EXIT_PRICE_BAND_MAX_SUBMISSIONS):
+            current = await self._get_visible_position(symbol=position.symbol)
+            if current is None:
+                return
+
+            try:
+                close_order = await exchange.close_position(
+                    symbol=attempt.symbol,
+                    client_order_id=exit_client_id,
+                )
+            except ExchangeOrderPriceBandRejectedError as error:
+                try:
+                    existing_exit = await order_service.get_by_client_order_id(
+                        symbol=attempt.symbol,
+                        client_order_id=exit_client_id,
+                    )
+                except ExchangeOrderNotFoundError:
+                    existing_exit = None
+                except ExchangeOrderOutcomeUnknownError as lookup_error:
+                    raise RuntimeError(
+                        "Emergency exit identity could not be reconciled "
+                        "after price-band rejection"
+                    ) from lookup_error
+
+                if existing_exit is not None:
+                    self._validate_emergency_exit_order(
+                        order=existing_exit,
+                        attempt=attempt,
+                        position=current,
+                        client_order_id=exit_client_id,
+                    )
+                    if existing_exit.status is OrderStatus.FILLED:
+                        return
+                    raise RuntimeError(
+                        "Price-band rejected emergency exit identity exists "
+                        "without a proven FILLED state"
+                    )
+
+                if await self._get_visible_position(symbol=position.symbol) is None:
+                    return
+
+                if submission_index + 1 >= _EMERGENCY_EXIT_PRICE_BAND_MAX_SUBMISSIONS:
+                    raise RuntimeError(
+                        "Emergency exit remained blocked by the venue price band"
+                    ) from error
+
+                _LOGGER.warning(
+                    "Emergency exit rejected by venue price band; retrying once "
+                    "after exact identity reconciliation: symbol=%s "
+                    "client_order_id=%s",
+                    attempt.symbol,
+                    exit_client_id,
+                )
+                await asyncio.sleep(_EMERGENCY_EXIT_PRICE_BAND_RETRY_DELAY_SECONDS)
+                continue
+            except ExchangeOrderOutcomeUnknownError:
+                if await self._get_visible_position(symbol=position.symbol) is not None:
+                    raise RuntimeError(
+                        "Emergency exit outcome is unknown while exposure remains"
+                    )
+                return
+
+            self._validate_emergency_exit_order(
+                order=close_order,
+                attempt=attempt,
+                position=current,
+                client_order_id=exit_client_id,
+            )
+            return
+
+        raise RuntimeError("Emergency exit submission budget was exhausted")
 
     async def _resolve_no_exposure(self, *, attempt: SubmissionAttempt) -> None:
         """Atomically terminalize one acknowledged entry after zero exposure proof."""

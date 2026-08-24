@@ -27,6 +27,7 @@ from botragram.enums import (
 from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
+    ExchangeOrderPriceBandRejectedError,
     ExchangeOrderRejectedError,
 )
 from botragram.exchanges.binance.client import BinanceExchangeClient
@@ -67,6 +68,7 @@ _DEFAULT_TIME_IN_FORCE = "GTC"
 _SUPPORTED_ENTRY_ORDER_TYPES = frozenset({OrderType.MARKET, OrderType.LIMIT})
 _CLIENT_ORDER_ID_MAX_LENGTH = 36
 _BINANCE_ORDER_NOT_FOUND_CODE = -2013
+_BINANCE_PERCENT_PRICE_REJECTED_CODE = -4131
 _PROTECTION_RECONCILIATION_ATTEMPTS = 2
 _PROTECTION_RECONCILIATION_DELAY_SECONDS = 0.05
 
@@ -758,12 +760,19 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
                 authenticated=True,
             )
         except BinanceRestResponseError as error:
+            if (
+                error.status == 400
+                and error.code == _BINANCE_PERCENT_PRICE_REJECTED_CODE
+            ):
+                raise ExchangeOrderPriceBandRejectedError(
+                    "Binance Futures rejected the order at the PERCENT_PRICE band"
+                ) from error
             if error.status == 400 and error.code is not None:
                 raise ExchangeOrderRejectedError(
-                    "Binance Futures explicitly rejected the entry order"
+                    "Binance Futures explicitly rejected the order"
                 ) from error
             raise ExchangeOrderOutcomeUnknownError(
-                "Binance Futures entry outcome is unknown"
+                "Binance Futures order outcome is unknown"
             ) from error
         except (aiohttp.ClientError, TimeoutError, RuntimeError) as error:
             raise ExchangeOrderOutcomeUnknownError(
