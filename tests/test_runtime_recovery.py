@@ -1252,8 +1252,8 @@ async def test_live_restart_recreates_proven_missing_persisted_legs() -> None:
     assert await service.recover()
     assert exchange.create_calls == 2
     assert exchange.reconciliation_requests == [
-        persisted.stop_loss_client_algo_id,
-        persisted.take_profit_client_algo_id,
+        *[persisted.stop_loss_client_algo_id] * 5,
+        *[persisted.take_profit_client_algo_id] * 5,
         persisted.stop_loss_client_algo_id,
         persisted.take_profit_client_algo_id,
     ]
@@ -1316,7 +1316,7 @@ async def test_live_restart_does_not_let_an_old_stop_mask_missing_replacement() 
     assert await service.recover()
     assert exchange.create_calls == 1
     assert exchange.reconciliation_requests == [
-        persisted.stop_loss_client_algo_id,
+        *[persisted.stop_loss_client_algo_id] * 5,
         persisted.take_profit_client_algo_id,
         persisted.stop_loss_client_algo_id,
     ]

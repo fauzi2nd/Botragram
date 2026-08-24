@@ -968,6 +968,8 @@ class DependencyProvider:
             exchange_client=exchange_client,
             position_repository=self.position_repository,
             submission_attempt_repository=self.submission_attempt_repository,
+            trade_repository=self.trade_repository,
+            trade_history=exchange_client,
             lifecycle_coordinator=self._live_position_lifecycle_coordinator,
         )
         self._live_entry_risk_evaluation_service = LiveEntryRiskEvaluationService(
@@ -1043,7 +1045,7 @@ class DependencyProvider:
             max_open_positions=self._settings.risk.max_open_positions,
         )
         self._live_trading_performance_service = LiveTradingPerformanceService(
-            exchange_client=self.exchange_client,
+            trade_repository=self.trade_repository,
         )
         self._paper_trading_service = PaperTradingService(
             order_repository=self.order_repository,

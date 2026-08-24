@@ -63,3 +63,14 @@ async def _run_natural_exit_and_tick_race() -> None:
     await asyncio.gather(deletion_task, tick_task)
 
     assert events == ["delete"]
+
+
+def test_position_deletion_invalidates_the_normalized_symbol_cache_version() -> None:
+    """Expose one monotonic cache version after a durable natural exit."""
+    coordinator = LivePositionLifecycleCoordinator()
+
+    assert coordinator.get_position_version(symbol="aiousdt") == 0
+
+    coordinator.record_position_deletion(symbol="AIOUSDT")
+
+    assert coordinator.get_position_version(symbol="aiousdt") == 1

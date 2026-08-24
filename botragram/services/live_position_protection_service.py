@@ -25,6 +25,8 @@ __all__ = ["LivePositionProtectionService"]
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _RECONCILIATION_MAX_ATTEMPTS: Final[int] = 2
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
+_PROTECTION_VISIBILITY_ATTEMPTS: Final[int] = 5
+_PROTECTION_VISIBILITY_DELAY_SECONDS: Final[float] = 0.2
 _TERMINAL_PROTECTION_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
     {
         OrderStatus.FILLED,
@@ -392,27 +394,11 @@ class LivePositionProtectionService:
                 "Submitted protection leg is missing its client identity"
             )
 
-        try:
-            order = await self.exchange_client.get_protection_order_by_client_id(
-                symbol=position.symbol,
-                client_id=client_id,
-            )
-        except ExchangeOrderNotFoundError as error:
-            raise RuntimeError(
-                "Exchange did not confirm submitted protection identity"
-            ) from error
-        except ExchangeOrderOutcomeUnknownError as error:
-            raise RuntimeError(
-                "Submitted protection identity could not be verified"
-            ) from error
-
-        self._validate_reconciled_leg(
-            order=order,
+        return await self._wait_for_verified_leg(
             position=position,
             order_type=order_type,
             client_id=client_id,
         )
-        return order
 
     async def _submit_missing_leg(
         self,
@@ -458,27 +444,48 @@ class LivePositionProtectionService:
         client_id: str,
     ) -> None:
         """Prove an ambiguous protection POST through bounded GET-only reads."""
-        for attempt in range(_RECONCILIATION_MAX_ATTEMPTS):
+        await self._wait_for_verified_leg(
+            position=position,
+            order_type=order_type,
+            client_id=client_id,
+        )
+
+    async def _wait_for_verified_leg(
+        self,
+        *,
+        position: Position,
+        order_type: OrderType,
+        client_id: str,
+    ) -> Order:
+        """Wait briefly for an accepted protection order to become queryable."""
+        last_unknown: ExchangeOrderOutcomeUnknownError | None = None
+        for attempt in range(_PROTECTION_VISIBILITY_ATTEMPTS):
             try:
                 order = await self.exchange_client.get_protection_order_by_client_id(
                     symbol=position.symbol,
                     client_id=client_id,
                 )
-            except ExchangeOrderNotFoundError, ExchangeOrderOutcomeUnknownError:
-                if attempt + 1 < _RECONCILIATION_MAX_ATTEMPTS:
-                    await asyncio.sleep(_RECONCILIATION_DELAY_SECONDS)
-                    continue
-                break
+            except ExchangeOrderNotFoundError:
+                pass
+            except ExchangeOrderOutcomeUnknownError as error:
+                last_unknown = error
+            else:
+                self._validate_reconciled_leg(
+                    order=order,
+                    position=position,
+                    order_type=order_type,
+                    client_id=client_id,
+                )
+                return order
 
-            self._validate_reconciled_leg(
-                order=order,
-                position=position,
-                order_type=order_type,
-                client_id=client_id,
-            )
-            return
+            if attempt + 1 < _PROTECTION_VISIBILITY_ATTEMPTS:
+                await asyncio.sleep(_PROTECTION_VISIBILITY_DELAY_SECONDS)
 
-        raise RuntimeError("Ambiguous LIVE protection mutation remains unresolved")
+        if last_unknown is not None:
+            raise RuntimeError(
+                "Submitted protection identity could not be verified"
+            ) from last_unknown
+        raise RuntimeError("Exchange did not confirm submitted protection identity")
 
     async def _recover_persisted_leg(
         self,
@@ -506,33 +513,43 @@ class LivePositionProtectionService:
         Raises:
             RuntimeError: If the protection mutation cannot be proven.
         """
-        try:
-            order = await self.exchange_client.get_protection_order_by_client_id(
-                symbol=position.symbol,
-                client_id=client_id,
-            )
-        except ExchangeOrderNotFoundError:
-            _LOGGER.warning(
-                "Persisted LIVE protection identity is absent; the same durable "
-                "identity may be recreated after fresh venue validation: "
-                "symbol=%s type=%s client_id=%s",
-                position.symbol,
-                order_type.value,
-                client_id,
-            )
-            return None
-        except ExchangeOrderOutcomeUnknownError as error:
+        last_unknown: ExchangeOrderOutcomeUnknownError | None = None
+        for attempt in range(_PROTECTION_VISIBILITY_ATTEMPTS):
+            try:
+                order = await self.exchange_client.get_protection_order_by_client_id(
+                    symbol=position.symbol,
+                    client_id=client_id,
+                )
+            except ExchangeOrderNotFoundError:
+                pass
+            except ExchangeOrderOutcomeUnknownError as error:
+                last_unknown = error
+            else:
+                self._validate_reconciled_leg(
+                    order=order,
+                    position=position,
+                    order_type=order_type,
+                    client_id=client_id,
+                )
+                return order
+
+            if attempt + 1 < _PROTECTION_VISIBILITY_ATTEMPTS:
+                await asyncio.sleep(_PROTECTION_VISIBILITY_DELAY_SECONDS)
+
+        if last_unknown is not None:
             raise RuntimeError(
                 "Persisted LIVE protection identity could not be verified"
-            ) from error
+            ) from last_unknown
 
-        self._validate_reconciled_leg(
-            order=order,
-            position=position,
-            order_type=order_type,
-            client_id=client_id,
+        _LOGGER.warning(
+            "Persisted LIVE protection identity is absent after bounded "
+            "visibility checks; the same durable identity may be recreated "
+            "after fresh venue validation: symbol=%s type=%s client_id=%s",
+            position.symbol,
+            order_type.value,
+            client_id,
         )
-        return order
+        return None
 
     async def cancel_persisted_legs(self, *, position: Position) -> None:
         """Cancel only exact durable protection identities and prove them absent."""

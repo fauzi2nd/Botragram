@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Read-only bounded LIVE Futures trading-performance aggregation.
+    Read-only persisted Botragram LIVE trading-performance aggregation.
 
 Python:
     3.14+
@@ -20,12 +20,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from time import monotonic
-from typing import Final, Protocol
+from typing import Final
 
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.models import Trade
+from botragram.repositories import TradeRepository
 
 __all__ = [
     "LiveTradingPerformanceService",
@@ -39,24 +40,12 @@ __all__ = [
 _DEFAULT_TRADE_HISTORY_LIMIT: Final[int] = 1_000
 _DEFAULT_REFRESH_SECONDS: Final[float] = 10.0
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
+_PAPER_ORDER_ID_PREFIX: Final[str] = "paper-"
 
 
 # =============================================================================
-# Dependency Contracts
+# Type Aliases
 # =============================================================================
-class LiveTradeHistory(Protocol):
-    """Read recent account fills without mutating exchange state."""
-
-    async def get_trades(
-        self,
-        *,
-        symbol: str | None,
-        limit: int,
-    ) -> Sequence[Trade]:
-        """Return bounded recent account fills for an optional symbol."""
-        ...
-
-
 type MonotonicClock = Callable[[], float]
 
 
@@ -65,7 +54,7 @@ type MonotonicClock = Callable[[], float]
 # =============================================================================
 @dataclass(slots=True, kw_only=True, frozen=True)
 class TradingPerformanceSnapshot:
-    """Immutable aggregate of authoritative realized account fills."""
+    """Immutable aggregate of persisted Botragram LIVE exit fills."""
 
     closed_trade_count: int
     win_count: int
@@ -80,9 +69,9 @@ class TradingPerformanceSnapshot:
 # =============================================================================
 @dataclass(slots=True, kw_only=True)
 class LiveTradingPerformanceService:
-    """Cache and aggregate recent realized Futures fills by closing order."""
+    """Cache and aggregate only Botragram-persisted LIVE exit fills."""
 
-    exchange_client: LiveTradeHistory
+    trade_repository: TradeRepository
     refresh_seconds: float = _DEFAULT_REFRESH_SECONDS
     trade_history_limit: int = _DEFAULT_TRADE_HISTORY_LIMIT
     monotonic_clock: MonotonicClock = monotonic
@@ -98,14 +87,14 @@ class LiveTradingPerformanceService:
     )
 
     def __post_init__(self) -> None:
-        """Validate bounded account-history polling configuration."""
+        """Validate bounded local-ledger read configuration."""
         if self.refresh_seconds <= 0:
             raise ValueError("LIVE performance refresh interval must be positive")
         if self.trade_history_limit <= 0:
             raise ValueError("LIVE performance trade-history limit must be positive")
 
     async def get_snapshot(self) -> TradingPerformanceSnapshot:
-        """Return cached-or-fresh authoritative LIVE realized performance."""
+        """Return cached-or-fresh Botragram-only realized performance."""
         now = self.monotonic_clock()
         cached = self._cached_snapshot
         if (
@@ -114,8 +103,7 @@ class LiveTradingPerformanceService:
         ):
             return cached
 
-        trades = await self.exchange_client.get_trades(
-            symbol=None,
+        trades = await self.trade_repository.get_latest(
             limit=self.trade_history_limit,
         )
         snapshot = self._aggregate(trades=trades)
@@ -125,11 +113,13 @@ class LiveTradingPerformanceService:
 
     @staticmethod
     def _aggregate(*, trades: Sequence[Trade]) -> TradingPerformanceSnapshot:
-        """Aggregate only fills whose venue supplies realized profit and loss."""
+        """Aggregate persisted fills whose venue supplies realized PnL."""
         realized_by_order: dict[str, Decimal] = {}
         for trade in trades:
             realized_pnl = trade.realized_pnl
-            if realized_pnl is None:
+            if realized_pnl is None or trade.order_id.startswith(
+                _PAPER_ORDER_ID_PREFIX
+            ):
                 continue
             realized_by_order[trade.order_id] = (
                 realized_by_order.get(trade.order_id, _DECIMAL_ZERO) + realized_pnl

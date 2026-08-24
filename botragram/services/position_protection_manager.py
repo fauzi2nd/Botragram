@@ -63,6 +63,7 @@ class PositionProtectionManager:
     )
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _cached_position: Position | None = field(default=None, init=False, repr=False)
+    _cached_position_version: int = field(default=0, init=False, repr=False)
     _last_refresh_monotonic: float = field(default=0.0, init=False, repr=False)
     _retry_after_monotonic: float = field(default=0.0, init=False, repr=False)
 
@@ -540,16 +541,21 @@ class PositionProtectionManager:
         """Refresh the active position at a bounded cadence."""
         now = monotonic()
         cached = self._cached_position
+        position_version = self.lifecycle_coordinator.get_position_version(
+            symbol=symbol,
+        )
 
         if (
             now - self._last_refresh_monotonic < self.position_refresh_seconds
             and cached is not None
             and cached.symbol.upper() == symbol.upper()
+            and self._cached_position_version == position_version
         ):
             return cached
 
         position = await self.position_repository.get_by_symbol(symbol=symbol)
         self._cached_position = position
+        self._cached_position_version = position_version
         self._last_refresh_monotonic = now
         return position
 

@@ -20,8 +20,12 @@ from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
 )
-from botragram.models import Order, Position
-from botragram.repositories import PositionRepository, SubmissionAttemptRepository
+from botragram.models import Order, Position, Trade
+from botragram.repositories import (
+    PositionRepository,
+    SubmissionAttemptRepository,
+    TradeRepository,
+)
 from botragram.services.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
 )
@@ -34,6 +38,7 @@ __all__ = [
 _RECONCILIATION_ATTEMPTS: Final[int] = 3
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.5
 _PORTFOLIO_STABILITY_ATTEMPTS: Final[int] = 3
+_TRADE_HISTORY_LIMIT: Final[int] = 1_000
 _TERMINAL_PROTECTION_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
     {
         OrderStatus.FILLED,
@@ -83,6 +88,19 @@ class LiveNaturalExitExchange(Protocol):
         ...
 
 
+class LiveBotExitTradeHistory(Protocol):
+    """Expose the bounded fill read needed for one proven Botragram exit."""
+
+    async def get_trades(
+        self,
+        *,
+        symbol: str | None,
+        limit: int,
+    ) -> Sequence[Trade]:
+        """Return bounded account fills for one optional symbol."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class LiveNaturalExitRecoveryService:
     """Reconcile zero-exposure exits before another LIVE entry can be allowed.
@@ -95,6 +113,8 @@ class LiveNaturalExitRecoveryService:
     exchange_client: LiveNaturalExitExchange
     position_repository: PositionRepository
     submission_attempt_repository: SubmissionAttemptRepository
+    trade_repository: TradeRepository | None = None
+    trade_history: LiveBotExitTradeHistory | None = None
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
         default_factory=LivePositionLifecycleCoordinator,
     )
@@ -259,12 +279,64 @@ class LiveNaturalExitRecoveryService:
                         "LIVE protection remains before durable position deletion: "
                         f"symbol={position.symbol} count={len(remaining)}"
                     )
+                await self._persist_bot_exit_fills(position=position)
                 await self.position_repository.delete(symbol=position.symbol)
+                self.lifecycle_coordinator.record_position_deletion(
+                    symbol=position.symbol,
+                )
             _LOGGER.info(
                 "Natural LIVE exit reconciled: symbol=%s entry_client_order_id=%s",
                 position.symbol,
                 position.entry_client_order_id,
             )
+
+    async def _persist_bot_exit_fills(self, *, position: Position) -> None:
+        """Persist only fills proven to belong to Botragram exit protection."""
+        trade_repository = self.trade_repository
+        trade_history = self.trade_history
+        if trade_repository is None or trade_history is None:
+            return
+
+        exit_order_ids = await self._get_filled_exit_order_ids(position=position)
+        if not exit_order_ids:
+            return
+
+        trades = await trade_history.get_trades(
+            symbol=position.symbol,
+            limit=_TRADE_HISTORY_LIMIT,
+        )
+        bot_exit_fills = tuple(
+            trade
+            for trade in trades
+            if trade.order_id in exit_order_ids and trade.realized_pnl is not None
+        )
+        if bot_exit_fills:
+            await trade_repository.save_many(trades=bot_exit_fills)
+
+    async def _get_filled_exit_order_ids(self, *, position: Position) -> set[str]:
+        """Return terminal FILLED order identifiers for durable bot legs only."""
+        filled_order_ids: set[str] = set()
+        for client_id in (
+            position.stop_loss_client_algo_id,
+            position.take_profit_client_algo_id,
+            position.pending_stop_loss_client_algo_id,
+        ):
+            if client_id is None:
+                continue
+            try:
+                order = await self.exchange_client.get_protection_order_by_client_id(
+                    symbol=position.symbol,
+                    client_id=client_id,
+                )
+            except ExchangeOrderNotFoundError:
+                continue
+            except ExchangeOrderOutcomeUnknownError as error:
+                raise RuntimeError(
+                    "LIVE exit fill identity could not be verified before persistence"
+                ) from error
+            if order.status is OrderStatus.FILLED:
+                filled_order_ids.add(order.order_id)
+        return filled_order_ids
 
     @staticmethod
     def _portfolio_snapshots_match(
