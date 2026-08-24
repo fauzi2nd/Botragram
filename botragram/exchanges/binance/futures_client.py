@@ -25,6 +25,7 @@ from botragram.enums import (
     PositionSide,
 )
 from botragram.exceptions import (
+    ExchangeOrderImmediateTriggerRejectedError,
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderPriceBandRejectedError,
@@ -68,6 +69,7 @@ _DEFAULT_TIME_IN_FORCE = "GTC"
 _SUPPORTED_ENTRY_ORDER_TYPES = frozenset({OrderType.MARKET, OrderType.LIMIT})
 _CLIENT_ORDER_ID_MAX_LENGTH = 36
 _BINANCE_ORDER_NOT_FOUND_CODE = -2013
+_BINANCE_IMMEDIATE_TRIGGER_REJECTED_CODE = -2021
 _BINANCE_PERCENT_PRICE_REJECTED_CODE = -4131
 _PROTECTION_RECONCILIATION_ATTEMPTS = 3
 _PROTECTION_RECONCILIATION_DELAY_SECONDS = 0.5
@@ -1003,6 +1005,10 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
                 authenticated=True,
             )
         except BinanceRestResponseError as error:
+            if error.code == _BINANCE_IMMEDIATE_TRIGGER_REJECTED_CODE:
+                raise ExchangeOrderImmediateTriggerRejectedError(
+                    "Binance Futures protection would trigger immediately"
+                ) from error
             raise ExchangeOrderRejectedError(
                 "Binance Futures protection order was rejected"
             ) from error

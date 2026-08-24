@@ -33,6 +33,7 @@ __all__ = [
     "ExchangeOrderNotFoundError",
     "ExchangeOrderOutcomeUnknownError",
     "ExchangeOrderRejectedError",
+    "ExchangeOrderImmediateTriggerRejectedError",
     "ExchangeOrderPriceBandRejectedError",
     "ExchangeInsufficientBalanceError",
     "ExchangeSymbolError",
@@ -84,6 +85,10 @@ class ExchangeOrderOutcomeUnknownError(ExchangeOrderError):
 
 class ExchangeOrderRejectedError(ExchangeOrderError):
     """Raised when an exchange explicitly rejects an order mutation."""
+
+
+class ExchangeOrderImmediateTriggerRejectedError(ExchangeOrderRejectedError):
+    """Raised when a conditional order would trigger immediately at the venue."""
 
 
 class ExchangeOrderPriceBandRejectedError(ExchangeOrderRejectedError):

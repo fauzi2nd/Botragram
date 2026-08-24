@@ -18,6 +18,7 @@ from botragram.enums import (
     TradeMode,
 )
 from botragram.exceptions import (
+    ExchangeOrderImmediateTriggerRejectedError,
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     VenueRuleValidationError,
@@ -134,12 +135,17 @@ class PositionProtectionManager:
                 self._cached_position = pending
 
                 try:
-                    await self._submit_pending_stop_replacement(position=pending)
+                    replacement_submitted = await self._submit_pending_stop_replacement(
+                        position=pending
+                    )
                 except Exception:
                     self._retry_after_monotonic = (
                         monotonic() + self.failure_retry_seconds
                     )
                     raise
+
+                if not replacement_submitted:
+                    return
 
                 protected_position = self._promote_pending_stop_replacement(
                     position=pending,
@@ -335,10 +341,15 @@ class PositionProtectionManager:
     ) -> None:
         """Prove pending STOP ownership, retire predecessor, then promote."""
         try:
-            await self._submit_pending_stop_replacement(position=position)
+            replacement_submitted = await self._submit_pending_stop_replacement(
+                position=position
+            )
         except Exception:
             self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
             raise
+
+        if not replacement_submitted:
+            return
 
         protected = self._promote_pending_stop_replacement(
             position=position,
@@ -402,21 +413,39 @@ class PositionProtectionManager:
                 "Pending LIVE STOP does not match its durable replacement identity"
             )
 
-    async def _submit_pending_stop_replacement(self, *, position: Position) -> None:
-        """Submit or reconcile the exact pending STOP and retire current STOP."""
+    async def _submit_pending_stop_replacement(self, *, position: Position) -> bool:
+        """Submit or reconcile the exact pending STOP and retire current STOP.
+
+        Returns:
+            ``True`` when the pending replacement is exchange-proven active.
+            ``False`` when Binance explicitly rejects it as immediately
+            triggering and the current durable STOP is still proven active.
+
+        Raises:
+            RuntimeError: If protection ownership cannot be proven.
+        """
         pending_stop = position.pending_stop_loss
         pending_id = position.pending_stop_loss_client_algo_id
         if pending_stop is None or pending_id is None:
             raise RuntimeError("Pending LIVE STOP replacement is incomplete")
 
-        order = await self.exchange_client.ensure_stop_loss_order(
-            symbol=position.symbol,
-            side=self._closing_side(position.side),
-            quantity=position.quantity,
-            stop_loss=pending_stop,
-            client_algo_id=pending_id,
-            previous_client_algo_id=position.stop_loss_client_algo_id,
-        )
+        try:
+            order = await self.exchange_client.ensure_stop_loss_order(
+                symbol=position.symbol,
+                side=self._closing_side(position.side),
+                quantity=position.quantity,
+                stop_loss=pending_stop,
+                client_algo_id=pending_id,
+                previous_client_algo_id=position.stop_loss_client_algo_id,
+            )
+        except ExchangeOrderImmediateTriggerRejectedError:
+            await self._require_current_stop_after_terminal_pending(position=position)
+            await self._clear_pending_stop_replacement(
+                position=position,
+                reason="explicit_immediate_trigger_rejected",
+            )
+            return False
+
         if (
             order.client_order_id != pending_id
             or order.symbol.upper() != position.symbol.upper()
@@ -429,6 +458,8 @@ class PositionProtectionManager:
             raise RuntimeError(
                 "Exchange did not prove the exact pending LIVE STOP replacement"
             )
+
+        return True
 
     @staticmethod
     def _promote_pending_stop_replacement(

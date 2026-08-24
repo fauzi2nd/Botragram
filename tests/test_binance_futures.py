@@ -20,9 +20,11 @@ from botragram.enums import (
     PositionSide,
 )
 from botragram.exceptions import (
+    ExchangeOrderImmediateTriggerRejectedError,
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderPriceBandRejectedError,
+    ExchangeOrderRejectedError,
 )
 from botragram.exchanges.base.rest import (
     JsonObject,
@@ -122,6 +124,34 @@ class PriceBandRejectingRestClient(RecordingBinanceRestClient):
                 "PERCENT_PRICE filter limit.",
             },
             message="configured PERCENT_PRICE rejection",
+        )
+
+
+class ProtectionRejectingRestClient(RecordingBinanceRestClient):
+    """Raise one configurable explicit Binance protection rejection."""
+
+    __slots__ = ("error_code",)
+
+    def __init__(self, *, error_code: int) -> None:
+        """Initialize one deterministic structured rejection."""
+        super().__init__()
+        self.error_code = error_code
+
+    async def post(
+        self,
+        path: str,
+        *,
+        params: QueryParams | None = None,
+        data: JsonObject | None = None,
+        headers: RequestHeaders | None = None,
+        authenticated: bool = False,
+    ) -> JsonResponse:
+        """Reject one conditional protection POST without transport ambiguity."""
+        del path, params, data, headers, authenticated
+        raise BinanceRestResponseError(
+            status=400,
+            payload={"code": self.error_code, "msg": "configured rejection"},
+            message="configured protection rejection",
         )
 
 
@@ -354,6 +384,42 @@ async def test_futures_client_classifies_percent_price_order_rejection() -> None
             order_type=OrderType.MARKET,
             quantity=Decimal("0.01"),
         )
+
+
+@pytest.mark.asyncio
+async def test_futures_protection_post_classifies_immediate_trigger_rejection() -> None:
+    """Map only Binance -2021 to the typed conditional-order rejection."""
+    client = _create_client(ProtectionRejectingRestClient(error_code=-2021))
+
+    with pytest.raises(ExchangeOrderImmediateTriggerRejectedError) as captured:
+        await client.create_protection_orders(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            quantity=Decimal("0.01"),
+            stop_loss=Decimal("64000"),
+            stop_loss_client_algo_id="bsl-00000000000000000000000000000000",
+        )
+
+    assert isinstance(captured.value, ExchangeOrderRejectedError)
+
+
+@pytest.mark.asyncio
+async def test_futures_protection_post_keeps_other_explicit_rejections_generic() -> (
+    None
+):
+    """Do not infer immediate triggering from any other Binance rejection."""
+    client = _create_client(ProtectionRejectingRestClient(error_code=-2010))
+
+    with pytest.raises(ExchangeOrderRejectedError) as captured:
+        await client.create_protection_orders(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            quantity=Decimal("0.01"),
+            stop_loss=Decimal("64000"),
+            stop_loss_client_algo_id="bsl-00000000000000000000000000000000",
+        )
+
+    assert not isinstance(captured.value, ExchangeOrderImmediateTriggerRejectedError)
 
 
 def test_factory_builds_binance_futures_client() -> None:
@@ -808,6 +874,79 @@ async def test_futures_ambiguous_stop_replacement_reconciles_before_old_cancel()
     assert replacement.client_order_id == "bsl-00000000000000000000000000000000"
     assert client.created == 1
     assert client.cancelled == ["old-stop"]
+
+
+@pytest.mark.asyncio
+async def test_futures_immediate_rejection_keeps_predecessor() -> None:
+    """Never retire the current STOP when pending POST is explicitly rejected."""
+
+    class ImmediateTriggerRejectedProtectionClient(InMemoryProtectionClient):
+        def __init__(self, *, orders: list[Order]) -> None:
+            super().__init__(orders=orders)
+            self.predecessor_retirements = 0
+
+        async def create_protection_orders(
+            self,
+            *,
+            symbol: str,
+            side: OrderSide,
+            quantity: Decimal,
+            stop_loss: Decimal | None = None,
+            take_profit: Decimal | None = None,
+            stop_loss_client_algo_id: str | None = None,
+            take_profit_client_algo_id: str | None = None,
+        ) -> tuple[Order, ...]:
+            del (
+                symbol,
+                side,
+                quantity,
+                stop_loss,
+                take_profit,
+                stop_loss_client_algo_id,
+                take_profit_client_algo_id,
+            )
+            raise ExchangeOrderImmediateTriggerRejectedError(
+                "configured immediate trigger rejection"
+            )
+
+        async def _retire_stop_loss_predecessor(
+            self,
+            *,
+            symbol: str,
+            side: OrderSide,
+            quantity: Decimal,
+            client_algo_id: str,
+        ) -> None:
+            del symbol, side, quantity, client_algo_id
+            self.predecessor_retirements += 1
+
+    predecessor_id = "bsl-11111111111111111111111111111111"
+    client = ImmediateTriggerRejectedProtectionClient(
+        orders=[
+            _protection_order(
+                order_id="old-stop",
+                order_type=OrderType.STOP_MARKET,
+                stop_price=Decimal("100.5"),
+                client_id=predecessor_id,
+            )
+        ]
+    )
+
+    with pytest.raises(ExchangeOrderImmediateTriggerRejectedError):
+        await client.ensure_stop_loss_order(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            quantity=Decimal("1"),
+            stop_loss=Decimal("99.7"),
+            client_algo_id="bsl-22222222222222222222222222222222",
+            previous_client_algo_id=predecessor_id,
+        )
+
+    assert client.predecessor_retirements == 0
+    assert client.cancelled == []
+    assert tuple(order.client_order_id for order in client.open_protections) == (
+        predecessor_id,
+    )
 
 
 @pytest.mark.asyncio

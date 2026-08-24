@@ -24,6 +24,7 @@ from botragram.enums import (
     SubmissionAttemptStatus,
 )
 from botragram.exceptions import (
+    ExchangeOrderImmediateTriggerRejectedError,
     LiveEntryExistingPositionError,
     LiveEntryPortfolioCapacityError,
     LiveEntryPreflightError,
@@ -933,6 +934,47 @@ async def test_post_acknowledged_venue_rule_failure_is_execution_unsafe() -> Non
         )
 
     assert isinstance(captured.value.__cause__, VenueRuleValidationError)
+    assert orders.calls == 1
+    incomplete = await repository.get_incomplete()
+    assert len(incomplete) == 1
+    assert incomplete[0].status is SubmissionAttemptStatus.ACKNOWLEDGED
+    assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_post_entry_immediate_trigger_rejection_remains_unsafe() -> None:
+    """Do not apply stepped replacement recovery to initial SL/TP creation."""
+    orders = FakeOrderService()
+    protection = FakeProtectionService(
+        error=ExchangeOrderImmediateTriggerRejectedError(
+            "configured initial protection rejection"
+        )
+    )
+    repository = MemorySubmissionAttemptRepository()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(_position()),
+        protection_service=protection,
+        runtime_control=control,
+        submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
+    )
+
+    with pytest.raises(RuntimeError, match="post-entry state is unsafe") as captured:
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M1,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert isinstance(
+        captured.value.__cause__, ExchangeOrderImmediateTriggerRejectedError
+    )
     assert orders.calls == 1
     incomplete = await repository.get_incomplete()
     assert len(incomplete) == 1

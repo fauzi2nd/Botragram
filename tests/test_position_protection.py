@@ -18,7 +18,11 @@ from botragram.enums import (
     PositionSide,
     TradeMode,
 )
-from botragram.exceptions import ExchangeOrderNotFoundError
+from botragram.exceptions import (
+    ExchangeOrderImmediateTriggerRejectedError,
+    ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
+)
 from botragram.exchanges.binance.futures_client import (
     BinanceFuturesExchangeClient,
 )
@@ -191,6 +195,73 @@ class SteppedPriceFilterExchange(RecordingProtectionExchange):
         if self.mark_price_error is not None:
             raise self.mark_price_error
         return self.mark_price
+
+
+class ImmediateTriggerRejectedExchange(RecordingProtectionExchange):
+    """Return a configured -2021 outcome for one stepped replacement POST."""
+
+    __slots__ = (
+        "current_result",
+        "current_stop_id",
+        "immediate_rejections_remaining",
+    )
+
+    def __init__(
+        self,
+        *,
+        current_stop_id: str,
+        current_result: Order | Exception | None,
+        immediate_rejections_remaining: int = 1,
+    ) -> None:
+        """Initialize one current STOP lookup and explicit pending rejection."""
+        super().__init__()
+        self.current_stop_id = current_stop_id
+        self.current_result = current_result
+        self.immediate_rejections_remaining = immediate_rejections_remaining
+
+    async def ensure_stop_loss_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        stop_loss: Decimal,
+        client_algo_id: str | None = None,
+        previous_client_algo_id: str | None = None,
+    ) -> Order:
+        """Reject only the configured first pending replacement submission."""
+        if self.immediate_rejections_remaining > 0:
+            self.immediate_rejections_remaining -= 1
+            self.previous_stop_client_algo_ids.append(previous_client_algo_id)
+            raise ExchangeOrderImmediateTriggerRejectedError(
+                "configured immediate trigger rejection"
+            )
+        return await super().ensure_stop_loss_order(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            client_algo_id=client_algo_id,
+            previous_client_algo_id=previous_client_algo_id,
+        )
+
+    async def get_protection_order_by_client_id(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+    ) -> Order:
+        """Return the configured exact current STOP outcome."""
+        if client_id == self.current_stop_id:
+            if isinstance(self.current_result, Exception):
+                raise self.current_result
+            if self.current_result is None:
+                raise ExchangeOrderNotFoundError("configured current STOP not found")
+            return self.current_result
+        return await super().get_protection_order_by_client_id(
+            symbol=symbol,
+            client_id=client_id,
+        )
 
 
 def _short_position() -> Position:
@@ -527,6 +598,108 @@ async def test_paper_stream_closes_position_when_stepped_stop_is_hit() -> None:
     await service.on_market_tick(ticker=_ticker(price="99.7", seconds=2))
 
     assert await position_repository.get_by_symbol(symbol="BTCUSDT") is None
+
+
+def _current_stop(*, client_id: str) -> Order:
+    """Return the exact active current STOP for a managed short position."""
+    return Order(
+        order_id="current-stop",
+        client_order_id=client_id,
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.STOP_MARKET,
+        status=OrderStatus.NEW,
+        quantity=Decimal("1"),
+        executed_quantity=Decimal("0"),
+        price=None,
+        stop_price=Decimal("100.5"),
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_immediate_trigger_rejection_clears_only_proven_pending_stop() -> (
+    None
+):
+    """Keep the current STOP healthy when a tighter pending STOP gets -2021."""
+    current_id = "bsl-11111111111111111111111111111111"
+    position = replace(_short_position(), stop_loss_client_algo_id=current_id)
+    repository = RecordingUpdateRepository()
+    await repository.save(position=position)
+    exchange = ImmediateTriggerRejectedExchange(
+        current_stop_id=current_id,
+        current_result=_current_stop(client_id=current_id),
+    )
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+
+    cleared = await repository.get_by_symbol(symbol=position.symbol)
+    assert cleared is not None
+    assert cleared.stop_loss == position.stop_loss
+    assert cleared.stop_loss_client_algo_id == current_id
+    assert cleared.protection_step == 0
+    assert cleared.pending_stop_loss is None
+    assert cleared.pending_stop_loss_client_algo_id is None
+    assert cleared.pending_protection_step == 0
+    assert exchange.stop_replacements == []
+
+    first_pending = repository.updated_positions[0]
+    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=2))
+
+    advanced = await repository.get_by_symbol(symbol=position.symbol)
+    assert advanced is not None
+    assert advanced.stop_loss == Decimal("99.70")
+    assert advanced.stop_loss_client_algo_id is not None
+    assert (
+        advanced.stop_loss_client_algo_id
+        != first_pending.pending_stop_loss_client_algo_id
+    )
+    assert advanced.protection_step == 1
+    assert advanced.pending_stop_loss_client_algo_id is None
+    assert exchange.previous_stop_client_algo_ids == [current_id, current_id]
+
+
+@pytest.mark.asyncio
+async def test_live_immediate_rejection_keeps_pending_when_current_unproven() -> None:
+    """Fail closed on absent, unknown, transitional, or malformed current STOP."""
+    current_id = "bsl-11111111111111111111111111111111"
+
+    for current_result in (
+        None,
+        ExchangeOrderOutcomeUnknownError("configured lookup unknown"),
+        replace(_current_stop(client_id=current_id), status=OrderStatus.TRIGGERING),
+        replace(_current_stop(client_id=current_id), stop_price=Decimal("100.4")),
+        replace(_current_stop(client_id=current_id), quantity=Decimal("2")),
+    ):
+        position = replace(_short_position(), stop_loss_client_algo_id=current_id)
+        repository = MemoryPositionRepository()
+        await repository.save(position=position)
+        manager = PositionProtectionManager(
+            trade_mode=TradeMode.LIVE,
+            position_repository=repository,
+            exchange_client=ImmediateTriggerRejectedExchange(
+                current_stop_id=current_id,
+                current_result=current_result,
+            ),
+        )
+
+        with pytest.raises(RuntimeError):
+            await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+
+        pending = await repository.get_by_symbol(symbol=position.symbol)
+        assert pending is not None
+        assert pending.stop_loss == position.stop_loss
+        assert pending.stop_loss_client_algo_id == current_id
+        assert pending.protection_step == 0
+        assert pending.pending_stop_loss == Decimal("99.70")
+        assert pending.pending_stop_loss_client_algo_id is not None
+        assert pending.pending_protection_step == 1
 
 
 @pytest.mark.asyncio
