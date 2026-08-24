@@ -373,6 +373,19 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         );
         """,
     ),
+    _Migration(
+        version=13,
+        script="""
+        ALTER TABLE positions
+        ADD COLUMN pending_stop_loss TEXT;
+
+        ALTER TABLE positions
+        ADD COLUMN pending_stop_loss_client_algo_id TEXT;
+
+        ALTER TABLE positions
+        ADD COLUMN pending_protection_step INTEGER NOT NULL DEFAULT 0;
+        """,
+    ),
 )
 
 

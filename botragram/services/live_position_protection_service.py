@@ -81,6 +81,9 @@ class LivePositionProtectionService:
         Raises:
             RuntimeError: If the exchange cannot prove complete protection.
         """
+        position = await self._reconcile_pending_stop_replacement(
+            position=position,
+        )
         protection_orders = await self.exchange_client.get_open_protection_orders(
             symbol=position.symbol,
         )
@@ -191,6 +194,115 @@ class LivePositionProtectionService:
             protected.take_profit,
         )
         return protected
+
+    async def _reconcile_pending_stop_replacement(
+        self,
+        *,
+        position: Position,
+    ) -> Position:
+        """Recover an interrupted stepped STOP without losing current ownership."""
+        pending_id = position.pending_stop_loss_client_algo_id
+        if pending_id is None:
+            return position
+
+        pending_stop = position.pending_stop_loss
+        if pending_stop is None:
+            raise RuntimeError("Pending LIVE STOP identity is missing its trigger")
+
+        try:
+            order = await self.exchange_client.get_protection_order_by_client_id(
+                symbol=position.symbol,
+                client_id=pending_id,
+            )
+        except ExchangeOrderNotFoundError:
+            return position
+        except ExchangeOrderOutcomeUnknownError as error:
+            raise RuntimeError(
+                "Pending LIVE STOP identity could not be verified"
+            ) from error
+
+        self._validate_pending_stop_replacement(
+            order=order,
+            position=position,
+        )
+        if order.status in {
+            OrderStatus.CANCELED,
+            OrderStatus.REJECTED,
+            OrderStatus.EXPIRED,
+        }:
+            cleared = replace(
+                position,
+                pending_stop_loss=None,
+                pending_stop_loss_client_algo_id=None,
+                pending_protection_step=0,
+            )
+            await self.position_repository.save(position=cleared)
+            return cleared
+        if order.status is OrderStatus.FILLED:
+            raise RuntimeError(
+                "Pending LIVE STOP is filled while exchange position remains active"
+            )
+        if order.status is not OrderStatus.NEW:
+            raise RuntimeError("Pending LIVE STOP is neither active nor terminal")
+
+        target = await self.exchange_client.ensure_stop_loss_order(
+            symbol=position.symbol,
+            side=self._closing_side(position.side),
+            quantity=position.quantity,
+            stop_loss=pending_stop,
+            client_algo_id=pending_id,
+            previous_client_algo_id=position.stop_loss_client_algo_id,
+        )
+        self._validate_pending_stop_replacement(
+            order=target,
+            position=position,
+        )
+        if target.status is not OrderStatus.NEW:
+            raise RuntimeError("Recovered pending LIVE STOP is not active")
+
+        promoted = replace(
+            position,
+            stop_loss=pending_stop,
+            stop_loss_client_algo_id=pending_id,
+            protection_step=position.pending_protection_step,
+            pending_stop_loss=None,
+            pending_stop_loss_client_algo_id=None,
+            pending_protection_step=0,
+        )
+        await self.position_repository.save(position=promoted)
+        _LOGGER.info(
+            "Pending LIVE STOP replacement recovered: symbol=%s step=%d",
+            promoted.symbol,
+            promoted.protection_step,
+        )
+        return promoted
+
+    @staticmethod
+    def _validate_pending_stop_replacement(
+        *,
+        order: Order,
+        position: Position,
+    ) -> None:
+        """Require exact pending STOP identity and immutable replacement shape."""
+        pending_id = position.pending_stop_loss_client_algo_id
+        pending_stop = position.pending_stop_loss
+        if pending_id is None or pending_stop is None:
+            raise RuntimeError("Pending LIVE STOP replacement is incomplete")
+
+        expected_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+        )
+        if (
+            order.client_order_id != pending_id
+            or order.symbol.upper() != position.symbol.upper()
+            or order.side is not expected_side
+            or order.order_type is not OrderType.STOP_MARKET
+            or order.quantity != position.quantity
+            or order.stop_price != pending_stop
+        ):
+            raise RuntimeError(
+                "Pending LIVE STOP does not match its durable replacement identity"
+            )
 
     async def _normalize_missing_protection_plan(
         self,

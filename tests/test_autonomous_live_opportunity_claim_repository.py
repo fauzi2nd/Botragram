@@ -62,7 +62,7 @@ async def _run_v11_to_v12_migration_test() -> None:
             )
             assert before is None
 
-            assert await manager.initialize() == 12
+            assert await manager.initialize(target_version=12) == 12
 
             after = await database.fetch_one(
                 statement="""
@@ -95,7 +95,7 @@ async def _run_atomic_claim_test() -> None:
         await database.connect()
         try:
             manager = SQLiteMigrationManager(database=database)
-            assert await manager.initialize() == 12
+            assert await manager.initialize(target_version=12) == 12
             repository = SQLiteAutonomousLiveOpportunityClaimRepository(
                 database=database
             )

@@ -62,15 +62,43 @@ class Position:
     protection_step: int = 0
     stop_loss_client_algo_id: str | None = None
     take_profit_client_algo_id: str | None = None
+    pending_stop_loss: Decimal | None = None
+    pending_stop_loss_client_algo_id: str | None = None
+    pending_protection_step: int = 0
     entry_client_order_id: str | None = None
 
     def __post_init__(self) -> None:
-        """Reject a shared client identity across distinct protection legs."""
+        """Validate distinct current and pending protection identities."""
         if (
             self.stop_loss_client_algo_id is not None
             and self.stop_loss_client_algo_id == self.take_profit_client_algo_id
         ):
             raise ValueError("STOP and TP protection identities must be distinct")
+
+        pending_id = self.pending_stop_loss_client_algo_id
+        has_pending = (
+            self.pending_stop_loss is not None
+            or pending_id is not None
+            or self.pending_protection_step != 0
+        )
+        if not has_pending:
+            return
+
+        if self.pending_stop_loss is None or pending_id is None:
+            raise ValueError(
+                "Pending STOP replacement requires both trigger and client identity"
+            )
+        if self.pending_protection_step <= self.protection_step:
+            raise ValueError(
+                "Pending STOP replacement step must advance current protection"
+            )
+        if pending_id in {
+            self.stop_loss_client_algo_id,
+            self.take_profit_client_algo_id,
+        }:
+            raise ValueError(
+                "Pending STOP replacement identity must be distinct from current legs"
+            )
 
     @staticmethod
     def create_stop_loss_client_algo_id() -> str:

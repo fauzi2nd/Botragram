@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -440,3 +441,36 @@ async def test_reconcile_rechecks_zero_exposure_before_durable_delete() -> None:
 
     assert exchange.cancel_calls == []
     assert await repository.get_by_symbol(symbol=_SYMBOL) is not None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_accepts_exact_pending_stop_orphan() -> None:
+    """Treat an interrupted stepped STOP as durable owned orphan protection."""
+    pending_id = "bsl-22222222222222222222222222222222"
+    position = replace(
+        _position(),
+        pending_stop_loss=Decimal("0.01140"),
+        pending_stop_loss_client_algo_id=pending_id,
+        pending_protection_step=1,
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = FakeNaturalExitExchange(
+        protections=(
+            _protection(
+                order_type=OrderType.STOP_MARKET,
+                client_id=pending_id,
+                trigger="0.01140",
+            ),
+        )
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    await service.reconcile()
+
+    assert exchange.cancel_calls == [(_SYMBOL, pending_id)]
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None

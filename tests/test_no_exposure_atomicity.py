@@ -193,7 +193,9 @@ class _FakeExchangeClient(BaseExchangeClient):
         quantity: Decimal,
         stop_loss: Decimal,
         client_algo_id: str | None = None,
+        previous_client_algo_id: str | None = None,
     ) -> Order:  # pragma: no cover
+        del previous_client_algo_id
         self.post_calls += 1
         raise NotImplementedError
 

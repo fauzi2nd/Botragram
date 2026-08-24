@@ -544,35 +544,56 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         quantity: Decimal,
         stop_loss: Decimal,
         client_algo_id: str | None = None,
+        previous_client_algo_id: str | None = None,
     ) -> Order:
-        """Place a replacement stop before cancelling matching older stops."""
+        """Ensure one exact durable replacement and retire its predecessor."""
         if quantity <= 0:
             raise ValueError("Stop-loss quantity must be greater than zero")
-
         if stop_loss <= 0:
             raise ValueError("Stop-loss trigger price must be greater than zero")
 
         normalized_symbol = self._normalize_symbol(symbol)
-        orders = await self.get_open_protection_orders(symbol=normalized_symbol)
         candidates = self._matching_stop_orders(
-            orders=orders,
+            orders=await self.get_open_protection_orders(symbol=normalized_symbol),
             symbol=normalized_symbol,
             side=side,
             quantity=quantity,
         )
-        target = next(
-            (order for order in candidates if order.stop_price == stop_loss),
-            None,
-        )
+        target: Order | None = None
+
+        if client_algo_id is not None:
+            target = next(
+                (
+                    order
+                    for order in candidates
+                    if order.client_order_id == client_algo_id
+                ),
+                None,
+            )
+            if target is None:
+                try:
+                    target = await self.get_protection_order_by_client_id(
+                        symbol=normalized_symbol,
+                        client_id=client_algo_id,
+                    )
+                except ExchangeOrderNotFoundError:
+                    target = None
+        else:
+            target = next(
+                (order for order in candidates if order.stop_price == stop_loss),
+                None,
+            )
 
         if target is None:
             try:
-                await self.create_protection_orders(
-                    symbol=normalized_symbol,
-                    side=side,
-                    quantity=quantity,
-                    stop_loss=stop_loss,
-                    stop_loss_client_algo_id=client_algo_id,
+                created = tuple(
+                    await self.create_protection_orders(
+                        symbol=normalized_symbol,
+                        side=side,
+                        quantity=quantity,
+                        stop_loss=stop_loss,
+                        stop_loss_client_algo_id=client_algo_id,
+                    )
                 )
             except ExchangeOrderOutcomeUnknownError:
                 if client_algo_id is None:
@@ -584,40 +605,78 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
                     stop_loss=stop_loss,
                     client_algo_id=client_algo_id,
                 )
-            if target is not None:
-                candidates = tuple((*candidates, target))
             else:
-                orders = await self.get_open_protection_orders(
-                    symbol=normalized_symbol,
-                )
-                candidates = self._matching_stop_orders(
-                    orders=orders,
-                    symbol=normalized_symbol,
-                    side=side,
-                    quantity=quantity,
-                )
-                target = next(
-                    (order for order in candidates if order.stop_price == stop_loss),
-                    None,
-                )
+                if client_algo_id is not None:
+                    target = next(
+                        (
+                            order
+                            for order in created
+                            if order.client_order_id == client_algo_id
+                        ),
+                        None,
+                    )
+                    if target is None:
+                        target = await self._reconcile_stop_loss_order(
+                            symbol=normalized_symbol,
+                            side=side,
+                            quantity=quantity,
+                            stop_loss=stop_loss,
+                            client_algo_id=client_algo_id,
+                        )
+                else:
+                    target = next(
+                        (
+                            order
+                            for order in created
+                            if order.order_type is OrderType.STOP_MARKET
+                            and order.stop_price == stop_loss
+                        ),
+                        None,
+                    )
 
         if target is None:
             raise RuntimeError("Binance did not confirm the replacement stop-loss")
 
-        for order in candidates:
-            if order.order_id == target.order_id:
-                continue
+        self._validate_stop_loss_order(
+            order=target,
+            symbol=normalized_symbol,
+            side=side,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            client_algo_id=client_algo_id,
+        )
 
-            await self._cancel_algo_order(
+        if (
+            previous_client_algo_id is not None
+            and previous_client_algo_id != target.client_order_id
+        ):
+            await self._retire_stop_loss_predecessor(
                 symbol=normalized_symbol,
-                order_id=order.order_id,
+                side=side,
+                quantity=quantity,
+                client_algo_id=previous_client_algo_id,
+            )
+        elif previous_client_algo_id is None:
+            for order in candidates:
+                if order.order_id == target.order_id:
+                    continue
+                await self._cancel_algo_order(
+                    symbol=normalized_symbol,
+                    order_id=order.order_id,
+                )
+
+        if client_algo_id is not None:
+            return await self._reconcile_stop_loss_order(
+                symbol=normalized_symbol,
+                side=side,
+                quantity=quantity,
+                stop_loss=stop_loss,
+                client_algo_id=client_algo_id,
             )
 
         remaining = await self.get_open_protection_orders(symbol=normalized_symbol)
-
         if not any(order.order_id == target.order_id for order in remaining):
             raise RuntimeError("Replacement stop-loss was not active after cleanup")
-
         return target
 
     async def _reconcile_stop_loss_order(
@@ -629,7 +688,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         stop_loss: Decimal,
         client_algo_id: str,
     ) -> Order:
-        """Resolve an ambiguous replacement solely through its client identity."""
+        """Resolve a replacement solely through its exact client identity."""
         for attempt in range(_PROTECTION_RECONCILIATION_ATTEMPTS):
             try:
                 order = await self.get_protection_order_by_client_id(
@@ -641,18 +700,133 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
                     await asyncio.sleep(_PROTECTION_RECONCILIATION_DELAY_SECONDS)
                     continue
                 break
-            if (
-                order.client_order_id == client_algo_id
-                and order.symbol == symbol
-                and order.side is side
-                and order.order_type is OrderType.STOP_MARKET
-                and order.quantity >= quantity
-                and order.stop_price == stop_loss
-                and order.status is OrderStatus.NEW
-            ):
-                return order
-            break
+
+            self._validate_stop_loss_order(
+                order=order,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                stop_loss=stop_loss,
+                client_algo_id=client_algo_id,
+            )
+            return order
+
         raise RuntimeError("Ambiguous replacement stop-loss remains unresolved")
+
+    async def _retire_stop_loss_predecessor(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        client_algo_id: str,
+    ) -> None:
+        """Make one exact predecessor STOP provably inactive."""
+        try:
+            predecessor = await self.get_protection_order_by_client_id(
+                symbol=symbol,
+                client_id=client_algo_id,
+            )
+        except ExchangeOrderNotFoundError:
+            return
+        except ExchangeOrderOutcomeUnknownError as error:
+            raise RuntimeError(
+                "Replacement STOP predecessor could not be verified"
+            ) from error
+
+        self._validate_stop_loss_order(
+            order=predecessor,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            stop_loss=None,
+            client_algo_id=client_algo_id,
+            require_active=False,
+        )
+        if predecessor.status in {
+            OrderStatus.FILLED,
+            OrderStatus.CANCELED,
+            OrderStatus.REJECTED,
+            OrderStatus.EXPIRED,
+        }:
+            return
+        if predecessor.status is not OrderStatus.NEW:
+            raise RuntimeError(
+                "Replacement STOP predecessor is neither active nor terminal"
+            )
+
+        ambiguous_error: ExchangeOrderOutcomeUnknownError | None = None
+        try:
+            await self.cancel_protection_order(
+                symbol=symbol,
+                client_id=client_algo_id,
+            )
+        except ExchangeOrderOutcomeUnknownError as error:
+            ambiguous_error = error
+
+        for attempt in range(_PROTECTION_RECONCILIATION_ATTEMPTS):
+            try:
+                remaining = await self.get_protection_order_by_client_id(
+                    symbol=symbol,
+                    client_id=client_algo_id,
+                )
+            except ExchangeOrderNotFoundError:
+                return
+            except ExchangeOrderOutcomeUnknownError:
+                remaining = None
+
+            if remaining is not None:
+                self._validate_stop_loss_order(
+                    order=remaining,
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    stop_loss=None,
+                    client_algo_id=client_algo_id,
+                    require_active=False,
+                )
+                if remaining.status in {
+                    OrderStatus.FILLED,
+                    OrderStatus.CANCELED,
+                    OrderStatus.REJECTED,
+                    OrderStatus.EXPIRED,
+                }:
+                    return
+
+            if attempt + 1 < _PROTECTION_RECONCILIATION_ATTEMPTS:
+                await asyncio.sleep(_PROTECTION_RECONCILIATION_DELAY_SECONDS)
+
+        if ambiguous_error is not None:
+            raise RuntimeError(
+                "Ambiguous replacement STOP predecessor cleanup remains unresolved"
+            ) from ambiguous_error
+        raise RuntimeError("Replacement STOP predecessor remains active")
+
+    @staticmethod
+    def _validate_stop_loss_order(
+        *,
+        order: Order,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        stop_loss: Decimal | None,
+        client_algo_id: str | None,
+        require_active: bool = True,
+    ) -> None:
+        """Validate exact shape of a current or replacement STOP."""
+        if (
+            order.symbol.upper() != symbol
+            or order.side is not side
+            or order.order_type is not OrderType.STOP_MARKET
+            or order.quantity != quantity
+            or order.stop_price is None
+            or (client_algo_id is not None and order.client_order_id != client_algo_id)
+            or (stop_loss is not None and order.stop_price != stop_loss)
+            or (require_active and order.status is not OrderStatus.NEW)
+        ):
+            raise RuntimeError(
+                "Binance STOP does not match the durable replacement identity"
+            )
 
     async def get_positions(
         self,

@@ -243,6 +243,51 @@ async def _run_v10_to_v11_migration_test() -> None:
             version_11 = await manager.initialize(target_version=11)
             assert version_11 == 11
 
+            columns_after = await database.fetch_all(
+                statement="PRAGMA table_info(positions)",
+            )
+            assert "entry_client_order_id" in {
+                str(row["name"]) for row in columns_after
+            }
+
+            legacy_row = await database.fetch_one(
+                statement="""
+                SELECT
+                    symbol,
+                    side,
+                    quantity,
+                    interval,
+                    strategy_type,
+                    stop_loss_client_algo_id,
+                    take_profit_client_algo_id,
+                    entry_client_order_id
+                FROM positions
+                WHERE symbol = ?
+                """,
+                parameters=("1000BONKUSDT",),
+            )
+            assert legacy_row is not None
+            assert str(legacy_row["symbol"]) == "1000BONKUSDT"
+            assert str(legacy_row["side"]) == PositionSide.LONG.value
+            assert str(legacy_row["quantity"]) == "4361"
+            assert str(legacy_row["interval"]) == Interval.M15.value
+            assert str(legacy_row["strategy_type"]) == StrategyType.EMA_CROSS.value
+            assert (
+                str(legacy_row["stop_loss_client_algo_id"])
+                == "bsl-5e874580885b4fc1842dc6fb6677469b"
+            )
+            assert (
+                str(legacy_row["take_profit_client_algo_id"])
+                == "btp-49dbe248896142829376fad033a40165"
+            )
+            assert legacy_row["entry_client_order_id"] is None
+
+            version_again = await manager.initialize(target_version=11)
+            assert version_again == 11
+
+            latest_version = await manager.initialize()
+            assert latest_version == 13
+
             repository = SQLitePositionRepository(database=database)
             loaded = await repository.get_by_symbol(symbol="1000BONKUSDT")
 
@@ -261,20 +306,80 @@ async def _run_v10_to_v11_migration_test() -> None:
                 == "btp-49dbe248896142829376fad033a40165"
             )
             assert loaded.entry_client_order_id is None
+            assert loaded.pending_stop_loss is None
+            assert loaded.pending_stop_loss_client_algo_id is None
+            assert loaded.pending_protection_step == 0
+        finally:
+            await database.close()
 
+
+def test_sqlite_pending_stop_replacement_round_trips() -> None:
+    """Persist current and pending STOP identities independently."""
+    asyncio.run(_run_pending_stop_replacement_round_trip())
+
+
+async def _run_pending_stop_replacement_round_trip() -> None:
+    with TemporaryDirectory() as temporary_directory:
+        database = SQLiteDatabase(
+            database_path=Path(temporary_directory) / "pending-stop.db",
+        )
+        await database.connect()
+        try:
+            manager = SQLiteMigrationManager(database=database)
+            assert await manager.initialize() == 13
+            repository = SQLitePositionRepository(database=database)
+            current_id = "bsl-11111111111111111111111111111111"
+            pending_id = "bsl-22222222222222222222222222222222"
+            position = replace(
+                _position(),
+                stop_loss=Decimal("100.5"),
+                stop_loss_client_algo_id=current_id,
+                pending_stop_loss=Decimal("99.7"),
+                pending_stop_loss_client_algo_id=pending_id,
+                pending_protection_step=1,
+            )
+
+            await repository.save(position=position)
+            loaded = await repository.get_by_symbol(symbol=position.symbol)
+
+            assert loaded == position
+            assert loaded is not None
+            assert loaded.stop_loss_client_algo_id == current_id
+            assert loaded.pending_stop_loss_client_algo_id == pending_id
+            assert loaded.pending_protection_step == 1
+        finally:
+            await database.close()
+
+
+def test_sqlite_v12_to_v13_adds_pending_stop_columns() -> None:
+    """Upgrade existing schema without inventing pending mutation state."""
+    asyncio.run(_run_v12_to_v13_pending_stop_migration())
+
+
+async def _run_v12_to_v13_pending_stop_migration() -> None:
+    with TemporaryDirectory() as temporary_directory:
+        database = SQLiteDatabase(
+            database_path=Path(temporary_directory) / "migration-v12-v13.db",
+        )
+        await database.connect()
+        try:
+            manager = SQLiteMigrationManager(database=database)
+            assert await manager.initialize(target_version=12) == 12
+            columns_before = await database.fetch_all(
+                statement="PRAGMA table_info(positions)",
+            )
+            names_before = {str(row["name"]) for row in columns_before}
+            assert "pending_stop_loss" not in names_before
+
+            assert await manager.initialize(target_version=13) == 13
             columns_after = await database.fetch_all(
                 statement="PRAGMA table_info(positions)",
             )
-            assert "entry_client_order_id" in {
-                str(row["name"]) for row in columns_after
-            }
-
-            version_again = await manager.initialize(target_version=11)
-            assert version_again == 11
-
-            loaded_again = await repository.get_by_symbol(
-                symbol="1000BONKUSDT",
-            )
-            assert loaded_again == loaded
+            names_after = {str(row["name"]) for row in columns_after}
+            assert {
+                "pending_stop_loss",
+                "pending_stop_loss_client_algo_id",
+                "pending_protection_step",
+            } <= names_after
         finally:
             await database.close()

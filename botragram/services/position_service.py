@@ -175,6 +175,11 @@ class PositionService:
                 exchange_position.take_profit_client_algo_id
                 or stored_position.take_profit_client_algo_id
             ),
+            pending_stop_loss=stored_position.pending_stop_loss,
+            pending_stop_loss_client_algo_id=(
+                stored_position.pending_stop_loss_client_algo_id
+            ),
+            pending_protection_step=stored_position.pending_protection_step,
             entry_client_order_id=(
                 exchange_position.entry_client_order_id
                 or stored_position.entry_client_order_id
@@ -288,6 +293,7 @@ class PositionService:
         return (
             position.stop_loss_client_algo_id is not None
             or position.take_profit_client_algo_id is not None
+            or position.pending_stop_loss_client_algo_id is not None
         )
 
     @staticmethod

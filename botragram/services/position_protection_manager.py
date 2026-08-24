@@ -5,14 +5,25 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from decimal import Decimal
 from time import monotonic
 from typing import Final
 
-from botragram.enums import OrderSide, OrderType, PositionSide, TradeMode
-from botragram.exceptions import VenueRuleValidationError
+from botragram.enums import (
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+    TradeMode,
+)
+from botragram.exceptions import (
+    ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
+    VenueRuleValidationError,
+)
 from botragram.exchanges.base import BaseExchangeClient
-from botragram.models import Position, Ticker
+from botragram.models import Order, Position, Ticker
 from botragram.repositories import PositionRepository
 
 __all__ = ["PositionProtectionManager"]
@@ -20,6 +31,8 @@ __all__ = ["PositionProtectionManager"]
 
 _POSITION_REFRESH_SECONDS: Final[float] = 1.0
 _FAILURE_RETRY_SECONDS: Final[float] = 5.0
+_PENDING_RECONCILIATION_ATTEMPTS: Final[int] = 2
+_PENDING_RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
 _PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = (
     Decimal("0.50"),
     Decimal("0.60"),
@@ -61,8 +74,18 @@ class PositionProtectionManager:
                 return
 
             position = await self._get_position(symbol=ticker.symbol)
-
             if position is None or position.take_profit is None:
+                return
+
+            if (
+                self.trade_mode is TradeMode.LIVE
+                and position.pending_stop_loss_client_algo_id is not None
+            ):
+                await self._resume_pending_stop_replacement(
+                    position=position,
+                    timestamp=ticker.timestamp,
+                    current_price=ticker.last_price,
+                )
                 return
 
             progress = self._calculate_tp_progress(
@@ -70,7 +93,6 @@ class PositionProtectionManager:
                 current_price=ticker.last_price,
             )
             step = self._resolve_step(progress=progress)
-
             if step <= position.protection_step:
                 return
 
@@ -79,9 +101,8 @@ class PositionProtectionManager:
                 position=position,
                 locked_progress=locked_progress,
             )
-
-            position_with_client_id = position
             final_stop = replacement_stop
+
             if self.trade_mode is TradeMode.LIVE:
                 try:
                     final_stop = await self._normalize_live_replacement_stop(
@@ -89,63 +110,56 @@ class PositionProtectionManager:
                         raw_stop=replacement_stop,
                     )
                 except VenueRuleValidationError:
-                    self._retry_after_monotonic = (
-                        monotonic() + self.failure_retry_seconds
-                    )
-                    _LOGGER.warning(
-                        "Live stepped protection deferred because the replacement "
-                        "stop is not currently venue-valid: symbol=%s side=%s "
-                        "raw_stop=%s",
-                        position.symbol,
-                        position.side.value,
-                        replacement_stop,
+                    self._defer_live_replacement(
+                        position=position,
+                        raw_stop=replacement_stop,
                     )
                     return
+
                 if not self._is_tighter_stop(
                     position=position,
                     replacement_stop=final_stop,
                 ):
                     return
-                position_with_client_id = replace(
+
+                pending = replace(
                     position,
-                    stop_loss=final_stop,
-                    stop_loss_client_algo_id=Position.create_stop_loss_client_algo_id(),
+                    pending_stop_loss=final_stop,
+                    pending_stop_loss_client_algo_id=(
+                        Position.create_stop_loss_client_algo_id()
+                    ),
+                    pending_protection_step=step,
                 )
-                await self.position_repository.update(
-                    position=position_with_client_id,
-                )
-                self._cached_position = position_with_client_id
+                await self.position_repository.update(position=pending)
+                self._cached_position = pending
 
                 try:
-                    await self.exchange_client.ensure_stop_loss_order(
-                        symbol=position_with_client_id.symbol,
-                        side=self._closing_side(position_with_client_id.side),
-                        quantity=position_with_client_id.quantity,
-                        stop_loss=final_stop,
-                        client_algo_id=(
-                            position_with_client_id.stop_loss_client_algo_id
-                        ),
-                    )
+                    await self._submit_pending_stop_replacement(position=pending)
                 except Exception:
                     self._retry_after_monotonic = (
                         monotonic() + self.failure_retry_seconds
                     )
                     raise
-            elif not self._is_tighter_stop(
-                position=position,
-                replacement_stop=final_stop,
-            ):
-                return
 
-            protected_position = replace(
-                position_with_client_id
-                if self.trade_mode is TradeMode.LIVE
-                else position,
-                current_price=ticker.last_price,
-                stop_loss=final_stop,
-                protection_step=step,
-                updated_at=ticker.timestamp,
-            )
+                protected_position = self._promote_pending_stop_replacement(
+                    position=pending,
+                    timestamp=ticker.timestamp,
+                    current_price=ticker.last_price,
+                )
+            else:
+                if not self._is_tighter_stop(
+                    position=position,
+                    replacement_stop=final_stop,
+                ):
+                    return
+                protected_position = replace(
+                    position,
+                    current_price=ticker.last_price,
+                    stop_loss=final_stop,
+                    protection_step=step,
+                    updated_at=ticker.timestamp,
+                )
+
             await self.position_repository.update(position=protected_position)
             self._cached_position = protected_position
             _LOGGER.info(
@@ -159,6 +173,254 @@ class PositionProtectionManager:
                 locked_progress * Decimal("100"),
                 final_stop,
             )
+
+    async def _resume_pending_stop_replacement(
+        self,
+        *,
+        position: Position,
+        timestamp: datetime,
+        current_price: Decimal,
+    ) -> None:
+        """Resume or retire one durable pending LIVE STOP mutation."""
+        pending_stop = position.pending_stop_loss
+        pending_id = position.pending_stop_loss_client_algo_id
+        if pending_stop is None or pending_id is None:
+            raise RuntimeError("Pending LIVE STOP replacement is incomplete")
+
+        existing = await self._get_pending_stop_replacement(position=position)
+        if existing is not None:
+            if existing.status in {
+                OrderStatus.CANCELED,
+                OrderStatus.REJECTED,
+                OrderStatus.EXPIRED,
+            }:
+                await self._clear_pending_stop_replacement(
+                    position=position,
+                    reason=f"terminal_{existing.status.value}",
+                )
+                return
+            if existing.status is OrderStatus.FILLED:
+                raise RuntimeError(
+                    "Pending LIVE STOP is filled while managed position remains active"
+                )
+            if existing.status is not OrderStatus.NEW:
+                raise RuntimeError("Pending LIVE STOP is neither active nor terminal")
+
+            await self._complete_pending_stop_replacement(
+                position=position,
+                timestamp=timestamp,
+                current_price=current_price,
+            )
+            return
+
+        try:
+            normalized_stop = await self._normalize_live_replacement_stop(
+                position=position,
+                raw_stop=pending_stop,
+            )
+        except VenueRuleValidationError:
+            await self._clear_pending_stop_replacement(
+                position=position,
+                reason="not_found_and_venue_invalid",
+            )
+            return
+
+        if normalized_stop != pending_stop:
+            await self._clear_pending_stop_replacement(
+                position=position,
+                reason="not_found_and_normalization_changed",
+            )
+            return
+
+        await self._complete_pending_stop_replacement(
+            position=position,
+            timestamp=timestamp,
+            current_price=current_price,
+        )
+
+    async def _get_pending_stop_replacement(
+        self,
+        *,
+        position: Position,
+    ) -> Order | None:
+        """Resolve a pending STOP solely through its exact durable identity."""
+        pending_id = position.pending_stop_loss_client_algo_id
+        pending_stop = position.pending_stop_loss
+        if pending_id is None or pending_stop is None:
+            raise RuntimeError("Pending LIVE STOP replacement is incomplete")
+
+        last_unknown: ExchangeOrderOutcomeUnknownError | None = None
+        for attempt in range(_PENDING_RECONCILIATION_ATTEMPTS):
+            try:
+                order = await self.exchange_client.get_protection_order_by_client_id(
+                    symbol=position.symbol,
+                    client_id=pending_id,
+                )
+            except ExchangeOrderNotFoundError:
+                last_unknown = None
+            except ExchangeOrderOutcomeUnknownError as error:
+                last_unknown = error
+            else:
+                self._validate_pending_stop_replacement(
+                    order=order,
+                    position=position,
+                )
+                return order
+
+            if attempt + 1 < _PENDING_RECONCILIATION_ATTEMPTS:
+                await asyncio.sleep(_PENDING_RECONCILIATION_DELAY_SECONDS)
+
+        if last_unknown is not None:
+            raise RuntimeError(
+                "Pending LIVE STOP identity remains unverifiable"
+            ) from last_unknown
+
+        return None
+
+    async def _complete_pending_stop_replacement(
+        self,
+        *,
+        position: Position,
+        timestamp: datetime,
+        current_price: Decimal,
+    ) -> None:
+        """Prove pending STOP ownership, retire predecessor, then promote."""
+        try:
+            await self._submit_pending_stop_replacement(position=position)
+        except Exception:
+            self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
+            raise
+
+        protected = self._promote_pending_stop_replacement(
+            position=position,
+            timestamp=timestamp,
+            current_price=current_price,
+        )
+        await self.position_repository.update(position=protected)
+        self._cached_position = protected
+        _LOGGER.info(
+            "Pending LIVE stepped protection promoted: symbol=%s step=%d stop_loss=%s",
+            protected.symbol,
+            protected.protection_step,
+            protected.stop_loss,
+        )
+
+    async def _clear_pending_stop_replacement(
+        self,
+        *,
+        position: Position,
+        reason: str,
+    ) -> None:
+        """Retire a proven-inactive pending intent while preserving current STOP."""
+        cleared = replace(
+            position,
+            pending_stop_loss=None,
+            pending_stop_loss_client_algo_id=None,
+            pending_protection_step=0,
+        )
+        await self.position_repository.update(position=cleared)
+        self._cached_position = cleared
+        _LOGGER.info(
+            "Pending LIVE stepped protection retired: symbol=%s reason=%s",
+            cleared.symbol,
+            reason,
+        )
+
+    @staticmethod
+    def _validate_pending_stop_replacement(
+        *,
+        order: Order,
+        position: Position,
+    ) -> None:
+        """Require exact durable identity and immutable pending STOP shape."""
+        pending_id = position.pending_stop_loss_client_algo_id
+        pending_stop = position.pending_stop_loss
+        if pending_id is None or pending_stop is None:
+            raise RuntimeError("Pending LIVE STOP replacement is incomplete")
+
+        expected_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+        )
+        if (
+            order.client_order_id != pending_id
+            or order.symbol.upper() != position.symbol.upper()
+            or order.side is not expected_side
+            or order.order_type is not OrderType.STOP_MARKET
+            or order.quantity != position.quantity
+            or order.stop_price != pending_stop
+        ):
+            raise RuntimeError(
+                "Pending LIVE STOP does not match its durable replacement identity"
+            )
+
+    async def _submit_pending_stop_replacement(self, *, position: Position) -> None:
+        """Submit or reconcile the exact pending STOP and retire current STOP."""
+        pending_stop = position.pending_stop_loss
+        pending_id = position.pending_stop_loss_client_algo_id
+        if pending_stop is None or pending_id is None:
+            raise RuntimeError("Pending LIVE STOP replacement is incomplete")
+
+        order = await self.exchange_client.ensure_stop_loss_order(
+            symbol=position.symbol,
+            side=self._closing_side(position.side),
+            quantity=position.quantity,
+            stop_loss=pending_stop,
+            client_algo_id=pending_id,
+            previous_client_algo_id=position.stop_loss_client_algo_id,
+        )
+        if (
+            order.client_order_id != pending_id
+            or order.symbol.upper() != position.symbol.upper()
+            or order.side is not self._closing_side(position.side)
+            or order.order_type is not OrderType.STOP_MARKET
+            or order.status is not OrderStatus.NEW
+            or order.quantity != position.quantity
+            or order.stop_price != pending_stop
+        ):
+            raise RuntimeError(
+                "Exchange did not prove the exact pending LIVE STOP replacement"
+            )
+
+    @staticmethod
+    def _promote_pending_stop_replacement(
+        *,
+        position: Position,
+        timestamp: datetime,
+        current_price: Decimal,
+    ) -> Position:
+        """Promote only an exchange-proven pending STOP into current durable state."""
+        pending_stop = position.pending_stop_loss
+        pending_id = position.pending_stop_loss_client_algo_id
+        if pending_stop is None or pending_id is None:
+            raise RuntimeError("Pending LIVE STOP replacement is incomplete")
+
+        return replace(
+            position,
+            current_price=current_price,
+            stop_loss=pending_stop,
+            stop_loss_client_algo_id=pending_id,
+            protection_step=position.pending_protection_step,
+            pending_stop_loss=None,
+            pending_stop_loss_client_algo_id=None,
+            pending_protection_step=0,
+            updated_at=timestamp,
+        )
+
+    def _defer_live_replacement(
+        self,
+        *,
+        position: Position,
+        raw_stop: Decimal,
+    ) -> None:
+        """Defer a replacement while preserving the currently verified STOP."""
+        self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
+        _LOGGER.warning(
+            "Live stepped protection deferred because the replacement "
+            "stop is not currently venue-valid: symbol=%s side=%s raw_stop=%s",
+            position.symbol,
+            position.side.value,
+            raw_stop,
+        )
 
     async def _normalize_live_replacement_stop(
         self,

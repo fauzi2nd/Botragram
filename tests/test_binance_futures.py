@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -21,6 +20,7 @@ from botragram.enums import (
     PositionSide,
 )
 from botragram.exceptions import (
+    ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderPriceBandRejectedError,
 )
@@ -177,16 +177,43 @@ class InMemoryProtectionClient(BinanceFuturesExchangeClient):
                 continue
 
             self.created += 1
+            assert client_algo_id is not None
             order = _protection_order(
                 order_id=f"new-{self.created}",
                 order_type=order_type,
                 stop_price=trigger,
+                client_id=client_algo_id,
             )
-            assert client_algo_id is not None
             self.open_protections.append(order)
             created.append(order)
 
         return tuple(created)
+
+    async def get_protection_order_by_client_id(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+    ) -> Order:
+        """Return one exact in-memory conditional identity."""
+        for order in self.open_protections:
+            if order.symbol == symbol and order.client_order_id == client_id:
+                return order
+        raise ExchangeOrderNotFoundError("configured protection not found")
+
+    async def cancel_protection_order(
+        self,
+        *,
+        symbol: str,
+        client_id: str,
+    ) -> None:
+        """Cancel one exact in-memory conditional identity."""
+        for order in tuple(self.open_protections):
+            if order.symbol == symbol and order.client_order_id == client_id:
+                self.cancelled.append(order.order_id)
+                self.open_protections.remove(order)
+                return
+        raise ExchangeOrderNotFoundError("configured protection not found")
 
     async def _cancel_algo_order(self, *, symbol: str, order_id: str) -> None:
         """Remove one matching in-memory protection."""
@@ -230,11 +257,11 @@ class AmbiguousInMemoryProtectionClient(InMemoryProtectionClient):
         symbol: str,
         client_id: str,
     ) -> Order:
-        """Prove the single remote replacement through its durable identity."""
-        for order in reversed(self.open_protections):
-            if order.symbol == symbol and order.order_type is OrderType.STOP_MARKET:
-                return replace(order, client_order_id=client_id)
-        raise AssertionError("Expected an already-created replacement stop")
+        """Prove only an actually-created replacement through exact identity."""
+        return await super().get_protection_order_by_client_id(
+            symbol=symbol,
+            client_id=client_id,
+        )
 
 
 def _order_payload() -> JsonObject:
@@ -259,10 +286,12 @@ def _protection_order(
     order_id: str,
     order_type: OrderType,
     stop_price: Decimal,
+    client_id: str | None = None,
 ) -> Order:
     """Return one deterministic Futures protection order."""
     return Order(
         order_id=order_id,
+        client_order_id=client_id,
         symbol="BTCUSDT",
         side=OrderSide.BUY,
         order_type=order_type,
@@ -901,3 +930,32 @@ async def test_futures_client_cancels_protection_by_exact_client_identity() -> N
             True,
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_futures_stop_replacement_retires_exact_predecessor() -> None:
+    """Retire the predecessor identity only after exact replacement proof."""
+    predecessor_id = "bsl-11111111111111111111111111111111"
+    replacement_id = "bsl-22222222222222222222222222222222"
+    old_stop = _protection_order(
+        order_id="old-stop",
+        order_type=OrderType.STOP_MARKET,
+        stop_price=Decimal("100.5"),
+        client_id=predecessor_id,
+    )
+    client = InMemoryProtectionClient(orders=[old_stop])
+
+    replacement = await client.ensure_stop_loss_order(
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        quantity=Decimal("1"),
+        stop_loss=Decimal("99.7"),
+        client_algo_id=replacement_id,
+        previous_client_algo_id=predecessor_id,
+    )
+
+    assert replacement.client_order_id == replacement_id
+    assert client.cancelled == ["old-stop"]
+    assert tuple(order.client_order_id for order in client.open_protections) == (
+        replacement_id,
+    )

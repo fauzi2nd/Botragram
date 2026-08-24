@@ -672,3 +672,56 @@ async def test_zero_exposure_accepts_terminal_owned_leg_without_cleanup() -> Non
     assert result is LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
     assert protection.cleanup_calls == 0
     assert positions.persisted is None
+
+
+@pytest.mark.asyncio
+async def test_restart_promotes_active_pending_stop_and_retires_current() -> None:
+    """Finish crash-interrupted stepped replacement from durable identities."""
+    current_id = "bsl-11111111111111111111111111111111"
+    pending_id = "bsl-22222222222222222222222222222222"
+    exchange = RestartProtectionExchange()
+    exchange.orders.extend(
+        [
+            _order(
+                order_id="stop-current",
+                client_id=current_id,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("98"),
+            ),
+            _order(
+                order_id="stop-pending",
+                client_id=pending_id,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("101"),
+            ),
+        ]
+    )
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+    position = replace(
+        _position(
+            stop_loss=Decimal("98"),
+            take_profit=Decimal("104"),
+            stop_id=current_id,
+            tp_id="btp-existing",
+        ),
+        pending_stop_loss=Decimal("101"),
+        pending_stop_loss_client_algo_id=pending_id,
+        pending_protection_step=1,
+    )
+
+    protected = await service.ensure(position=position)
+
+    assert protected.stop_loss == Decimal("101")
+    assert protected.stop_loss_client_algo_id == pending_id
+    assert protected.protection_step == 1
+    assert protected.pending_stop_loss is None
+    assert protected.pending_stop_loss_client_algo_id is None
+    assert current_id in exchange.cancelled
+    assert pending_id not in exchange.cancelled

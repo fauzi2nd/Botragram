@@ -279,8 +279,9 @@ class BaseExchangeClient(ABC):
         quantity: Decimal,
         stop_loss: Decimal,
         client_algo_id: str | None = None,
+        previous_client_algo_id: str | None = None,
     ) -> Order:
-        """Ensure one matching stop-loss is active and remove older duplicates."""
+        """Ensure one durable stop replacement and retire its predecessor."""
 
     # =========================================================================
     # Positions

@@ -209,6 +209,11 @@ class LiveNaturalExitRecoveryService:
                 position.take_profit_client_algo_id,
                 position.take_profit,
             ),
+            (
+                OrderType.STOP_MARKET,
+                position.pending_stop_loss_client_algo_id,
+                position.pending_stop_loss,
+            ),
         )
         for order_type, client_id, trigger in legs:
             if client_id is None:
@@ -395,6 +400,9 @@ class LiveNaturalExitRecoveryService:
         elif client_id == position.take_profit_client_algo_id:
             expected_type = OrderType.TAKE_PROFIT_MARKET
             expected_trigger = position.take_profit
+        elif client_id == position.pending_stop_loss_client_algo_id:
+            expected_type = OrderType.STOP_MARKET
+            expected_trigger = position.pending_stop_loss
 
         if expected_type is None:
             raise RuntimeError(

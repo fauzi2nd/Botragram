@@ -489,9 +489,17 @@ class BinanceExchangeClient(BaseExchangeClient):
         quantity: Decimal,
         stop_loss: Decimal,
         client_algo_id: str | None = None,
+        previous_client_algo_id: str | None = None,
     ) -> Order:
         """Reject unsupported Spot stop replacement until OCO is implemented."""
-        del symbol, side, quantity, stop_loss, client_algo_id
+        del (
+            symbol,
+            side,
+            quantity,
+            stop_loss,
+            client_algo_id,
+            previous_client_algo_id,
+        )
         raise NotImplementedError(
             "Binance Spot stop replacement requires dedicated OCO support"
         )

@@ -64,10 +64,13 @@ INSERT INTO positions (
     protection_step,
     stop_loss_client_algo_id,
     take_profit_client_algo_id,
+    pending_stop_loss,
+    pending_stop_loss_client_algo_id,
+    pending_protection_step,
     entry_client_order_id
 )
 VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT (
     symbol
@@ -88,6 +91,9 @@ DO UPDATE SET
     protection_step = excluded.protection_step,
     stop_loss_client_algo_id = excluded.stop_loss_client_algo_id,
     take_profit_client_algo_id = excluded.take_profit_client_algo_id,
+    pending_stop_loss = excluded.pending_stop_loss,
+    pending_stop_loss_client_algo_id = excluded.pending_stop_loss_client_algo_id,
+    pending_protection_step = excluded.pending_protection_step,
     entry_client_order_id = excluded.entry_client_order_id;
 """
 
@@ -109,6 +115,9 @@ SET
     protection_step = ?,
     stop_loss_client_algo_id = ?,
     take_profit_client_algo_id = ?,
+    pending_stop_loss = ?,
+    pending_stop_loss_client_algo_id = ?,
+    pending_protection_step = ?,
     entry_client_order_id = ?
 WHERE symbol = ?;
 """
@@ -131,6 +140,9 @@ SELECT
     protection_step,
     stop_loss_client_algo_id,
     take_profit_client_algo_id,
+    pending_stop_loss,
+    pending_stop_loss_client_algo_id,
+    pending_protection_step,
     entry_client_order_id
 FROM positions
 """
@@ -208,6 +220,9 @@ type PositionParameters = tuple[
     str | None,
     str | None,
     str | None,
+    str | None,
+    int,
+    str | None,
 ]
 
 type PositionUpdateParameters = tuple[
@@ -226,6 +241,9 @@ type PositionUpdateParameters = tuple[
     int,
     str | None,
     str | None,
+    str | None,
+    str | None,
+    int,
     str | None,
     str,
 ]
@@ -416,6 +434,9 @@ class SQLitePositionRepository(PositionRepository):
             position.protection_step,
             position.stop_loss_client_algo_id,
             position.take_profit_client_algo_id,
+            cls._optional_decimal_to_text(position.pending_stop_loss),
+            position.pending_stop_loss_client_algo_id,
+            position.pending_protection_step,
             position.entry_client_order_id,
         )
 
@@ -451,6 +472,9 @@ class SQLitePositionRepository(PositionRepository):
             position.protection_step,
             position.stop_loss_client_algo_id,
             position.take_profit_client_algo_id,
+            cls._optional_decimal_to_text(position.pending_stop_loss),
+            position.pending_stop_loss_client_algo_id,
+            position.pending_protection_step,
             position.entry_client_order_id,
             cls._normalize_symbol(position.symbol),
         )
@@ -529,6 +553,18 @@ class SQLitePositionRepository(PositionRepository):
             take_profit_client_algo_id=cls._get_optional_string(
                 row,
                 column="take_profit_client_algo_id",
+            ),
+            pending_stop_loss=cls._get_optional_decimal(
+                row,
+                column="pending_stop_loss",
+            ),
+            pending_stop_loss_client_algo_id=cls._get_optional_string(
+                row,
+                column="pending_stop_loss_client_algo_id",
+            ),
+            pending_protection_step=cls._get_integer(
+                row,
+                column="pending_protection_step",
             ),
             entry_client_order_id=cls._get_optional_string(
                 row,
