@@ -307,6 +307,61 @@ def test_rejects_missing_or_invalid_price_tick_size() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pre_entry_plan_rejects_crossed_mark_without_persistence_or_post() -> (
+    None
+):
+    """Fail before entry when the approved protection plan is already crossed."""
+    repository = RecordingPositionRepository()
+    exchange = ProtectionPlanExchange(
+        rules=_rules(),
+        mark_price=Decimal("0.002248"),
+    )
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+
+    with pytest.raises(VenueRuleValidationError, match="current MARK_PRICE"):
+        await service.validate_pre_entry_plan(
+            symbol="1000BONKUSDT",
+            position_side=PositionSide.LONG,
+            stop_loss=Decimal("0.00224812"),
+            take_profit=Decimal("0.00238576"),
+        )
+
+    assert exchange.events == ["rules", "mark_price"]
+    assert repository.saved_positions == []
+    assert exchange.orders == []
+
+
+@pytest.mark.asyncio
+async def test_pre_entry_plan_accepts_valid_mark_without_persistence_or_post() -> None:
+    """Prove feasibility through venue reads while keeping mutation state untouched."""
+    repository = RecordingPositionRepository()
+    exchange = ProtectionPlanExchange(
+        rules=_rules(),
+        mark_price=Decimal("0.002294"),
+    )
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+
+    await service.validate_pre_entry_plan(
+        symbol="1000BONKUSDT",
+        position_side=PositionSide.LONG,
+        stop_loss=Decimal("0.00224812"),
+        take_profit=Decimal("0.00238576"),
+    )
+
+    assert exchange.events == ["rules", "mark_price"]
+    assert repository.saved_positions == []
+    assert exchange.orders == []
+
+
+@pytest.mark.asyncio
 async def test_invalid_mark_plan_creates_no_identity_or_post() -> None:
     """Reject immediately-triggerable protection before durable mutation state."""
     repository = RecordingPositionRepository()

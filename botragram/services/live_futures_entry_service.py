@@ -19,6 +19,8 @@ from botragram.enums import (
     OrderSide,
     OrderStatus,
     OrderType,
+    PositionSide,
+    SignalType,
     StrategyType,
     SubmissionAttemptStatus,
 )
@@ -96,7 +98,18 @@ class LivePositionSynchronization(Protocol):
 
 
 class LiveProtectionReconciliation(Protocol):
-    """Reconcile and verify SL/TP protection for one position."""
+    """Validate and verify SL/TP protection around one LIVE entry."""
+
+    async def validate_pre_entry_plan(
+        self,
+        *,
+        symbol: str,
+        position_side: PositionSide,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+    ) -> None:
+        """Reject a plan that is already invalid before the entry mutation."""
+        ...
 
     async def ensure(self, *, position: Position) -> Position:
         """Return a position whose SL/TP coverage is exchange-verified."""
@@ -131,6 +144,7 @@ class LiveFuturesEntryService:
         protection gate closes is unsafe and propagates to the runtime boundary.
         """
         self._validate_entry(order_type=order_type)
+        position_side = self._position_side_for_signal(signal=signal)
         try:
             if await self.submission_attempt_repository.get_unresolved():
                 raise LiveSubmissionBlockedError(
@@ -141,6 +155,12 @@ class LiveFuturesEntryService:
                     symbol=signal.symbol,
                     quantity=risk_result.position.quantity,
                 )
+            )
+            await self.protection_service.validate_pre_entry_plan(
+                symbol=signal.symbol,
+                position_side=position_side,
+                stop_loss=risk_result.metrics.stop_loss,
+                take_profit=risk_result.metrics.take_profit,
             )
         except asyncio.CancelledError:
             raise
@@ -334,6 +354,15 @@ class LiveFuturesEntryService:
 
         if order_type is not OrderType.MARKET:
             raise ValueError("Protected LIVE entry currently supports MARKET orders")
+
+    @staticmethod
+    def _position_side_for_signal(*, signal: Signal) -> PositionSide:
+        """Translate an executable entry signal into the protected position side."""
+        if signal.signal_type is SignalType.BUY:
+            return PositionSide.LONG
+        if signal.signal_type is SignalType.SELL:
+            return PositionSide.SHORT
+        raise ValueError("Protected LIVE entry requires a BUY or SELL signal")
 
     async def _reconcile_ambiguous_submission(
         self,

@@ -262,9 +262,20 @@ class FakePositionService:
 
 @dataclass(slots=True)
 class FakeProtectionService:
-    """Verify protection or fail after acknowledgement."""
+    """Verify pre-entry feasibility and protection after acknowledgement."""
 
     error: BaseException | None = None
+
+    async def validate_pre_entry_plan(
+        self,
+        *,
+        symbol: str,
+        position_side: PositionSide,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+    ) -> None:
+        """Accept the focused test's deterministic pre-entry plan."""
+        del symbol, position_side, stop_loss, take_profit
 
     async def ensure(self, *, position: Position) -> Position:
         """Return protection verification outcome."""

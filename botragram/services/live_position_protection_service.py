@@ -43,6 +43,38 @@ class LivePositionProtectionService:
     position_repository: PositionRepository
     risk_engine: RiskEngine
 
+    async def validate_pre_entry_plan(
+        self,
+        *,
+        symbol: str,
+        position_side: PositionSide,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+    ) -> None:
+        """Reject a protection plan that is already invalid before entry mutation."""
+        rules = await self.exchange_client.get_market_entry_rules(symbol=symbol)
+        mark_price = await self.exchange_client.get_mark_price(symbol=symbol)
+        normalized_stop = rules.normalize_protection_trigger(
+            raw_trigger_price=stop_loss,
+            position_side=position_side,
+            order_type=OrderType.STOP_MARKET,
+            mark_price=mark_price,
+        )
+        normalized_take_profit = rules.normalize_protection_trigger(
+            raw_trigger_price=take_profit,
+            position_side=position_side,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            mark_price=mark_price,
+        )
+        _LOGGER.info(
+            "Pre-entry protection plan verified: symbol=%s mark_price=%s "
+            "stop_loss=%s take_profit=%s",
+            symbol,
+            mark_price,
+            normalized_stop,
+            normalized_take_profit,
+        )
+
     async def ensure(self, *, position: Position) -> Position:
         """Reconcile SL/TP orders and persist their verified trigger prices.
 

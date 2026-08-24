@@ -250,10 +250,29 @@ class FakePositionService:
 
 @dataclass(slots=True)
 class FakeProtectionService:
-    """Capture protection verification requests."""
+    """Capture pre-entry validation and post-entry protection verification."""
 
     error: BaseException | None = None
+    preflight_error: BaseException | None = None
     position: Position | None = None
+    preflight_calls: list[tuple[str, PositionSide, Decimal, Decimal]] = field(
+        default_factory=list[tuple[str, PositionSide, Decimal, Decimal]]
+    )
+
+    async def validate_pre_entry_plan(
+        self,
+        *,
+        symbol: str,
+        position_side: PositionSide,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+    ) -> None:
+        """Record read-only protection feasibility before any entry mutation."""
+        self.preflight_calls.append((symbol, position_side, stop_loss, take_profit))
+        if isinstance(self.preflight_error, asyncio.CancelledError):
+            raise self.preflight_error
+        if self.preflight_error is not None:
+            raise self.preflight_error
 
     async def ensure(self, *, position: Position) -> Position:
         """Return verified protection or fail closed."""
@@ -502,6 +521,53 @@ async def test_market_entry_syncs_actual_position_and_marks_protection_ready() -
     assert positions.saved.interval is Interval.M15
     assert positions.saved.strategy_type is StrategyType.EMA_SCALPING
     assert protection.position == positions.saved
+    assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_invalid_pre_entry_plan_blocks_before_mutation() -> None:
+    """Reject an already-crossed plan without creating durable mutation intent."""
+    orders = FakeOrderService()
+    protection = FakeProtectionService(
+        preflight_error=VenueRuleValidationError(
+            "Protection trigger is invalid relative to current MARK_PRICE"
+        )
+    )
+    repository = MemorySubmissionAttemptRepository()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=FakePositionService(_position()),
+        protection_service=protection,
+        runtime_control=control,
+        submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
+    )
+
+    with pytest.raises(
+        VenueRuleValidationError,
+        match="current MARK_PRICE",
+    ):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert protection.preflight_calls == [
+        (
+            "BTCUSDT",
+            PositionSide.LONG,
+            Decimal("64000"),
+            Decimal("66000"),
+        )
+    ]
+    assert orders.calls == 0
+    assert await repository.get_incomplete() == ()
     assert "position protection" not in control.get_missing_startup_requirements()
 
 

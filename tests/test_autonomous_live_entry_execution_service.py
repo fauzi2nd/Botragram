@@ -273,9 +273,21 @@ class _RecordingOrderService:
 
 @dataclass
 class _RecordingProtectionService:
-    """Record required STOP/TP verification after position persistence."""
+    """Record pre-entry feasibility and post-entry STOP/TP verification."""
 
     events: list[str]
+
+    async def validate_pre_entry_plan(
+        self,
+        *,
+        symbol: str,
+        position_side: PositionSide,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+    ) -> None:
+        """Record deterministic read-only feasibility before durable intent."""
+        del symbol, position_side, stop_loss, take_profit
+        self.events.append("protection:preflight")
 
     async def ensure(self, *, position: Position) -> Position:
         """Record verified protection and retain the authoritative position."""
@@ -960,6 +972,7 @@ def test_adapter_delegates_full_prepared_to_protected_completion_order() -> None
     assert events == [
         "portfolio:sync",
         "attempt:check",
+        "protection:preflight",
         "attempt:prepared",
         "portfolio:sync",
         "order:post",
