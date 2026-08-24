@@ -45,6 +45,12 @@ from botragram.models.execution_authorization import (
     ExecutionAuthorization,
     ExecutionAuthorizationOutcome,
 )
+from botragram.models.futures_user_data import (
+    FuturesUserDataAccountUpdate,
+    FuturesUserDataEvent,
+    FuturesUserDataOrderUpdate,
+    FuturesUserDataPositionUpdate,
+)
 from botragram.models.live_entry_risk_evaluation import LiveEntryRiskEvaluation
 from botragram.models.live_market_stream_identity import LiveMarketStreamIdentity
 from botragram.models.live_market_stream_state import LiveMarketStreamState
@@ -90,6 +96,10 @@ __all__ = [
     "DiscoveryUniverseBatch",
     "ExecutionAuthorization",
     "ExecutionAuthorizationOutcome",
+    "FuturesUserDataAccountUpdate",
+    "FuturesUserDataEvent",
+    "FuturesUserDataOrderUpdate",
+    "FuturesUserDataPositionUpdate",
     "ExecutableQuote",
     "ExchangeSymbolRules",
     "LivePortfolioRecoveryResult",

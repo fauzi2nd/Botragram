@@ -1249,7 +1249,7 @@ def test_terminal_live_performance_and_full_width_positions_render() -> None:
     assert "Win / Loss" in rendered and "1 / 1" in rendered
     assert "33.3%" in rendered
     assert "+3.00 USDT" in rendered
-    assert "LIVE FUTURES ACCOUNT FILLS" in rendered
+    assert "BOTRAGRAM LIVE EXIT LEDGER" in rendered
     assert rendered.index("Managed LIVE Positions") < rendered.index(
         "Runtime Events | Log Messages"
     )

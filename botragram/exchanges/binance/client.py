@@ -95,6 +95,11 @@ class BinanceExchangeClient(BaseExchangeClient):
         self._rest = rest
         self._mapper = mapper
 
+    @property
+    def rest_transport(self) -> BinanceRestClient:
+        """Return the vendor REST transport for non-trading lifecycle adapters."""
+        return self._rest
+
     # =========================================================================
     # Lifecycle
     # =========================================================================

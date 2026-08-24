@@ -37,7 +37,7 @@ from botragram.app import (
     run_until_restart,
 )
 from botragram.config import Settings
-from botragram.enums import ExecutionPolicy
+from botragram.enums import ExecutionPolicy, MarketType, TradeMode
 from botragram.utils.logger import configure_logging, shutdown_logging
 
 __all__ = [
@@ -75,7 +75,13 @@ async def _run_trading(
     terminal_monitor = TerminalMonitor(
         runtime_control=dependency_provider.runtime_control,
         paper_balance_provider=dependency_provider.paper_trading_service,
-        live_balance_provider=dependency_provider.account_service,
+        live_balance_provider=(
+            dependency_provider.live_futures_user_data_service
+            if settings.app.trade_mode is TradeMode.LIVE
+            and not settings.exchange.testnet
+            and settings.exchange.market_type is MarketType.FUTURES
+            else dependency_provider.account_service
+        ),
         position_provider=dependency_provider.position_repository,
         pnl_engine=dependency_provider.pnl_engine,
         trade_mode=settings.app.trade_mode,

@@ -210,6 +210,36 @@ class BinanceRestClient(BaseRestClient):
             retryable=False,
         )
 
+    async def start_user_data_stream(self, *, path: str) -> str:
+        """Open a Binance listen key using API-key-only authentication."""
+        return await self._user_stream_request(method="POST", path=path)
+
+    async def keepalive_user_data_stream(self, *, path: str) -> str:
+        """Refresh the active Binance listen key before its expiry."""
+        return await self._user_stream_request(method="PUT", path=path)
+
+    async def close_user_data_stream(self, *, path: str) -> None:
+        """Close the active Binance listen key without signing a trade request."""
+        await self._user_stream_request(method="DELETE", path=path)
+
+    async def _user_stream_request(self, *, method: str, path: str) -> str:
+        """Call one USER_STREAM endpoint that requires an API key but no signature."""
+        payload = await self._request(
+            method=method,
+            path=path,
+            headers={_API_KEY_HEADER: self._require_api_key()},
+            authenticated=False,
+            retryable=False,
+        )
+        if not isinstance(payload, Mapping):
+            raise RuntimeError("Binance User Data Stream returned an invalid payload")
+        listen_key = payload.get("listenKey")
+        if not isinstance(listen_key, str) or not listen_key.strip():
+            if method == "DELETE":
+                return ""
+            raise RuntimeError("Binance User Data Stream response has no listen key")
+        return listen_key
+
     async def close(self) -> None:
         """Close the underlying HTTP session."""
         session = self._session
@@ -435,6 +465,12 @@ class BinanceRestClient(BaseRestClient):
             query_string.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
+
+    def _require_api_key(self) -> str:
+        """Return the API key required by Binance USER_STREAM endpoints."""
+        if not self._api_key:
+            raise ValueError("Binance API key is required for User Data Stream")
+        return self._api_key
 
     def _require_credentials(self) -> None:
         """Raise when an authenticated request lacks credentials."""

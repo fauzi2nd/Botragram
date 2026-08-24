@@ -20,6 +20,9 @@ import logging
 from pathlib import Path
 from typing import Final
 
+from botragram.app.live_futures_user_data_service import (
+    LiveFuturesUserDataService,
+)
 from botragram.app.market_type_switch import (
     MarketTypeSwitchService,
     RuntimeRestartCoordinator,
@@ -65,6 +68,10 @@ from botragram.enums import (
     TradeMode,
 )
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
+from botragram.exchanges.binance import (
+    BinanceFuturesExchangeClient,
+    BinanceFuturesUserDataStream,
+)
 from botragram.exchanges.factory import ExchangeFactory
 from botragram.models import (
     AutonomousLiveEntryAuthorization,
@@ -173,6 +180,7 @@ class DependencyProvider:
         "_exchange_client",
         "_health_service",
         "_live_futures_entry_service",
+        "_live_futures_user_data_service",
         "_live_market_stream_service",
         "_live_natural_exit_recovery_service",
         "_live_position_lifecycle_coordinator",
@@ -276,6 +284,7 @@ class DependencyProvider:
         self._telegram_query_service: TelegramQueryService | None = None
         self._health_service: HealthService | None = None
         self._live_futures_entry_service: LiveFuturesEntryService | None = None
+        self._live_futures_user_data_service: LiveFuturesUserDataService | None = None
         self._live_market_stream_service: LiveMarketStreamService | None = None
         self._live_natural_exit_recovery_service: (
             LiveNaturalExitRecoveryService | None
@@ -452,6 +461,7 @@ class DependencyProvider:
             )
             self._telegram_bot = TelegramBot(settings=self._settings.telegram)
             self._build_services()
+            await self._start_live_futures_user_data_service()
             self._health_service = HealthService(
                 database=database,
                 exchange=self.exchange_client,
@@ -592,6 +602,7 @@ class DependencyProvider:
         stream_client = self._stream_client
         telegram_bot = self._telegram_bot
         live_market_stream_service = self._live_market_stream_service
+        live_futures_user_data_service = self._live_futures_user_data_service
         live_protection_monitoring_service = self._live_protection_monitoring_service
         database = self._database
 
@@ -603,24 +614,27 @@ class DependencyProvider:
                 await telegram_bot.stop()
         finally:
             try:
-                if live_protection_monitoring_service is not None:
-                    live_protection_monitoring_service.stop_all()
+                if live_futures_user_data_service is not None:
+                    await live_futures_user_data_service.close()
             finally:
                 try:
-                    if live_market_stream_service is not None:
-                        await live_market_stream_service.stop_all()
+                    if live_protection_monitoring_service is not None:
+                        live_protection_monitoring_service.stop_all()
                 finally:
                     try:
-                        if stream_client is not None:
-                            await stream_client.close()
+                        if live_market_stream_service is not None:
+                            await live_market_stream_service.stop_all()
                     finally:
                         try:
-                            if exchange_client is not None:
-                                await exchange_client.close()
+                            if stream_client is not None:
+                                await stream_client.close()
                         finally:
-                            if database is not None:
-                                await database.close()
-
+                            try:
+                                if exchange_client is not None:
+                                    await exchange_client.close()
+                            finally:
+                                if database is not None:
+                                    await database.close()
         _LOGGER.info("Dependencies shut down")
 
     # =========================================================================
@@ -739,6 +753,11 @@ class DependencyProvider:
     def live_post_entry_recovery_service(self) -> LivePostEntryRecoveryService:
         """Return the durable acknowledged-entry recovery service."""
         return self._require(self._live_post_entry_recovery_service)
+
+    @property
+    def live_futures_user_data_service(self) -> LiveFuturesUserDataService:
+        """Return the live Futures private-stream cache service."""
+        return self._require(self._live_futures_user_data_service)
 
     @property
     def live_futures_entry_service(self) -> LiveFuturesEntryService:
@@ -911,6 +930,33 @@ class DependencyProvider:
         await exchange_client.connect()
         await stream_client.connect()
         _LOGGER.info("Exchange REST and WebSocket transports are ready")
+
+    async def _start_live_futures_user_data_service(self) -> None:
+        """Start private cache only for credentialed LIVE mainnet Binance Futures."""
+        if (
+            self._settings.app.trade_mode is not TradeMode.LIVE
+            or self._settings.exchange.testnet
+            or self._settings.exchange.market_type is not MarketType.FUTURES
+        ):
+            return
+
+        exchange_client = self.exchange_client
+        if not isinstance(exchange_client, BinanceFuturesExchangeClient):
+            raise TypeError("LIVE Futures User Data Stream requires Binance Futures")
+
+        _, websocket_base_url = self._get_binance_urls(
+            testnet=self._settings.exchange.testnet,
+            market_type=MarketType.FUTURES,
+        )
+        service = LiveFuturesUserDataService(
+            snapshot_provider=exchange_client,
+            event_stream=BinanceFuturesUserDataStream(
+                rest=exchange_client.rest_transport,
+                websocket_base_url=websocket_base_url,
+            ),
+        )
+        await service.start()
+        self._live_futures_user_data_service = service
 
     def _build_engines(self) -> None:
         """Construct engines from configured strategies and exchange clients."""
@@ -1304,6 +1350,7 @@ class DependencyProvider:
         self._telegram_query_service = None
         self._health_service = None
         self._live_futures_entry_service = None
+        self._live_futures_user_data_service = None
         self._live_market_stream_service = None
         self._live_natural_exit_recovery_service = None
         self._live_position_lifecycle_coordinator = LivePositionLifecycleCoordinator()

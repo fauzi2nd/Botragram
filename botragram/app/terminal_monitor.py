@@ -1004,7 +1004,7 @@ class TerminalMonitor:
             "Realized PnL",
             f"{performance.realized_pnl:+,.2f} {self.quote_asset}",
         )
-        table.add_row("Source", "LIVE FUTURES ACCOUNT FILLS")
+        table.add_row("Source", "BOTRAGRAM LIVE EXIT LEDGER")
 
     def _build_stream_panel(self, status: TerminalStatus) -> Panel:
         """Build one compact, canonical row for every managed position."""
