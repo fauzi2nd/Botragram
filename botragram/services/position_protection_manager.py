@@ -194,6 +194,9 @@ class PositionProtectionManager:
                 OrderStatus.REJECTED,
                 OrderStatus.EXPIRED,
             }:
+                await self._require_current_stop_after_terminal_pending(
+                    position=position,
+                )
                 await self._clear_pending_stop_replacement(
                     position=position,
                     reason=f"terminal_{existing.status.value}",
@@ -237,6 +240,52 @@ class PositionProtectionManager:
             timestamp=timestamp,
             current_price=current_price,
         )
+
+    async def _require_current_stop_after_terminal_pending(
+        self,
+        *,
+        position: Position,
+    ) -> None:
+        """Prove the predecessor still protects an active position.
+
+        A terminal pending replacement may have occurred before or after the
+        predecessor was retired. Clearing its durable identity is safe only
+        when the exact current identity remains an active, matching STOP.
+        """
+        current_id = position.stop_loss_client_algo_id
+        current_stop = position.stop_loss
+        if current_id is None or current_stop is None:
+            raise RuntimeError(
+                "Terminal pending LIVE STOP has no durable current protection"
+            )
+
+        try:
+            current = await self.exchange_client.get_protection_order_by_client_id(
+                symbol=position.symbol,
+                client_id=current_id,
+            )
+        except ExchangeOrderNotFoundError as error:
+            raise RuntimeError(
+                "Current LIVE STOP is absent after terminal pending replacement"
+            ) from error
+        except ExchangeOrderOutcomeUnknownError as error:
+            raise RuntimeError(
+                "Current LIVE STOP is unverifiable after terminal pending replacement"
+            ) from error
+
+        expected_side = self._closing_side(position.side)
+        if (
+            current.client_order_id != current_id
+            or current.symbol.upper() != position.symbol.upper()
+            or current.side is not expected_side
+            or current.order_type is not OrderType.STOP_MARKET
+            or current.status is not OrderStatus.NEW
+            or current.quantity != position.quantity
+            or current.stop_price != current_stop
+        ):
+            raise RuntimeError(
+                "Current LIVE STOP does not protect after terminal pending replacement"
+            )
 
     async def _get_pending_stop_replacement(
         self,

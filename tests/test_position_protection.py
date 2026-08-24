@@ -651,6 +651,57 @@ async def test_live_absent_invalid_pending_stop_is_retired_without_churn() -> No
 
 
 @pytest.mark.asyncio
+async def test_live_terminal_pending_stop_requires_active_predecessor() -> None:
+    """Fail closed when a crash leaves neither STOP identity active."""
+
+    class TerminalPendingExchange(RecordingProtectionExchange):
+        async def get_protection_order_by_client_id(
+            self,
+            *,
+            symbol: str,
+            client_id: str,
+        ) -> Order:
+            if client_id == pending_id:
+                return Order(
+                    order_id="pending-stop",
+                    client_order_id=pending_id,
+                    symbol=symbol,
+                    side=OrderSide.BUY,
+                    order_type=OrderType.STOP_MARKET,
+                    status=OrderStatus.CANCELED,
+                    quantity=Decimal("1"),
+                    executed_quantity=Decimal("0"),
+                    price=None,
+                    stop_price=Decimal("99.70"),
+                    created_at=_NOW,
+                    updated_at=_NOW,
+                )
+            raise ExchangeOrderNotFoundError("configured STOP was not found")
+
+    current_id = "bsl-11111111111111111111111111111111"
+    pending_id = "bsl-22222222222222222222222222222222"
+    position = replace(
+        _short_position(),
+        stop_loss_client_algo_id=current_id,
+        pending_stop_loss=Decimal("99.70"),
+        pending_stop_loss_client_algo_id=pending_id,
+        pending_protection_step=1,
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=TerminalPendingExchange(),
+    )
+
+    with pytest.raises(RuntimeError, match="Current LIVE STOP is absent"):
+        await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+
+    assert await repository.get_by_symbol(symbol=position.symbol) == position
+
+
+@pytest.mark.asyncio
 async def test_live_active_pending_stop_promotes_despite_moved_mark_price() -> None:
     """Do not discard an already-active pending STOP because MARK_PRICE moved."""
     current_id = "bsl-33333333333333333333333333333333"

@@ -290,6 +290,56 @@ async def test_reconcile_preserves_stale_position_when_delete_unresolved() -> No
 
 
 @pytest.mark.asyncio
+async def test_reconcile_does_not_retry_delete_when_bulk_snapshot_lags() -> None:
+    """Require exact lookup rather than a stale empty bulk response after DELETE."""
+
+    class StaleBulkAfterDeleteExchange(FakeNaturalExitExchange):
+        def __init__(self) -> None:
+            super().__init__(
+                protections=(
+                    _protection(
+                        order_type=OrderType.TAKE_PROFIT_MARKET,
+                        client_id=_TP_ID,
+                        trigger="0.01084",
+                    ),
+                ),
+            )
+            self.hide_from_bulk = False
+
+        async def get_open_protection_orders(
+            self,
+            *,
+            symbol: str | None = None,
+        ) -> tuple[Order, ...]:
+            if self.hide_from_bulk:
+                return ()
+            return await super().get_open_protection_orders(symbol=symbol)
+
+        async def cancel_protection_order(
+            self,
+            *,
+            symbol: str,
+            client_id: str,
+        ) -> None:
+            self.cancel_calls.append((symbol.upper(), client_id))
+            self.hide_from_bulk = True
+
+    repository = await _repository()
+    exchange = StaleBulkAfterDeleteExchange()
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    with pytest.raises(RuntimeError, match="remains active after cancellation"):
+        await service.reconcile()
+
+    assert exchange.cancel_calls == [(_SYMBOL, _TP_ID)]
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is not None
+
+
+@pytest.mark.asyncio
 async def test_reconcile_leaves_active_position_protection_untouched() -> None:
     position = _position()
     repository = await _repository()

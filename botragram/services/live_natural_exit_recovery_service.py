@@ -348,7 +348,7 @@ class LiveNaturalExitRecoveryService:
             )
 
     async def _cancel_and_reconcile(self, *, order: Order) -> None:
-        """Attempt one DELETE and prove the identity absent with GET-only reads."""
+        """Attempt one DELETE and prove its exact identity is inactive."""
         client_id = order.client_order_id
         if client_id is None:
             raise RuntimeError("Orphan protection is missing its client identity")
@@ -364,16 +364,28 @@ class LiveNaturalExitRecoveryService:
         except ExchangeOrderOutcomeUnknownError as error:
             ambiguous_error = error
 
+        last_unknown: ExchangeOrderOutcomeUnknownError | None = None
         for attempt in range(_RECONCILIATION_ATTEMPTS):
-            remaining = tuple(
-                await self.exchange_client.get_open_protection_orders(
-                    symbol=order.symbol,
+            try:
+                remaining = (
+                    await self.exchange_client.get_protection_order_by_client_id(
+                        symbol=order.symbol,
+                        client_id=client_id,
+                    )
                 )
-            )
-            if not any(
-                candidate.client_order_id == client_id for candidate in remaining
-            ):
+            except ExchangeOrderNotFoundError:
                 return
+            except ExchangeOrderOutcomeUnknownError as error:
+                last_unknown = error
+            else:
+                last_unknown = None
+                if remaining.status in _TERMINAL_PROTECTION_STATUSES:
+                    return
+                if remaining.status is not OrderStatus.NEW:
+                    raise RuntimeError(
+                        "LIVE orphan protection entered an unexpected state "
+                        "during cancellation"
+                    )
 
             if attempt + 1 < _RECONCILIATION_ATTEMPTS:
                 await asyncio.sleep(_RECONCILIATION_DELAY_SECONDS)
@@ -382,10 +394,13 @@ class LiveNaturalExitRecoveryService:
             raise RuntimeError(
                 "Ambiguous LIVE orphan-protection cancellation remains unresolved"
             ) from ambiguous_error
+        if last_unknown is not None:
+            raise RuntimeError(
+                "LIVE orphan-protection identity remains unverifiable after "
+                "cancellation"
+            ) from last_unknown
 
-        raise RuntimeError(
-            "Exchange still reports LIVE orphan protection after cancellation"
-        )
+        raise RuntimeError("LIVE orphan protection remains active after cancellation")
 
     @staticmethod
     def _validate_owned_orphan(*, order: Order, position: Position) -> None:
