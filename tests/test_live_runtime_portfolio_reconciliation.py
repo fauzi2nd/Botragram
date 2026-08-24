@@ -300,6 +300,51 @@ def test_existing_unhealthy_target_stream_fails_closed(failed: bool) -> None:
     assert monitors.monitor_states == ()
 
 
+def test_unhealthy_monitor_is_replaced_after_protection_recovery() -> None:
+    """Replace sticky local monitor failure after portfolio protection is safe."""
+
+    class RecoverableUnhealthyMonitors(_Monitors):
+        def __init__(self, *, context: LiveRuntimePositionContext) -> None:
+            super().__init__()
+            self._contexts[context.symbol] = context
+            self.unhealthy_symbols = {context.symbol}
+
+        @property
+        def monitor_states(self) -> tuple[LiveProtectionMonitorState, ...]:
+            return tuple(
+                LiveProtectionMonitorState(
+                    context=context,
+                    is_active=True,
+                    failure_type=(
+                        "RuntimeError"
+                        if context.symbol in self.unhealthy_symbols
+                        else None
+                    ),
+                )
+                for context in self._contexts.values()
+            )
+
+        def stop(self, *, symbol: str) -> bool:
+            stopped = super().stop(symbol=symbol)
+            self.unhealthy_symbols.discard(symbol.strip().upper())
+            return stopped
+
+    service, control, streams, _ = _service([_safe(_position("BTCUSDT"))])
+    context = LiveRuntimePositionContext(
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+    monitors = RecoverableUnhealthyMonitors(context=context)
+    service = replace(service, protection_monitoring_service=monitors)
+
+    assert asyncio.run(service.reconcile()) is True
+    assert monitors.events == ["monitor_stop:BTCUSDT", "register:BTCUSDT"]
+    assert monitors.monitor_states[0].failure_type is None
+    assert control.is_position_protection_ready
+    assert streams.stream_states[0].identity.symbol == "BTCUSDT"
+
+
 def test_unhealthy_monitor_fails_closed() -> None:
     service, control, streams, _ = _service([_safe(_position("BTCUSDT"))])
     context = LiveRuntimePositionContext(

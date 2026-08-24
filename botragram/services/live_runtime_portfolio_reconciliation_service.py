@@ -267,23 +267,29 @@ class LiveRuntimePortfolioReconciliationService:
     def _ensure_monitors_ready(
         self, *, contexts: tuple[LiveRuntimePositionContext, ...]
     ) -> None:
-        """Register only missing monitors and reject unhealthy existing monitors."""
+        """Register missing monitors and replace unhealthy recovered ownership."""
         states = {
             state.context: state
             for state in self.protection_monitoring_service.monitor_states
         }
         for context in contexts:
             state = states.get(context)
-            if state is None:
-                if not self.protection_monitoring_service.register(context=context):
+            if state is not None and (
+                not state.is_active or state.failure_type is not None
+            ):
+                if not self.protection_monitoring_service.stop(symbol=context.symbol):
                     raise RuntimeError(
-                        "LIVE protection monitor registration was rejected: "
+                        "LIVE protection monitor could not be released for recovery: "
                         f"{context.symbol}"
                     )
-                continue
-            if not state.is_active or state.failure_type is not None:
+                state = None
+
+            if state is None and not self.protection_monitoring_service.register(
+                context=context
+            ):
                 raise RuntimeError(
-                    f"LIVE protection monitor is unhealthy: {context.symbol}"
+                    "LIVE protection monitor registration was rejected: "
+                    f"{context.symbol}"
                 )
 
     def _ownership_is_exact(
