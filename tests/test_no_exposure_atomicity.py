@@ -290,6 +290,29 @@ def _now() -> datetime:
     return datetime(2026, 8, 19, tzinfo=UTC)
 
 
+def _durable_exit_position() -> Position:
+    """Return a protected position whose exchange exposure has naturally exited."""
+    now = _now()
+    return Position(
+        symbol="GIGGLEUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("0.27"),
+        entry_price=Decimal("36.40"),
+        current_price=Decimal("36.40"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=now,
+        updated_at=now,
+        stop_loss=Decimal("36.43"),
+        take_profit=Decimal("36.35"),
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_CROSS,
+        stop_loss_client_algo_id="bsl-00000000000000000000000000000001",
+        take_profit_client_algo_id="btp-00000000000000000000000000000001",
+        entry_client_order_id="btg-00000000000000000000000000000001",
+    )
+
+
 def _attempt() -> SubmissionAttempt:
     return SubmissionAttempt(
         client_order_id="atomic-000",
@@ -809,3 +832,81 @@ async def test_sqlite_failed_correlation_preserves_stale_position() -> None:
     assert exchange.delete_calls == 0
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_full_sync_preserves_exit_identity() -> None:
+    """Keep durable orphan-cleanup identity while reads stay authoritative."""
+    database = SQLiteDatabase(database_path=":memory:")
+    await database.connect()
+    try:
+        await SQLiteMigrationManager(database=database).initialize()
+        repository = SQLitePositionRepository(database=database)
+        position = _durable_exit_position()
+        await repository.save(position=position)
+
+        exchange = _FakeExchangeClient()
+        exchange.positions = ()
+        service = PositionService(
+            position_engine=PositionEngine(exchange_client=exchange),
+            position_repository=repository,
+        )
+
+        assert tuple(await service.get_all(synchronize=True)) == ()
+        assert await repository.get_by_symbol(symbol=position.symbol) == position
+    finally:
+        await database.close()
+
+
+@pytest.mark.asyncio
+async def test_symbol_sync_preserves_exit_identity() -> None:
+    """A symbol-scoped zero-exposure read must not erase protection ownership."""
+    database = SQLiteDatabase(database_path=":memory:")
+    await database.connect()
+    try:
+        await SQLiteMigrationManager(database=database).initialize()
+        repository = SQLitePositionRepository(database=database)
+        position = _durable_exit_position()
+        await repository.save(position=position)
+
+        exchange = _FakeExchangeClient()
+        exchange.positions = ()
+        service = PositionService(
+            position_engine=PositionEngine(exchange_client=exchange),
+            position_repository=repository,
+        )
+
+        assert await service.get(symbol=position.symbol, synchronize=True) is None
+        assert await repository.get_by_symbol(symbol=position.symbol) == position
+    finally:
+        await database.close()
+
+
+@pytest.mark.asyncio
+async def test_full_sync_deletes_stale_position_without_protection_identity() -> None:
+    """Retain existing cleanup when no durable protection ownership remains."""
+    database = SQLiteDatabase(database_path=":memory:")
+    await database.connect()
+    try:
+        await SQLiteMigrationManager(database=database).initialize()
+        repository = SQLitePositionRepository(database=database)
+        position = replace(
+            _durable_exit_position(),
+            stop_loss=None,
+            take_profit=None,
+            stop_loss_client_algo_id=None,
+            take_profit_client_algo_id=None,
+        )
+        await repository.save(position=position)
+
+        exchange = _FakeExchangeClient()
+        exchange.positions = ()
+        service = PositionService(
+            position_engine=PositionEngine(exchange_client=exchange),
+            position_repository=repository,
+        )
+
+        assert tuple(await service.get_all(synchronize=True)) == ()
+        assert await repository.get_by_symbol(symbol=position.symbol) is None
+    finally:
+        await database.close()

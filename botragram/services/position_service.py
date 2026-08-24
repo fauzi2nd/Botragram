@@ -109,9 +109,16 @@ class PositionService:
             )
 
             if matching_position is None:
-                await self.position_repository.delete(
-                    symbol=normalized_symbol,
-                )
+                stored_position = stored_by_symbol.get(normalized_symbol)
+                if (
+                    stored_position is None
+                    or not self._requires_natural_exit_reconciliation(
+                        position=stored_position,
+                    )
+                ):
+                    await self.position_repository.delete(
+                        symbol=normalized_symbol,
+                    )
             else:
                 await self.position_repository.save(
                     position=matching_position,
@@ -119,7 +126,17 @@ class PositionService:
 
             return positions
 
-        await self.position_repository.delete_all()
+        active_symbols = {position.symbol.upper() for position in positions}
+        for stored_position in stored_positions:
+            if stored_position.symbol.upper() in active_symbols:
+                continue
+            if self._requires_natural_exit_reconciliation(
+                position=stored_position,
+            ):
+                continue
+            await self.position_repository.delete(
+                symbol=stored_position.symbol,
+            )
 
         if positions:
             await self.position_repository.save_many(
@@ -174,7 +191,11 @@ class PositionService:
         normalized_symbol = self._normalize_symbol(symbol)
 
         if synchronize:
-            await self.sync(
+            positions = await self.sync(
+                symbol=normalized_symbol,
+            )
+            return self._find_position(
+                positions=positions,
                 symbol=normalized_symbol,
             )
 
@@ -189,7 +210,7 @@ class PositionService:
     ) -> Sequence[Position]:
         """Return all positions."""
         if synchronize:
-            await self.sync()
+            return await self.sync()
 
         return await self.position_repository.get_all()
 
@@ -256,6 +277,17 @@ class PositionService:
         return self._merge_local_metadata(
             exchange_position=exchange_position,
             stored_position=stored_position,
+        )
+
+    @staticmethod
+    def _requires_natural_exit_reconciliation(*, position: Position) -> bool:
+        """Retain durable protection identity until natural-exit cleanup.
+
+        Natural-exit reconciliation owns the final durable deletion.
+        """
+        return (
+            position.stop_loss_client_algo_id is not None
+            or position.take_profit_client_algo_id is not None
         )
 
     @staticmethod
