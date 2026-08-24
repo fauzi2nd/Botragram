@@ -383,15 +383,15 @@ async def _run_completed_candidate_test() -> None:
     assert status.global_discovery.rank_start == 21
     assert status.global_discovery.rank_end == 21
     assert "WAITING #1" in rendered
-    assert "Universe 100" in rendered
-    assert "Batch 20" in rendered
-    assert "Top 5" in rendered
+    assert "U100/B20/T5" in rendered
     assert "21-21 / 100" in rendered
     assert "Scanned" in rendered
     assert "ETHUSDT" in rendered
     assert "BUY" in rendered
     assert "90%" in rendered
     assert "RISK REJECT" in rendered
+    assert "Confidence" not in rendered
+    assert "Score" in rendered
 
 
 async def _run_capacity_skipped_global_discovery_test() -> None:
@@ -424,7 +424,7 @@ async def _run_capacity_skipped_global_discovery_test() -> None:
     assert "WAITING #1" in rendered
     assert "Last Result" in rendered
     assert "CAPACITY" in rendered
-    assert "Universe 100" in rendered
+    assert "U100/B20/T5" in rendered
     assert "Scanned" in rendered
 
 
@@ -485,8 +485,7 @@ async def _run_zero_position_global_discovery_test() -> None:
     rendered = output.getvalue()
     assert "Global Discovery" in rendered
     assert "1m" in rendered
-    assert "Universe 20" in rendered
-    assert "Top 5" in rendered
+    assert "U20/B-/T5" in rendered
     assert "321.50 USDT" in rendered
     assert "0 / 1" in rendered
     assert rendered.count("New LIVE Exposure") == 1

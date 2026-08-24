@@ -904,9 +904,9 @@ class TerminalMonitor:
 
         candidates = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False)
         candidates.add_column("Symbol", style="bright_magenta", no_wrap=True)
-        candidates.add_column("Side", no_wrap=True)
-        candidates.add_column("Confidence", justify="right", no_wrap=True)
-        candidates.add_column("Result", no_wrap=True)
+        candidates.add_column("Action", no_wrap=True)
+        candidates.add_column("Score", justify="right", no_wrap=True)
+        candidates.add_column("State", no_wrap=True)
         for candidate in discovery.candidates[:5]:
             candidates.add_row(
                 candidate.symbol,
@@ -925,13 +925,11 @@ class TerminalMonitor:
         """Format bounded scan scope without leaking telemetry field names."""
         universe = discovery.universe_limit or discovery.max_symbols
         parts = (
-            f"Universe {universe}" if universe is not None else "Universe -",
-            f"Batch {discovery.batch_size}"
-            if discovery.batch_size is not None
-            else "Batch -",
-            f"Top {discovery.top_n}" if discovery.top_n is not None else "Top -",
+            f"U{universe}" if universe is not None else "U-",
+            f"B{discovery.batch_size}" if discovery.batch_size is not None else "B-",
+            f"T{discovery.top_n}" if discovery.top_n is not None else "T-",
         )
-        return " · ".join(parts)
+        return "/".join(parts)
 
     @staticmethod
     def _format_candidate_result(outcome: str | None) -> str:
@@ -939,7 +937,7 @@ class TerminalMonitor:
         labels = {
             "blocked_by_capacity": "CAPACITY",
             "entry_blocked": "BLOCKED",
-            "executed_and_protected": "EXECUTED",
+            "executed_and_protected": "LIVE",
             "no_signal": "NO SIGNAL",
             "risk_rejected": "RISK REJECT",
             "skipped_capacity": "CAPACITY",
@@ -952,10 +950,13 @@ class TerminalMonitor:
 
     @staticmethod
     def _format_confidence(confidence: Decimal) -> str:
-        """Present the domain's normalized confidence as a compact percentage."""
-        return (
-            f"{TerminalMonitor._format_compact_decimal(confidence * Decimal('100'))}%"
-        )
+        """Present normalized confidence with four significant percentage digits."""
+        percentage = confidence * Decimal("100")
+        if percentage.is_zero():
+            return "0%"
+
+        quantum = Decimal("1").scaleb(percentage.adjusted() - 3)
+        return f"{percentage.quantize(quantum).normalize():f}%"
 
     def _build_performance_panel(self, status: TerminalStatus) -> Panel:
         """Build truthful PAPER or cached LIVE realized-performance telemetry."""
