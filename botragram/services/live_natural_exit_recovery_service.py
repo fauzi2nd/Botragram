@@ -22,8 +22,8 @@ __all__ = [
 ]
 
 
-_RECONCILIATION_ATTEMPTS: Final[int] = 2
-_RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
+_RECONCILIATION_ATTEMPTS: Final[int] = 3
+_RECONCILIATION_DELAY_SECONDS: Final[float] = 0.5
 _TERMINAL_PROTECTION_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
     {
         OrderStatus.FILLED,

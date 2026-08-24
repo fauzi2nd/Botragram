@@ -69,8 +69,9 @@ _SUPPORTED_ENTRY_ORDER_TYPES = frozenset({OrderType.MARKET, OrderType.LIMIT})
 _CLIENT_ORDER_ID_MAX_LENGTH = 36
 _BINANCE_ORDER_NOT_FOUND_CODE = -2013
 _BINANCE_PERCENT_PRICE_REJECTED_CODE = -4131
-_PROTECTION_RECONCILIATION_ATTEMPTS = 2
-_PROTECTION_RECONCILIATION_DELAY_SECONDS = 0.05
+_PROTECTION_RECONCILIATION_ATTEMPTS = 3
+_PROTECTION_RECONCILIATION_DELAY_SECONDS = 0.5
+_TRANSITIONAL_PROTECTION_STATUSES = frozenset({OrderStatus.TRIGGERING})
 
 
 class BinanceFuturesExchangeClient(BinanceExchangeClient):
@@ -488,24 +489,41 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
     async def get_protection_order_by_client_id(
         self, *, symbol: str, client_id: str
     ) -> Order:
-        """Read one Futures conditional algo order by its client identity."""
-        try:
-            payload = await self._rest.get(
-                _ALGO_ORDER_ENDPOINT,
-                params={"clientAlgoId": self._normalize_client_order_id(client_id)},
-                authenticated=True,
-            )
-        except BinanceRestResponseError as error:
-            if error.code == _BINANCE_ORDER_NOT_FOUND_CODE:
-                raise ExchangeOrderNotFoundError(
-                    "Binance Futures protection order was not found"
+        """Read one Futures conditional algo order by its client identity.
+
+        A Binance conditional leg can be observed while it is transitioning
+        from its trigger to its execution outcome. The read remains GET-only
+        and bounded; an unresolved transition is returned for callers to
+        fail closed rather than being relabeled as active protection.
+        """
+        for attempt in range(_PROTECTION_RECONCILIATION_ATTEMPTS):
+            try:
+                payload = await self._rest.get(
+                    _ALGO_ORDER_ENDPOINT,
+                    params={"clientAlgoId": self._normalize_client_order_id(client_id)},
+                    authenticated=True,
+                )
+            except BinanceRestResponseError as error:
+                if error.code == _BINANCE_ORDER_NOT_FOUND_CODE:
+                    raise ExchangeOrderNotFoundError(
+                        "Binance Futures protection order was not found"
+                    ) from error
+                raise
+            except (aiohttp.ClientError, TimeoutError, RuntimeError) as error:
+                raise ExchangeOrderOutcomeUnknownError(
+                    "Binance Futures protection lookup outcome is unknown"
                 ) from error
-            raise
-        except (aiohttp.ClientError, TimeoutError, RuntimeError) as error:
-            raise ExchangeOrderOutcomeUnknownError(
-                "Binance Futures protection lookup outcome is unknown"
-            ) from error
-        return self._mapper.map_algo_order(self._require_mapping(payload))
+
+            order = self._mapper.map_algo_order(self._require_mapping(payload))
+            if (
+                order.status not in _TRANSITIONAL_PROTECTION_STATUSES
+                or attempt + 1 == _PROTECTION_RECONCILIATION_ATTEMPTS
+            ):
+                return order
+
+            await asyncio.sleep(_PROTECTION_RECONCILIATION_DELAY_SECONDS)
+
+        raise RuntimeError("Binance protection lookup did not produce an order")
 
     async def cancel_protection_order(
         self,

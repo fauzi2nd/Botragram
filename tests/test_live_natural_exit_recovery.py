@@ -340,6 +340,71 @@ async def test_reconcile_does_not_retry_delete_when_bulk_snapshot_lags() -> None
 
 
 @pytest.mark.asyncio
+async def test_reconcile_waits_for_delayed_exact_cancellation_without_repeating_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allow Binance's delayed exact GET result without a second DELETE."""
+
+    class DelayedExactCancellationExchange(FakeNaturalExitExchange):
+        def __init__(self) -> None:
+            super().__init__(
+                protections=(
+                    _protection(
+                        order_type=OrderType.TAKE_PROFIT_MARKET,
+                        client_id=_TP_ID,
+                        trigger="0.01084",
+                    ),
+                )
+            )
+            self.exact_reads_after_cancel = 0
+
+        async def cancel_protection_order(
+            self,
+            *,
+            symbol: str,
+            client_id: str,
+        ) -> None:
+            self.cancel_calls.append((symbol.upper(), client_id))
+
+        async def get_protection_order_by_client_id(
+            self,
+            *,
+            symbol: str,
+            client_id: str,
+        ) -> Order:
+            if self.cancel_calls:
+                self.exact_reads_after_cancel += 1
+                if self.exact_reads_after_cancel == 3:
+                    self.protections = []
+                    raise ExchangeOrderNotFoundError("configured cancellation proof")
+            return await super().get_protection_order_by_client_id(
+                symbol=symbol,
+                client_id=client_id,
+            )
+
+    async def no_delay(_: float) -> None:
+        """Keep the bounded reconciliation test fast."""
+
+    monkeypatch.setattr(
+        "botragram.services.live_natural_exit_recovery_service.asyncio.sleep",
+        no_delay,
+    )
+    repository = await _repository()
+    exchange = DelayedExactCancellationExchange()
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    await service.reconcile()
+
+    assert exchange.cancel_calls == [(_SYMBOL, _TP_ID)]
+    assert exchange.exact_reads_after_cancel >= 3
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+
+
+@pytest.mark.asyncio
 async def test_reconcile_leaves_active_position_protection_untouched() -> None:
     position = _position()
     repository = await _repository()

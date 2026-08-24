@@ -887,6 +887,117 @@ def test_mapper_normalizes_triggered_algo_status_as_in_progress() -> None:
     assert order.status is OrderStatus.PARTIALLY_FILLED
 
 
+def test_mapper_preserves_triggering_algo_status_as_transitional() -> None:
+    """Reject neither a real in-flight trigger nor relabel it as active."""
+    order = BinanceExchangeMapper().map_algo_order(
+        {
+            "algoId": 80,
+            "clientAlgoId": "btp-00000000000000000000000000000003",
+            "symbol": "ONUSDT",
+            "side": "SELL",
+            "orderType": "TAKE_PROFIT_MARKET",
+            "algoStatus": "TRIGGERING",
+            "quantity": "500",
+            "actualQty": "0",
+            "triggerPrice": "0.2516600",
+            "createTime": 1_700_000_000_000,
+            "updateTime": 1_700_000_001_000,
+        }
+    )
+
+    assert order.status is OrderStatus.TRIGGERING
+    assert order.status is not OrderStatus.NEW
+
+
+@pytest.mark.asyncio
+async def test_futures_client_waits_for_transitional_exact_protection_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resolve a real transient algo state through bounded GET-only reads."""
+
+    class TriggeringThenNewRestClient(RecordingBinanceRestClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.algo_responses: list[JsonResponse] = [
+                {
+                    "algoId": 80,
+                    "clientAlgoId": "btp-00000000000000000000000000000003",
+                    "symbol": "ONUSDT",
+                    "side": "SELL",
+                    "orderType": "TAKE_PROFIT_MARKET",
+                    "algoStatus": "TRIGGERING",
+                    "quantity": "500",
+                    "actualQty": "0",
+                    "triggerPrice": "0.2516600",
+                    "createTime": 1_700_000_000_000,
+                    "updateTime": 1_700_000_001_000,
+                },
+                {
+                    "algoId": 80,
+                    "clientAlgoId": "btp-00000000000000000000000000000003",
+                    "symbol": "ONUSDT",
+                    "side": "SELL",
+                    "orderType": "TAKE_PROFIT_MARKET",
+                    "algoStatus": "TRIGGERING",
+                    "quantity": "500",
+                    "actualQty": "0",
+                    "triggerPrice": "0.2516600",
+                    "createTime": 1_700_000_000_000,
+                    "updateTime": 1_700_000_001_000,
+                },
+                {
+                    "algoId": 80,
+                    "clientAlgoId": "btp-00000000000000000000000000000003",
+                    "symbol": "ONUSDT",
+                    "side": "SELL",
+                    "orderType": "TAKE_PROFIT_MARKET",
+                    "algoStatus": "NEW",
+                    "quantity": "500",
+                    "actualQty": "0",
+                    "triggerPrice": "0.2516600",
+                    "createTime": 1_700_000_000_000,
+                    "updateTime": 1_700_000_001_000,
+                },
+            ]
+
+        async def get(
+            self,
+            path: str,
+            *,
+            params: QueryParams | None = None,
+            headers: RequestHeaders | None = None,
+            authenticated: bool = False,
+        ) -> JsonResponse:
+            if path != "/fapi/v1/algoOrder":
+                return await super().get(
+                    path,
+                    params=params,
+                    headers=headers,
+                    authenticated=authenticated,
+                )
+
+            del headers
+            self.requests.append(("GET", path, params, authenticated))
+            return self.algo_responses.pop(0)
+
+    async def no_delay(_: float) -> None:
+        """Keep the bounded transition test fast."""
+
+    monkeypatch.setattr(
+        "botragram.exchanges.binance.futures_client.asyncio.sleep",
+        no_delay,
+    )
+    rest = TriggeringThenNewRestClient()
+    order = await _create_client(rest).get_protection_order_by_client_id(
+        symbol="ONUSDT",
+        client_id="btp-00000000000000000000000000000003",
+    )
+
+    assert order.status is OrderStatus.NEW
+    assert [request[0] for request in rest.requests] == ["GET", "GET", "GET"]
+    assert all(request[1] == "/fapi/v1/algoOrder" for request in rest.requests)
+
+
 def test_mapper_normalizes_failed_algo_status_to_rejected() -> None:
     """Normalize Binance's terminal failed algo state without a vendor leak."""
     order = BinanceExchangeMapper().map_algo_order(

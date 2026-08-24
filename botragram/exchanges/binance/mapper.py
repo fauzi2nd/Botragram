@@ -327,14 +327,18 @@ class BinanceExchangeMapper(BaseExchangeMapper):
 
         Binance USD-M conditional orders expose algo-specific states in addition
         to standard order statuses. ``ACTIVE`` remains open protection, while
-        ``TRIGGERED`` means the conditional leg has already fired and is mapped
-        to an in-progress status so protection recovery cannot mistake it for a
-        still-pending trigger. ``FINISHED`` is normalized to FILLED.
+        ``TRIGGERING`` is retained as a transitional domain status so recovery
+        cannot mistake it for active or terminal protection. ``TRIGGERED``
+        means the conditional leg has already fired and is mapped to an
+        in-progress status. ``FINISHED`` is normalized to FILLED.
         """
         normalized = BinanceExchangeMapper._to_string(value).strip().lower()
 
         if normalized == "active":
             return OrderStatus.NEW
+
+        if normalized == "triggering":
+            return OrderStatus.TRIGGERING
 
         if normalized == "triggered":
             return OrderStatus.PARTIALLY_FILLED

@@ -35,6 +35,7 @@ class OrderStatus(BaseEnum):
 
     NEW = "new"
     PARTIALLY_FILLED = "partially_filled"
+    TRIGGERING = "triggering"
     FILLED = "filled"
 
     CANCELED = "canceled"
