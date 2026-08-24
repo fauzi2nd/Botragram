@@ -589,3 +589,172 @@ async def test_reconcile_accepts_exact_pending_stop_orphan() -> None:
 
     assert exchange.cancel_calls == [(_SYMBOL, pending_id)]
     assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+
+
+class SnapshotNaturalExitExchange(FakeNaturalExitExchange):
+    """Return one deterministic sequence of complete portfolio snapshots."""
+
+    def __init__(
+        self,
+        *,
+        snapshots: tuple[tuple[Position, ...], ...],
+        protections: tuple[Order, ...] = (),
+    ) -> None:
+        super().__init__(protections=protections)
+        self.snapshots = snapshots
+        self.snapshot_index = 0
+
+    async def get_positions(
+        self,
+        *,
+        symbol: str | None = None,
+    ) -> tuple[Position, ...]:
+        if symbol is not None:
+            return await super().get_positions(symbol=symbol)
+        snapshot = self.snapshots[min(self.snapshot_index, len(self.snapshots) - 1)]
+        self.snapshot_index += 1
+        self.positions = snapshot
+        return snapshot
+
+
+def _completed_attempt(*, position: Position) -> SubmissionAttempt:
+    """Build durable evidence for one completed protected entry."""
+    entry_client_order_id = position.entry_client_order_id
+    assert entry_client_order_id is not None
+    return SubmissionAttempt(
+        client_order_id=entry_client_order_id,
+        symbol=position.symbol,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        quantity=position.quantity,
+        signal_generated_at=_NOW,
+        interval=Interval.M15,
+        strategy_type=StrategyType.EMA_CROSS,
+        status=SubmissionAttemptStatus.COMPLETED,
+        exchange_order_id="entry-1",
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_adopts_stable_fresh_protected_entry() -> None:
+    """Retry GET-only after a newly completed entry settles into visibility."""
+    position = _position()
+    repository = await _repository()
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    exchange = SnapshotNaturalExitExchange(
+        snapshots=((), (position,), (position,), (position,), (position,)),
+        protections=(
+            _protection(
+                order_type=OrderType.STOP_MARKET,
+                client_id=_STOP_ID,
+                trigger="0.01151",
+            ),
+            _protection(
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                client_id=_TP_ID,
+                trigger="0.01084",
+            ),
+        ),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=attempts,
+    )
+
+    await service.reconcile()
+
+    assert exchange.cancel_calls == []
+    assert exchange.snapshot_index == 5
+    assert await repository.get_by_symbol(symbol=_SYMBOL) == position
+
+
+@pytest.mark.asyncio
+async def test_reconcile_fails_closed_on_new_unmanaged_exposure() -> None:
+    """Never retry an added exposure that lacks durable ownership evidence."""
+    position = _position()
+    exchange = SnapshotNaturalExitExchange(snapshots=((), (position,)))
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=MemoryPositionRepository(),
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    with pytest.raises(RuntimeError, match="gained an unmanaged exposure"):
+        await service.reconcile()
+
+    assert exchange.cancel_calls == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_retries_a_known_natural_exit_until_stable() -> None:
+    """Treat a durable position disappearing mid-pass as retryable read state."""
+    position = _position()
+    repository = await _repository()
+    exchange = SnapshotNaturalExitExchange(
+        snapshots=((position,), (), (), (), ()),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    await service.reconcile()
+
+    assert exchange.cancel_calls == []
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_fails_closed_when_portfolio_never_stabilizes() -> None:
+    """Bound changed snapshots without retrying a mutation or looping forever."""
+    position = _position()
+    repository = await _repository()
+    exchange = SnapshotNaturalExitExchange(
+        snapshots=((position,), (), (position,), (), (position,), ()),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    with pytest.raises(RuntimeError, match="did not stabilize"):
+        await service.reconcile()
+
+    assert exchange.cancel_calls == []
+    assert await repository.get_by_symbol(symbol=_SYMBOL) == position
+
+
+@pytest.mark.asyncio
+async def test_reconcile_fails_closed_when_fresh_protection_is_unknown() -> None:
+    """Require exact STOP and TP proof before accepting a newly visible entry."""
+
+    class UnknownProtectionExchange(SnapshotNaturalExitExchange):
+        async def get_protection_order_by_client_id(
+            self,
+            *,
+            symbol: str,
+            client_id: str,
+        ) -> Order:
+            raise ExchangeOrderOutcomeUnknownError("configured protection unknown")
+
+    position = _position()
+    repository = await _repository()
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    exchange = UnknownProtectionExchange(snapshots=((), (position,)))
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=attempts,
+    )
+
+    with pytest.raises(ExchangeOrderOutcomeUnknownError):
+        await service.reconcile()
+
+    assert exchange.cancel_calls == []

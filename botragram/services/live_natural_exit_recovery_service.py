@@ -9,7 +9,13 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final, Protocol
 
-from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
+from botragram.enums import (
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+    SubmissionAttemptStatus,
+)
 from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
@@ -24,6 +30,7 @@ __all__ = [
 
 _RECONCILIATION_ATTEMPTS: Final[int] = 3
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.5
+_PORTFOLIO_STABILITY_ATTEMPTS: Final[int] = 3
 _TERMINAL_PROTECTION_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
     {
         OrderStatus.FILLED,
@@ -97,26 +104,91 @@ class LiveNaturalExitRecoveryService:
                 "natural-exit reconciliation"
             )
 
-        stored_positions = tuple(await self.position_repository.get_all())
-        stored_by_symbol = {
-            position.symbol.upper(): position for position in stored_positions
-        }
+        for attempt in range(_PORTFOLIO_STABILITY_ATTEMPTS):
+            stored_positions = tuple(await self.position_repository.get_all())
+            stored_by_symbol = {
+                position.symbol.upper(): position for position in stored_positions
+            }
+            initial_positions = tuple(await self.exchange_client.get_positions())
+            open_protections = tuple(
+                await self.exchange_client.get_open_protection_orders()
+            )
+            observed_positions = tuple(await self.exchange_client.get_positions())
+            if not self._portfolio_snapshots_match(
+                initial_positions=initial_positions,
+                observed_positions=observed_positions,
+            ):
+                await self._validate_known_portfolio_transition(
+                    initial_positions=initial_positions,
+                    observed_positions=observed_positions,
+                    stored_by_symbol=stored_by_symbol,
+                )
+                if attempt + 1 < _PORTFOLIO_STABILITY_ATTEMPTS:
+                    continue
+                raise RuntimeError(
+                    "LIVE portfolio did not stabilize during natural-exit "
+                    "reconciliation"
+                )
 
-        initial_positions = tuple(await self.exchange_client.get_positions())
-        initial_active_symbols = {
-            position.symbol.upper() for position in initial_positions
-        }
-        open_protections = tuple(
-            await self.exchange_client.get_open_protection_orders()
-        )
+            active_symbols = {
+                position.symbol.upper() for position in observed_positions
+            }
+            await self._reconcile_orphan_protections(
+                open_protections=open_protections,
+                active_symbols=active_symbols,
+                stored_by_symbol=stored_by_symbol,
+            )
+            final_protections = tuple(
+                await self.exchange_client.get_open_protection_orders()
+            )
+            remaining_orphans = tuple(
+                order
+                for order in final_protections
+                if order.symbol.upper() not in active_symbols
+            )
+            if remaining_orphans:
+                raise RuntimeError(
+                    "LIVE orphan protection remains after reconciliation: "
+                    f"count={len(remaining_orphans)}"
+                )
 
+            await self._delete_stale_positions(
+                stored_positions=stored_positions,
+                active_symbols=active_symbols,
+            )
+            settled_positions = tuple(await self.exchange_client.get_positions())
+            if self._portfolio_snapshots_match(
+                initial_positions=observed_positions,
+                observed_positions=settled_positions,
+            ):
+                return
+            await self._validate_known_portfolio_transition(
+                initial_positions=observed_positions,
+                observed_positions=settled_positions,
+                stored_by_symbol={
+                    position.symbol.upper(): position
+                    for position in await self.position_repository.get_all()
+                },
+            )
+            if attempt + 1 >= _PORTFOLIO_STABILITY_ATTEMPTS:
+                raise RuntimeError(
+                    "LIVE portfolio did not stabilize during natural-exit "
+                    "reconciliation"
+                )
+
+    async def _reconcile_orphan_protections(
+        self,
+        *,
+        open_protections: tuple[Order, ...],
+        active_symbols: set[str],
+        stored_by_symbol: dict[str, Position],
+    ) -> None:
+        """Cancel exact durable orphan legs only after a stable zero-exposure read."""
         orphan_groups: dict[str, list[Order]] = {}
         for order in open_protections:
             symbol = order.symbol.upper()
-            if symbol in initial_active_symbols:
-                continue
-            orphan_groups.setdefault(symbol, []).append(order)
-
+            if symbol not in active_symbols:
+                orphan_groups.setdefault(symbol, []).append(order)
         for symbol in sorted(orphan_groups):
             stored_position = stored_by_symbol.get(symbol)
             if stored_position is None:
@@ -124,14 +196,9 @@ class LiveNaturalExitRecoveryService:
                     "LIVE orphan protection has no durable position identity: "
                     f"symbol={symbol}"
                 )
-
             orders = tuple(orphan_groups[symbol])
             for order in orders:
-                self._validate_owned_orphan(
-                    order=order,
-                    position=stored_position,
-                )
-
+                self._validate_owned_orphan(order=order, position=stored_position)
             for order in sorted(
                 orders,
                 key=lambda candidate: (
@@ -141,55 +208,197 @@ class LiveNaturalExitRecoveryService:
             ):
                 await self._cancel_and_reconcile(order=order)
 
-        final_positions = tuple(await self.exchange_client.get_positions())
-        final_active_symbols = {position.symbol.upper() for position in final_positions}
-        final_protections = tuple(
-            await self.exchange_client.get_open_protection_orders()
-        )
-
-        if final_active_symbols != initial_active_symbols:
-            raise RuntimeError(
-                "LIVE portfolio changed during natural-exit reconciliation"
-            )
-
-        remaining_orphans = tuple(
-            order
-            for order in final_protections
-            if order.symbol.upper() not in final_active_symbols
-        )
-        if remaining_orphans:
-            raise RuntimeError(
-                "LIVE orphan protection remains after reconciliation: "
-                f"count={len(remaining_orphans)}"
-            )
-
+    async def _delete_stale_positions(
+        self,
+        *,
+        stored_positions: tuple[Position, ...],
+        active_symbols: set[str],
+    ) -> None:
+        """Delete only durable positions with repeatedly proven zero exposure."""
         for position in stored_positions:
-            if position.symbol.upper() in final_active_symbols:
+            if position.symbol.upper() in active_symbols:
                 continue
-            await self._reconcile_persisted_protection_before_delete(
-                position=position,
-            )
+            await self._reconcile_persisted_protection_before_delete(position=position)
             if await self.exchange_client.get_positions(symbol=position.symbol):
                 raise RuntimeError(
                     "LIVE exposure reappeared before durable position deletion: "
                     f"symbol={position.symbol}"
                 )
-            remaining_symbol_protections = tuple(
+            remaining = tuple(
                 await self.exchange_client.get_open_protection_orders(
                     symbol=position.symbol,
                 )
             )
-            if remaining_symbol_protections:
+            if remaining:
                 raise RuntimeError(
                     "LIVE protection remains before durable position deletion: "
-                    f"symbol={position.symbol} "
-                    f"count={len(remaining_symbol_protections)}"
+                    f"symbol={position.symbol} count={len(remaining)}"
                 )
             await self.position_repository.delete(symbol=position.symbol)
             _LOGGER.info(
                 "Natural LIVE exit reconciled: symbol=%s entry_client_order_id=%s",
                 position.symbol,
                 position.entry_client_order_id,
+            )
+
+    @staticmethod
+    def _portfolio_snapshots_match(
+        *,
+        initial_positions: tuple[Position, ...],
+        observed_positions: tuple[Position, ...],
+    ) -> bool:
+        """Require stable symbol, side, quantity, and entry-price exposure."""
+        return LiveNaturalExitRecoveryService._to_exposure_by_symbol(
+            positions=initial_positions
+        ) == LiveNaturalExitRecoveryService._to_exposure_by_symbol(
+            positions=observed_positions
+        )
+
+    @staticmethod
+    def _to_exposure_by_symbol(
+        *,
+        positions: tuple[Position, ...],
+    ) -> dict[str, tuple[PositionSide, Decimal, Decimal]]:
+        """Return one exact non-price-sensitive exposure identity per symbol."""
+        exposures: dict[str, tuple[PositionSide, Decimal, Decimal]] = {}
+        for position in positions:
+            symbol = position.symbol.upper()
+            if symbol in exposures:
+                raise RuntimeError(
+                    "Exchange returned duplicate LIVE positions during "
+                    f"natural-exit reconciliation: symbol={symbol}"
+                )
+            exposures[symbol] = (
+                position.side,
+                position.quantity,
+                position.entry_price,
+            )
+        return exposures
+
+    async def _validate_known_portfolio_transition(
+        self,
+        *,
+        initial_positions: tuple[Position, ...],
+        observed_positions: tuple[Position, ...],
+        stored_by_symbol: dict[str, Position],
+    ) -> None:
+        """Accept only a durable protected entry or known natural-exit transition."""
+        initial = self._to_exposure_by_symbol(positions=initial_positions)
+        observed = self._to_exposure_by_symbol(positions=observed_positions)
+        for symbol in sorted(observed.keys() - initial.keys()):
+            exchange_position = next(
+                position
+                for position in observed_positions
+                if position.symbol.upper() == symbol
+            )
+            await self._require_durable_protected_entry(
+                exchange_position=exchange_position,
+                stored_position=stored_by_symbol.get(symbol),
+            )
+        for symbol in sorted(initial.keys() - observed.keys()):
+            if symbol not in stored_by_symbol:
+                raise RuntimeError(
+                    "LIVE portfolio lost an unmanaged exposure during "
+                    f"natural-exit reconciliation: symbol={symbol}"
+                )
+        for symbol in sorted(initial.keys() & observed.keys()):
+            if initial[symbol] != observed[symbol]:
+                raise RuntimeError(
+                    "LIVE exposure changed during natural-exit reconciliation: "
+                    f"symbol={symbol}"
+                )
+
+    async def _require_durable_protected_entry(
+        self,
+        *,
+        exchange_position: Position,
+        stored_position: Position | None,
+    ) -> None:
+        """Prove a newly visible exposure belongs to one completed protected entry."""
+        if stored_position is None:
+            raise RuntimeError(
+                "LIVE portfolio gained an unmanaged exposure during natural-exit "
+                f"reconciliation: symbol={exchange_position.symbol}"
+            )
+        if (
+            exchange_position.symbol.upper() != stored_position.symbol.upper()
+            or exchange_position.side is not stored_position.side
+            or exchange_position.quantity != stored_position.quantity
+            or exchange_position.entry_price != stored_position.entry_price
+            or stored_position.interval is None
+            or stored_position.strategy_type is None
+        ):
+            raise RuntimeError(
+                "LIVE portfolio gained exposure that does not match its durable "
+                f"position: symbol={exchange_position.symbol}"
+            )
+        entry_client_order_id = stored_position.entry_client_order_id
+        if entry_client_order_id is None:
+            raise RuntimeError(
+                "LIVE portfolio gained exposure without a durable entry identity: "
+                f"symbol={exchange_position.symbol}"
+            )
+        attempt = await self.submission_attempt_repository.get_by_client_order_id(
+            client_order_id=entry_client_order_id,
+        )
+        expected_side = (
+            OrderSide.BUY
+            if stored_position.side is PositionSide.LONG
+            else OrderSide.SELL
+        )
+        if (
+            attempt is None
+            or attempt.status is not SubmissionAttemptStatus.COMPLETED
+            or attempt.symbol.upper() != stored_position.symbol.upper()
+            or attempt.side is not expected_side
+            or attempt.quantity != stored_position.quantity
+        ):
+            raise RuntimeError(
+                "LIVE portfolio gained exposure without a completed durable entry: "
+                f"symbol={exchange_position.symbol}"
+            )
+        await self._require_active_persisted_leg(
+            position=stored_position,
+            order_type=OrderType.STOP_MARKET,
+            client_id=stored_position.stop_loss_client_algo_id,
+            trigger=stored_position.stop_loss,
+        )
+        await self._require_active_persisted_leg(
+            position=stored_position,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            client_id=stored_position.take_profit_client_algo_id,
+            trigger=stored_position.take_profit,
+        )
+
+    async def _require_active_persisted_leg(
+        self,
+        *,
+        position: Position,
+        order_type: OrderType,
+        client_id: str | None,
+        trigger: Decimal | None,
+    ) -> None:
+        """Require one exact durable protection identity to be currently active."""
+        if client_id is None or trigger is None:
+            raise RuntimeError(
+                "Newly visible LIVE exposure is missing durable protection: "
+                f"symbol={position.symbol}"
+            )
+        order = await self.exchange_client.get_protection_order_by_client_id(
+            symbol=position.symbol,
+            client_id=client_id,
+        )
+        self._validate_persisted_leg_identity(
+            order=order,
+            position=position,
+            order_type=order_type,
+            client_id=client_id,
+            trigger=trigger,
+        )
+        if order.status is not OrderStatus.NEW:
+            raise RuntimeError(
+                "Newly visible LIVE exposure has inactive protection: "
+                f"symbol={position.symbol}"
             )
 
     async def _reconcile_persisted_protection_before_delete(
