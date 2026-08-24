@@ -6,6 +6,7 @@ import asyncio
 import socket
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
+from time import monotonic
 
 import pytest
 from aiohttp import web
@@ -19,7 +20,10 @@ from botragram.exchanges.binance.futures_client import (
     BinanceFuturesExchangeClient,
 )
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
-from botragram.exchanges.binance.rest import BinanceRestClient
+from botragram.exchanges.binance.rest import (
+    BinanceRestClient,
+    BinanceRestResponseError,
+)
 
 type RequestHandler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
@@ -76,6 +80,77 @@ async def test_authenticated_get_retries_with_fresh_signature_parameters() -> No
     assert attempts == 2
     assert timestamps[0] != timestamps[1]
     assert signatures[0] != signatures[1]
+
+
+@pytest.mark.asyncio
+async def test_get_rate_limit_honors_retry_after_before_retrying() -> None:
+    """Wait for Binance's requested delay before repeating a safe read."""
+    attempts = 0
+    request_times: list[float] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        """Rate limit once before accepting the GET request."""
+        nonlocal attempts
+        del request
+        attempts += 1
+        request_times.append(monotonic())
+
+        if attempts == 1:
+            return web.json_response(
+                {"code": -1003, "msg": "too many requests"},
+                status=429,
+                headers={"Retry-After": "0.03"},
+            )
+
+        return web.json_response({"ok": True})
+
+    base_url, runner = await _start_server(handler)
+    rest = BinanceRestClient(
+        base_url=base_url,
+        max_retries=3,
+        retry_delay_seconds=0,
+    )
+
+    try:
+        assert await rest.get("/read") == {"ok": True}
+    finally:
+        await rest.close()
+        await runner.cleanup()
+
+    assert attempts == 2
+    assert request_times[1] - request_times[0] >= 0.025
+
+
+@pytest.mark.asyncio
+async def test_get_client_error_is_not_retried() -> None:
+    """Do not waste API quota retrying a deterministic client rejection."""
+    attempts = 0
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        """Return an invalid-credential rejection once."""
+        nonlocal attempts
+        del request
+        attempts += 1
+        return web.json_response(
+            {"code": -2015, "msg": "invalid credentials"},
+            status=401,
+        )
+
+    base_url, runner = await _start_server(handler)
+    rest = BinanceRestClient(
+        base_url=base_url,
+        max_retries=3,
+        retry_delay_seconds=0,
+    )
+
+    try:
+        with pytest.raises(BinanceRestResponseError, match="status=401"):
+            await rest.get("/read")
+    finally:
+        await rest.close()
+        await runner.cleanup()
+
+    assert attempts == 1
 
 
 @pytest.mark.asyncio

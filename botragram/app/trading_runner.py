@@ -1820,10 +1820,10 @@ class TradingRunner:
         self,
         telemetry: GlobalDiscoveryTelemetry,
     ) -> None:
-        """Record and log a local discovery-cycle start."""
+        """Record and log the preflight before a possible discovery scan."""
         telemetry.begin_cycle(interval=self.interval)
         _LOGGER.info(
-            "Global discovery cycle started: interval=%s universe_limit=%s "
+            "Global discovery preflight started: interval=%s universe_limit=%s "
             "batch_size=%s top_n=%s",
             self.interval.value,
             telemetry.universe_limit,

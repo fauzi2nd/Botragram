@@ -22,6 +22,7 @@ import hmac
 import json
 import logging
 from collections.abc import Mapping
+from math import isfinite
 from time import time
 from typing import Final, cast
 from urllib.parse import urlencode
@@ -69,17 +70,29 @@ _API_KEY_HEADER: Final[str] = "X-MBX-APIKEY"
 _SIGNATURE_PARAMETER: Final[str] = "signature"
 _TIMESTAMP_PARAMETER: Final[str] = "timestamp"
 _RECV_WINDOW_PARAMETER: Final[str] = "recvWindow"
+_RETRY_AFTER_HEADER: Final[str] = "Retry-After"
+_HTTP_AUTO_BAN_STATUS: Final[int] = 418
+_HTTP_RATE_LIMIT_STATUS: Final[int] = 429
+_HTTP_SERVER_ERROR_STATUS: Final[int] = 500
 
 
 class BinanceRestResponseError(RuntimeError):
     """Retain structured Binance HTTP response metadata at the transport boundary."""
 
-    __slots__ = ("code", "status")
+    __slots__ = ("code", "retry_after_seconds", "status")
 
-    def __init__(self, *, status: int, payload: JsonResponse, message: str) -> None:
+    def __init__(
+        self,
+        *,
+        status: int,
+        payload: JsonResponse,
+        message: str,
+        retry_after_seconds: float | None = None,
+    ) -> None:
         """Initialize one failed Binance response."""
         super().__init__(message)
         self.status = status
+        self.retry_after_seconds = retry_after_seconds
         raw_code = payload.get("code") if isinstance(payload, Mapping) else None
         self.code = raw_code if isinstance(raw_code, int) else None
 
@@ -248,6 +261,9 @@ class BinanceRestClient(BaseRestClient):
                         raise BinanceRestResponseError(
                             status=response.status,
                             payload=payload,
+                            retry_after_seconds=self._get_retry_after_seconds(
+                                response=response,
+                            ),
                             message=self._format_http_error(
                                 method=method,
                                 url=url,
@@ -258,27 +274,107 @@ class BinanceRestClient(BaseRestClient):
 
                     return payload
 
-            except (aiohttp.ClientError, TimeoutError, RuntimeError) as error:
+            except BinanceRestResponseError as error:
+                if not self._is_retryable_response(error=error):
+                    raise
+
                 last_error = error
 
                 if attempt >= maximum_attempts:
                     raise
 
-                delay = self._retry_delay_seconds * attempt
-
-                _LOGGER.warning(
-                    "Binance REST request failed; retrying",
-                    extra={
-                        "attempt": attempt,
-                        "delay_seconds": delay,
-                        "method": method,
-                        "path": path,
-                    },
+                delay = self._get_retry_delay_seconds(
+                    attempt=attempt,
+                    retry_after_seconds=error.retry_after_seconds,
                 )
+                self._log_retry(
+                    attempt=attempt,
+                    delay_seconds=delay,
+                    method=method,
+                    path=path,
+                    status=error.status,
+                )
+                await asyncio.sleep(delay)
 
+            except (aiohttp.ClientError, TimeoutError) as error:
+                last_error = error
+
+                if attempt >= maximum_attempts:
+                    raise
+
+                delay = self._get_retry_delay_seconds(attempt=attempt)
+                self._log_retry(
+                    attempt=attempt,
+                    delay_seconds=delay,
+                    method=method,
+                    path=path,
+                )
                 await asyncio.sleep(delay)
 
         raise RuntimeError("Binance REST request failed") from last_error
+
+    def _get_retry_delay_seconds(
+        self,
+        *,
+        attempt: int,
+        retry_after_seconds: float | None = None,
+    ) -> float:
+        """Return retry delay while honoring Binance rate-limit guidance."""
+        retry_delay = self._retry_delay_seconds * attempt
+
+        if retry_after_seconds is None:
+            return retry_delay
+
+        return max(retry_delay, retry_after_seconds)
+
+    @staticmethod
+    def _get_retry_after_seconds(
+        *,
+        response: aiohttp.ClientResponse,
+    ) -> float | None:
+        """Return a valid numeric Retry-After response header, when supplied."""
+        raw_retry_after = response.headers.get(_RETRY_AFTER_HEADER)
+        if raw_retry_after is None:
+            return None
+
+        try:
+            retry_after_seconds = float(raw_retry_after)
+        except ValueError:
+            return None
+
+        if not isfinite(retry_after_seconds) or retry_after_seconds < 0:
+            return None
+
+        return retry_after_seconds
+
+    @staticmethod
+    def _is_retryable_response(*, error: BinanceRestResponseError) -> bool:
+        """Return whether a read response represents a transient failure."""
+        return (
+            error.status in {_HTTP_AUTO_BAN_STATUS, _HTTP_RATE_LIMIT_STATUS}
+            or error.status >= _HTTP_SERVER_ERROR_STATUS
+        )
+
+    @staticmethod
+    def _log_retry(
+        *,
+        attempt: int,
+        delay_seconds: float,
+        method: str,
+        path: str,
+        status: int | None = None,
+    ) -> None:
+        """Log one bounded retry without credentials or payloads."""
+        _LOGGER.warning(
+            "Binance REST request failed; retrying",
+            extra={
+                "attempt": attempt,
+                "delay_seconds": delay_seconds,
+                "method": method,
+                "path": path,
+                "status": status,
+            },
+        )
 
     def _get_session(self) -> aiohttp.ClientSession:
         """Return the active HTTP session, creating it when necessary."""
