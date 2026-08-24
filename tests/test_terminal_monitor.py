@@ -111,6 +111,20 @@ class FakePositionProvider:
         return self.positions
 
 
+@dataclass(slots=True, kw_only=True)
+class TransitioningPositionProvider:
+    """Change runtime contexts while an async terminal snapshot is in flight."""
+
+    runtime_control: TradingRuntimeControl
+    positions: tuple[Position, ...]
+    contexts: tuple[LiveRuntimePositionContext, ...]
+
+    async def get_open_positions(self) -> Sequence[Position]:
+        """Advance runtime ownership before returning the position snapshot."""
+        self.runtime_control.set_runtime_contexts(contexts=self.contexts)
+        return self.positions
+
+
 class RecordingAlternateScreenConsole(Console):
     """Record alternate-screen transitions independently of terminal support."""
 
@@ -475,6 +489,58 @@ async def _run_zero_position_global_discovery_test() -> None:
     assert "NONE (no managed positions)" in rendered
     assert "WAITING #1" in rendered
     assert "Next Discovery" in rendered
+
+
+def test_terminal_stale_single_context_health_survives_multi_context_transition() -> (
+    None
+):
+    """Do not read singular runtime accessors after an async context transition."""
+    asyncio.run(_run_terminal_stale_health_transition_test())
+
+
+async def _run_terminal_stale_health_transition_test() -> None:
+    """Reproduce a stale health snapshot racing with multi-context adoption."""
+    first_context = LiveRuntimePositionContext(
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+    second_context = LiveRuntimePositionContext(
+        symbol="ETHUSDT",
+        interval=Interval.M5,
+        strategy_type=StrategyType.EMA_SCALPING,
+    )
+    stale_health = LiveRuntimeHealthSnapshot(
+        status=LiveRuntimeHealthStatus.ACTIVE,
+        reason=None,
+        contexts=(first_context,),
+        affected_contexts=(),
+        authorization_present=True,
+        authorization_exact=True,
+        runner_paused=False,
+        cycle_in_progress=False,
+        stream_states=(),
+        monitor_states=(),
+    )
+    control = TradingRuntimeControl(symbol="BTCUSDT")
+    control.set_stream_enabled(True)
+    control.record_stream_tick(price=Decimal("110"))
+    monitor = _create_monitor(
+        runtime_control=control,
+        trade_mode=TradeMode.LIVE,
+        live_runtime_health=stale_health,
+    )
+    monitor.position_provider = TransitioningPositionProvider(
+        runtime_control=control,
+        positions=(_create_position(),),
+        contexts=(first_context, second_context),
+    )
+
+    status = await monitor.collect_status()
+
+    assert len(control.runtime_contexts) == 2
+    assert status.live_runtime_health == stale_health
+    assert status.unrealized_pnl == Decimal("2")
 
 
 def test_terminal_multi_context_health_never_selects_a_singular_runtime() -> None:

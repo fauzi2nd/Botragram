@@ -428,9 +428,7 @@ class TerminalMonitor:
     ) -> Decimal:
         """Calculate PnL using a fresh selected-symbol stream price when present."""
         total = _DECIMAL_ZERO
-        can_use_singular_stream = (
-            live_runtime_health is None or len(live_runtime_health.contexts) <= 1
-        )
+        can_use_legacy_singular_stream = live_runtime_health is None
 
         stream_states = (
             live_runtime_health.stream_states if live_runtime_health is not None else ()
@@ -440,9 +438,13 @@ class TerminalMonitor:
                 position=position,
                 stream_states=stream_states,
             )
-            if stream_price is None and can_use_singular_stream and stream.enabled:
-                if position.symbol == self.runtime_control.symbol:
-                    stream_price = stream.last_price
+            if (
+                stream_price is None
+                and can_use_legacy_singular_stream
+                and stream.enabled
+                and position.symbol == self.runtime_control.symbol
+            ):
+                stream_price = stream.last_price
             total += self.pnl_engine.calculate_unrealized(
                 position=position,
                 current_price=stream_price,
