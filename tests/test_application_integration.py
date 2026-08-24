@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock
 
 # =============================================================================
 # Third-Party Imports
@@ -37,6 +38,9 @@ from botragram.app import (
     HumanConfirmedPaperTradingCycleExecutor,
     SettingsManager,
     SingleSymbolTradingCycleExecutor,
+)
+from botragram.app.live_futures_user_data_service import (
+    LiveFuturesUserDataService,
 )
 from botragram.config import Settings
 from botragram.config.app_settings import AppSettings
@@ -299,8 +303,12 @@ def test_provider_rejects_live_human_confirmation_configuration() -> None:
         SettingsManager.validate(settings=settings)
 
 
-def test_provider_selects_testnet_autonomous_live_executor() -> None:
+def test_provider_selects_testnet_autonomous_live_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Compose the single global TESTNET autonomous LIVE workflow."""
+    monkeypatch.setattr(LiveFuturesUserDataService, "start", AsyncMock())
+
     asyncio.run(_run_testnet_autonomous_live_provider_test())
 
 

@@ -623,7 +623,7 @@ Botragram/
 |   |   |-- __init__.py
 |   |   |-- application.py
 |   |   |-- backtest_command.py       # Backtest CLI composition dan report
-|   |   |-- dependency_provider.py
+|   |   |-- dependency_provider.py`n|   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
 |   |   |-- environment_provider.py
 |   |   |-- lifecycle.py
 |   |   |-- market_type_switch.py     # Guarded Spot/Futures soft restart
@@ -668,7 +668,7 @@ Botragram/
 |   |   |-- risk_engine.py
 |   |   |-- signal_engine.py
 |   |   `-- trading_engine.py
-|   |-- enums/
+|   |-- enums/`n|   |   |-- live_futures_user_data_status.py # Freshness state for private Futures cache
 |   |   |-- __init__.py
 |   |   |-- base.py
 |   |   |-- environment.py
@@ -689,7 +689,7 @@ Botragram/
 |   |   |-- binance/
 |   |   |   |-- __init__.py
 |   |   |   |-- client.py
-|   |   |   |-- futures_client.py
+|   |   |   |-- futures_client.py`n|   |   |-- futures_user_data_stream.py # Binance private account User Data Stream
 |   |   |   |-- mapper.py
 |   |   |   |-- rest.py
 |   |   |   `-- stream.py
@@ -725,7 +725,7 @@ Botragram/
 |   |       |-- __init__.py
 |   |       |-- obv.py
 |   |       `-- vwap.py
-|   |-- models/
+|   |-- models/`n|   |   |-- futures_user_data.py # Immutable private account, position, and order updates
 |   |   |-- __init__.py
 |   |   |-- account.py
 |   |   |-- backtest.py

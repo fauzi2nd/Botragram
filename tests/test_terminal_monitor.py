@@ -41,6 +41,7 @@ from botragram.enums import (
     AutonomousLiveRecoveryStatus,
     GlobalDiscoveryCycleOutcome,
     Interval,
+    LiveFuturesUserDataStatus,
     LiveMarketStreamLifecycleStatus,
     LiveRuntimeHealthReason,
     LiveRuntimeHealthStatus,
@@ -52,6 +53,7 @@ from botragram.enums import (
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
     DiscoveryUniverseBatch,
+    FuturesUserDataPositionUpdate,
     LiveMarketStreamIdentity,
     LiveMarketStreamState,
     LiveProtectionMonitorState,
@@ -64,6 +66,9 @@ from botragram.models import (
     TradingResult,
 )
 from botragram.services import PaperPortfolioSnapshot
+from botragram.services.live_futures_user_data_cache import (
+    LiveFuturesUserDataSnapshot,
+)
 from botragram.services.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
@@ -126,6 +131,17 @@ class TransitioningPositionProvider:
         """Advance runtime ownership before returning the position snapshot."""
         self.runtime_control.set_runtime_contexts(contexts=self.contexts)
         return self.positions
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class FakeLiveFuturesUserDataProvider:
+    """Return one deterministic private Futures cache snapshot."""
+
+    snapshot: LiveFuturesUserDataSnapshot
+
+    async def get_snapshot(self) -> LiveFuturesUserDataSnapshot:
+        """Return the configured cache snapshot without exchange I/O."""
+        return self.snapshot
 
 
 class RecordingAlternateScreenConsole(Console):
@@ -715,7 +731,7 @@ async def _run_terminal_monitor_stop_test() -> None:
     ("refresh_interval", "live_balance_interval", "message"),
     (
         (0.0, 10.0, "refresh interval"),
-        (1.0, 0.0, "balance refresh interval"),
+        (1.0, -1.0, "balance refresh interval"),
     ),
 )
 def test_terminal_monitor_rejects_invalid_intervals(
@@ -723,7 +739,7 @@ def test_terminal_monitor_rejects_invalid_intervals(
     live_balance_interval: float,
     message: str,
 ) -> None:
-    """Reject non-positive terminal and exchange refresh intervals."""
+    """Reject invalid terminal and exchange refresh intervals."""
     with pytest.raises(ValueError, match=message):
         TerminalMonitor(
             runtime_control=TradingRuntimeControl(),
@@ -737,6 +753,46 @@ def test_terminal_monitor_rejects_invalid_intervals(
             refresh_interval_seconds=refresh_interval,
             live_balance_refresh_seconds=live_balance_interval,
         )
+
+
+def test_terminal_merges_realtime_position_without_losing_protection_fields() -> None:
+    """Overlay streamed exposure while retaining the durable position metadata."""
+    asyncio.run(_run_terminal_realtime_position_overlay_test())
+
+
+async def _run_terminal_realtime_position_overlay_test() -> None:
+    """Collect a public terminal snapshot with private position updates."""
+    position = _live_position("BTCUSDT")
+    snapshot = LiveFuturesUserDataSnapshot(
+        status=LiveFuturesUserDataStatus.READY,
+        last_event_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
+        last_snapshot_at=datetime(2026, 1, 1, tzinfo=UTC),
+        balances=(),
+        positions=(),
+        position_updates=(
+            FuturesUserDataPositionUpdate(
+                symbol="BTCUSDT",
+                quantity=Decimal("2"),
+                entry_price=Decimal("102"),
+                unrealized_pnl=Decimal("5"),
+            ),
+        ),
+        recent_orders=(),
+    )
+    monitor = _create_monitor(
+        positions=(position,),
+        trade_mode=TradeMode.LIVE,
+    )
+    monitor.live_futures_user_data_service = FakeLiveFuturesUserDataProvider(
+        snapshot=snapshot,
+    )
+
+    status = await monitor.collect_status()
+
+    assert status.positions[0].quantity == Decimal("2")
+    assert status.positions[0].entry_price == Decimal("102")
+    assert status.positions[0].unrealized_pnl == Decimal("5")
+    assert status.positions[0].stop_loss == position.stop_loss
 
 
 # =============================================================================

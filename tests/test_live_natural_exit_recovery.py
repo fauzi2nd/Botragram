@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -21,11 +22,12 @@ from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
 )
-from botragram.models import Order, Position, SubmissionAttempt
+from botragram.models import Order, Position, SubmissionAttempt, Trade
 from botragram.services import LiveNaturalExitRecoveryService
 from botragram.storage.memory import (
     MemoryPositionRepository,
     MemorySubmissionAttemptRepository,
+    MemoryTradeRepository,
 )
 
 _NOW = datetime(2026, 8, 21, tzinfo=UTC)
@@ -785,3 +787,40 @@ async def test_reconcile_fails_closed_when_fresh_protection_is_unknown() -> None
         await service.reconcile()
 
     assert exchange.cancel_calls == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletes_proven_exit_when_performance_history_fails() -> None:
+    """Do not let post-cleanup telemetry failure block a safe deletion."""
+
+    class FailingTradeHistory:
+        async def get_trades(
+            self,
+            *,
+            symbol: str | None,
+            limit: int,
+        ) -> Sequence[Trade]:
+            raise RuntimeError("configured performance history failure")
+
+    repository = await _repository()
+    filled_stop = replace(
+        _protection(
+            order_type=OrderType.STOP_MARKET,
+            client_id=_STOP_ID,
+            trigger="0.01151",
+        ),
+        order_id="filled-stop",
+        status=OrderStatus.FILLED,
+    )
+    exchange = FakeNaturalExitExchange(exact_only_protections=(filled_stop,))
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+        trade_repository=MemoryTradeRepository(),
+        trade_history=FailingTradeHistory(),
+    )
+
+    await service.reconcile()
+
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None

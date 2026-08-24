@@ -11,7 +11,14 @@ from decimal import Decimal
 import pytest
 
 from botragram.app.live_futures_user_data_service import LiveFuturesUserDataService
-from botragram.enums import Interval, OrderSide, OrderStatus, OrderType, PositionSide
+from botragram.enums import (
+    Interval,
+    LiveFuturesUserDataStatus,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+)
 from botragram.models import (
     Account,
     Balance,
@@ -22,6 +29,7 @@ from botragram.models import (
     Order,
     Position,
 )
+from botragram.services.live_futures_user_data_cache import LiveFuturesUserDataCache
 
 _NOW = datetime(2026, 8, 25, tzinfo=UTC)
 
@@ -134,9 +142,43 @@ async def test_user_data_stream_cache_uses_startup_snapshot_then_events() -> Non
     assert snapshots.calls == 1
     assert await service.get_free_balance(asset="usdt") == Decimal("125")
     snapshot = await service.cache.get_snapshot()
+    assert snapshot.status is LiveFuturesUserDataStatus.READY
+    assert snapshot.last_snapshot_at is not None
+    assert snapshot.last_event_at == _NOW
+    assert snapshot.positions[0].quantity == Decimal("2")
     assert snapshot.position_updates[0].quantity == Decimal("2")
     assert snapshot.recent_orders == (_order(),)
+
+    await service.cache.apply(
+        event=FuturesUserDataAccountUpdate(
+            observed_at=_NOW,
+            balances=(),
+            positions=(
+                FuturesUserDataPositionUpdate(
+                    symbol="BTCUSDT",
+                    quantity=Decimal("0"),
+                    entry_price=Decimal("0"),
+                    unrealized_pnl=Decimal("0"),
+                ),
+            ),
+        )
+    )
+    closed_snapshot = await service.get_snapshot()
+    assert closed_snapshot.positions == ()
+    assert closed_snapshot.position_updates == ()
 
     await service.close()
 
     assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_user_data_cache_exposes_resync_and_stale_freshness() -> None:
+    """Expose stale cached state instead of presenting it as current."""
+    cache = LiveFuturesUserDataCache()
+
+    await cache.mark_resyncing()
+    assert (await cache.get_snapshot()).status is LiveFuturesUserDataStatus.RESYNCING
+
+    await cache.mark_stale()
+    assert (await cache.get_snapshot()).status is LiveFuturesUserDataStatus.STALE

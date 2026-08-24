@@ -20,7 +20,7 @@ import asyncio
 import logging
 from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from time import monotonic
@@ -49,6 +49,7 @@ from botragram.engine import PnLEngine
 from botragram.enums import (
     LiveMarketStreamLifecycleStatus,
     LiveRuntimeHealthStatus,
+    PositionSide,
     TradeMode,
 )
 from botragram.models import (
@@ -57,6 +58,9 @@ from botragram.models import (
     LiveRuntimeHealthSnapshot,
     LiveRuntimePositionContext,
     Position,
+)
+from botragram.services.live_futures_user_data_cache import (
+    LiveFuturesUserDataSnapshot,
 )
 from botragram.services.live_trading_performance_service import (
     TradingPerformanceSnapshot,
@@ -100,6 +104,14 @@ class LiveBalanceProvider(Protocol):
 
     async def get_free_balance(self, *, asset: str) -> Decimal:
         """Return free exchange balance for one asset."""
+        ...
+
+
+class LiveFuturesUserDataSnapshotProvider(Protocol):
+    """Read local private-stream cache freshness for terminal presentation."""
+
+    async def get_snapshot(self) -> LiveFuturesUserDataSnapshot:
+        """Return cached User Data Stream status without exchange I/O."""
         ...
 
 
@@ -167,6 +179,7 @@ class TerminalStatus:
     trading_performance: TradingPerformanceSnapshot | None = None
     autonomous_live_recovery: AutonomousLiveRecoverySnapshot | None = None
     global_discovery: GlobalDiscoverySnapshot | None = None
+    live_futures_user_data: LiveFuturesUserDataSnapshot | None = None
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -241,6 +254,7 @@ class TerminalMonitor:
         AutonomousLiveRecoveryObservabilityProvider | None
     ) = None
     global_discovery_telemetry_provider: GlobalDiscoveryTelemetryProvider | None = None
+    live_futures_user_data_service: LiveFuturesUserDataSnapshotProvider | None = None
     max_open_positions: int | None = None
     console: Console = field(default_factory=Console)
     log_handler: DashboardLogHandler = field(default_factory=DashboardLogHandler)
@@ -279,8 +293,8 @@ class TerminalMonitor:
         if self.refresh_interval_seconds <= 0:
             raise ValueError("Terminal refresh interval must be greater than zero")
 
-        if self.live_balance_refresh_seconds <= 0:
-            raise ValueError("Live balance refresh interval must be greater than zero")
+        if self.live_balance_refresh_seconds < 0:
+            raise ValueError("Live balance refresh interval must not be negative")
 
         if self.max_open_positions is not None and self.max_open_positions <= 0:
             raise ValueError("Terminal maximum open positions must be positive")
@@ -359,7 +373,16 @@ class TerminalMonitor:
             if telemetry_provider is not None
             else None
         )
-        positions = tuple(await self.position_provider.get_open_positions())
+        user_data_service = self.live_futures_user_data_service
+        live_futures_user_data = (
+            await user_data_service.get_snapshot()
+            if user_data_service is not None
+            else None
+        )
+        positions = self._merge_live_futures_position_updates(
+            positions=tuple(await self.position_provider.get_open_positions()),
+            user_data=live_futures_user_data,
+        )
         balance, realized_pnl = await self._get_portfolio_metrics(
             sample_time=sample_time,
         )
@@ -392,7 +415,42 @@ class TerminalMonitor:
             trading_performance=trading_performance,
             autonomous_live_recovery=autonomous_live_recovery,
             global_discovery=global_discovery,
+            live_futures_user_data=live_futures_user_data,
         )
+
+    @staticmethod
+    def _merge_live_futures_position_updates(
+        *,
+        positions: tuple[Position, ...],
+        user_data: LiveFuturesUserDataSnapshot | None,
+    ) -> tuple[Position, ...]:
+        """Overlay cached exchange exposure while retaining protection data."""
+        if user_data is None:
+            return positions
+
+        updates = {
+            update.symbol.upper(): update for update in user_data.position_updates
+        }
+        merged: list[Position] = []
+        for position in positions:
+            update = updates.get(position.symbol.upper())
+            if update is None:
+                continue
+            merged.append(
+                replace(
+                    position,
+                    side=(
+                        PositionSide.LONG
+                        if update.quantity >= _DECIMAL_ZERO
+                        else PositionSide.SHORT
+                    ),
+                    quantity=abs(update.quantity),
+                    entry_price=update.entry_price,
+                    unrealized_pnl=update.unrealized_pnl,
+                    updated_at=user_data.last_event_at or position.updated_at,
+                )
+            )
+        return tuple(merged)
 
     def render_dashboard(self, status: TerminalStatus) -> Layout:
         """Build a full-width managed-position dashboard for one snapshot."""
@@ -433,7 +491,11 @@ class TerminalMonitor:
         cached_balance = self._cached_live_balance
         cache_age = sample_time - self._last_balance_refresh_monotonic
 
-        if cached_balance is not None and cache_age < self.live_balance_refresh_seconds:
+        if (
+            self.live_balance_refresh_seconds > 0
+            and cached_balance is not None
+            and cache_age < self.live_balance_refresh_seconds
+        ):
             return cached_balance, None
 
         balance = await self.live_balance_provider.get_free_balance(
@@ -638,6 +700,18 @@ class TerminalMonitor:
                 style=pnl_style,
             ),
         )
+
+    @staticmethod
+    def _add_live_account_stream_row(
+        *,
+        table: Table,
+        status: TerminalStatus,
+    ) -> None:
+        """Display private account-cache freshness when LIVE Futures owns it."""
+        user_data = status.live_futures_user_data
+        if user_data is None:
+            return
+        table.add_row("Account Stream", user_data.status.value.upper())
 
     def _format_portfolio_capacity(self, status: TerminalStatus) -> str:
         """Format the actual and configured position capacity without symbols."""

@@ -72,7 +72,7 @@ async def _run_live_performance_aggregation_test() -> None:
     assert snapshot.loss_count == 1
     assert snapshot.break_even_count == 1
     assert snapshot.realized_pnl == Decimal("3")
-    assert snapshot.win_rate_percent == Decimal("100") / Decimal("3")
+    assert snapshot.win_rate_percent == Decimal("50")
 
 
 def test_live_performance_caches_local_ledger_within_refresh_window() -> None:

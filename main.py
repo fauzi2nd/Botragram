@@ -78,11 +78,22 @@ async def _run_trading(
         live_balance_provider=(
             dependency_provider.live_futures_user_data_service
             if settings.app.trade_mode is TradeMode.LIVE
-            and not settings.exchange.testnet
             and settings.exchange.market_type is MarketType.FUTURES
             else dependency_provider.account_service
         ),
         position_provider=dependency_provider.position_repository,
+        live_futures_user_data_service=(
+            dependency_provider.live_futures_user_data_service
+            if settings.app.trade_mode is TradeMode.LIVE
+            and settings.exchange.market_type is MarketType.FUTURES
+            else None
+        ),
+        live_balance_refresh_seconds=(
+            0.0
+            if settings.app.trade_mode is TradeMode.LIVE
+            and settings.exchange.market_type is MarketType.FUTURES
+            else 10.0
+        ),
         pnl_engine=dependency_provider.pnl_engine,
         trade_mode=settings.app.trade_mode,
         quote_asset=settings.market.quote_asset,

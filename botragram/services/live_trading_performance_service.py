@@ -130,6 +130,7 @@ class LiveTradingPerformanceService:
         loss_count = sum(outcome < _DECIMAL_ZERO for outcome in outcomes)
         break_even_count = len(outcomes) - win_count - loss_count
         closed_trade_count = len(outcomes)
+        decisive_trade_count = win_count + loss_count
         return TradingPerformanceSnapshot(
             closed_trade_count=closed_trade_count,
             win_count=win_count,
@@ -137,8 +138,8 @@ class LiveTradingPerformanceService:
             break_even_count=break_even_count,
             realized_pnl=sum(outcomes, start=_DECIMAL_ZERO),
             win_rate_percent=(
-                Decimal(win_count) * Decimal("100") / Decimal(closed_trade_count)
-                if closed_trade_count
+                Decimal(win_count) * Decimal("100") / Decimal(decisive_trade_count)
+                if decisive_trade_count
                 else _DECIMAL_ZERO
             ),
         )

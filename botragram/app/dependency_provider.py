@@ -932,10 +932,9 @@ class DependencyProvider:
         _LOGGER.info("Exchange REST and WebSocket transports are ready")
 
     async def _start_live_futures_user_data_service(self) -> None:
-        """Start private cache only for credentialed LIVE mainnet Binance Futures."""
+        """Start private cache for credentialed LIVE Binance Futures networks."""
         if (
             self._settings.app.trade_mode is not TradeMode.LIVE
-            or self._settings.exchange.testnet
             or self._settings.exchange.market_type is not MarketType.FUTURES
         ):
             return

@@ -18,7 +18,10 @@ from decimal import Decimal
 from typing import Final, Protocol
 
 from botragram.models import Account, FuturesUserDataEvent, Position
-from botragram.services.live_futures_user_data_cache import LiveFuturesUserDataCache
+from botragram.services.live_futures_user_data_cache import (
+    LiveFuturesUserDataCache,
+    LiveFuturesUserDataSnapshot,
+)
 
 __all__ = [
     "LiveFuturesUserDataService",
@@ -75,7 +78,7 @@ class LiveFuturesUserDataService:
             raise RuntimeError("User Data Stream service is closed")
         if self._task is not None:
             return
-        await self._refresh_snapshot()
+        await self._refresh_snapshot(clear_recent_orders=True)
         self._task = asyncio.create_task(
             self._consume_forever(),
             name="botragram-futures-user-data",
@@ -95,6 +98,10 @@ class LiveFuturesUserDataService:
         """Return the latest streamed balance for TerminalMonitor compatibility."""
         return await self.cache.get_free_balance(asset=asset)
 
+    async def get_snapshot(self) -> LiveFuturesUserDataSnapshot:
+        """Return cache freshness and account state without exchange I/O."""
+        return await self.cache.get_snapshot()
+
     async def _consume_forever(self) -> None:
         """Reconnect after stream interruption and resynchronize with REST."""
         while not self._closed:
@@ -113,18 +120,24 @@ class LiveFuturesUserDataService:
 
             if self._closed:
                 return
+            await self.cache.mark_resyncing()
             try:
-                await self._refresh_snapshot()
+                await self._refresh_snapshot(clear_recent_orders=False)
             except asyncio.CancelledError:
                 raise
             except Exception:
+                await self.cache.mark_stale()
                 _LOGGER.exception(
                     "Binance Futures User Data Stream REST resynchronization failed"
                 )
             await asyncio.sleep(self.reconnect_delay_seconds)
 
-    async def _refresh_snapshot(self) -> None:
+    async def _refresh_snapshot(self, *, clear_recent_orders: bool) -> None:
         """Refresh only after startup or loss of private-stream continuity."""
         account = await self.snapshot_provider.get_account()
         positions = await self.snapshot_provider.get_positions()
-        await self.cache.initialize(account=account, positions=positions)
+        await self.cache.initialize(
+            account=account,
+            positions=positions,
+            clear_recent_orders=clear_recent_orders,
+        )

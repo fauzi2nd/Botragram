@@ -37,7 +37,7 @@ botragram/
 |-- app/
 |   |-- backtest_command.py  # Isolated backtest CLI composition dan report
 |   |-- application.py
-|   |-- dependency_provider.py
+|   |-- dependency_provider.py`n|   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
 |   |-- environment_provider.py
 |   |-- global_discovery_telemetry.py # Read-only ranked discovery phase/outcome snapshot
 |   |-- lifecycle.py
@@ -94,7 +94,7 @@ botragram/
 |   |   `-- stream.py
 |   |-- binance/
 |   |   |-- client.py          # Binance Spot high-level client
-|   |   |-- futures_client.py  # Binance USD(S)-M Futures client
+|   |   |-- futures_client.py`n|   |   |-- futures_user_data_stream.py # Binance private account User Data Stream  # Binance USD(S)-M Futures client
 |   |   |-- mapper.py
 |   |   |-- rest.py
 |   |   `-- stream.py
@@ -135,7 +135,7 @@ botragram/
 |   |-- human_confirmed_paper_execution_service.py # Discovery-to-approval orchestration
 |   |-- market_service.py
 |   |-- live_market_stream_service.py # Production 0/1/N LIVE stream ownership
-|   |-- live_futures_entry_service.py # Protected Futures MARKET entry workflow
+|   |-- live_futures_entry_service.py`n|   |-- live_futures_user_data_cache.py # Thread-safe cached private Futures account state # Protected Futures MARKET entry workflow
 |   |-- live_post_entry_recovery_service.py # ACKNOWLEDGED entry recovery core
 |   |-- live_position_protection_service.py # Shared LIVE SL/TP reconciliation
 |   |-- live_protection_monitoring_service.py # Production 0/1/N protection monitor owner

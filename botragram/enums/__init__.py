@@ -39,6 +39,9 @@ from botragram.enums.global_discovery_cycle_state import GlobalDiscoveryCycleSta
 from botragram.enums.indicator_type import IndicatorType
 from botragram.enums.interval import Interval
 from botragram.enums.leverage_mode import LeverageMode
+from botragram.enums.live_futures_user_data_status import (
+    LiveFuturesUserDataStatus,
+)
 from botragram.enums.live_market_stream_lifecycle_status import (
     LiveMarketStreamLifecycleStatus,
 )
@@ -96,6 +99,7 @@ __all__ = [
     "MarginMode",
     "LeverageMode",
     "LiveMarketStreamLifecycleStatus",
+    "LiveFuturesUserDataStatus",
     "LiveRuntimeHealthReason",
     "LiveRuntimeHealthStatus",
     "LivePortfolioRecoveryStatus",

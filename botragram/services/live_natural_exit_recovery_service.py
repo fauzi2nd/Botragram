@@ -279,15 +279,28 @@ class LiveNaturalExitRecoveryService:
                         "LIVE protection remains before durable position deletion: "
                         f"symbol={position.symbol} count={len(remaining)}"
                     )
-                await self._persist_bot_exit_fills(position=position)
                 await self.position_repository.delete(symbol=position.symbol)
                 self.lifecycle_coordinator.record_position_deletion(
                     symbol=position.symbol,
                 )
+                await self._persist_bot_exit_fills_best_effort(position=position)
             _LOGGER.info(
                 "Natural LIVE exit reconciled: symbol=%s entry_client_order_id=%s",
                 position.symbol,
                 position.entry_client_order_id,
+            )
+
+    async def _persist_bot_exit_fills_best_effort(self, *, position: Position) -> None:
+        """Persist performance history after safety cleanup without blocking it."""
+        try:
+            await self._persist_bot_exit_fills(position=position)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Botragram LIVE exit performance persistence failed after "
+                "position cleanup: symbol=%s",
+                position.symbol,
             )
 
     async def _persist_bot_exit_fills(self, *, position: Position) -> None:

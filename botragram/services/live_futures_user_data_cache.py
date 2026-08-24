@@ -13,10 +13,12 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final
 
+from botragram.enums import LiveFuturesUserDataStatus, PositionSide
 from botragram.models import (
     Account,
     FuturesUserDataAccountUpdate,
@@ -41,6 +43,9 @@ _MAXIMUM_RECENT_ORDERS: Final[int] = 100
 class LiveFuturesUserDataSnapshot:
     """Immutable read-only view of cached private Futures account state."""
 
+    status: LiveFuturesUserDataStatus
+    last_event_at: datetime | None
+    last_snapshot_at: datetime | None
     balances: tuple[tuple[str, Decimal], ...]
     positions: tuple[Position, ...]
     position_updates: tuple[FuturesUserDataPositionUpdate, ...]
@@ -64,6 +69,12 @@ class LiveFuturesUserDataCache:
         default_factory=lambda: deque(maxlen=_MAXIMUM_RECENT_ORDERS),
         init=False,
     )
+    _status: LiveFuturesUserDataStatus = field(
+        default=LiveFuturesUserDataStatus.STARTING,
+        init=False,
+    )
+    _last_event_at: datetime | None = field(default=None, init=False)
+    _last_snapshot_at: datetime | None = field(default=None, init=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     async def initialize(
@@ -71,8 +82,9 @@ class LiveFuturesUserDataCache:
         *,
         account: Account,
         positions: Sequence[Position],
+        clear_recent_orders: bool,
     ) -> None:
-        """Seed the cache from the authoritative REST startup snapshot."""
+        """Seed the cache from one authoritative REST snapshot."""
         async with self._lock:
             self._balances = {
                 balance.asset.upper(): balance.free for balance in account.balances
@@ -85,14 +97,29 @@ class LiveFuturesUserDataCache:
             self._position_updates = {
                 position.symbol.upper(): FuturesUserDataPositionUpdate(
                     symbol=position.symbol,
-                    quantity=position.quantity,
+                    quantity=(
+                        position.quantity
+                        if position.side is PositionSide.LONG
+                        else -position.quantity
+                    ),
                     entry_price=position.entry_price,
                     unrealized_pnl=position.unrealized_pnl,
                 )
                 for position in positions
                 if position.quantity != _DECIMAL_ZERO
             }
-            self._recent_orders.clear()
+            if clear_recent_orders:
+                self._recent_orders.clear()
+            self._last_snapshot_at = datetime.now(UTC)
+            self._status = LiveFuturesUserDataStatus.READY
+
+    async def mark_resyncing(self) -> None:
+        """Mark the last cached state as being refreshed after a disconnect."""
+        await self._set_status(status=LiveFuturesUserDataStatus.RESYNCING)
+
+    async def mark_stale(self) -> None:
+        """Mark the cached state stale when authoritative resync fails."""
+        await self._set_status(status=LiveFuturesUserDataStatus.STALE)
 
     async def apply(self, *, event: FuturesUserDataEvent) -> None:
         """Apply one normalized private-stream event to the local cache."""
@@ -102,13 +129,13 @@ class LiveFuturesUserDataCache:
                     for balance in event.balances:
                         self._balances[balance.asset.upper()] = balance.free
                     for position in event.positions:
-                        normalized_symbol = position.symbol.upper()
-                        if position.quantity == _DECIMAL_ZERO:
-                            self._position_updates.pop(normalized_symbol, None)
-                        else:
-                            self._position_updates[normalized_symbol] = position
+                        self._apply_position_update(
+                            position=position, observed_at=event.observed_at
+                        )
                 case FuturesUserDataOrderUpdate():
                     self._recent_orders.append(event.order)
+            self._last_event_at = event.observed_at
+            self._status = LiveFuturesUserDataStatus.READY
 
     async def get_free_balance(self, *, asset: str) -> Decimal:
         """Return the latest streamed free balance for one asset."""
@@ -123,8 +150,60 @@ class LiveFuturesUserDataCache:
         """Return an immutable local snapshot without exchange I/O."""
         async with self._lock:
             return LiveFuturesUserDataSnapshot(
+                status=self._status,
+                last_event_at=self._last_event_at,
+                last_snapshot_at=self._last_snapshot_at,
                 balances=tuple(sorted(self._balances.items())),
                 positions=tuple(self._positions.values()),
                 position_updates=tuple(self._position_updates.values()),
                 recent_orders=tuple(self._recent_orders),
             )
+
+    def _apply_position_update(
+        self,
+        *,
+        position: FuturesUserDataPositionUpdate,
+        observed_at: datetime,
+    ) -> None:
+        """Keep both position views synchronized with one account update."""
+        normalized_symbol = position.symbol.upper()
+        if position.quantity == _DECIMAL_ZERO:
+            self._position_updates.pop(normalized_symbol, None)
+            self._positions.pop(normalized_symbol, None)
+            return
+
+        self._position_updates[normalized_symbol] = position
+        existing_position = self._positions.get(normalized_symbol)
+        quantity = abs(position.quantity)
+        side = (
+            PositionSide.LONG
+            if position.quantity > _DECIMAL_ZERO
+            else PositionSide.SHORT
+        )
+        if existing_position is None:
+            self._positions[normalized_symbol] = Position(
+                symbol=position.symbol,
+                side=side,
+                quantity=quantity,
+                entry_price=position.entry_price,
+                current_price=position.entry_price,
+                unrealized_pnl=position.unrealized_pnl,
+                leverage=1,
+                opened_at=observed_at,
+                updated_at=observed_at,
+            )
+            return
+
+        self._positions[normalized_symbol] = replace(
+            existing_position,
+            side=side,
+            quantity=quantity,
+            entry_price=position.entry_price,
+            unrealized_pnl=position.unrealized_pnl,
+            updated_at=observed_at,
+        )
+
+    async def _set_status(self, *, status: LiveFuturesUserDataStatus) -> None:
+        """Set the observable cache freshness state under the async lock."""
+        async with self._lock:
+            self._status = status
