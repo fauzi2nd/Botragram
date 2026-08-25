@@ -17,7 +17,12 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final, Protocol
 
-from botragram.models import Account, FuturesUserDataEvent, Position
+from botragram.models import (
+    Account,
+    FuturesUserDataEvent,
+    FuturesUserDataStreamConnected,
+    Position,
+)
 from botragram.services.live_futures_user_data_cache import (
     LiveFuturesUserDataCache,
     LiveFuturesUserDataSnapshot,
@@ -65,6 +70,12 @@ class LiveFuturesUserDataService:
     cache: LiveFuturesUserDataCache = field(default_factory=LiveFuturesUserDataCache)
     reconnect_delay_seconds: float = _RECONNECT_DELAY_SECONDS
     _task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
+    _initialization: asyncio.Future[None] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _initial_snapshot_complete: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -73,16 +84,22 @@ class LiveFuturesUserDataService:
             raise ValueError("User Data Stream reconnect delay must not be negative")
 
     async def start(self) -> None:
-        """Capture the initial REST state, then begin private event consumption."""
+        """Open the stream, seed REST state, then consume buffered events."""
         if self._closed:
             raise RuntimeError("User Data Stream service is closed")
         if self._task is not None:
             return
-        await self._refresh_snapshot(clear_recent_orders=True)
+        initialization = asyncio.get_running_loop().create_future()
+        self._initialization = initialization
         self._task = asyncio.create_task(
             self._consume_forever(),
             name="botragram-futures-user-data",
         )
+        try:
+            await initialization
+        except BaseException:
+            await self.close()
+            raise
 
     async def close(self) -> None:
         """Stop consumption and close the owned stream idempotently."""
@@ -103,34 +120,52 @@ class LiveFuturesUserDataService:
         return await self.cache.get_snapshot()
 
     async def _consume_forever(self) -> None:
-        """Reconnect after stream interruption and resynchronize with REST."""
+        """Reconnect after interruption with socket-first REST synchronization."""
         while not self._closed:
             try:
                 async for event in self.event_stream.stream_events():
+                    if isinstance(event, FuturesUserDataStreamConnected):
+                        await self._synchronize_after_connection()
+                        continue
                     await self.cache.apply(event=event)
                 if self._closed:
                     return
                 raise RuntimeError("Binance Futures User Data Stream ended")
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as error:
+                self._fail_initialization(error=error)
                 _LOGGER.exception(
-                    "Binance Futures User Data Stream interrupted; resynchronizing"
+                    "Binance Futures User Data Stream interrupted; reconnecting"
                 )
 
             if self._closed:
                 return
             await self.cache.mark_resyncing()
-            try:
-                await self._refresh_snapshot(clear_recent_orders=False)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                await self.cache.mark_stale()
-                _LOGGER.exception(
-                    "Binance Futures User Data Stream REST resynchronization failed"
-                )
             await asyncio.sleep(self.reconnect_delay_seconds)
+
+    async def _synchronize_after_connection(self) -> None:
+        """Seed a connected socket before the buffered events are consumed."""
+        try:
+            await self._refresh_snapshot(
+                clear_recent_orders=not self._initial_snapshot_complete,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            await self.cache.mark_stale()
+            self._fail_initialization(error=error)
+            raise
+        self._initial_snapshot_complete = True
+        initialization = self._initialization
+        if initialization is not None and not initialization.done():
+            initialization.set_result(None)
+
+    def _fail_initialization(self, *, error: Exception) -> None:
+        """Fail startup promptly instead of leaving an unseeded cache running."""
+        initialization = self._initialization
+        if initialization is not None and not initialization.done():
+            initialization.set_exception(error)
 
     async def _refresh_snapshot(self, *, clear_recent_orders: bool) -> None:
         """Refresh only after startup or loss of private-stream continuity."""

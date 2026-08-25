@@ -43,3 +43,5 @@ class OrderType(BaseEnum):
     TAKE_PROFIT_MARKET = "take_profit_market"
 
     TRAILING_STOP = "trailing_stop"
+    TRAILING_STOP_MARKET = "trailing_stop_market"
+    LIQUIDATION = "liquidation"

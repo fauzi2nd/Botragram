@@ -22,9 +22,11 @@ from botragram.enums import LiveFuturesUserDataStatus, PositionSide
 from botragram.models import (
     Account,
     FuturesUserDataAccountUpdate,
+    FuturesUserDataAlgoUpdate,
     FuturesUserDataEvent,
     FuturesUserDataOrderUpdate,
     FuturesUserDataPositionUpdate,
+    FuturesUserDataStreamConnected,
     Position,
 )
 from botragram.models.order import Order
@@ -50,6 +52,7 @@ class LiveFuturesUserDataSnapshot:
     positions: tuple[Position, ...]
     position_updates: tuple[FuturesUserDataPositionUpdate, ...]
     recent_orders: tuple[Order, ...]
+    recent_algo_updates: tuple[FuturesUserDataAlgoUpdate, ...] = ()
 
 
 @dataclass(slots=True)
@@ -66,6 +69,10 @@ class LiveFuturesUserDataCache:
         default_factory=dict[str, FuturesUserDataPositionUpdate], init=False
     )
     _recent_orders: deque[Order] = field(
+        default_factory=lambda: deque(maxlen=_MAXIMUM_RECENT_ORDERS),
+        init=False,
+    )
+    _recent_algo_updates: deque[FuturesUserDataAlgoUpdate] = field(
         default_factory=lambda: deque(maxlen=_MAXIMUM_RECENT_ORDERS),
         init=False,
     )
@@ -110,6 +117,7 @@ class LiveFuturesUserDataCache:
             }
             if clear_recent_orders:
                 self._recent_orders.clear()
+                self._recent_algo_updates.clear()
             self._last_snapshot_at = datetime.now(UTC)
             self._status = LiveFuturesUserDataStatus.READY
 
@@ -125,6 +133,10 @@ class LiveFuturesUserDataCache:
         """Apply one normalized private-stream event to the local cache."""
         async with self._lock:
             match event:
+                case FuturesUserDataStreamConnected():
+                    return
+                case FuturesUserDataAlgoUpdate():
+                    self._recent_algo_updates.append(event)
                 case FuturesUserDataAccountUpdate():
                     for balance in event.balances:
                         self._balances[balance.asset.upper()] = balance.free
@@ -157,6 +169,7 @@ class LiveFuturesUserDataCache:
                 positions=tuple(self._positions.values()),
                 position_updates=tuple(self._position_updates.values()),
                 recent_orders=tuple(self._recent_orders),
+                recent_algo_updates=tuple(self._recent_algo_updates),
             )
 
     def _apply_position_update(

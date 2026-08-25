@@ -34,6 +34,7 @@ from botragram.enums.environment_profile import EnvironmentProfile
 from botragram.enums.exchange_environment import ExchangeEnvironment
 from botragram.enums.exchange_type import ExchangeType
 from botragram.enums.execution_policy import ExecutionPolicy
+from botragram.enums.futures_algo_order_status import FuturesAlgoOrderStatus
 from botragram.enums.global_discovery_cycle_outcome import GlobalDiscoveryCycleOutcome
 from botragram.enums.global_discovery_cycle_state import GlobalDiscoveryCycleState
 from botragram.enums.indicator_type import IndicatorType
@@ -91,6 +92,7 @@ __all__ = [
     "ExecutionPolicy",
     "GlobalDiscoveryCycleOutcome",
     "GlobalDiscoveryCycleState",
+    "FuturesAlgoOrderStatus",
     # Exchange
     "ExchangeType",
     "MarketType",

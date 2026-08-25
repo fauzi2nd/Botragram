@@ -12,6 +12,7 @@ import pytest
 
 from botragram.app.live_futures_user_data_service import LiveFuturesUserDataService
 from botragram.enums import (
+    FuturesAlgoOrderStatus,
     Interval,
     LiveFuturesUserDataStatus,
     OrderSide,
@@ -23,9 +24,11 @@ from botragram.models import (
     Account,
     Balance,
     FuturesUserDataAccountUpdate,
+    FuturesUserDataAlgoUpdate,
     FuturesUserDataEvent,
     FuturesUserDataOrderUpdate,
     FuturesUserDataPositionUpdate,
+    FuturesUserDataStreamConnected,
     Order,
     Position,
 )
@@ -126,8 +129,18 @@ async def test_user_data_stream_cache_uses_startup_snapshot_then_events() -> Non
     )
     stream = FakeEventStream(
         events=(
+            FuturesUserDataStreamConnected(observed_at=_NOW),
             account_update,
             FuturesUserDataOrderUpdate(observed_at=_NOW, order=_order()),
+            FuturesUserDataAlgoUpdate(
+                observed_at=_NOW,
+                client_algo_id="bsl-123",
+                algo_id="123",
+                symbol="BTCUSDT",
+                status=FuturesAlgoOrderStatus.TRIGGERING,
+                order_type=OrderType.STOP_MARKET,
+                trigger_price=Decimal("95"),
+            ),
         )
     )
     snapshots = FakeSnapshotProvider()
@@ -148,6 +161,7 @@ async def test_user_data_stream_cache_uses_startup_snapshot_then_events() -> Non
     assert snapshot.positions[0].quantity == Decimal("2")
     assert snapshot.position_updates[0].quantity == Decimal("2")
     assert snapshot.recent_orders == (_order(),)
+    assert snapshot.recent_algo_updates[0].client_algo_id == "bsl-123"
 
     await service.cache.apply(
         event=FuturesUserDataAccountUpdate(

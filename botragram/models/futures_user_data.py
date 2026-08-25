@@ -14,14 +14,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
+from botragram.enums import FuturesAlgoOrderStatus, OrderType
 from botragram.models.balance import Balance
 from botragram.models.order import Order
 
 __all__ = [
     "FuturesUserDataAccountUpdate",
+    "FuturesUserDataAlgoUpdate",
     "FuturesUserDataEvent",
     "FuturesUserDataOrderUpdate",
     "FuturesUserDataPositionUpdate",
+    "FuturesUserDataStreamConnected",
 ]
 
 
@@ -45,6 +48,19 @@ class FuturesUserDataAccountUpdate:
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
+class FuturesUserDataAlgoUpdate:
+    """One conditional SL/TP order-state update from the private stream."""
+
+    observed_at: datetime
+    client_algo_id: str
+    algo_id: str
+    symbol: str
+    status: FuturesAlgoOrderStatus
+    order_type: OrderType
+    trigger_price: Decimal | None
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
 class FuturesUserDataOrderUpdate:
     """One normalized Futures order-status update from the private stream."""
 
@@ -52,4 +68,16 @@ class FuturesUserDataOrderUpdate:
     order: Order
 
 
-type FuturesUserDataEvent = FuturesUserDataAccountUpdate | FuturesUserDataOrderUpdate
+@dataclass(slots=True, kw_only=True, frozen=True)
+class FuturesUserDataStreamConnected:
+    """Signal that a private stream session is ready to buffer events."""
+
+    observed_at: datetime
+
+
+type FuturesUserDataEvent = (
+    FuturesUserDataAccountUpdate
+    | FuturesUserDataAlgoUpdate
+    | FuturesUserDataOrderUpdate
+    | FuturesUserDataStreamConnected
+)

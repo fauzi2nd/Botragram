@@ -47,6 +47,7 @@ from botragram.app.runtime_control import (
 )
 from botragram.engine import PnLEngine
 from botragram.enums import (
+    LiveFuturesUserDataStatus,
     LiveMarketStreamLifecycleStatus,
     LiveRuntimeHealthStatus,
     PositionSide,
@@ -379,7 +380,7 @@ class TerminalMonitor:
             if user_data_service is not None
             else None
         )
-        positions = self._merge_live_futures_position_updates(
+        positions = self.merge_live_futures_position_updates(
             positions=tuple(await self.position_provider.get_open_positions()),
             user_data=live_futures_user_data,
         )
@@ -419,13 +420,13 @@ class TerminalMonitor:
         )
 
     @staticmethod
-    def _merge_live_futures_position_updates(
+    def merge_live_futures_position_updates(
         *,
         positions: tuple[Position, ...],
         user_data: LiveFuturesUserDataSnapshot | None,
     ) -> tuple[Position, ...]:
         """Overlay cached exchange exposure while retaining protection data."""
-        if user_data is None:
+        if user_data is None or user_data.status is not LiveFuturesUserDataStatus.READY:
             return positions
 
         updates = {

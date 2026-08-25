@@ -41,3 +41,4 @@ class OrderStatus(BaseEnum):
     CANCELED = "canceled"
     REJECTED = "rejected"
     EXPIRED = "expired"
+    EXPIRED_IN_MATCH = "expired_in_match"

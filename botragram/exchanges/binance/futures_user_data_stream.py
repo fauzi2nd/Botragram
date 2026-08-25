@@ -20,14 +20,16 @@ from typing import Final, cast
 
 import aiohttp
 
-from botragram.enums import OrderSide, OrderStatus, OrderType
+from botragram.enums import FuturesAlgoOrderStatus, OrderSide, OrderStatus, OrderType
 from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.models import (
     Balance,
     FuturesUserDataAccountUpdate,
+    FuturesUserDataAlgoUpdate,
     FuturesUserDataEvent,
     FuturesUserDataOrderUpdate,
     FuturesUserDataPositionUpdate,
+    FuturesUserDataStreamConnected,
     Order,
 )
 
@@ -38,7 +40,9 @@ __all__ = [
 
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _ACCOUNT_UPDATE_EVENT: Final[str] = "ACCOUNT_UPDATE"
+_ALGO_UPDATE_EVENT: Final[str] = "ALGO_UPDATE"
 _ORDER_UPDATE_EVENT: Final[str] = "ORDER_TRADE_UPDATE"
+_LISTEN_KEY_EXPIRED_EVENT: Final[str] = "listenKeyExpired"
 _LISTEN_KEY_PATH: Final[str] = "/fapi/v1/listenKey"
 _KEEPALIVE_SECONDS: Final[float] = 30.0 * 60.0
 _RECEIVE_TIMEOUT_SECONDS: Final[float] = 60.0
@@ -77,13 +81,15 @@ class BinanceFuturesUserDataStream:
             raise ValueError("User Data Stream WebSocket URL must not be empty")
 
         self._rest = rest
-        self._websocket_base_url = self._private_websocket_base_url(normalized_base_url)
+        self._websocket_base_url = self.build_private_websocket_base_url(
+            normalized_base_url
+        )
         self._heartbeat_seconds = heartbeat_seconds
         self._session: aiohttp.ClientSession | None = None
         self._closed = False
 
     async def stream_events(self) -> AsyncIterator[FuturesUserDataEvent]:
-        """Open one listen key and yield account and order events until closed."""
+        """Open one listen key and yield buffered private events until closed."""
         if self._closed:
             return
 
@@ -101,8 +107,9 @@ class BinanceFuturesUserDataStream:
                 self._keepalive(listen_key=listen_key, socket=socket),
                 name="binance-futures-user-data-keepalive",
             )
+            yield FuturesUserDataStreamConnected(observed_at=datetime.now(UTC))
             async for message in socket:
-                event = self._parse_event(message)
+                event = self.parse_event(message)
                 if event is not None:
                     yield event
         finally:
@@ -159,12 +166,12 @@ class BinanceFuturesUserDataStream:
         return session
 
     @staticmethod
-    def _private_websocket_base_url(public_base_url: str) -> str:
-        """Remove the public Futures market path before appending ``/ws``."""
-        return public_base_url.removesuffix("/market")
+    def build_private_websocket_base_url(public_base_url: str) -> str:
+        """Derive Binance's explicit private base from the public market base."""
+        return f"{public_base_url.removesuffix('/market')}/private"
 
     @staticmethod
-    def _parse_event(message: aiohttp.WSMessage) -> FuturesUserDataEvent | None:
+    def parse_event(message: aiohttp.WSMessage) -> FuturesUserDataEvent | None:
         """Map one Binance WebSocket payload to a validated domain event."""
         if message.type is aiohttp.WSMsgType.TEXT:
             raw_data = message.data
@@ -183,7 +190,25 @@ class BinanceFuturesUserDataStream:
             if event_type == _ACCOUNT_UPDATE_EVENT:
                 return BinanceFuturesUserDataStream.map_account_update(payload=payload)
             if event_type == _ORDER_UPDATE_EVENT:
-                return BinanceFuturesUserDataStream.map_order_update(payload=payload)
+                try:
+                    return BinanceFuturesUserDataStream.map_order_update(
+                        payload=payload
+                    )
+                except ValueError:
+                    _LOGGER.warning(
+                        "Binance private stream ignored unsupported order update"
+                    )
+                    return None
+            if event_type == _ALGO_UPDATE_EVENT:
+                try:
+                    return BinanceFuturesUserDataStream.map_algo_update(payload=payload)
+                except ValueError:
+                    _LOGGER.warning(
+                        "Binance private stream ignored unsupported algo update"
+                    )
+                    return None
+            if event_type == _LISTEN_KEY_EXPIRED_EVENT:
+                raise RuntimeError("Binance private stream listen key expired")
             return None
 
         if message.type in {
@@ -239,6 +264,36 @@ class BinanceFuturesUserDataStream:
             observed_at=BinanceFuturesUserDataStream._timestamp(payload, key="E"),
             balances=balances,
             positions=positions,
+        )
+
+    @staticmethod
+    def map_algo_update(
+        *,
+        payload: Mapping[str, object],
+    ) -> FuturesUserDataAlgoUpdate:
+        """Map Binance ``ALGO_UPDATE`` to a typed conditional-order state."""
+        data = BinanceFuturesUserDataStream._require_mapping(
+            payload.get("o"),
+            label="algo update",
+        )
+        raw_trigger_price = BinanceFuturesUserDataStream._decimal(data, key="tp")
+        return FuturesUserDataAlgoUpdate(
+            observed_at=BinanceFuturesUserDataStream._timestamp(payload, key="E"),
+            client_algo_id=BinanceFuturesUserDataStream._require_text(
+                data,
+                key="caid",
+            ),
+            algo_id=BinanceFuturesUserDataStream._require_text(data, key="aid"),
+            symbol=BinanceFuturesUserDataStream._require_text(data, key="s"),
+            status=FuturesAlgoOrderStatus(
+                BinanceFuturesUserDataStream._require_text(data, key="X").lower()
+            ),
+            order_type=OrderType(
+                BinanceFuturesUserDataStream._require_text(data, key="o").lower()
+            ),
+            trigger_price=(
+                raw_trigger_price if raw_trigger_price != Decimal("0") else None
+            ),
         )
 
     @staticmethod
