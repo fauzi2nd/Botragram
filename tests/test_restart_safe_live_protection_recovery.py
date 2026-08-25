@@ -12,6 +12,7 @@ from botragram.app import TradingRuntimeControl
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine import RiskEngine
 from botragram.enums import (
+    ClosedPositionReason,
     Interval,
     OrderSide,
     OrderStatus,
@@ -28,14 +29,24 @@ from botragram.exceptions import (
 from botragram.exchanges.binance.futures_client import BinanceFuturesExchangeClient
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
-from botragram.models import ExchangeSymbolRules, Order, Position, SubmissionAttempt
+from botragram.models import (
+    ExchangeSymbolRules,
+    Order,
+    Position,
+    SubmissionAttempt,
+    Trade,
+)
 from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
-from botragram.services import LivePositionProtectionService
+from botragram.services import (
+    ClosedPositionLifecycleService,
+    LivePositionProtectionService,
+)
 from botragram.services.live_post_entry_recovery_service import (
     LivePostEntryRecoveryResult,
     LivePostEntryRecoveryService,
 )
 from botragram.storage.memory import (
+    MemoryClosedPositionLifecycleRepository,
     MemoryPositionRepository,
     MemorySubmissionAttemptRepository,
 )
@@ -389,6 +400,76 @@ class EmergencyExitExchange:
         return order
 
 
+@dataclass(slots=True, kw_only=True)
+class ExactTradeHistory:
+    """Return authoritative fills for one exact order."""
+
+    fills_by_order_id: dict[str, tuple[Trade, ...]]
+
+    async def get_trades_for_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> tuple[Trade, ...]:
+        return tuple(
+            fill for fill in self.fills_by_order_id[order_id] if fill.symbol == symbol
+        )
+
+
+def _trade(
+    *,
+    trade_id: str,
+    order_id: str,
+    side: OrderSide,
+    realized_pnl: str,
+) -> Trade:
+    """Build one exact entry or recovery-exit fill."""
+    return Trade(
+        trade_id=trade_id,
+        order_id=order_id,
+        symbol="BTCUSDT",
+        side=side,
+        price=Decimal("100"),
+        quantity=Decimal("1"),
+        quote_quantity=Decimal("100"),
+        fee=Decimal("0.2"),
+        fee_asset="USDT",
+        realized_pnl=Decimal(realized_pnl),
+        executed_at=_NOW,
+    )
+
+
+def _lifecycle_service(
+    *,
+    repository: MemoryClosedPositionLifecycleRepository,
+) -> ClosedPositionLifecycleService:
+    """Build lifecycle enrichment for exact emergency entry and exit fills."""
+    return ClosedPositionLifecycleService(
+        repository=repository,
+        trade_history=ExactTradeHistory(
+            fills_by_order_id={
+                "entry-1": (
+                    _trade(
+                        trade_id="entry-fill",
+                        order_id="entry-1",
+                        side=OrderSide.BUY,
+                        realized_pnl="0",
+                    ),
+                ),
+                "exit-1": (
+                    _trade(
+                        trade_id="exit-fill",
+                        order_id="exit-1",
+                        side=OrderSide.SELL,
+                        realized_pnl="-2",
+                    ),
+                ),
+            }
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_crossed_acknowledged_entry_closes_once_and_resolves() -> None:
     attempt = _attempt()
@@ -408,6 +489,7 @@ async def test_crossed_acknowledged_entry_closes_once_and_resolves() -> None:
     )
     protection = ProtectionRecovery(fail_ensure=True)
     exit_exchange = EmergencyExitExchange(positions=positions, lookup=lookup)
+    lifecycle_repository = MemoryClosedPositionLifecycleRepository()
     control = TradingRuntimeControl()
     service = LivePostEntryRecoveryService(
         submission_attempt_repository=attempts,
@@ -422,6 +504,7 @@ async def test_crossed_acknowledged_entry_closes_once_and_resolves() -> None:
         protection_reconciler=protection,
         protection_cleanup_service=protection,
         emergency_exit_exchange=exit_exchange,
+        closed_lifecycle_service=_lifecycle_service(repository=lifecycle_repository),
     )
 
     result = await service.recover_acknowledged(attempt=attempt)
@@ -434,6 +517,135 @@ async def test_crossed_acknowledged_entry_closes_once_and_resolves() -> None:
     assert stored is not None
     assert stored.status is SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE
     assert "position protection" not in control.get_missing_startup_requirements()
+    completed = await lifecycle_repository.get_completed()
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.EMERGENCY_CLOSE
+    assert completed[0].gross_realized_pnl == Decimal("-2")
+    assert completed[0].fee == Decimal("0.4")
+    assert completed[0].net_pnl == Decimal("-2.4")
+
+
+@pytest.mark.asyncio
+async def test_restart_reconciles_existing_emergency_exit_into_one_lifecycle() -> None:
+    """Record a previously FILLED deterministic recovery close without duplicate."""
+
+    class RecoveryOrderLookup(OrderLookup):
+        def __init__(
+            self,
+            *,
+            orders: dict[str, Order],
+            positions: PositionVisibility,
+        ) -> None:
+            super().__init__(orders=orders)
+            self.positions = positions
+
+        async def get_by_client_order_id(
+            self,
+            *,
+            symbol: str,
+            client_order_id: str,
+        ) -> Order:
+            order = await super().get_by_client_order_id(
+                symbol=symbol,
+                client_order_id=client_order_id,
+            )
+            if client_order_id == _EXIT_ID:
+                self.positions.current = None
+            return order
+
+    attempt = _attempt()
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+    positions = PositionVisibility(current=_position(), persisted=_position())
+    lookup = RecoveryOrderLookup(
+        positions=positions,
+        orders={
+            _EXIT_ID: _order(
+                order_id="exit-1",
+                client_id=_EXIT_ID,
+                side=OrderSide.SELL,
+                order_type=OrderType.MARKET,
+                status=OrderStatus.FILLED,
+            )
+        },
+    )
+    protection = ProtectionRecovery(fail_ensure=True)
+    lifecycle_repository = MemoryClosedPositionLifecycleRepository()
+    service = LivePostEntryRecoveryService(
+        submission_attempt_repository=attempts,
+        live_recovery_repository=AtomicRecovery(
+            attempts=attempts,
+            positions=positions,
+        ),
+        position_service=positions,
+        protection_service=protection,
+        runtime_control=TradingRuntimeControl(),
+        order_service=lookup,
+        protection_reconciler=protection,
+        protection_cleanup_service=protection,
+        emergency_exit_exchange=EmergencyExitExchange(
+            positions=positions,
+            lookup=lookup,
+        ),
+        closed_lifecycle_service=_lifecycle_service(repository=lifecycle_repository),
+    )
+
+    result = await service.recover_acknowledged(attempt=attempt)
+    completed = await lifecycle_repository.get_completed()
+
+    assert result is LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.RECOVERY_CLOSE
+
+
+@pytest.mark.asyncio
+async def test_crash_after_emergency_fill_recovers_lifecycle_from_zero_exposure() -> (
+    None
+):
+    """Recover the deterministic exit when restart begins with no exposure."""
+    attempt = _attempt()
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+    positions = PositionVisibility(current=None, persisted=_position())
+    lookup = OrderLookup(
+        orders={
+            _ENTRY_ID: _order(
+                order_id="entry-1",
+                client_id=_ENTRY_ID,
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                status=OrderStatus.FILLED,
+            ),
+            _EXIT_ID: _order(
+                order_id="exit-1",
+                client_id=_EXIT_ID,
+                side=OrderSide.SELL,
+                order_type=OrderType.MARKET,
+                status=OrderStatus.FILLED,
+            ),
+        }
+    )
+    lifecycle_repository = MemoryClosedPositionLifecycleRepository()
+    service = LivePostEntryRecoveryService(
+        submission_attempt_repository=attempts,
+        live_recovery_repository=AtomicRecovery(
+            attempts=attempts,
+            positions=positions,
+        ),
+        position_service=positions,
+        protection_service=ProtectionRecovery(),
+        runtime_control=TradingRuntimeControl(),
+        order_service=lookup,
+        closed_lifecycle_service=_lifecycle_service(repository=lifecycle_repository),
+    )
+
+    result = await service.recover_acknowledged(attempt=attempt)
+    completed = await lifecycle_repository.get_completed()
+
+    assert result is LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
+    assert positions.persisted is None
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.RECOVERY_CLOSE
 
 
 @pytest.mark.asyncio

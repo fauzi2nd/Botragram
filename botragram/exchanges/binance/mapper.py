@@ -319,6 +319,7 @@ class BinanceExchangeMapper(BaseExchangeMapper):
                 else created_at
             ),
             client_order_id=self._to_optional_string(payload.get("clientAlgoId")),
+            execution_order_id=self._to_optional_string(payload.get("actualOrderId")),
         )
 
     @staticmethod

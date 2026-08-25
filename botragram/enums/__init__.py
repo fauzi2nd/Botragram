@@ -29,6 +29,8 @@ from botragram.enums.autonomous_live_entry_intent_status import (
 from botragram.enums.autonomous_live_recovery_reason import AutonomousLiveRecoveryReason
 from botragram.enums.autonomous_live_recovery_status import AutonomousLiveRecoveryStatus
 from botragram.enums.base import BaseEnum
+from botragram.enums.closed_position_provenance import ClosedPositionProvenance
+from botragram.enums.closed_position_reason import ClosedPositionReason
 from botragram.enums.environment import Environment
 from botragram.enums.environment_profile import EnvironmentProfile
 from botragram.enums.exchange_environment import ExchangeEnvironment
@@ -85,6 +87,8 @@ __all__ = [
     "AutonomousLiveEntryIntentStatus",
     "AutonomousLiveRecoveryReason",
     "AutonomousLiveRecoveryStatus",
+    "ClosedPositionProvenance",
+    "ClosedPositionReason",
     # Environment
     "Environment",
     "EnvironmentProfile",

@@ -46,6 +46,7 @@ from botragram.models import MarketUniverseEntry, Order
 _NOW = datetime(2026, 8, 7, tzinfo=UTC)
 _EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
 _BULK_TICKER_ENDPOINT = "/fapi/v1/ticker/24hr"
+_TRADES_ENDPOINT = "/fapi/v1/userTrades"
 
 
 class RecordingBinanceRestClient(BinanceRestClient):
@@ -100,6 +101,47 @@ class RecordingBinanceRestClient(BinanceRestClient):
         del headers
         self.requests.append(("DELETE", path, params, authenticated))
         return self.delete_responses.get(path, self.response)
+
+
+@pytest.mark.asyncio
+async def test_get_trades_for_order_uses_exact_authenticated_order_identity() -> None:
+    """Never depend on a latest-account-fill window for lifecycle enrichment."""
+    rest = RecordingBinanceRestClient()
+    rest.get_responses[_TRADES_ENDPOINT] = [
+        {
+            "id": 7,
+            "orderId": 42,
+            "symbol": "BTCUSDT",
+            "side": "SELL",
+            "price": "101",
+            "qty": "1",
+            "quoteQty": "101",
+            "commission": "0.1",
+            "commissionAsset": "USDT",
+            "realizedPnl": "1",
+            "time": 1_700_000_000_000,
+        }
+    ]
+    client = BinanceFuturesExchangeClient(
+        rest=rest,
+        mapper=BinanceExchangeMapper(),
+    )
+
+    trades = await client.get_trades_for_order(
+        symbol="btcusdt",
+        order_id="42",
+    )
+
+    assert len(trades) == 1
+    assert trades[0].order_id == "42"
+    assert rest.requests == [
+        (
+            "GET",
+            _TRADES_ENDPOINT,
+            {"symbol": "BTCUSDT", "orderId": "42", "limit": 1_000},
+            True,
+        )
+    ]
 
 
 class PriceBandRejectingRestClient(RecordingBinanceRestClient):
@@ -1003,6 +1045,30 @@ def test_mapper_normalizes_finished_algo_status_to_filled() -> None:
     assert order.status is OrderStatus.FILLED
     assert order.executed_quantity == Decimal("1")
     assert order.client_order_id == "bsl-00000000000000000000000000000000"
+
+
+def test_mapper_preserves_actual_execution_id_separately_from_algo_id() -> None:
+    """Link exact fills without changing the identity used for algo operations."""
+    order = BinanceExchangeMapper().map_algo_order(
+        {
+            "algoId": 77,
+            "actualOrderId": "42001",
+            "clientAlgoId": "btp-00000000000000000000000000000000",
+            "symbol": "BTCUSDT",
+            "side": "SELL",
+            "orderType": "TAKE_PROFIT_MARKET",
+            "algoStatus": "FINISHED",
+            "quantity": "1",
+            "actualQty": "1",
+            "triggerPrice": "51000",
+            "createTime": 1_700_000_000_000,
+            "updateTime": 1_700_000_001_000,
+        }
+    )
+
+    assert order.order_id == "77"
+    assert order.execution_order_id == "42001"
+    assert order.status is OrderStatus.FILLED
 
 
 def test_mapper_normalizes_triggered_algo_status_as_in_progress() -> None:

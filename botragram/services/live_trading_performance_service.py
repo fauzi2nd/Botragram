@@ -25,8 +25,8 @@ from typing import Final
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.models import Trade
-from botragram.repositories import TradeRepository
+from botragram.models import ClosedPositionLifecycle
+from botragram.repositories import ClosedPositionLifecycleRepository
 
 __all__ = [
     "LiveTradingPerformanceService",
@@ -37,10 +37,8 @@ __all__ = [
 # =============================================================================
 # Constants
 # =============================================================================
-_DEFAULT_TRADE_HISTORY_LIMIT: Final[int] = 1_000
 _DEFAULT_REFRESH_SECONDS: Final[float] = 10.0
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
-_PAPER_ORDER_ID_PREFIX: Final[str] = "paper-"
 
 
 # =============================================================================
@@ -71,9 +69,8 @@ class TradingPerformanceSnapshot:
 class LiveTradingPerformanceService:
     """Cache and aggregate only Botragram-persisted LIVE exit fills."""
 
-    trade_repository: TradeRepository
+    lifecycle_repository: ClosedPositionLifecycleRepository
     refresh_seconds: float = _DEFAULT_REFRESH_SECONDS
-    trade_history_limit: int = _DEFAULT_TRADE_HISTORY_LIMIT
     monotonic_clock: MonotonicClock = monotonic
     _cached_snapshot: TradingPerformanceSnapshot | None = field(
         default=None,
@@ -90,8 +87,6 @@ class LiveTradingPerformanceService:
         """Validate bounded local-ledger read configuration."""
         if self.refresh_seconds <= 0:
             raise ValueError("LIVE performance refresh interval must be positive")
-        if self.trade_history_limit <= 0:
-            raise ValueError("LIVE performance trade-history limit must be positive")
 
     async def get_snapshot(self) -> TradingPerformanceSnapshot:
         """Return cached-or-fresh Botragram-only realized performance."""
@@ -103,29 +98,19 @@ class LiveTradingPerformanceService:
         ):
             return cached
 
-        trades = await self.trade_repository.get_latest(
-            limit=self.trade_history_limit,
-        )
-        snapshot = self._aggregate(trades=trades)
+        lifecycles = await self.lifecycle_repository.get_completed()
+        snapshot = self._aggregate(lifecycles=lifecycles)
         self._cached_snapshot = snapshot
         self._last_refresh_monotonic = now
         return snapshot
 
     @staticmethod
-    def _aggregate(*, trades: Sequence[Trade]) -> TradingPerformanceSnapshot:
-        """Aggregate persisted fills whose venue supplies realized PnL."""
-        realized_by_order: dict[str, Decimal] = {}
-        for trade in trades:
-            realized_pnl = trade.realized_pnl
-            if realized_pnl is None or trade.order_id.startswith(
-                _PAPER_ORDER_ID_PREFIX
-            ):
-                continue
-            realized_by_order[trade.order_id] = (
-                realized_by_order.get(trade.order_id, _DECIMAL_ZERO) + realized_pnl
-            )
-
-        outcomes = tuple(realized_by_order.values())
+    def _aggregate(
+        *,
+        lifecycles: Sequence[ClosedPositionLifecycle],
+    ) -> TradingPerformanceSnapshot:
+        """Aggregate one outcome per completed entry lifecycle using net PnL."""
+        outcomes = tuple(lifecycle.net_pnl for lifecycle in lifecycles)
         win_count = sum(outcome > _DECIMAL_ZERO for outcome in outcomes)
         loss_count = sum(outcome < _DECIMAL_ZERO for outcome in outcomes)
         break_even_count = len(outcomes) - win_count - loss_count

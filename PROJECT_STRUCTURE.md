@@ -115,6 +115,7 @@ botragram/
 |   |-- autonomous_live_entry_execution.py # Typed protected-entry execution result
 |   |-- autonomous_live_entry_intent.py # Transient authorized TESTNET entry intent
 |   |-- autonomous_live_recovery_snapshot.py # Immutable durable recovery status
+|   |-- closed_position_lifecycle.py # One authoritative closed LIVE position lifecycle
 |   |-- discovery_universe_batch.py # Immutable contiguous ranked discovery window
 |   |-- live_entry_risk_evaluation.py # Immutable fresh LIVE risk decision
 |   `-- backtest.py            # Backtest request, trade, metrics, dan result
@@ -124,7 +125,8 @@ botragram/
 |   |-- live_runtime_position_context.py # One recovered LIVE runtime context
 |   |-- live_runtime_portfolio_context.py # Immutable recovered LIVE portfolio
 |   `-- market_universe_entry.py # Binance-independent ranked market fact
-|-- repositories/              # Persistence interfaces, including submission attempts
+|-- repositories/              # Persistence interfaces, including lifecycle ledger
+|   |-- closed_position_lifecycle_repository.py # Durable entry-identity ledger contract
 |-- services/
 |   |-- account_service.py
 |   |-- autonomous_live_entry_execution_service.py # Fresh-risk protected TESTNET entry adapter
@@ -148,7 +150,8 @@ botragram/
 |   |-- live_runtime_portfolio_reconciliation_service.py # Canonical 0/1/N LIVE management reconciliation
 |   |-- live_runtime_health_service.py # Derived recovered LIVE health aggregation
 |   |-- live_submission_recovery_service.py # GET-only incomplete entry recovery
-|   |-- live_trading_performance_service.py # Bounded LIVE realized-fill performance
+|   |-- closed_position_lifecycle_service.py # Exact-order gross/fee/net enrichment
+|   |-- live_trading_performance_service.py # One net outcome per completed lifecycle
 |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |-- order_service.py
 |   |-- paper_trading_service.py
@@ -164,6 +167,7 @@ botragram/
 |   |-- memory/
 |   `-- sqlite/
 |       |-- database.py
+|       |-- closed_position_lifecycle_repository.py # SQLite lifecycle ledger
 |       |-- legacy_live_ledger_migration.py # One-time legacy TESTNET LIVE ledger import
 |       |-- migrations.py
 |       `-- *_repository.py

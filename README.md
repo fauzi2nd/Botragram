@@ -587,3 +587,10 @@ telemetry tick lokal tanpa menambahkan polling harga per refresh. Tick WebSocket
 tetap diproses event-driven;
 refresh tampilan 4 kali per detik hanya mengatur kecepatan visual. Rotating log
 tetap menyimpan riwayat diagnostik lengkap secara terpisah.
+
+Trading Performance LIVE membaca ledger lifecycle SQLite: satu
+entry_client_order_id Botragram menghasilkan paling banyak satu closed trade.
+Gross realized PnL dan fee berasal dari fill entry/exit dengan exact exchange
+order_id; W/L/BE dan realized PnL dashboard memakai net PnL. Migration tidak
+menebak ownership atau melakukan backfill atas history lama yang tidak dapat
+dibuktikan.

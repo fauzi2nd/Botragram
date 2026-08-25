@@ -14,6 +14,7 @@ import asyncio
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
+from typing import Final
 
 import aiohttp
 
@@ -77,6 +78,7 @@ _BINANCE_IMMEDIATE_TRIGGER_REJECTED_CODE = -2021
 _BINANCE_PERCENT_PRICE_REJECTED_CODE = -4131
 _PROTECTION_RECONCILIATION_ATTEMPTS = 3
 _PROTECTION_RECONCILIATION_DELAY_SECONDS = 0.5
+_ORDER_TRADE_PAGE_LIMIT: Final[int] = 1_000
 _TRANSITIONAL_PROTECTION_STATUSES = frozenset({OrderStatus.TRIGGERING})
 
 
@@ -384,6 +386,57 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             self._mapper.map_trade(self._require_mapping(item))
             for item in self._require_sequence(payload)
         )
+
+    async def get_trades_for_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> Sequence[Trade]:
+        """Return every fill for one exact Futures order identity."""
+        normalized_symbol = self._normalize_symbol(symbol)
+        normalized_order_id = self._normalize_order_id(order_id)
+        trades: list[Trade] = []
+        seen_trade_ids: set[str] = set()
+        from_id: int | None = None
+
+        while True:
+            params: RequestParams = {
+                "symbol": normalized_symbol,
+                "orderId": normalized_order_id,
+                "limit": _ORDER_TRADE_PAGE_LIMIT,
+            }
+            if from_id is not None:
+                params["fromId"] = from_id
+            payload = await self._rest.get(
+                _TRADES_ENDPOINT,
+                params=params,
+                authenticated=True,
+            )
+            page = tuple(
+                self._mapper.map_trade(self._require_mapping(item))
+                for item in self._require_sequence(payload)
+            )
+            if any(trade.order_id != normalized_order_id for trade in page):
+                raise RuntimeError("Binance returned a fill for a different order")
+
+            new_trades = tuple(
+                trade for trade in page if trade.trade_id not in seen_trade_ids
+            )
+            trades.extend(new_trades)
+            seen_trade_ids.update(trade.trade_id for trade in new_trades)
+            if len(page) < _ORDER_TRADE_PAGE_LIMIT:
+                return tuple(trades)
+            if not new_trades:
+                raise RuntimeError(
+                    "Binance exact-order trade pagination did not advance"
+                )
+            try:
+                from_id = int(page[-1].trade_id) + 1
+            except ValueError as error:
+                raise RuntimeError(
+                    "Binance Futures trade identity is not numeric"
+                ) from error
 
     async def create_order(
         self,

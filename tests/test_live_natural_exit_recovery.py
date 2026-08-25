@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -10,6 +9,7 @@ from decimal import Decimal
 import pytest
 
 from botragram.enums import (
+    ClosedPositionReason,
     Interval,
     OrderSide,
     OrderStatus,
@@ -22,12 +22,22 @@ from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
 )
-from botragram.models import Order, Position, SubmissionAttempt, Trade
-from botragram.services import LiveNaturalExitRecoveryService
+from botragram.models import (
+    ClosedPositionLifecycle,
+    Order,
+    PendingClosedPositionLifecycle,
+    Position,
+    SubmissionAttempt,
+    Trade,
+)
+from botragram.services import (
+    ClosedPositionLifecycleService,
+    LiveNaturalExitRecoveryService,
+)
 from botragram.storage.memory import (
+    MemoryClosedPositionLifecycleRepository,
     MemoryPositionRepository,
     MemorySubmissionAttemptRepository,
-    MemoryTradeRepository,
 )
 
 _NOW = datetime(2026, 8, 21, tzinfo=UTC)
@@ -794,15 +804,19 @@ async def test_reconcile_deletes_proven_exit_when_performance_history_fails() ->
     """Do not let post-cleanup telemetry failure block a safe deletion."""
 
     class FailingTradeHistory:
-        async def get_trades(
+        async def get_trades_for_order(
             self,
             *,
-            symbol: str | None,
-            limit: int,
-        ) -> Sequence[Trade]:
+            symbol: str,
+            order_id: str,
+        ) -> tuple[Trade, ...]:
+            del symbol, order_id
             raise RuntimeError("configured performance history failure")
 
     repository = await _repository()
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=_position()))
+    lifecycle_repository = MemoryClosedPositionLifecycleRepository()
     filled_stop = replace(
         _protection(
             order_type=OrderType.STOP_MARKET,
@@ -816,9 +830,169 @@ async def test_reconcile_deletes_proven_exit_when_performance_history_fails() ->
     service = LiveNaturalExitRecoveryService(
         exchange_client=exchange,
         position_repository=repository,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycle_repository,
+            trade_history=FailingTradeHistory(),
+        ),
+    )
+
+    await service.reconcile()
+
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(await lifecycle_repository.get_pending()) == 1
+
+
+def _fill(
+    *,
+    trade_id: str,
+    order_id: str,
+    side: OrderSide,
+    realized_pnl: str,
+) -> Trade:
+    """Build one exact Futures fill for lifecycle enrichment."""
+    return Trade(
+        trade_id=trade_id,
+        order_id=order_id,
+        symbol=_SYMBOL,
+        side=side,
+        price=Decimal("0.011"),
+        quantity=Decimal("885"),
+        quote_quantity=Decimal("9.735"),
+        fee=Decimal("0.1"),
+        fee_asset="USDT",
+        realized_pnl=Decimal(realized_pnl),
+        executed_at=_NOW,
+    )
+
+
+@pytest.mark.parametrize(
+    ("order_type", "client_id", "trigger", "protection_step", "expected_reason"),
+    (
+        (
+            OrderType.TAKE_PROFIT_MARKET,
+            _TP_ID,
+            "0.01084",
+            0,
+            ClosedPositionReason.TAKE_PROFIT,
+        ),
+        (
+            OrderType.STOP_MARKET,
+            _STOP_ID,
+            "0.01151",
+            0,
+            ClosedPositionReason.STOP_LOSS,
+        ),
+        (
+            OrderType.STOP_MARKET,
+            _STOP_ID,
+            "0.01151",
+            1,
+            ClosedPositionReason.STEPPED_STOP,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_natural_exit_records_one_tp_sl_or_stepped_stop_lifecycle(
+    order_type: OrderType,
+    client_id: str,
+    trigger: str,
+    protection_step: int,
+    expected_reason: ClosedPositionReason,
+) -> None:
+    """Record one authoritative lifecycle for every natural close reason."""
+
+    class ExactTradeHistory:
+        async def get_trades_for_order(
+            self,
+            *,
+            symbol: str,
+            order_id: str,
+        ) -> tuple[Trade, ...]:
+            del symbol
+            return {
+                "entry-1": (
+                    _fill(
+                        trade_id="entry-fill",
+                        order_id="entry-1",
+                        side=OrderSide.SELL,
+                        realized_pnl="0",
+                    ),
+                ),
+                "filled-exit": (
+                    _fill(
+                        trade_id="exit-fill",
+                        order_id="filled-exit",
+                        side=OrderSide.BUY,
+                        realized_pnl="2",
+                    ),
+                ),
+            }[order_id]
+
+    position = replace(_position(), protection_step=protection_step)
+    position_repository = MemoryPositionRepository()
+    await position_repository.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycle_repository = MemoryClosedPositionLifecycleRepository()
+    filled_exit = replace(
+        _protection(
+            order_type=order_type,
+            client_id=client_id,
+            trigger=trigger,
+        ),
+        order_id="filled-exit",
+        status=OrderStatus.FILLED,
+        executed_quantity=position.quantity,
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=FakeNaturalExitExchange(exact_only_protections=(filled_exit,)),
+        position_repository=position_repository,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycle_repository,
+            trade_history=ExactTradeHistory(),
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycle_repository.get_completed()
+
+    assert await position_repository.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    assert isinstance(completed[0], ClosedPositionLifecycle)
+    assert completed[0].ownership.close_reason is expected_reason
+
+
+@pytest.mark.asyncio
+async def test_performance_repository_failure_never_blocks_safe_cleanup() -> None:
+    """Treat both pending reads and ownership lookups as non-critical telemetry."""
+
+    class FailingLifecycleRepository(MemoryClosedPositionLifecycleRepository):
+        async def get_pending(
+            self,
+        ) -> tuple[PendingClosedPositionLifecycle, ...]:
+            raise RuntimeError("configured lifecycle read failure")
+
+    class EmptyTradeHistory:
+        async def get_trades_for_order(
+            self,
+            *,
+            symbol: str,
+            order_id: str,
+        ) -> tuple[Trade, ...]:
+            del symbol, order_id
+            return ()
+
+    repository = await _repository()
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=FakeNaturalExitExchange(),
+        position_repository=repository,
         submission_attempt_repository=MemorySubmissionAttemptRepository(),
-        trade_repository=MemoryTradeRepository(),
-        trade_history=FailingTradeHistory(),
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=FailingLifecycleRepository(),
+            trade_history=EmptyTradeHistory(),
+        ),
     )
 
     await service.reconcile()

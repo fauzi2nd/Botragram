@@ -396,6 +396,39 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         );
         """,
     ),
+    _Migration(
+        version=15,
+        script="""
+        CREATE TABLE IF NOT EXISTS closed_position_lifecycles (
+            entry_client_order_id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            position_side TEXT NOT NULL,
+            entry_order_id TEXT NOT NULL,
+            exit_client_order_id TEXT NOT NULL,
+            exit_order_id TEXT NOT NULL,
+            close_reason TEXT NOT NULL,
+            provenance TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            gross_realized_pnl TEXT,
+            fee TEXT,
+            fee_asset TEXT,
+            net_pnl TEXT,
+            closed_at TEXT,
+            CHECK (
+                (gross_realized_pnl IS NULL AND fee IS NULL
+                    AND fee_asset IS NULL AND net_pnl IS NULL
+                    AND closed_at IS NULL)
+                OR
+                (gross_realized_pnl IS NOT NULL AND fee IS NOT NULL
+                    AND fee_asset IS NOT NULL AND net_pnl IS NOT NULL
+                    AND closed_at IS NOT NULL)
+            )
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_closed_position_lifecycles_closed_at
+        ON closed_position_lifecycles (closed_at);
+        """,
+    ),
 )
 
 

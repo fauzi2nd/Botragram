@@ -10,6 +10,8 @@ from decimal import Decimal
 from typing import Final, Protocol
 
 from botragram.enums import (
+    ClosedPositionProvenance,
+    ClosedPositionReason,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -20,11 +22,13 @@ from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
 )
-from botragram.models import Order, Position, Trade
+from botragram.models import Order, Position
 from botragram.repositories import (
     PositionRepository,
     SubmissionAttemptRepository,
-    TradeRepository,
+)
+from botragram.services.closed_position_lifecycle_service import (
+    ClosedPositionLifecycleService,
 )
 from botragram.services.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
@@ -38,7 +42,6 @@ __all__ = [
 _RECONCILIATION_ATTEMPTS: Final[int] = 3
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.5
 _PORTFOLIO_STABILITY_ATTEMPTS: Final[int] = 3
-_TRADE_HISTORY_LIMIT: Final[int] = 1_000
 _TERMINAL_PROTECTION_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
     {
         OrderStatus.FILLED,
@@ -88,19 +91,6 @@ class LiveNaturalExitExchange(Protocol):
         ...
 
 
-class LiveBotExitTradeHistory(Protocol):
-    """Expose the bounded fill read needed for one proven Botragram exit."""
-
-    async def get_trades(
-        self,
-        *,
-        symbol: str | None,
-        limit: int,
-    ) -> Sequence[Trade]:
-        """Return bounded account fills for one optional symbol."""
-        ...
-
-
 @dataclass(slots=True, kw_only=True, frozen=True)
 class LiveNaturalExitRecoveryService:
     """Reconcile zero-exposure exits before another LIVE entry can be allowed.
@@ -113,14 +103,14 @@ class LiveNaturalExitRecoveryService:
     exchange_client: LiveNaturalExitExchange
     position_repository: PositionRepository
     submission_attempt_repository: SubmissionAttemptRepository
-    trade_repository: TradeRepository | None = None
-    trade_history: LiveBotExitTradeHistory | None = None
+    closed_lifecycle_service: ClosedPositionLifecycleService | None = None
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
         default_factory=LivePositionLifecycleCoordinator,
     )
 
     async def reconcile(self) -> None:
         """Remove proven orphan protection and stale local positions."""
+        await self._reconcile_pending_lifecycles_best_effort()
         incomplete_attempts = tuple(
             await self.submission_attempt_repository.get_incomplete()
         )
@@ -261,8 +251,10 @@ class LiveNaturalExitRecoveryService:
             if position.symbol.upper() in active_symbols:
                 continue
             async with self.lifecycle_coordinator.hold(symbol=position.symbol):
-                await self._reconcile_persisted_protection_before_delete(
-                    position=position,
+                filled_exit_orders = (
+                    await self._reconcile_persisted_protection_before_delete(
+                        position=position,
+                    )
                 )
                 if await self.exchange_client.get_positions(symbol=position.symbol):
                     raise RuntimeError(
@@ -279,77 +271,101 @@ class LiveNaturalExitRecoveryService:
                         "LIVE protection remains before durable position deletion: "
                         f"symbol={position.symbol} count={len(remaining)}"
                     )
+                lifecycle_id = await self._stage_closed_lifecycle_best_effort(
+                    position=position,
+                    filled_exit_orders=filled_exit_orders,
+                )
                 await self.position_repository.delete(symbol=position.symbol)
                 self.lifecycle_coordinator.record_position_deletion(
                     symbol=position.symbol,
                 )
-                await self._persist_bot_exit_fills_best_effort(position=position)
+                if lifecycle_id is not None:
+                    await self._complete_closed_lifecycle_best_effort(
+                        entry_client_order_id=lifecycle_id,
+                    )
             _LOGGER.info(
                 "Natural LIVE exit reconciled: symbol=%s entry_client_order_id=%s",
                 position.symbol,
                 position.entry_client_order_id,
             )
 
-    async def _persist_bot_exit_fills_best_effort(self, *, position: Position) -> None:
-        """Persist performance history after safety cleanup without blocking it."""
+    async def _reconcile_pending_lifecycles_best_effort(self) -> None:
+        """Retry durable financial enrichment without blocking safety recovery."""
+        service = self.closed_lifecycle_service
+        if service is not None:
+            await service.reconcile_pending_best_effort()
+
+    async def _stage_closed_lifecycle_best_effort(
+        self,
+        *,
+        position: Position,
+        filled_exit_orders: tuple[Order, ...],
+    ) -> str | None:
+        """Stage exact lifecycle ownership without blocking position cleanup."""
+        service = self.closed_lifecycle_service
+        entry_identity = position.entry_client_order_id
+        if service is None or entry_identity is None or len(filled_exit_orders) != 1:
+            return None
         try:
-            await self._persist_bot_exit_fills(position=position)
+            attempt = await self.submission_attempt_repository.get_by_client_order_id(
+                client_order_id=entry_identity,
+            )
+            if (
+                attempt is None
+                or attempt.status is not SubmissionAttemptStatus.COMPLETED
+                or attempt.exchange_order_id is None
+            ):
+                return None
+            exit_order = filled_exit_orders[0]
+            await service.stage(
+                position=position,
+                attempt=attempt,
+                exit_order=exit_order,
+                close_reason=self._close_reason(
+                    position=position,
+                    exit_order=exit_order,
+                ),
+                provenance=ClosedPositionProvenance.PROTECTION_ORDER,
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
             _LOGGER.exception(
-                "Botragram LIVE exit performance persistence failed after "
-                "position cleanup: symbol=%s",
+                "Closed lifecycle ownership staging failed before local cleanup: "
+                "symbol=%s entry_client_order_id=%s",
                 position.symbol,
+                entry_identity,
+            )
+            return None
+        return entry_identity
+
+    async def _complete_closed_lifecycle_best_effort(
+        self,
+        *,
+        entry_client_order_id: str,
+    ) -> None:
+        """Complete staged financial evidence after safety-critical cleanup."""
+        service = self.closed_lifecycle_service
+        if service is not None:
+            await service.complete_best_effort(
+                entry_client_order_id=entry_client_order_id,
             )
 
-    async def _persist_bot_exit_fills(self, *, position: Position) -> None:
-        """Persist only fills proven to belong to Botragram exit protection."""
-        trade_repository = self.trade_repository
-        trade_history = self.trade_history
-        if trade_repository is None or trade_history is None:
-            return
-
-        exit_order_ids = await self._get_filled_exit_order_ids(position=position)
-        if not exit_order_ids:
-            return
-
-        trades = await trade_history.get_trades(
-            symbol=position.symbol,
-            limit=_TRADE_HISTORY_LIMIT,
-        )
-        bot_exit_fills = tuple(
-            trade
-            for trade in trades
-            if trade.order_id in exit_order_ids and trade.realized_pnl is not None
-        )
-        if bot_exit_fills:
-            await trade_repository.save_many(trades=bot_exit_fills)
-
-    async def _get_filled_exit_order_ids(self, *, position: Position) -> set[str]:
-        """Return terminal FILLED order identifiers for durable bot legs only."""
-        filled_order_ids: set[str] = set()
-        for client_id in (
-            position.stop_loss_client_algo_id,
-            position.take_profit_client_algo_id,
-            position.pending_stop_loss_client_algo_id,
+    @staticmethod
+    def _close_reason(
+        *,
+        position: Position,
+        exit_order: Order,
+    ) -> ClosedPositionReason:
+        """Classify one exact filled protection identity."""
+        if exit_order.client_order_id == position.take_profit_client_algo_id:
+            return ClosedPositionReason.TAKE_PROFIT
+        if (
+            exit_order.client_order_id == position.pending_stop_loss_client_algo_id
+            or position.protection_step > 0
         ):
-            if client_id is None:
-                continue
-            try:
-                order = await self.exchange_client.get_protection_order_by_client_id(
-                    symbol=position.symbol,
-                    client_id=client_id,
-                )
-            except ExchangeOrderNotFoundError:
-                continue
-            except ExchangeOrderOutcomeUnknownError as error:
-                raise RuntimeError(
-                    "LIVE exit fill identity could not be verified before persistence"
-                ) from error
-            if order.status is OrderStatus.FILLED:
-                filled_order_ids.add(order.order_id)
-        return filled_order_ids
+            return ClosedPositionReason.STEPPED_STOP
+        return ClosedPositionReason.STOP_LOSS
 
     @staticmethod
     def _portfolio_snapshots_match(
@@ -515,7 +531,7 @@ class LiveNaturalExitRecoveryService:
         self,
         *,
         position: Position,
-    ) -> None:
+    ) -> tuple[Order, ...]:
         """Resolve every durable protection identity before deleting local state."""
         legs = (
             (
@@ -534,15 +550,19 @@ class LiveNaturalExitRecoveryService:
                 position.pending_stop_loss,
             ),
         )
+        filled_orders: list[Order] = []
         for order_type, client_id, trigger in legs:
             if client_id is None:
                 continue
-            await self._reconcile_persisted_leg_before_delete(
+            filled_order = await self._reconcile_persisted_leg_before_delete(
                 position=position,
                 order_type=order_type,
                 client_id=client_id,
                 trigger=trigger,
             )
+            if filled_order is not None:
+                filled_orders.append(filled_order)
+        return tuple(filled_orders)
 
     async def _reconcile_persisted_leg_before_delete(
         self,
@@ -551,7 +571,7 @@ class LiveNaturalExitRecoveryService:
         order_type: OrderType,
         client_id: str,
         trigger: Decimal | None,
-    ) -> None:
+    ) -> Order | None:
         """Make one durable protection leg provably inactive before deletion."""
         try:
             order = await self.exchange_client.get_protection_order_by_client_id(
@@ -559,7 +579,7 @@ class LiveNaturalExitRecoveryService:
                 client_id=client_id,
             )
         except ExchangeOrderNotFoundError:
-            return
+            return None
         except ExchangeOrderOutcomeUnknownError as error:
             raise RuntimeError(
                 "Persisted LIVE protection identity could not be verified "
@@ -574,7 +594,7 @@ class LiveNaturalExitRecoveryService:
             trigger=trigger,
         )
         if order.status in _TERMINAL_PROTECTION_STATUSES:
-            return
+            return order if order.status is OrderStatus.FILLED else None
         if order.status is not OrderStatus.NEW:
             raise RuntimeError(
                 "Persisted LIVE protection is neither active nor terminal "
@@ -588,6 +608,7 @@ class LiveNaturalExitRecoveryService:
             client_id=client_id,
             trigger=trigger,
         )
+        return None
 
     async def _prove_persisted_leg_inactive(
         self,

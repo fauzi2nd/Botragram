@@ -20,6 +20,9 @@ from botragram.repositories.autonomous_live_opportunity_claim_repository import 
     AutonomousLiveOpportunityClaimRepository,
 )
 from botragram.repositories.candle_repository import CandleRepository
+from botragram.repositories.closed_position_lifecycle_repository import (
+    ClosedPositionLifecycleRepository,
+)
 from botragram.repositories.execution_authorization_repository import (
     ExecutionAuthorizationRepository,
 )
@@ -35,6 +38,7 @@ from botragram.repositories.submission_attempt_repository import (
 from botragram.repositories.trade_repository import TradeRepository
 
 __all__ = [
+    "ClosedPositionLifecycleRepository",
     "AutonomousLiveOpportunityClaimRepository",
     "CandleRepository",
     "ExecutionAuthorizationRepository",

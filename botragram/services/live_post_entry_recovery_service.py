@@ -29,6 +29,8 @@ from typing import Final, Protocol
 # =============================================================================
 from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.enums import (
+    ClosedPositionProvenance,
+    ClosedPositionReason,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -45,6 +47,9 @@ from botragram.exceptions import (
 from botragram.models import Order, Position, SubmissionAttempt
 from botragram.repositories import SubmissionAttemptRepository
 from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
+from botragram.services.closed_position_lifecycle_service import (
+    ClosedPositionLifecycleService,
+)
 
 # =============================================================================
 # Exports
@@ -178,6 +183,7 @@ class LivePostEntryRecoveryService:
     protection_reconciler: LiveProtectionVerification | None = None
     protection_cleanup_service: LiveProtectionCleanup | None = None
     emergency_exit_exchange: LiveEmergencyExitExchange | None = None
+    closed_lifecycle_service: ClosedPositionLifecycleService | None = None
 
     async def recover_acknowledged(
         self,
@@ -258,7 +264,16 @@ class LivePostEntryRecoveryService:
                     position=persisted,
                 ):
                     return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+                lifecycle_id = (
+                    await self._stage_existing_recovery_lifecycle_best_effort(
+                        attempt=attempt,
+                        position=persisted,
+                    )
+                )
                 await self._resolve_no_exposure(attempt=attempt)
+                await self._complete_recovery_lifecycle_best_effort(
+                    entry_client_order_id=lifecycle_id,
+                )
                 return LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
 
             return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
@@ -394,7 +409,14 @@ class LivePostEntryRecoveryService:
                 raise RuntimeError(
                     "Zero exposure could not be proven safe after protection failure"
                 ) from cause
+            lifecycle_id = await self._stage_existing_recovery_lifecycle_best_effort(
+                attempt=attempt,
+                position=position,
+            )
             await self._resolve_no_exposure(attempt=attempt)
+            await self._complete_recovery_lifecycle_best_effort(
+                entry_client_order_id=lifecycle_id,
+            )
             return
 
         exit_client_id = self._emergency_exit_client_order_id(
@@ -413,6 +435,7 @@ class LivePostEntryRecoveryService:
                 "Emergency exit identity could not be reconciled"
             ) from error
 
+        exit_order: Order | None = existing_exit
         if existing_exit is not None:
             self._validate_emergency_exit_order(
                 order=existing_exit,
@@ -425,7 +448,7 @@ class LivePostEntryRecoveryService:
                     "Existing emergency exit is not in a proven FILLED state"
                 )
         else:
-            await self._submit_emergency_exit(
+            exit_order = await self._submit_emergency_exit(
                 attempt=attempt,
                 position=position,
                 exit_client_id=exit_client_id,
@@ -441,7 +464,20 @@ class LivePostEntryRecoveryService:
         if not await self._reconcile_zero_exposure_protection(position=position):
             raise RuntimeError("Emergency exit left protection cleanup unresolved")
 
+        lifecycle_id = await self._stage_recovery_lifecycle_best_effort(
+            attempt=attempt,
+            position=position,
+            exit_order=exit_order,
+            close_reason=(
+                ClosedPositionReason.RECOVERY_CLOSE
+                if existing_exit is not None
+                else ClosedPositionReason.EMERGENCY_CLOSE
+            ),
+        )
         await self._resolve_no_exposure(attempt=attempt)
+        await self._complete_recovery_lifecycle_best_effort(
+            entry_client_order_id=lifecycle_id,
+        )
 
     async def _submit_emergency_exit(
         self,
@@ -451,12 +487,12 @@ class LivePostEntryRecoveryService:
         exit_client_id: str,
         order_service: LiveOrderFetch,
         exchange: LiveEmergencyExitExchange,
-    ) -> None:
+    ) -> Order | None:
         """Submit a deterministic emergency exit with one price-band retry."""
         for submission_index in range(_EMERGENCY_EXIT_PRICE_BAND_MAX_SUBMISSIONS):
             current = await self._get_visible_position(symbol=position.symbol)
             if current is None:
-                return
+                return None
 
             try:
                 close_order = await exchange.close_position(
@@ -485,14 +521,14 @@ class LivePostEntryRecoveryService:
                         client_order_id=exit_client_id,
                     )
                     if existing_exit.status is OrderStatus.FILLED:
-                        return
+                        return existing_exit
                     raise RuntimeError(
                         "Price-band rejected emergency exit identity exists "
                         "without a proven FILLED state"
                     )
 
                 if await self._get_visible_position(symbol=position.symbol) is None:
-                    return
+                    return None
 
                 if submission_index + 1 >= _EMERGENCY_EXIT_PRICE_BAND_MAX_SUBMISSIONS:
                     raise RuntimeError(
@@ -513,7 +549,7 @@ class LivePostEntryRecoveryService:
                     raise RuntimeError(
                         "Emergency exit outcome is unknown while exposure remains"
                     )
-                return
+                return None
 
             self._validate_emergency_exit_order(
                 order=close_order,
@@ -521,9 +557,100 @@ class LivePostEntryRecoveryService:
                 position=current,
                 client_order_id=exit_client_id,
             )
-            return
+            return close_order
 
         raise RuntimeError("Emergency exit submission budget was exhausted")
+
+    async def _stage_recovery_lifecycle_best_effort(
+        self,
+        *,
+        attempt: SubmissionAttempt,
+        position: Position,
+        exit_order: Order | None,
+        close_reason: ClosedPositionReason,
+    ) -> str | None:
+        """Stage a proven emergency recovery close without blocking resolution."""
+        service = self.closed_lifecycle_service
+        if service is None or exit_order is None:
+            return None
+        try:
+            await service.stage(
+                position=position,
+                attempt=attempt,
+                exit_order=exit_order,
+                close_reason=close_reason,
+                provenance=ClosedPositionProvenance.RECOVERY_EMERGENCY_ORDER,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Recovery close lifecycle staging failed without blocking "
+                "zero-exposure resolution: symbol=%s client_order_id=%s",
+                attempt.symbol,
+                attempt.client_order_id,
+            )
+            return None
+        return attempt.client_order_id
+
+    async def _stage_existing_recovery_lifecycle_best_effort(
+        self,
+        *,
+        attempt: SubmissionAttempt,
+        position: Position,
+    ) -> str | None:
+        """Recover an exact FILLED emergency identity after a process restart."""
+        order_service = self.order_service
+        if self.closed_lifecycle_service is None or order_service is None:
+            return None
+        exit_client_id = self._emergency_exit_client_order_id(
+            entry_client_order_id=attempt.client_order_id,
+        )
+        try:
+            exit_order = await order_service.get_by_client_order_id(
+                symbol=attempt.symbol,
+                client_order_id=exit_client_id,
+            )
+            self._validate_emergency_exit_order(
+                order=exit_order,
+                attempt=attempt,
+                position=position,
+                client_order_id=exit_client_id,
+            )
+            if exit_order.status is not OrderStatus.FILLED:
+                raise RuntimeError(
+                    "Recovered emergency exit is not in a proven FILLED state"
+                )
+        except ExchangeOrderNotFoundError:
+            return None
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Recovery close identity remains unavailable for performance: "
+                "symbol=%s client_order_id=%s",
+                attempt.symbol,
+                attempt.client_order_id,
+            )
+            return None
+        return await self._stage_recovery_lifecycle_best_effort(
+            attempt=attempt,
+            position=position,
+            exit_order=exit_order,
+            close_reason=ClosedPositionReason.RECOVERY_CLOSE,
+        )
+
+    async def _complete_recovery_lifecycle_best_effort(
+        self,
+        *,
+        entry_client_order_id: str | None,
+    ) -> None:
+        """Complete staged performance only after safety state is terminal."""
+        service = self.closed_lifecycle_service
+        if entry_client_order_id is not None and service is not None:
+            await service.complete_best_effort(
+                entry_client_order_id=entry_client_order_id,
+            )
 
     async def _resolve_no_exposure(self, *, attempt: SubmissionAttempt) -> None:
         """Atomically terminalize one acknowledged entry after zero exposure proof."""

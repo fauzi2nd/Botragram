@@ -81,6 +81,7 @@ from botragram.models import (
 from botragram.repositories import (
     AutonomousLiveOpportunityClaimRepository,
     CandleRepository,
+    ClosedPositionLifecycleRepository,
     ExecutionAuthorizationRepository,
     OrderRepository,
     PositionRepository,
@@ -95,6 +96,7 @@ from botragram.services import (
     AutonomousLiveEntryIntentService,
     AutonomousLiveRecoveryObservabilityService,
     AutonomousPaperExecutionService,
+    ClosedPositionLifecycleService,
     ExecutionAuthorizationService,
     HealthService,
     HumanConfirmedPaperExecutionService,
@@ -129,6 +131,7 @@ from botragram.storage.memory import MemoryExecutionAuthorizationRepository
 from botragram.storage.sqlite import (
     SQLiteAutonomousLiveOpportunityClaimRepository,
     SQLiteCandleRepository,
+    SQLiteClosedPositionLifecycleRepository,
     SQLiteDatabase,
     SQLiteLiveEquityHighWaterRepository,
     SQLiteMigrationManager,
@@ -180,6 +183,8 @@ class DependencyProvider:
         "_execution_authorization_service",
         "_human_confirmed_paper_execution_service",
         "_candle_repository",
+        "_closed_position_lifecycle_repository",
+        "_closed_position_lifecycle_service",
         "_database",
         "_database_path",
         "_exchange_client",
@@ -322,6 +327,12 @@ class DependencyProvider:
         self._runtime_recovery_service: RuntimeRecoveryService | None = None
 
         self._candle_repository: CandleRepository | None = None
+        self._closed_position_lifecycle_repository: (
+            ClosedPositionLifecycleRepository | None
+        ) = None
+        self._closed_position_lifecycle_service: (
+            ClosedPositionLifecycleService | None
+        ) = None
         self._execution_authorization_repository: (
             ExecutionAuthorizationRepository | None
         ) = None
@@ -660,6 +671,13 @@ class DependencyProvider:
         return self._require(self._signal_repository)
 
     @property
+    def closed_position_lifecycle_repository(
+        self,
+    ) -> ClosedPositionLifecycleRepository:
+        """Return durable one-position-per-closed-trade storage."""
+        return self._require(self._closed_position_lifecycle_repository)
+
+    @property
     def autonomous_live_opportunity_claim_repository(
         self,
     ) -> AutonomousLiveOpportunityClaimRepository:
@@ -895,6 +913,9 @@ class DependencyProvider:
     ) -> None:
         """Construct SQLite repository implementations."""
         self._candle_repository = SQLiteCandleRepository(database=database)
+        self._closed_position_lifecycle_repository = (
+            SQLiteClosedPositionLifecycleRepository(database=database)
+        )
         self._signal_repository = SQLiteSignalRepository(database=database)
         self._autonomous_live_opportunity_claim_repository = (
             SQLiteAutonomousLiveOpportunityClaimRepository(database=database)
@@ -1084,12 +1105,19 @@ class DependencyProvider:
             position_repository=self.position_repository,
         )
         self._account_service = AccountService(exchange_client=exchange_client)
+        self._closed_position_lifecycle_service = (
+            ClosedPositionLifecycleService(
+                repository=self.closed_position_lifecycle_repository,
+                trade_history=exchange_client,
+            )
+            if isinstance(exchange_client, BinanceFuturesExchangeClient)
+            else None
+        )
         self._live_natural_exit_recovery_service = LiveNaturalExitRecoveryService(
             exchange_client=exchange_client,
             position_repository=self.position_repository,
             submission_attempt_repository=self.submission_attempt_repository,
-            trade_repository=self.trade_repository,
-            trade_history=exchange_client,
+            closed_lifecycle_service=self._closed_position_lifecycle_service,
             lifecycle_coordinator=self._live_position_lifecycle_coordinator,
         )
         live_user_data_service = self._live_futures_user_data_service
@@ -1160,6 +1188,7 @@ class DependencyProvider:
             protection_reconciler=self.live_position_protection_service,
             protection_cleanup_service=self.live_position_protection_service,
             emergency_exit_exchange=exchange_client,
+            closed_lifecycle_service=self._closed_position_lifecycle_service,
         )
         self._live_futures_entry_service = LiveFuturesEntryService(
             market_type=self._settings.exchange.market_type,
@@ -1181,7 +1210,7 @@ class DependencyProvider:
             maximum_leverage=self._settings.risk.leverage,
         )
         self._live_trading_performance_service = LiveTradingPerformanceService(
-            trade_repository=self.trade_repository,
+            lifecycle_repository=self.closed_position_lifecycle_repository,
         )
         self._paper_trading_service = PaperTradingService(
             order_repository=self.order_repository,
@@ -1437,6 +1466,8 @@ class DependencyProvider:
         self.runtime_control.set_position_protection_ready(False)
         self.runtime_control.clear_runtime_contexts()
         self._candle_repository = None
+        self._closed_position_lifecycle_repository = None
+        self._closed_position_lifecycle_service = None
         self._execution_authorization_repository = None
         self._execution_authorization_service = None
         self._human_confirmed_paper_execution_service = None

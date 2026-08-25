@@ -739,10 +739,12 @@ Botragram/
 |   |   |-- signal.py
 |   |   |-- ticker.py
 |   |   |-- trade.py
+|   |   |-- closed_position_lifecycle.py # Durable closed LIVE position identity and PnL
 |   |   `-- trading.py
 |   |-- repositories/
 |   |   |-- __init__.py
 |   |   |-- candle_repository.py
+|   |   |-- closed_position_lifecycle_repository.py
 |   |   |-- order_repository.py
 |   |   |-- position_repository.py
 |   |   |-- signal_repository.py
@@ -752,7 +754,8 @@ Botragram/
 |   |   |-- account_service.py
 |   |   |-- backtest_service.py
 |   |   |-- health_service.py
-|   |   |-- live_trading_performance_service.py # Bounded LIVE realized-fill performance
+|   |   |-- closed_position_lifecycle_service.py # Exact-order lifecycle enrichment
+|   |   |-- live_trading_performance_service.py # Net lifecycle performance
 |   |   |-- live_executable_quote_service.py # Shared fresh LIVE quote/staleness gate
 |   |   |-- market_service.py
 |   |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
@@ -775,6 +778,7 @@ Botragram/
 |   |   `-- sqlite/
 |   |       |-- __init__.py
 |   |       |-- database.py
+|   |       |-- closed_position_lifecycle_repository.py
 |   |       |-- legacy_live_ledger_migration.py # One-time legacy TESTNET LIVE ledger import
 |   |       |-- migrations.py
 |   |       `-- <entity_repository>.py

@@ -22,6 +22,9 @@ from botragram.storage.sqlite.autonomous_live_opportunity_claim_repository impor
 from botragram.storage.sqlite.candle_repository import (
     SQLiteCandleRepository,
 )
+from botragram.storage.sqlite.closed_position_lifecycle_repository import (
+    SQLiteClosedPositionLifecycleRepository,
+)
 from botragram.storage.sqlite.database import SQLiteDatabase
 from botragram.storage.sqlite.legacy_live_ledger_migration import (
     SQLiteTestnetLegacyLiveLedgerMigration,
@@ -47,6 +50,7 @@ from botragram.storage.sqlite.trade_repository import (
 )
 
 __all__ = [
+    "SQLiteClosedPositionLifecycleRepository",
     "SQLiteAutonomousLiveOpportunityClaimRepository",
     "SQLiteCandleRepository",
     "SQLiteDatabase",

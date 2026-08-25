@@ -11,6 +11,9 @@ from botragram.services.autonomous_live_recovery_observability_service import (
 from botragram.services.autonomous_paper_execution_service import (
     AutonomousPaperExecutionService,
 )
+from botragram.services.closed_position_lifecycle_service import (
+    ClosedPositionLifecycleService,
+)
 from botragram.services.execution_authorization_service import (
     ExecutionAuthorizationService,
 )
@@ -83,6 +86,7 @@ from botragram.services.volume_ranked_discovery_universe_service import (
 )
 
 __all__ = [
+    "ClosedPositionLifecycleService",
     "AccountService",
     "AutonomousPaperExecutionService",
     "AutonomousLiveEntryIntentService",

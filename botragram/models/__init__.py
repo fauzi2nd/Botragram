@@ -38,6 +38,10 @@ from botragram.models.backtest import (
 )
 from botragram.models.balance import Balance
 from botragram.models.candle import Candle
+from botragram.models.closed_position_lifecycle import (
+    ClosedPositionLifecycle,
+    PendingClosedPositionLifecycle,
+)
 from botragram.models.discovery_universe_batch import DiscoveryUniverseBatch
 from botragram.models.exchange_symbol_rules import ExchangeSymbolRules
 from botragram.models.executable_quote import ExecutableQuote
@@ -84,6 +88,8 @@ from botragram.models.trading import TradingDecision, TradingResult
 # Exports
 # =============================================================================
 __all__ = [
+    "ClosedPositionLifecycle",
+    "PendingClosedPositionLifecycle",
     "Account",
     "AutonomousLiveEntryAuthorization",
     "AutonomousLiveEntryIntent",
