@@ -1276,6 +1276,10 @@ class DependencyProvider:
             market_service=self.market_service,
             live_futures_entry_service=self.live_futures_entry_service,
             environment=authorization.environment,
+            max_executable_quote_age_ms=(
+                self._settings.risk.max_executable_quote_age_ms
+            ),
+            max_spread_bps=self._settings.risk.max_spread_bps,
         )
 
     def _create_position_protection_manager(

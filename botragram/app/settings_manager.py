@@ -13,7 +13,9 @@ Python:
 # =============================================================================
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 # =============================================================================
 # Local Imports
@@ -75,9 +77,17 @@ class SettingsManager:
             ValueError: If an environment value cannot form a valid
                 configuration.
         """
+        app = self.load_app_settings()
+        exchange = self.load_exchange_settings()
         settings = Settings(
-            app=self.load_app_settings(),
-            exchange=self.load_exchange_settings(),
+            app=replace(
+                app,
+                database_path=self._get_scoped_database_path(
+                    app=app,
+                    exchange=exchange,
+                ),
+            ),
+            exchange=exchange,
             market=self.load_market_settings(),
             risk=self.load_risk_settings(),
             strategy=self.load_strategy_settings(),
@@ -231,7 +241,47 @@ class SettingsManager:
                 raw_value=environment.get_max_position_size_usdt(),
                 setting_name="MAX_POSITION_SIZE_USDT",
             ),
+            risk_per_trade_pct=self._parse_decimal(
+                raw_value=environment.get_risk_per_trade_pct(),
+                setting_name="RISK_PER_TRADE_PCT",
+            ),
+            max_drawdown_pct=self._parse_decimal(
+                raw_value=environment.get_max_drawdown_pct(),
+                setting_name="MAX_DRAWDOWN_PCT",
+            ),
+            leverage=self._parse_positive_int(
+                raw_value=environment.get_leverage(),
+                setting_name="LEVERAGE",
+            ),
+            max_executable_quote_age_ms=self._parse_positive_int(
+                raw_value=environment.get_max_executable_quote_age_ms(),
+                setting_name="MAX_EXECUTABLE_QUOTE_AGE_MS",
+            ),
+            max_spread_bps=self._parse_decimal(
+                raw_value=environment.get_max_spread_bps(),
+                setting_name="MAX_SPREAD_BPS",
+            ),
         )
+
+    @staticmethod
+    def _get_scoped_database_path(
+        *,
+        app: AppSettings,
+        exchange: ExchangeSettings,
+    ) -> Path:
+        """Return a network-scoped SQLite path for every LIVE deployment."""
+        if app.trade_mode is not TradeMode.LIVE:
+            return app.database_path
+
+        base_path = app.database_path
+        scope = "-".join(
+            (
+                exchange.exchange.value,
+                exchange.market_type.value,
+                exchange.environment.value,
+            )
+        )
+        return base_path.with_stem(f"{base_path.stem}-{scope}")
 
     def load_strategy_settings(self) -> StrategySettings:
         """Load strategy settings using their configured defaults."""

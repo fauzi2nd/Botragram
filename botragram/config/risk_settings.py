@@ -43,6 +43,8 @@ class RiskSettings:
     # Risk
     risk_per_trade_pct: Decimal = Decimal("0.02")
     max_drawdown_pct: Decimal = Decimal("0.10")
+    max_executable_quote_age_ms: int = 1_000
+    max_spread_bps: Decimal = Decimal("20")
 
     # Exit
     stop_loss_pct: Decimal = Decimal("0.02")
@@ -78,6 +80,12 @@ class RiskSettings:
 
         if self.leverage <= 0:
             raise ValueError("Risk leverage must be greater than zero")
+
+        if self.max_executable_quote_age_ms <= 0:
+            raise ValueError("Maximum executable quote age must be greater than zero")
+
+        if not self.max_spread_bps.is_finite() or self.max_spread_bps <= Decimal("0"):
+            raise ValueError("Maximum spread must be greater than zero")
 
         if isinstance(self.max_open_positions, bool) or self.max_open_positions <= 0:
             raise ValueError("Maximum open positions must be greater than zero")

@@ -57,17 +57,22 @@ from botragram.constants.env import (
     ENV_EXCHANGE_API_SECRET_LEGACY,
     ENV_EXECUTION_POLICY,
     ENV_GEMINI_API_KEY,
+    ENV_LEVERAGE,
     ENV_LOG_LEVEL,
     ENV_LOG_LEVEL_LEGACY,
     ENV_MARKET_INTERVAL,
+    ENV_MAX_DRAWDOWN_PCT,
+    ENV_MAX_EXECUTABLE_QUOTE_AGE_MS,
     ENV_MAX_OPEN_POSITIONS,
     ENV_MAX_POSITION_SIZE_USDT,
+    ENV_MAX_SPREAD_BPS,
     ENV_OKX_API_KEY,
     ENV_OKX_API_SECRET,
     ENV_OKX_PASSPHRASE,
     ENV_OKX_TESTNET,
     ENV_OPENAI_API_KEY,
     ENV_OPENROUTER_API_KEY,
+    ENV_RISK_PER_TRADE_PCT,
     ENV_TELEGRAM_CHAT_ID,
     ENV_TELEGRAM_TOKEN,
     ENV_TELEGRAM_TOKEN_LEGACY,
@@ -463,6 +468,26 @@ class EnvironmentProvider:
     def get_max_position_size_usdt(self) -> str:
         """Return the configured maximum position notional in USDT."""
         return self._get_var(ENV_MAX_POSITION_SIZE_USDT, default="1000")
+
+    def get_risk_per_trade_pct(self) -> str:
+        """Return the configured maximum account risk for one trade."""
+        return self._get_var(ENV_RISK_PER_TRADE_PCT, default="0.02")
+
+    def get_max_drawdown_pct(self) -> str:
+        """Return the configured maximum account drawdown ratio."""
+        return self._get_var(ENV_MAX_DRAWDOWN_PCT, default="0.10")
+
+    def get_leverage(self) -> str:
+        """Return the configured risk-sizing leverage."""
+        return self._get_var(ENV_LEVERAGE, default="1")
+
+    def get_max_executable_quote_age_ms(self) -> str:
+        """Return the maximum acceptable MARKET quote age in milliseconds."""
+        return self._get_var(ENV_MAX_EXECUTABLE_QUOTE_AGE_MS, default="1000")
+
+    def get_max_spread_bps(self) -> str:
+        """Return the maximum acceptable MARKET bid/ask spread in basis points."""
+        return self._get_var(ENV_MAX_SPREAD_BPS, default="20")
 
     def get_market_interval(self) -> str:
         """Return the optional configured candle interval."""

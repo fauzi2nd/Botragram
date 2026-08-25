@@ -379,6 +379,8 @@ def _create_service(
     position_service: _FakePositionService,
     protected_entry_service: _FakeProtectedEntryService,
     max_open_positions: int = 2,
+    max_executable_quote_age_ms: int = 900_000,
+    max_spread_bps: Decimal = Decimal("5_000"),
     utc_now: Callable[[], datetime] = lambda: _NOW,
     market_service: _FakeMarketService | None = None,
 ) -> AutonomousLiveEntryExecutionService:
@@ -401,6 +403,8 @@ def _create_service(
         ),
         live_futures_entry_service=protected_entry_service,
         environment=ExchangeEnvironment.TESTNET,
+        max_executable_quote_age_ms=max_executable_quote_age_ms,
+        max_spread_bps=max_spread_bps,
         utc_now=utc_now,
     )
 
@@ -610,14 +614,13 @@ def test_pre_signal_quote_timestamp_rejects_before_risk_or_entry() -> None:
     "timestamp",
     (
         _NOW,
-        _NOW + timedelta(microseconds=1),
         _NOW.astimezone(timezone(timedelta(hours=7))),
     ),
 )
-def test_current_or_later_quote_timestamp_allows_repriced_entry(
+def test_current_or_offset_equivalent_quote_timestamp_allows_repriced_entry(
     timestamp: datetime,
 ) -> None:
-    """Accept equal, later, and offset-equivalent quote provenance times."""
+    """Accept equal and offset-equivalent quote provenance times."""
     protected_entry = _FakeProtectedEntryService()
     result = asyncio.run(
         _create_service(
@@ -632,6 +635,53 @@ def test_current_or_later_quote_timestamp_allows_repriced_entry(
 
     assert result.status is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
     assert len(protected_entry.calls) == 1
+
+
+def test_stale_executable_quote_rejects_before_risk_or_entry() -> None:
+    """Reject a quote older than the configured execution freshness budget."""
+    accounts = _FakeAccountService(balances=[Decimal("500")])
+    positions = _FakePositionService(portfolios=[()])
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=accounts,
+            position_service=positions,
+            protected_entry_service=protected_entry,
+            max_executable_quote_age_ms=1_000,
+            utc_now=lambda: _NOW + timedelta(milliseconds=1_001),
+        ).execute(intent=_create_intent(), authorization=_create_authorization())
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED
+    assert accounts.calls == 0
+    assert positions.calls == 0
+    assert protected_entry.calls == []
+
+
+def test_wide_executable_spread_rejects_before_risk_or_entry() -> None:
+    """Reject a market reference whose spread exceeds the configured budget."""
+    accounts = _FakeAccountService(balances=[Decimal("500")])
+    positions = _FakePositionService(portfolios=[()])
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=accounts,
+            position_service=positions,
+            protected_entry_service=protected_entry,
+            max_spread_bps=Decimal("20"),
+            market_service=_FakeMarketService(
+                quote=_create_executable_quote(
+                    bid_price=Decimal("99"),
+                    ask_price=Decimal("101"),
+                )
+            ),
+        ).execute(intent=_create_intent(), authorization=_create_authorization())
+    )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED
+    assert accounts.calls == 0
+    assert positions.calls == 0
+    assert protected_entry.calls == []
 
 
 def test_executable_quote_rejects_naive_timestamp() -> None:
@@ -707,13 +757,17 @@ def test_signal_before_next_close_boundary_delegates_protected_entry() -> None:
 def test_monthly_signal_uses_calendar_next_close_for_pre_submission_freshness() -> None:
     """Reject monthly signals at the calendar close, not after thirty days."""
     signal_time = datetime(2024, 1, 31, 23, 59, 59, tzinfo=UTC)
+    as_of = datetime(2024, 2, 29, 23, 59, 59, tzinfo=UTC)
     protected_entry = _FakeProtectedEntryService()
     result = asyncio.run(
         _create_service(
             account_service=_FakeAccountService(balances=[Decimal("500")]),
             position_service=_FakePositionService(portfolios=[()]),
             protected_entry_service=protected_entry,
-            utc_now=lambda: datetime(2024, 2, 29, 23, 59, 59, tzinfo=UTC),
+            market_service=_FakeMarketService(
+                quote=_create_executable_quote(timestamp=as_of)
+            ),
+            utc_now=lambda: as_of,
         ).execute(
             intent=_create_intent(
                 interval=Interval.MN1,

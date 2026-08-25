@@ -97,12 +97,18 @@ class AutonomousLiveEntryExecutionService:
     market_service: _LiveExecutableQuoteProvider
     live_futures_entry_service: _ProtectedLiveEntryExecutor
     environment: ExchangeEnvironment
+    max_executable_quote_age_ms: int = 1_000
+    max_spread_bps: Decimal = Decimal("20")
     utc_now: Callable[[], datetime] = _utc_now
 
     def __post_init__(self) -> None:
         """Normalize static TESTNET execution configuration."""
         if self.environment is not ExchangeEnvironment.TESTNET:
             raise ValueError("Autonomous LIVE execution requires TESTNET")
+        if self.max_executable_quote_age_ms <= 0:
+            raise ValueError("Maximum executable quote age must be greater than zero")
+        if not self.max_spread_bps.is_finite() or self.max_spread_bps <= Decimal("0"):
+            raise ValueError("Maximum executable spread must be greater than zero")
 
     async def execute(
         self,
@@ -241,9 +247,8 @@ class AutonomousLiveEntryExecutionService:
             and authorization.environment is self.environment
         )
 
-    @staticmethod
     def _get_entry_price_override(
-        *, quote: ExecutableQuote, signal: Signal
+        self, *, quote: ExecutableQuote, signal: Signal
     ) -> Decimal | None:
         """Return a valid side-aware execution reference for an entry signal."""
         if quote.symbol.strip().upper() != signal.symbol.strip().upper():
@@ -266,7 +271,26 @@ class AutonomousLiveEntryExecutionService:
                 name="Autonomous LIVE signal generated_at",
             )
         )
-        if quote.timestamp.astimezone(UTC) < signal_generated_at:
+        quote_time = self._normalize_utc_datetime(
+            value=quote.timestamp,
+            name="Autonomous LIVE executable quote timestamp",
+        )
+        if quote_time < signal_generated_at:
+            return None
+
+        as_of = self._normalize_utc_datetime(
+            value=self.utc_now(),
+            name="Autonomous LIVE execution time",
+        )
+        quote_age_ms = (as_of - quote_time).total_seconds() * 1_000
+        if quote_age_ms < 0 or quote_age_ms > self.max_executable_quote_age_ms:
+            return None
+
+        midpoint = (quote.bid_price + quote.ask_price) / Decimal("2")
+        if midpoint <= Decimal("0"):
+            return None
+        spread_bps = (quote.ask_price - quote.bid_price) / midpoint * Decimal("10000")
+        if spread_bps > self.max_spread_bps:
             return None
 
         return entry_price
