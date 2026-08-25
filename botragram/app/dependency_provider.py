@@ -1026,8 +1026,9 @@ class DependencyProvider:
             or self._settings.exchange.market_type is not MarketType.FUTURES
         ):
             return
+        database = self._require(self._database)
         self._live_account_drawdown_service = LiveAccountDrawdownService(
-            repository=SQLiteLiveEquityHighWaterRepository(database=self.database),
+            repository=SQLiteLiveEquityHighWaterRepository(database=database),
             asset=self._settings.market.quote_asset,
         )
 
@@ -1169,6 +1170,15 @@ class DependencyProvider:
             submission_attempt_repository=self.submission_attempt_repository,
             portfolio_engine=self.trading_engine.portfolio_engine,
             max_open_positions=self._settings.risk.max_open_positions,
+            venue_entry_readiness=(
+                exchange_client
+                if isinstance(exchange_client, BinanceFuturesExchangeClient)
+                and self._settings.app.trade_mode is TradeMode.LIVE
+                and self._settings.exchange.market_type is MarketType.FUTURES
+                and self._settings.exchange.environment is ExchangeEnvironment.MAINNET
+                else None
+            ),
+            maximum_leverage=self._settings.risk.leverage,
         )
         self._live_trading_performance_service = LiveTradingPerformanceService(
             trade_repository=self.trade_repository,
@@ -1191,8 +1201,16 @@ class DependencyProvider:
             trading_engine=self.trading_engine,
             paper_trading_service=self.paper_trading_service,
             live_futures_entry_service=self.live_futures_entry_service,
+            live_entry_risk_evaluation_service=(
+                self.live_entry_risk_evaluation_service
+            ),
+            live_executable_quote_provider=self.market_service,
             balance_asset=self._settings.market.quote_asset,
             trade_mode=self._settings.app.trade_mode,
+            max_executable_quote_age_ms=(
+                self._settings.risk.max_executable_quote_age_ms
+            ),
+            max_spread_bps=self._settings.risk.max_spread_bps,
         )
         self._autonomous_paper_execution_service = AutonomousPaperExecutionService(
             discovery_service=self.opportunity_discovery_service,

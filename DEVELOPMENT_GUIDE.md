@@ -753,6 +753,7 @@ Botragram/
 |   |   |-- backtest_service.py
 |   |   |-- health_service.py
 |   |   |-- live_trading_performance_service.py # Bounded LIVE realized-fill performance
+|   |   |-- live_executable_quote_service.py # Shared fresh LIVE quote/staleness gate
 |   |   |-- market_service.py
 |   |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |   |-- order_service.py
@@ -812,6 +813,7 @@ Botragram/
 |   `-- test_*.py
 |-- data/                         # SQLite runtime; isi diabaikan Git
 |-- logs/                         # Log runtime; isi diabaikan Git
+|-- .github/workflows/quality.yml # Windows/Linux strict quality gates
 |-- .env.example
 |-- .env.mainnet.example
 |-- .env.testnet.example

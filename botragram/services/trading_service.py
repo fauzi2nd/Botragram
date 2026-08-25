@@ -16,8 +16,9 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Protocol
 
@@ -28,6 +29,8 @@ from botragram.engine import TradingEngine
 from botragram.enums import Interval, OrderType, StrategyType, TradeMode
 from botragram.models import (
     Candle,
+    ExecutableQuote,
+    LiveEntryRiskEvaluation,
     LiveRecoveredPositionManagementAuthorization,
     LiveRuntimePositionContext,
     Order,
@@ -36,6 +39,12 @@ from botragram.models import (
     Signal,
     TradingDecision,
     TradingResult,
+)
+from botragram.services.live_executable_quote_service import (
+    LIVE_MARKET_REFERENCE_REJECTED_REASON,
+    LIVE_STALE_SIGNAL_REASON,
+    get_executable_entry_price,
+    is_signal_stale,
 )
 from botragram.services.paper_trading_service import PaperTradingService
 
@@ -57,6 +66,11 @@ _RECOVERED_POSITION_NOT_OPEN_REASON = (
 _RECOVERED_MANAGEMENT_ENTRY_DENIED_REASON = (
     "Recovered LIVE management authorization does not permit new position entry"
 )
+
+
+def _utc_now() -> datetime:
+    """Return the current timezone-aware UTC execution time."""
+    return datetime.now(UTC)
 
 
 # =============================================================================
@@ -136,6 +150,27 @@ class _LiveFuturesEntryExecutor(Protocol):
         ...
 
 
+class _LiveEntryRiskEvaluator(Protocol):
+    """Evaluate one signal against fresh authoritative LIVE state."""
+
+    async def evaluate(
+        self,
+        *,
+        signal: Signal,
+        entry_price_override: Decimal | None = None,
+    ) -> LiveEntryRiskEvaluation:
+        """Return a fresh risk evaluation for one exact signal."""
+        ...
+
+
+class _LiveExecutableQuoteProvider(Protocol):
+    """Provide one current normalized executable market quote."""
+
+    async def get_executable_quote(self, *, symbol: str) -> ExecutableQuote:
+        """Return the current executable quote for one symbol."""
+        ...
+
+
 # =============================================================================
 # Trading Service
 # =============================================================================
@@ -155,9 +190,14 @@ class TradingService:
     trading_engine: TradingEngine
     paper_trading_service: PaperTradingService | None = None
     live_futures_entry_service: _LiveFuturesEntryExecutor | None = None
+    live_entry_risk_evaluation_service: _LiveEntryRiskEvaluator | None = None
+    live_executable_quote_provider: _LiveExecutableQuoteProvider | None = None
 
     balance_asset: str = _DEFAULT_BALANCE_ASSET
     trade_mode: TradeMode = TradeMode.PAPER
+    max_executable_quote_age_ms: int = 1_000
+    max_spread_bps: Decimal = Decimal("20")
+    utc_now: Callable[[], datetime] = _utc_now
 
     def __post_init__(self) -> None:
         """Normalize immutable service configuration."""
@@ -166,6 +206,10 @@ class TradingService:
             "balance_asset",
             self._normalize_asset(self.balance_asset),
         )
+        if self.max_executable_quote_age_ms <= 0:
+            raise ValueError("Maximum executable quote age must be greater than zero")
+        if not self.max_spread_bps.is_finite() or self.max_spread_bps <= _DECIMAL_ZERO:
+            raise ValueError("Maximum executable spread must be greater than zero")
 
     async def execute(
         self,
@@ -232,6 +276,18 @@ class TradingService:
             candles=candles,
             strategy_type=strategy_type,
         )
+
+        if (
+            self.trade_mode is TradeMode.LIVE
+            and submit_order
+            and live_management_authorization is None
+        ):
+            return await self._execute_fresh_live_entry(
+                signal=signal,
+                interval=interval,
+                order_type=order_type,
+                price=price,
+            )
 
         if not submit_order and self.paper_trading_service is not None:
             return await self.paper_trading_service.execute(
@@ -367,6 +423,77 @@ class TradingService:
             decision=decision,
             order=order,
         )
+
+    async def _execute_fresh_live_entry(
+        self,
+        *,
+        signal: Signal,
+        interval: Interval,
+        order_type: OrderType,
+        price: Decimal | None,
+    ) -> TradingResult:
+        """Execute fresh LIVE entry only after quote and authoritative risk gates."""
+        quote_provider = self.live_executable_quote_provider
+        risk_evaluator = self.live_entry_risk_evaluation_service
+        live_entry_service = self.live_futures_entry_service
+        if quote_provider is None or risk_evaluator is None:
+            raise RuntimeError("Fresh LIVE entry requires quote and risk services")
+        if live_entry_service is None:
+            raise RuntimeError("LIVE trading requires protected Futures entry")
+
+        quote = await quote_provider.get_executable_quote(symbol=signal.symbol)
+        as_of = self.utc_now()
+        entry_price = get_executable_entry_price(
+            quote=quote,
+            signal=signal,
+            as_of=as_of,
+            max_quote_age_ms=self.max_executable_quote_age_ms,
+            max_spread_bps=self.max_spread_bps,
+        )
+        if entry_price is None:
+            return self._non_executing_result(
+                signal=signal,
+                reason=LIVE_MARKET_REFERENCE_REJECTED_REASON,
+            )
+
+        evaluation = await risk_evaluator.evaluate(
+            signal=signal,
+            entry_price_override=entry_price,
+        )
+        decision = evaluation.decision
+        if evaluation.has_existing_position or not decision.should_execute:
+            return TradingResult(
+                executed=False,
+                decision=decision,
+                order=None,
+                reason=decision.reason,
+            )
+        if decision.risk_result is None:
+            raise RuntimeError(_APPROVED_DECISION_RISK_ERROR)
+        if is_signal_stale(
+            signal=signal,
+            interval=interval,
+            as_of=self.utc_now(),
+        ):
+            return TradingResult(
+                executed=False,
+                decision=replace(
+                    decision,
+                    should_execute=False,
+                    reason=LIVE_STALE_SIGNAL_REASON,
+                ),
+                order=None,
+                reason=LIVE_STALE_SIGNAL_REASON,
+            )
+
+        order = await live_entry_service.execute(
+            signal=signal,
+            risk_result=decision.risk_result,
+            interval=interval,
+            order_type=order_type,
+            price=price,
+        )
+        return TradingResult(executed=True, decision=decision, order=order)
 
     @staticmethod
     def _require_risk_result(*, decision: TradingDecision) -> RiskResult:

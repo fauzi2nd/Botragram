@@ -116,6 +116,20 @@ class LiveProtectionReconciliation(Protocol):
         ...
 
 
+class LiveVenueEntryReadiness(Protocol):
+    """Verify existing venue settings without mutating exchange state."""
+
+    async def verify_mainnet_symbol_readiness(
+        self,
+        *,
+        symbol: str,
+        maximum_leverage: int,
+        entry_notional: Decimal,
+    ) -> None:
+        """Fail closed unless one symbol is safe for a MAINNET entry."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class LiveFuturesEntryService:
     """Submit one LIVE Futures entry only through verified protection state."""
@@ -128,6 +142,13 @@ class LiveFuturesEntryService:
     submission_attempt_repository: SubmissionAttemptRepository
     portfolio_engine: PortfolioEngine
     max_open_positions: int
+    venue_entry_readiness: LiveVenueEntryReadiness | None = None
+    maximum_leverage: int = 1
+
+    def __post_init__(self) -> None:
+        """Validate immutable entry safety configuration."""
+        if isinstance(self.maximum_leverage, bool) or self.maximum_leverage <= 0:
+            raise ValueError("Maximum leverage must be greater than zero")
 
     async def execute(
         self,
@@ -156,6 +177,14 @@ class LiveFuturesEntryService:
                     quantity=risk_result.position.quantity,
                 )
             )
+            if self.venue_entry_readiness is not None:
+                await self.venue_entry_readiness.verify_mainnet_symbol_readiness(
+                    symbol=signal.symbol,
+                    maximum_leverage=self.maximum_leverage,
+                    entry_notional=(
+                        normalized_quantity * risk_result.metrics.entry_price
+                    ),
+                )
             await self.protection_service.validate_pre_entry_plan(
                 symbol=signal.symbol,
                 position_side=position_side,

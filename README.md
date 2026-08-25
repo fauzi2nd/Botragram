@@ -112,16 +112,20 @@ resulting notional remains bounded by the configured maximum position size.
 `availableBalance` is the LIVE balance authority for this calculation.
 
 `RiskSettings.leverage` does not configure Binance LIVE leverage and does not
-change LIVE position quantity. It may be retained as local position metadata and
-used by PAPER simulation, so it must not be interpreted as authoritative Binance
-leverage.
+change LIVE position quantity. For MAINNET it is the maximum accepted existing
+venue leverage; the entry is rejected when Binance reports a higher value. It is
+also retained as local position metadata and used by PAPER simulation.
 
 Botragram does not locally reproduce or guarantee Binance initial-margin
-admissibility before a MARKET POST. The entry preflight does not model the actual
-target-symbol Binance leverage, cross/isolated margin calculations,
-leverage/notional brackets, multi-assets margin behavior, or Binance's
-exchange-calculated initial margin. Binance remains authoritative for final
-margin acceptance. An explicit deterministic Binance order rejection is a safe
+admissibility before a MARKET POST. MAINNET startup uses authenticated GET-only
+account configuration to require trading permission, one-way mode, and
+single-assets margin. Immediately before a new MAINNET entry, another GET-only
+preflight requires isolated margin, disabled auto-add margin, leverage within the
+configured maximum, and sufficient reported maximum symbol notional. Botragram
+does not mutate those settings. It still does not reproduce Binance
+leverage/notional brackets, exchange-calculated initial or maintenance margin,
+or liquidation thresholds. Binance remains authoritative for final margin
+acceptance. An explicit deterministic Binance order rejection is a safe
 rejected entry; transport, timeout, malformed-response, cancellation, and other
 ambiguous post-submission outcomes are fail-closed and require reconciliation.
 This boundary concerns prediction of exchange order acceptance only; it does not
@@ -237,8 +241,9 @@ signal returns the safe typed `stale_signal` outcome without creating a
 `PREPARED` attempt, normalizing quantity, or submitting an exchange order; its
 durable closed-candle claim remains intentionally unreleased. Monthly checks use
 calendar-month rollover with end-of-month preservation.
-Before that final risk evaluation, autonomous LIVE fetches a fresh executable
-bid/ask quote. Binance USD-M Futures uses `/fapi/v1/ticker/bookTicker`: BUY
+Before that final risk evaluation, every fresh LIVE entry fetches a fresh
+executable bid/ask quote. Binance USD-M Futures uses
+`/fapi/v1/ticker/bookTicker`: BUY
 entries size from `ask_price` and SELL entries size from `bid_price`. The
 closed-candle `Signal.price` remains immutable strategy provenance; an ephemeral
 repriced signal is used only for risk sizing, while the returned decision still
@@ -246,10 +251,45 @@ retains the original signal. The executable quote carries exchange timestamp
 provenance from bookTicker `time`; it must be timezone-aware and reach at least
 the signal's closed-candle `generated_at`. A symbol mismatch, invalid,
 non-finite, non-positive side-aware price, or older quote returns
-`market_reference_rejected` before any protected-entry mutation. No `last_price`
-is fabricated. This is only a pre-submission executable reference, not a
-configurable age or slippage bound: residual MARKET fill/slippage risk remains,
-and Binance remains authoritative for the actual fill.
+`market_reference_rejected` before any protected-entry mutation. Quote age is
+bounded by `MAX_EXECUTABLE_QUOTE_AGE_MS` and bid/ask spread by
+`MAX_SPREAD_BPS`. The closed-candle signal is rechecked immediately before the
+protected entry and is rejected at its next interval close. No `last_price` is
+fabricated. These are pre-submission reference bounds, not a fill-price
+guarantee; residual MARKET fill/slippage risk remains, and Binance remains
+authoritative for the actual fill.
+
+### MAINNET-candidate release gate
+
+MAINNET-candidate applies only to operator-started, single-symbol Binance USD-M
+Futures `MARKET` entry. Autonomous MAINNET remains rejected by settings
+validation. A failed account, quote, risk, symbol, quantity, or protection
+preflight must produce no new exchange mutation; symbol readiness runs before a
+durable `PREPARED` attempt.
+
+Before promoting a revision, the operator must verify:
+
+- the full automated suite and strict Ruff, Pyright, MyPy, and `git diff --check`
+  gates pass on both Windows and Linux CI;
+- the deployed commit is immutable, the worktree is clean, and database/profile
+  paths are backed up and scoped to the intended environment;
+- MAINNET API keys have Futures trading permission but no withdrawal permission,
+  the account is one-way and single-assets, and the target symbol is isolated
+  with auto-add margin disabled and leverage no higher than `LEVERAGE`;
+- a credentialed TESTNET soak covers fill, protection verification, natural
+  STOP/TP, restart at each durable submission state, timeout/unknown POST
+  reconciliation, user-stream interruption, monitor failure, drawdown rejection,
+  graceful shutdown, and restart recovery without duplicate entry;
+- independent Binance-side alerts and an operator kill/rollback procedure are
+  ready; rollback stops new runtime entry but does not blindly cancel durable
+  exchange protection;
+- the first MAINNET canary uses the smallest approved sizing, one symbol, one
+  open position, active operator observation, and explicit authorization outside
+  automated CI.
+
+Automated tests do not place TESTNET or MAINNET orders and do not substitute for
+the credentialed soak or operator-observed canary. Until those external checks
+are recorded, the project is code-level mainnet-candidate, not production-proven.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an

@@ -13,15 +13,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Final, cast
+from typing import Final, Protocol, cast
 
 import aiohttp
 
 from botragram.enums import FuturesAlgoOrderStatus, OrderSide, OrderStatus, OrderType
-from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.models import (
     Balance,
     FuturesUserDataAccountUpdate,
@@ -48,6 +47,22 @@ _KEEPALIVE_SECONDS: Final[float] = 30.0 * 60.0
 _WEBSOCKET_HEARTBEAT_SECONDS: Final[float] = 30.0
 
 
+class _FuturesUserDataStreamRest(Protocol):
+    """Define the minimal REST operations required by the private stream."""
+
+    async def start_user_data_stream(self, *, path: str) -> str:
+        """Start one Binance Futures User Data Stream session."""
+        ...
+
+    async def keepalive_user_data_stream(self, *, path: str) -> str:
+        """Refresh the active Binance Futures User Data Stream session."""
+        ...
+
+    async def close_user_data_stream(self, *, path: str) -> None:
+        """Close one Binance Futures User Data Stream session."""
+        ...
+
+
 class BinanceFuturesUserDataStream:
     """Yield normalized private Futures events from one managed listen key."""
 
@@ -62,7 +77,7 @@ class BinanceFuturesUserDataStream:
     def __init__(
         self,
         *,
-        rest: BinanceRestClient,
+        rest: _FuturesUserDataStreamRest,
         websocket_base_url: str,
         heartbeat_seconds: float = _KEEPALIVE_SECONDS,
     ) -> None:
@@ -88,7 +103,7 @@ class BinanceFuturesUserDataStream:
         self._session: aiohttp.ClientSession | None = None
         self._closed = False
 
-    async def stream_events(self) -> AsyncIterator[FuturesUserDataEvent]:
+    async def stream_events(self) -> AsyncGenerator[FuturesUserDataEvent, None]:
         """Open one listen key and yield buffered private events until closed."""
         if self._closed:
             return

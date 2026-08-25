@@ -22,6 +22,10 @@ from botragram.services.live_account_drawdown_service import LiveAccountDrawdown
 from botragram.services.live_entry_risk_evaluation_service import (
     LiveEntryRiskEvaluationService,
 )
+from botragram.services.live_executable_quote_service import (
+    get_executable_entry_price,
+    is_signal_stale,
+)
 from botragram.services.live_futures_entry_service import LiveFuturesEntryService
 from botragram.services.live_market_stream_service import (
     LiveMarketStreamService,
@@ -89,6 +93,8 @@ __all__ = [
     "HealthService",
     "LiveFuturesEntryService",
     "LiveEntryRiskEvaluationService",
+    "get_executable_entry_price",
+    "is_signal_stale",
     "LiveAccountDrawdownService",
     "LiveMarketStreamService",
     "MarketTickListener",

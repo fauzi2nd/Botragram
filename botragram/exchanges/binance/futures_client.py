@@ -66,6 +66,8 @@ _OPEN_ALGO_ORDERS_ENDPOINT = "/fapi/v1/openAlgoOrders"
 _TRADES_ENDPOINT = "/fapi/v1/userTrades"
 _POSITIONS_ENDPOINT = "/fapi/v3/positionRisk"
 _POSITION_MODE_ENDPOINT = "/fapi/v1/positionSide/dual"
+_ACCOUNT_CONFIG_ENDPOINT = "/fapi/v1/accountConfig"
+_SYMBOL_CONFIG_ENDPOINT = "/fapi/v1/symbolConfig"
 
 _DEFAULT_TIME_IN_FORCE = "GTC"
 _SUPPORTED_ENTRY_ORDER_TYPES = frozenset({OrderType.MARKET, OrderType.LIMIT})
@@ -105,13 +107,86 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         return True
 
     async def verify_mainnet_readiness(self) -> None:
-        """Synchronize time and require one-way mode for MAINNET startup.
+        """Synchronize time and require a supported MAINNET account config.
 
         Raises:
             RuntimeError: If time synchronization or account-mode verification fails.
         """
         await self._rest.synchronize_time(path=_TIME_ENDPOINT)
-        await self.verify_one_way_position_mode()
+        await self.verify_mainnet_account_configuration()
+
+    async def verify_mainnet_account_configuration(self) -> None:
+        """Require a tradable one-way, single-asset MAINNET account."""
+        payload = await self._rest.get(
+            _ACCOUNT_CONFIG_ENDPOINT,
+            authenticated=True,
+        )
+        configuration = self._require_mapping(payload)
+        can_trade = configuration.get("canTrade")
+        dual_side_position = configuration.get("dualSidePosition")
+        multi_assets_margin = configuration.get("multiAssetsMargin")
+        if not all(
+            isinstance(value, bool)
+            for value in (can_trade, dual_side_position, multi_assets_margin)
+        ):
+            raise RuntimeError("Binance Futures account configuration is invalid")
+        if not can_trade:
+            raise RuntimeError("Binance Futures account is not permitted to trade")
+        if dual_side_position:
+            raise RuntimeError(
+                "Binance Futures Hedge Mode is unsupported; configure One-way Mode"
+            )
+        if multi_assets_margin:
+            raise RuntimeError("Binance Futures Multi-Assets Mode is unsupported")
+
+    async def verify_mainnet_symbol_readiness(
+        self,
+        *,
+        symbol: str,
+        maximum_leverage: int,
+        entry_notional: Decimal,
+    ) -> None:
+        """Require safe existing venue settings for one MAINNET entry."""
+        if isinstance(maximum_leverage, bool) or maximum_leverage <= 0:
+            raise ValueError("Maximum leverage must be greater than zero")
+        if not entry_notional.is_finite() or entry_notional <= Decimal("0"):
+            raise ValueError("Entry notional must be finite and positive")
+
+        normalized_symbol = self._normalize_symbol(symbol)
+        payload = await self._rest.get(
+            _SYMBOL_CONFIG_ENDPOINT,
+            params={"symbol": normalized_symbol},
+            authenticated=True,
+        )
+        configurations = self._require_sequence(payload)
+        if len(configurations) != 1:
+            raise RuntimeError("Binance Futures symbol configuration is ambiguous")
+        configuration = self._require_mapping(configurations[0])
+        if configuration.get("symbol") != normalized_symbol:
+            raise RuntimeError("Binance Futures symbol configuration is invalid")
+        if configuration.get("marginType") != "ISOLATED":
+            raise RuntimeError("Binance Futures MAINNET entry requires isolated margin")
+        auto_add_margin = configuration.get("isAutoAddMargin")
+        if not isinstance(auto_add_margin, bool):
+            raise RuntimeError("Binance Futures auto-add margin state is invalid")
+        if auto_add_margin:
+            raise RuntimeError("Binance Futures auto-add margin must be disabled")
+
+        leverage = configuration.get("leverage")
+        if isinstance(leverage, bool) or not isinstance(leverage, int):
+            raise RuntimeError("Binance Futures symbol leverage is invalid")
+        if leverage <= 0 or leverage > maximum_leverage:
+            raise RuntimeError("Binance Futures symbol leverage exceeds the risk limit")
+        try:
+            maximum_notional = Decimal(str(configuration.get("maxNotionalValue")))
+        except ArithmeticError as error:
+            raise RuntimeError(
+                "Binance Futures maximum symbol notional is invalid"
+            ) from error
+        if not maximum_notional.is_finite() or maximum_notional < entry_notional:
+            raise RuntimeError(
+                "Binance Futures maximum symbol notional is below the entry"
+            )
 
     async def verify_one_way_position_mode(self) -> None:
         """Require Binance Futures one-way mode before LIVE runtime starts.

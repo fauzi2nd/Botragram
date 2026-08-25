@@ -187,7 +187,7 @@ class _PrivateStreamSession:
     """Capture private WebSocket connection options without network I/O."""
 
     socket: _IdleSocket
-    options: dict[str, object] = field(default_factory=dict)
+    options: dict[str, object] = field(default_factory=dict[str, object])
     closed: bool = False
 
     async def ws_connect(
@@ -219,6 +219,11 @@ class _PrivateStreamRest:
         """Record one exact listen-key cleanup call."""
         assert path == "/fapi/v1/listenKey"
         self.close_calls += 1
+
+    async def keepalive_user_data_stream(self, *, path: str) -> str:
+        """Return the existing key while the fake stream remains idle."""
+        assert path == "/fapi/v1/listenKey"
+        return "listen-key"
 
 
 def test_idle_private_socket_uses_heartbeat_without_receive_timeout(

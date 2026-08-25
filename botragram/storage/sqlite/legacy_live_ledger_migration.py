@@ -254,18 +254,20 @@ class SQLiteTestnetLegacyLiveLedgerMigration:
         """Atomically import the fixed ledger subset from the read-only source."""
         rows_by_table: list[tuple[_LedgerTable, tuple[tuple[object, ...], ...]]] = []
         for table in _LEDGER_TABLES:
-            rows = await source_database.fetch_all(statement=table.select_statement)
+            source_rows = await source_database.fetch_all(
+                statement=table.select_statement
+            )
             rows_by_table.append(
                 (
                     table,
-                    tuple(self._to_values(row=row) for row in rows),
+                    tuple(self._to_values(row=row) for row in source_rows),
                 )
             )
 
         async with self.target_database.transaction() as connection:
-            for table, rows in rows_by_table:
-                if rows:
-                    await connection.executemany(table.insert_statement, rows)
+            for table, parameter_rows in rows_by_table:
+                if parameter_rows:
+                    await connection.executemany(table.insert_statement, parameter_rows)
 
     @staticmethod
     async def _get_schema_version(*, database: SQLiteDatabase) -> int:

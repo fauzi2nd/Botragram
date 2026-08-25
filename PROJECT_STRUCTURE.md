@@ -15,6 +15,7 @@ Botragram/
 |-- tests/                     # Automated dan manual tests
 |-- data/                      # SQLite runtime data; ignored by Git
 |-- logs/                      # Runtime logs; ignored by Git
+|-- .github/workflows/quality.yml # Windows/Linux strict quality gates
 |-- .env.example              # Public environment-variable template
 |-- .env.autonomous_testnet_soak.example # Explicit autonomous TESTNET soak base
 |-- .env.autonomous_testnet_soak.testnet.example # TESTNET credential template
@@ -131,6 +132,7 @@ botragram/
 |   |-- autonomous_live_entry_intent_service.py # Pure TESTNET intent authorization
 |   |-- autonomous_live_recovery_observability_service.py # Read-only recovery view
 |   |-- live_entry_risk_evaluation_service.py # Authoritative portfolio/balance decision
+|   |-- live_executable_quote_service.py # Shared fresh quote and signal provenance gate
 |   |-- autonomous_paper_execution_service.py # Ranked PAPER candidate execution
 |   |-- backtest_service.py   # Paginated historical candle orchestration
 |   |-- execution_authorization_service.py # PAPER human-approval boundary

@@ -1012,6 +1012,7 @@ def test_adapter_delegates_full_prepared_to_protected_completion_order() -> None
         market_service=_FakeMarketService(quote=_create_executable_quote()),
         live_futures_entry_service=live_entry,
         environment=ExchangeEnvironment.TESTNET,
+        max_spread_bps=Decimal("5_000"),
         utc_now=lambda: _NOW,
     )
 
@@ -1072,6 +1073,8 @@ async def _run_cancellation_test() -> None:
         market_service=_FakeMarketService(quote=_create_executable_quote()),
         live_futures_entry_service=protected_entry,
         environment=ExchangeEnvironment.TESTNET,
+        max_spread_bps=Decimal("5_000"),
+        utc_now=lambda: _NOW,
     )
     task = asyncio.create_task(
         service.execute(

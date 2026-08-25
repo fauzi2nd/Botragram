@@ -14,7 +14,6 @@ from botragram.enums import (
     ExchangeEnvironment,
     Interval,
     OrderType,
-    SignalType,
 )
 from botragram.exceptions import (
     ExchangeOrderRejectedError,
@@ -34,6 +33,10 @@ from botragram.models import (
     RiskResult,
     Signal,
     TradingDecision,
+)
+from botragram.services.live_executable_quote_service import (
+    get_executable_entry_price,
+    is_signal_stale,
 )
 
 __all__ = ["AutonomousLiveEntryExecutionService"]
@@ -251,49 +254,13 @@ class AutonomousLiveEntryExecutionService:
         self, *, quote: ExecutableQuote, signal: Signal
     ) -> Decimal | None:
         """Return a valid side-aware execution reference for an entry signal."""
-        if quote.symbol.strip().upper() != signal.symbol.strip().upper():
-            return None
-
-        match signal.signal_type:
-            case SignalType.BUY:
-                entry_price = quote.ask_price
-            case SignalType.SELL:
-                entry_price = quote.bid_price
-            case _:
-                return None
-
-        if not entry_price.is_finite() or entry_price <= Decimal("0"):
-            return None
-
-        signal_generated_at = (
-            AutonomousLiveEntryExecutionService._normalize_utc_datetime(
-                value=signal.generated_at,
-                name="Autonomous LIVE signal generated_at",
-            )
+        return get_executable_entry_price(
+            quote=quote,
+            signal=signal,
+            as_of=self.utc_now(),
+            max_quote_age_ms=self.max_executable_quote_age_ms,
+            max_spread_bps=self.max_spread_bps,
         )
-        quote_time = self._normalize_utc_datetime(
-            value=quote.timestamp,
-            name="Autonomous LIVE executable quote timestamp",
-        )
-        if quote_time < signal_generated_at:
-            return None
-
-        as_of = self._normalize_utc_datetime(
-            value=self.utc_now(),
-            name="Autonomous LIVE execution time",
-        )
-        quote_age_ms = (as_of - quote_time).total_seconds() * 1_000
-        if quote_age_ms < 0 or quote_age_ms > self.max_executable_quote_age_ms:
-            return None
-
-        midpoint = (quote.bid_price + quote.ask_price) / Decimal("2")
-        if midpoint <= Decimal("0"):
-            return None
-        spread_bps = (quote.ask_price - quote.bid_price) / midpoint * Decimal("10000")
-        if spread_bps > self.max_spread_bps:
-            return None
-
-        return entry_price
 
     @staticmethod
     def _market_reference_rejected_decision(*, signal: Signal) -> TradingDecision:
@@ -317,22 +284,8 @@ class AutonomousLiveEntryExecutionService:
         Raises:
             ValueError: If the configured clock or signal timestamp is naive.
         """
-        as_of = self._normalize_utc_datetime(
-            value=self.utc_now(),
-            name="Autonomous LIVE execution time",
+        return is_signal_stale(
+            signal=intent.signal,
+            interval=intent.interval,
+            as_of=self.utc_now(),
         )
-        signal_generated_at = self._normalize_utc_datetime(
-            value=intent.signal.generated_at,
-            name="Autonomous LIVE signal generated_at",
-        )
-        return as_of >= intent.interval.next_close_time(
-            close_time=signal_generated_at,
-        )
-
-    @staticmethod
-    def _normalize_utc_datetime(*, value: datetime, name: str) -> datetime:
-        """Require an aware timestamp and normalize it to UTC."""
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError(f"{name} must be timezone-aware")
-
-        return value.astimezone(UTC)

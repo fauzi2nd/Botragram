@@ -286,7 +286,7 @@ async def _run_v10_to_v11_migration_test() -> None:
             assert version_again == 11
 
             latest_version = await manager.initialize()
-            assert latest_version == 13
+            assert latest_version == manager.latest_version
 
             repository = SQLitePositionRepository(database=database)
             loaded = await repository.get_by_symbol(symbol="1000BONKUSDT")
@@ -326,7 +326,7 @@ async def _run_pending_stop_replacement_round_trip() -> None:
         await database.connect()
         try:
             manager = SQLiteMigrationManager(database=database)
-            assert await manager.initialize() == 13
+            assert await manager.initialize() == manager.latest_version
             repository = SQLitePositionRepository(database=database)
             current_id = "bsl-11111111111111111111111111111111"
             pending_id = "bsl-22222222222222222222222222222222"
