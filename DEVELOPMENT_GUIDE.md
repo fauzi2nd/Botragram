@@ -813,7 +813,6 @@ Botragram/
 |   `-- test_*.py
 |-- data/                         # SQLite runtime; isi diabaikan Git
 |-- logs/                         # Log runtime; isi diabaikan Git
-|-- .github/workflows/quality.yml # Windows/Linux strict quality gates
 |-- .env.example
 |-- .env.mainnet.example
 |-- .env.testnet.example

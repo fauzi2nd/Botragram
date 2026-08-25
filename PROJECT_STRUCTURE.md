@@ -15,7 +15,6 @@ Botragram/
 |-- tests/                     # Automated dan manual tests
 |-- data/                      # SQLite runtime data; ignored by Git
 |-- logs/                      # Runtime logs; ignored by Git
-|-- .github/workflows/quality.yml # Windows/Linux strict quality gates
 |-- .env.example              # Public environment-variable template
 |-- .env.autonomous_testnet_soak.example # Explicit autonomous TESTNET soak base
 |-- .env.autonomous_testnet_soak.testnet.example # TESTNET credential template

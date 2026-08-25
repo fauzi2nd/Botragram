@@ -269,8 +269,9 @@ durable `PREPARED` attempt.
 
 Before promoting a revision, the operator must verify:
 
-- the full automated suite and strict Ruff, Pyright, MyPy, and `git diff --check`
-  gates pass on both Windows and Linux CI;
+- the full automated suite and strict Ruff, Pyright, MyPy, and
+  `git diff --check` gates pass from a clean Windows terminal on the deployment
+  machine;
 - the deployed commit is immutable, the worktree is clean, and database/profile
   paths are backed up and scoped to the intended environment;
 - MAINNET API keys have Futures trading permission but no withdrawal permission,
@@ -285,11 +286,24 @@ Before promoting a revision, the operator must verify:
   exchange protection;
 - the first MAINNET canary uses the smallest approved sizing, one symbol, one
   open position, active operator observation, and explicit authorization outside
-  automated CI.
+  the automated test runner.
 
 Automated tests do not place TESTNET or MAINNET orders and do not substitute for
 the credentialed soak or operator-observed canary. Until those external checks
 are recorded, the project is code-level mainnet-candidate, not production-proven.
+
+Run the terminal release gate from the repository root:
+
+```powershell
+python -m compileall -q botragram tests main.py
+python -c "import main"
+python -m ruff format --check .
+python -m ruff check .
+python -m pyright
+python -m mypy botragram
+python -m pytest
+git diff --check
+```
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an
