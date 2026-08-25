@@ -1089,6 +1089,7 @@ class TerminalMonitor:
         table.add_column("Qty", justify="right", no_wrap=True)
         table.add_column("Entry", justify="right", no_wrap=True)
         table.add_column("Mark", justify="right", no_wrap=True)
+        table.add_column("PnL", justify="right", no_wrap=True)
         table.add_column("SL", justify="right", no_wrap=True)
         table.add_column("TP", justify="right", no_wrap=True)
         table.add_column("Step", justify="right", no_wrap=True)
@@ -1097,7 +1098,7 @@ class TerminalMonitor:
         if health_snapshot is None:
             self._add_paper_position_rows(table=table, status=status)
         elif not health_snapshot.contexts:
-            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "NONE")
+            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "NONE")
         else:
             for context in health_snapshot.contexts:
                 position = next(
@@ -1123,7 +1124,7 @@ class TerminalMonitor:
     def _add_paper_position_rows(self, *, table: Table, status: TerminalStatus) -> None:
         """Render paper positions in the same compact canonical table."""
         if not status.positions:
-            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "NONE")
+            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "NONE")
             return
         for position in status.positions:
             table.add_row(
@@ -1132,6 +1133,7 @@ class TerminalMonitor:
                 self._format_compact_decimal(position.quantity),
                 self._format_compact_decimal(position.entry_price),
                 self._format_compact_decimal(position.current_price),
+                self.format_position_pnl(position.unrealized_pnl),
                 self._format_compact_price(position.stop_loss),
                 self._format_compact_price(position.take_profit),
                 str(position.protection_step),
@@ -1157,6 +1159,7 @@ class TerminalMonitor:
                 "-",
                 "-",
                 "-",
+                "-",
                 "POSITION MISSING",
             )
             return
@@ -1173,6 +1176,7 @@ class TerminalMonitor:
             self._format_compact_decimal(position.quantity),
             self._format_compact_decimal(position.entry_price),
             self._format_compact_decimal(mark),
+            self.format_position_pnl(position.unrealized_pnl),
             self._format_compact_price(position.stop_loss),
             self._format_compact_price(position.take_profit),
             str(position.protection_step),
@@ -1189,6 +1193,12 @@ class TerminalMonitor:
             return "0"
         quantum = Decimal("1").scaleb(value.adjusted() - 7)
         return format(value.quantize(quantum).normalize(), "f")
+
+    @staticmethod
+    def format_position_pnl(unrealized_pnl: Decimal) -> str:
+        """Format one position PnL compactly while retaining its sign."""
+        formatted = TerminalMonitor._format_compact_decimal(unrealized_pnl)
+        return f"+{formatted}" if unrealized_pnl > _DECIMAL_ZERO else formatted
 
     def _format_compact_price(self, price: Decimal | None) -> str:
         """Format an optional protection trigger for a compact table column."""

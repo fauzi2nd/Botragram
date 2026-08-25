@@ -50,3 +50,10 @@ def test_terminal_does_not_overlay_resyncing_position_cache() -> None:
     )
 
     assert merged == (position,)
+
+
+def test_terminal_formats_signed_position_pnl() -> None:
+    """Make profit and loss unambiguous in the managed-position table."""
+    assert TerminalMonitor.format_position_pnl(Decimal("1.2345678")) == "+1.2345678"
+    assert TerminalMonitor.format_position_pnl(Decimal("-1.2345678")) == "-1.2345678"
+    assert TerminalMonitor.format_position_pnl(Decimal("0")) == "0"
