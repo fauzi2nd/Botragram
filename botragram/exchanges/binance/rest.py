@@ -21,7 +21,7 @@ import hashlib
 import hmac
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from math import isfinite
 from time import time
 from typing import Final, cast
@@ -74,6 +74,13 @@ _RETRY_AFTER_HEADER: Final[str] = "Retry-After"
 _HTTP_AUTO_BAN_STATUS: Final[int] = 418
 _HTTP_RATE_LIMIT_STATUS: Final[int] = 429
 _HTTP_SERVER_ERROR_STATUS: Final[int] = 500
+_SERVER_TIME_PARAMETER: Final[str] = "serverTime"
+_INVALID_SERVER_TIME_ERROR: Final[str] = "Binance server time response is invalid"
+
+
+def _current_timestamp_ms() -> int:
+    """Return the current local Unix timestamp in milliseconds."""
+    return int(time() * 1_000)
 
 
 class BinanceRestResponseError(RuntimeError):
@@ -106,11 +113,14 @@ class BinanceRestClient(BaseRestClient):
     __slots__ = (
         "_api_key",
         "_api_secret",
+        "_clock_ms",
+        "_clock_offset_ms",
         "_base_url",
         "_max_retries",
         "_recv_window_ms",
         "_retry_delay_seconds",
         "_session",
+        "_time_sync_lock",
         "_timeout",
     )
 
@@ -124,8 +134,20 @@ class BinanceRestClient(BaseRestClient):
         request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
+        clock_ms: Callable[[], int] = _current_timestamp_ms,
     ) -> None:
-        """Initialize the Binance REST client."""
+        """Initialize the Binance REST client.
+
+        Args:
+            base_url: Binance REST API base URL.
+            api_key: Optional Binance API key.
+            api_secret: Optional Binance API secret.
+            recv_window_ms: Signed-request acceptance window.
+            request_timeout_seconds: Total timeout for one HTTP request.
+            max_retries: Maximum attempts for retryable read requests.
+            retry_delay_seconds: Base delay for retryable read requests.
+            clock_ms: Local millisecond clock used to synchronize signed requests.
+        """
         normalized_base_url = base_url.rstrip("/")
 
         if not normalized_base_url:
@@ -146,6 +168,8 @@ class BinanceRestClient(BaseRestClient):
         self._base_url = normalized_base_url
         self._api_key = api_key
         self._api_secret = api_secret
+        self._clock_ms = clock_ms
+        self._clock_offset_ms = 0
         self._recv_window_ms = recv_window_ms
         self._max_retries = max_retries
         self._retry_delay_seconds = retry_delay_seconds
@@ -153,6 +177,7 @@ class BinanceRestClient(BaseRestClient):
             total=request_timeout_seconds,
         )
         self._session: aiohttp.ClientSession | None = None
+        self._time_sync_lock = asyncio.Lock()
 
     async def get(
         self,
@@ -239,6 +264,28 @@ class BinanceRestClient(BaseRestClient):
                 return ""
             raise RuntimeError("Binance User Data Stream response has no listen key")
         return listen_key
+
+    async def synchronize_time(self, *, path: str) -> None:
+        """Synchronize signed-request timestamps with one Binance server clock.
+
+        Args:
+            path: Public Binance server-time endpoint for the selected product.
+
+        Raises:
+            RuntimeError: If Binance does not return a valid server timestamp.
+            ValueError: If the endpoint path is empty.
+        """
+        normalized_path = path.strip()
+        if not normalized_path:
+            raise ValueError("Binance server time path must not be empty")
+
+        async with self._time_sync_lock:
+            sent_at_ms = self._local_timestamp_ms()
+            payload = await self.get(normalized_path)
+            received_at_ms = self._local_timestamp_ms()
+            server_time_ms = self._get_server_time_ms(payload=payload)
+            midpoint_ms = (sent_at_ms + received_at_ms) // 2
+            self._clock_offset_ms = server_time_ms - midpoint_ms
 
     async def close(self) -> None:
         """Close the underlying HTTP session."""
@@ -536,10 +583,29 @@ class BinanceRestClient(BaseRestClient):
             f"code={code!r}, message={message!r}"
         )
 
+    def _timestamp_ms(self) -> int:
+        """Return the synchronized Unix timestamp used for signatures."""
+        return self._local_timestamp_ms() + self._clock_offset_ms
+
+    def _local_timestamp_ms(self) -> int:
+        """Return the local Unix timestamp in milliseconds."""
+        return self._clock_ms()
+
     @staticmethod
-    def _timestamp_ms() -> int:
-        """Return the current Unix timestamp in milliseconds."""
-        return int(time() * 1_000)
+    def _get_server_time_ms(*, payload: JsonResponse) -> int:
+        """Extract one required positive Binance server timestamp."""
+        if not isinstance(payload, Mapping):
+            raise RuntimeError(_INVALID_SERVER_TIME_ERROR)
+
+        server_time_ms = payload.get(_SERVER_TIME_PARAMETER)
+        if (
+            isinstance(server_time_ms, bool)
+            or not isinstance(server_time_ms, int)
+            or server_time_ms <= 0
+        ):
+            raise RuntimeError(_INVALID_SERVER_TIME_ERROR)
+
+        return server_time_ms
 
     async def __aenter__(self) -> BinanceRestClient:
         """Enter the asynchronous context manager."""

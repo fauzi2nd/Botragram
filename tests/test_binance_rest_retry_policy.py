@@ -83,6 +83,59 @@ async def test_authenticated_get_retries_with_fresh_signature_parameters() -> No
 
 
 @pytest.mark.asyncio
+async def test_time_synchronization_offsets_authenticated_signatures() -> None:
+    """Use the midpoint-adjusted server clock for signed request timestamps."""
+    request_timestamp: str | None = None
+    clock_values = iter((1_000, 1_100, 1_200))
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        """Serve a deterministic server time then observe one signed request."""
+        nonlocal request_timestamp
+        if request.path == "/fapi/v1/time":
+            return web.json_response({"serverTime": 3_050})
+
+        request_timestamp = request.query["timestamp"]
+        return web.json_response({"ok": True})
+
+    base_url, runner = await _start_server(handler)
+    rest = BinanceRestClient(
+        base_url=base_url,
+        api_key="key",
+        api_secret="secret",
+        clock_ms=lambda: next(clock_values),
+    )
+
+    try:
+        await rest.synchronize_time(path="/fapi/v1/time")
+        assert await rest.get("/signed", authenticated=True) == {"ok": True}
+    finally:
+        await rest.close()
+        await runner.cleanup()
+
+    assert request_timestamp == "3200"
+
+
+@pytest.mark.asyncio
+async def test_time_synchronization_rejects_invalid_server_timestamp() -> None:
+    """Fail closed instead of signing requests against an unproven server clock."""
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        """Return a malformed public server-time payload."""
+        del request
+        return web.json_response({"serverTime": "invalid"})
+
+    base_url, runner = await _start_server(handler)
+    rest = BinanceRestClient(base_url=base_url)
+
+    try:
+        with pytest.raises(RuntimeError, match="server time response is invalid"):
+            await rest.synchronize_time(path="/fapi/v1/time")
+    finally:
+        await rest.close()
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_get_rate_limit_honors_retry_after_before_retrying() -> None:
     """Wait for Binance's requested delay before repeating a safe read."""
     attempts = 0

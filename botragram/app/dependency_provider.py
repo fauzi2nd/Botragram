@@ -61,6 +61,7 @@ from botragram.engine import (
     TradingEngine,
 )
 from botragram.enums import (
+    ExchangeEnvironment,
     ExchangeType,
     ExecutionPolicy,
     MarketType,
@@ -928,6 +929,14 @@ class DependencyProvider:
             exchange.market_type.value,
         )
         await exchange_client.connect()
+        if (
+            self._settings.app.trade_mode is TradeMode.LIVE
+            and exchange.market_type is MarketType.FUTURES
+            and exchange.environment is ExchangeEnvironment.MAINNET
+        ):
+            if not isinstance(exchange_client, BinanceFuturesExchangeClient):
+                raise TypeError("MAINNET Futures readiness requires Binance Futures")
+            await exchange_client.verify_mainnet_readiness()
         await stream_client.connect()
         _LOGGER.info("Exchange REST and WebSocket transports are ready")
 

@@ -52,6 +52,7 @@ type RequestValue = str | int | float | bool
 type RequestParams = dict[str, RequestValue]
 
 _PING_ENDPOINT = "/fapi/v1/ping"
+_TIME_ENDPOINT = "/fapi/v1/time"
 _EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
 _ACCOUNT_ENDPOINT = "/fapi/v3/account"
 _TICKER_ENDPOINT = "/fapi/v1/ticker/24hr"
@@ -64,6 +65,7 @@ _ALGO_ORDER_ENDPOINT = "/fapi/v1/algoOrder"
 _OPEN_ALGO_ORDERS_ENDPOINT = "/fapi/v1/openAlgoOrders"
 _TRADES_ENDPOINT = "/fapi/v1/userTrades"
 _POSITIONS_ENDPOINT = "/fapi/v3/positionRisk"
+_POSITION_MODE_ENDPOINT = "/fapi/v1/positionSide/dual"
 
 _DEFAULT_TIME_IN_FORCE = "GTC"
 _SUPPORTED_ENTRY_ORDER_TYPES = frozenset({OrderType.MARKET, OrderType.LIMIT})
@@ -101,6 +103,34 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             return False
 
         return True
+
+    async def verify_mainnet_readiness(self) -> None:
+        """Synchronize time and require one-way mode for MAINNET startup.
+
+        Raises:
+            RuntimeError: If time synchronization or account-mode verification fails.
+        """
+        await self._rest.synchronize_time(path=_TIME_ENDPOINT)
+        await self.verify_one_way_position_mode()
+
+    async def verify_one_way_position_mode(self) -> None:
+        """Require Binance Futures one-way mode before LIVE runtime starts.
+
+        Raises:
+            RuntimeError: If Binance returns an invalid response or Hedge Mode.
+        """
+        payload = await self._rest.get(
+            _POSITION_MODE_ENDPOINT,
+            authenticated=True,
+        )
+        position_mode = self._require_mapping(payload)
+        dual_side_position = position_mode.get("dualSidePosition")
+        if not isinstance(dual_side_position, bool):
+            raise RuntimeError("Binance Futures position mode response is invalid")
+        if dual_side_position:
+            raise RuntimeError(
+                "Binance Futures Hedge Mode is unsupported; configure One-way Mode"
+            )
 
     async def get_account(self) -> Account:
         """Return current Binance Futures account information."""
