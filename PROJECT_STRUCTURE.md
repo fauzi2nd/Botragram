@@ -44,6 +44,7 @@ botragram/
 |   |-- lifecycle.py
 |   |-- market_type_switch.py # Guarded Spot/Futures soft-restart coordination
 |   |-- runtime_control.py
+|   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
 |   |-- settings_manager.py
 |   |-- shutdown.py
 |   |-- startup.py
@@ -162,6 +163,7 @@ botragram/
 |   |-- memory/
 |   `-- sqlite/
 |       |-- database.py
+|       |-- legacy_live_ledger_migration.py # One-time legacy TESTNET LIVE ledger import
 |       |-- migrations.py
 |       `-- *_repository.py
 |-- strategies/

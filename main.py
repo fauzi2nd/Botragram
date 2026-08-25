@@ -30,6 +30,7 @@ from botragram.app import (
     ApplicationLifecycle,
     DependencyProvider,
     GlobalDiscoveryTelemetry,
+    RuntimeInstanceLock,
     RuntimeRestartCoordinator,
     SettingsManager,
     TerminalMonitor,
@@ -190,10 +191,14 @@ async def main() -> None:
         return
 
     restart_coordinator = RuntimeRestartCoordinator()
+    runtime_lock = RuntimeInstanceLock(
+        lock_path=settings.app.database_path.with_suffix(".lock"),
+    )
     market_type_confirmed = False
     configure_logging(settings=settings.logging)
 
     try:
+        runtime_lock.acquire()
         _LOGGER.info(
             "Configuration loaded: environment=%s exchange=%s market_type=%s "
             "testnet=%s trade_mode=%s symbol=%s strategy=%s",
@@ -244,6 +249,7 @@ async def main() -> None:
                 requested_market_type.value,
             )
     finally:
+        runtime_lock.release()
         shutdown_logging()
 
 

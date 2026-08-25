@@ -57,6 +57,7 @@ class SQLiteDatabase:
         "_connection",
         "_connection_lock",
         "_database_path",
+        "_read_only",
     )
 
     def __init__(
@@ -64,12 +65,14 @@ class SQLiteDatabase:
         *,
         database_path: str | Path,
         busy_timeout_ms: int = _DEFAULT_BUSY_TIMEOUT_MS,
+        read_only: bool = False,
     ) -> None:
         """Initialize the SQLite database manager.
 
         Args:
             database_path: SQLite database file path.
             busy_timeout_ms: Time SQLite waits for a locked database.
+            read_only: Whether the connection must reject database writes.
 
         Raises:
             ValueError: If configuration values are invalid.
@@ -84,6 +87,7 @@ class SQLiteDatabase:
 
         self._database_path = Path(normalized_path)
         self._busy_timeout_ms = busy_timeout_ms
+        self._read_only = read_only
         self._connection: aiosqlite.Connection | None = None
         self._connection_lock = asyncio.Lock()
 
@@ -103,10 +107,12 @@ class SQLiteDatabase:
             if self._connection is not None:
                 return
 
-            self._create_parent_directory()
+            if not self._read_only:
+                self._create_parent_directory()
 
             connection = await aiosqlite.connect(
-                self._database_path,
+                self._get_connection_target(),
+                uri=self._read_only,
             )
             connection.row_factory = Row
 
@@ -114,9 +120,10 @@ class SQLiteDatabase:
                 await connection.execute(
                     _ENABLE_FOREIGN_KEYS_SQL,
                 )
-                await connection.execute(
-                    _ENABLE_WAL_SQL,
-                )
+                if not self._read_only:
+                    await connection.execute(
+                        _ENABLE_WAL_SQL,
+                    )
                 await connection.execute(
                     _BUSY_TIMEOUT_SQL_TEMPLATE.format(
                         timeout_ms=self._busy_timeout_ms,
@@ -321,6 +328,13 @@ class SQLiteDatabase:
                 parents=True,
                 exist_ok=True,
             )
+
+    def _get_connection_target(self) -> str | Path:
+        """Return a SQLite target that preserves the configured access mode."""
+        if not self._read_only:
+            return self._database_path
+
+        return f"{self._database_path.resolve().as_uri()}?mode=ro"
 
     @staticmethod
     def _validate_statement(

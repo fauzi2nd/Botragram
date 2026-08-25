@@ -62,6 +62,9 @@ class LiveFuturesUserDataCache:
     _balances: dict[str, Decimal] = field(
         default_factory=dict[str, Decimal], init=False
     )
+    _wallet_balances: dict[str, Decimal] = field(
+        default_factory=dict[str, Decimal], init=False
+    )
     _positions: dict[str, Position] = field(
         default_factory=dict[str, Position], init=False
     )
@@ -95,6 +98,10 @@ class LiveFuturesUserDataCache:
         async with self._lock:
             self._balances = {
                 balance.asset.upper(): balance.free for balance in account.balances
+            }
+            self._wallet_balances = {
+                balance.asset.upper(): balance.free + balance.locked
+                for balance in account.balances
             }
             self._positions = {
                 position.symbol.upper(): position
@@ -140,6 +147,9 @@ class LiveFuturesUserDataCache:
                 case FuturesUserDataAccountUpdate():
                     for balance in event.balances:
                         self._balances[balance.asset.upper()] = balance.free
+                        self._wallet_balances[balance.asset.upper()] = (
+                            balance.free + balance.locked
+                        )
                     for position in event.positions:
                         self._apply_position_update(
                             position=position, observed_at=event.observed_at
@@ -157,6 +167,28 @@ class LiveFuturesUserDataCache:
 
         async with self._lock:
             return self._balances.get(normalized_asset, _DECIMAL_ZERO)
+
+    async def get_equity(self, *, asset: str) -> Decimal:
+        """Return streamed collateral equity including unrealized Futures PnL.
+
+        Raises:
+            RuntimeError: If private account state is not currently authoritative.
+        """
+        normalized_asset = asset.strip().upper()
+        if not normalized_asset:
+            raise ValueError("Balance asset must not be empty")
+
+        async with self._lock:
+            if self._status is not LiveFuturesUserDataStatus.READY:
+                raise RuntimeError("LIVE Futures User Data cache is not ready")
+            collateral = self._wallet_balances.get(
+                normalized_asset,
+                _DECIMAL_ZERO,
+            )
+            return collateral + sum(
+                (position.unrealized_pnl for position in self._positions.values()),
+                start=_DECIMAL_ZERO,
+            )
 
     async def get_snapshot(self) -> LiveFuturesUserDataSnapshot:
         """Return an immutable local snapshot without exchange I/O."""

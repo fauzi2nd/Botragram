@@ -154,6 +154,7 @@ async def test_user_data_stream_cache_uses_startup_snapshot_then_events() -> Non
 
     assert snapshots.calls == 1
     assert await service.get_free_balance(asset="usdt") == Decimal("125")
+    assert await service.get_equity(asset="USDT") == Decimal("129")
     snapshot = await service.cache.get_snapshot()
     assert snapshot.status is LiveFuturesUserDataStatus.READY
     assert snapshot.last_snapshot_at is not None

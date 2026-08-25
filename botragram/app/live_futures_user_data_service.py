@@ -19,6 +19,7 @@ from typing import Final, Protocol
 
 from botragram.models import (
     Account,
+    FuturesUserDataAccountUpdate,
     FuturesUserDataEvent,
     FuturesUserDataStreamConnected,
     Position,
@@ -61,6 +62,14 @@ class FuturesUserDataEventStream(Protocol):
         ...
 
 
+class FuturesEquityObserver(Protocol):
+    """Persist a newly observed authoritative Futures account equity."""
+
+    async def observe(self, *, equity: Decimal) -> Decimal:
+        """Record equity and return the durable high-water value."""
+        ...
+
+
 @dataclass(slots=True)
 class LiveFuturesUserDataService:
     """Maintain a REST-seeded, WebSocket-updated private Futures cache."""
@@ -69,6 +78,8 @@ class LiveFuturesUserDataService:
     event_stream: FuturesUserDataEventStream
     cache: LiveFuturesUserDataCache = field(default_factory=LiveFuturesUserDataCache)
     reconnect_delay_seconds: float = _RECONNECT_DELAY_SECONDS
+    equity_asset: str | None = None
+    equity_observer: FuturesEquityObserver | None = None
     _task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _initialization: asyncio.Future[None] | None = field(
         default=None,
@@ -82,6 +93,11 @@ class LiveFuturesUserDataService:
         """Validate bounded reconnect behavior."""
         if self.reconnect_delay_seconds < 0:
             raise ValueError("User Data Stream reconnect delay must not be negative")
+        if self.equity_observer is not None:
+            normalized_asset = (self.equity_asset or "").strip().upper()
+            if not normalized_asset:
+                raise ValueError("LIVE equity observer requires a collateral asset")
+            self.equity_asset = normalized_asset
 
     async def start(self) -> None:
         """Open the stream, seed REST state, then consume buffered events."""
@@ -115,6 +131,10 @@ class LiveFuturesUserDataService:
         """Return the latest streamed balance for TerminalMonitor compatibility."""
         return await self.cache.get_free_balance(asset=asset)
 
+    async def get_equity(self, *, asset: str) -> Decimal:
+        """Return fresh realtime Futures equity without REST polling."""
+        return await self.cache.get_equity(asset=asset)
+
     async def get_snapshot(self) -> LiveFuturesUserDataSnapshot:
         """Return cache freshness and account state without exchange I/O."""
         return await self.cache.get_snapshot()
@@ -128,6 +148,8 @@ class LiveFuturesUserDataService:
                         await self._synchronize_after_connection()
                         continue
                     await self.cache.apply(event=event)
+                    if isinstance(event, FuturesUserDataAccountUpdate):
+                        await self._observe_current_equity()
                 if self._closed:
                     return
                 raise RuntimeError("Binance Futures User Data Stream ended")
@@ -156,6 +178,7 @@ class LiveFuturesUserDataService:
             await self.cache.mark_stale()
             self._fail_initialization(error=error)
             raise
+        await self._observe_current_equity()
         self._initial_snapshot_complete = True
         initialization = self._initialization
         if initialization is not None and not initialization.done():
@@ -166,6 +189,19 @@ class LiveFuturesUserDataService:
         initialization = self._initialization
         if initialization is not None and not initialization.done():
             initialization.set_exception(error)
+
+    async def _observe_current_equity(self) -> None:
+        """Persist a fresh private-stream equity observation when enabled."""
+        observer = self.equity_observer
+        asset = self.equity_asset
+        if observer is None or asset is None:
+            return
+        try:
+            await observer.observe(equity=await self.cache.get_equity(asset=asset))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception("Unable to persist LIVE Futures equity high-water mark")
 
     async def _refresh_snapshot(self, *, clear_recent_orders: bool) -> None:
         """Refresh only after startup or loss of private-stream continuity."""

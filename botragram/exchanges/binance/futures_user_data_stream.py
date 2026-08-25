@@ -45,7 +45,7 @@ _ORDER_UPDATE_EVENT: Final[str] = "ORDER_TRADE_UPDATE"
 _LISTEN_KEY_EXPIRED_EVENT: Final[str] = "listenKeyExpired"
 _LISTEN_KEY_PATH: Final[str] = "/fapi/v1/listenKey"
 _KEEPALIVE_SECONDS: Final[float] = 30.0 * 60.0
-_RECEIVE_TIMEOUT_SECONDS: Final[float] = 60.0
+_WEBSOCKET_HEARTBEAT_SECONDS: Final[float] = 30.0
 
 
 class BinanceFuturesUserDataStream:
@@ -99,7 +99,8 @@ class BinanceFuturesUserDataStream:
         try:
             socket = await self._get_session().ws_connect(
                 f"{self._websocket_base_url}/ws/{listen_key}",
-                receive_timeout=_RECEIVE_TIMEOUT_SECONDS,
+                receive_timeout=None,
+                heartbeat=_WEBSOCKET_HEARTBEAT_SECONDS,
                 autoclose=True,
                 autoping=True,
             )
@@ -241,7 +242,11 @@ class BinanceFuturesUserDataStream:
             Balance(
                 asset=BinanceFuturesUserDataStream._require_text(item, key="a"),
                 free=BinanceFuturesUserDataStream._decimal(item, key="cw"),
-                locked=Decimal("0"),
+                locked=max(
+                    BinanceFuturesUserDataStream._decimal(item, key="wb")
+                    - BinanceFuturesUserDataStream._decimal(item, key="cw"),
+                    Decimal("0"),
+                ),
             )
             for item in (
                 BinanceFuturesUserDataStream._require_mapping(value, label="balance")

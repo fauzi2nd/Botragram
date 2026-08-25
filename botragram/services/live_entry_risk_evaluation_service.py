@@ -9,6 +9,9 @@ from typing import Protocol
 
 from botragram.engine import TradingEngine
 from botragram.models import LiveEntryRiskEvaluation, Position, Signal
+from botragram.services.live_account_drawdown_service import (
+    LiveAccountDrawdownService,
+)
 
 __all__ = ["LiveEntryRiskEvaluationService"]
 
@@ -21,6 +24,14 @@ class _LiveAccountBalanceProvider(Protocol):
 
     async def get_free_balance(self, *, asset: str) -> Decimal:
         """Return free balance for one quote asset."""
+        ...
+
+
+class _LiveAccountEquityProvider(Protocol):
+    """Provide fresh authoritative LIVE collateral equity."""
+
+    async def get_equity(self, *, asset: str) -> Decimal:
+        """Return current account equity including unrealized PnL."""
         ...
 
 
@@ -48,6 +59,8 @@ class LiveEntryRiskEvaluationService:
     position_service: _LivePositionPortfolioProvider
     trading_engine: TradingEngine
     balance_asset: str
+    equity_provider: _LiveAccountEquityProvider | None = None
+    drawdown_service: LiveAccountDrawdownService | None = None
     natural_exit_recovery_service: _LiveNaturalExitRecovery | None = None
 
     def __post_init__(self) -> None:
@@ -58,6 +71,10 @@ class LiveEntryRiskEvaluationService:
             raise ValueError("LIVE entry balance asset must not be empty")
 
         object.__setattr__(self, "balance_asset", normalized_asset)
+        if (self.equity_provider is None) is not (self.drawdown_service is None):
+            raise ValueError(
+                "LIVE drawdown evaluation requires both an equity provider and service"
+            )
 
     async def evaluate(
         self,
@@ -91,9 +108,17 @@ class LiveEntryRiskEvaluationService:
             for position in positions
         )
         balance = await self.account_service.get_free_balance(asset=self.balance_asset)
+        current_drawdown_pct = _DECIMAL_ZERO
+        equity_provider = self.equity_provider
+        drawdown_service = self.drawdown_service
+        if equity_provider is not None and drawdown_service is not None:
+            current_drawdown_pct = await drawdown_service.get_current_drawdown_pct(
+                equity=await equity_provider.get_equity(asset=self.balance_asset)
+            )
         decision = self.trading_engine.evaluate(
             signal=evaluation_signal,
             account_balance=balance,
+            current_drawdown_pct=current_drawdown_pct,
             has_open_position=has_existing_position,
             open_positions=positions,
         )

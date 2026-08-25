@@ -98,6 +98,7 @@ from botragram.services import (
     ExecutionAuthorizationService,
     HealthService,
     HumanConfirmedPaperExecutionService,
+    LiveAccountDrawdownService,
     LiveEntryRiskEvaluationService,
     LiveFuturesEntryService,
     LiveMarketStreamService,
@@ -129,11 +130,13 @@ from botragram.storage.sqlite import (
     SQLiteAutonomousLiveOpportunityClaimRepository,
     SQLiteCandleRepository,
     SQLiteDatabase,
+    SQLiteLiveEquityHighWaterRepository,
     SQLiteMigrationManager,
     SQLiteOrderRepository,
     SQLitePositionRepository,
     SQLiteSignalRepository,
     SQLiteSubmissionAttemptRepository,
+    SQLiteTestnetLegacyLiveLedgerMigration,
     SQLiteTradeRepository,
 )
 from botragram.storage.sqlite.live_recovery_repository import (
@@ -170,6 +173,7 @@ class DependencyProvider:
         "_autonomous_live_entry_intent_service",
         "_autonomous_live_opportunity_claim_repository",
         "_autonomous_live_recovery_observability_service",
+        "_live_account_drawdown_service",
         "_live_entry_risk_evaluation_service",
         "_autonomous_paper_execution_service",
         "_execution_authorization_repository",
@@ -287,6 +291,7 @@ class DependencyProvider:
         self._live_futures_entry_service: LiveFuturesEntryService | None = None
         self._live_futures_user_data_service: LiveFuturesUserDataService | None = None
         self._live_market_stream_service: LiveMarketStreamService | None = None
+        self._live_account_drawdown_service: LiveAccountDrawdownService | None = None
         self._live_natural_exit_recovery_service: (
             LiveNaturalExitRecoveryService | None
         ) = None
@@ -452,6 +457,7 @@ class DependencyProvider:
         try:
             await database.connect()
             await SQLiteMigrationManager(database=database).initialize()
+            await self._migrate_legacy_testnet_live_ledger(database=database)
 
             self._database = database
             self._build_repositories(database=database)
@@ -461,8 +467,9 @@ class DependencyProvider:
                 self._select_runtime_strategy,
             )
             self._telegram_bot = TelegramBot(settings=self._settings.telegram)
-            self._build_services()
+            self._build_live_account_drawdown_service()
             await self._start_live_futures_user_data_service()
+            self._build_services()
             self._health_service = HealthService(
                 database=database,
                 exchange=self.exchange_client,
@@ -899,6 +906,50 @@ class DependencyProvider:
         self._trade_repository = SQLiteTradeRepository(database=database)
         self._position_repository = SQLitePositionRepository(database=database)
 
+    async def _migrate_legacy_testnet_live_ledger(
+        self,
+        *,
+        database: SQLiteDatabase,
+    ) -> None:
+        """Import only the compatible legacy Binance Futures TESTNET ledger."""
+        exchange = self._settings.exchange
+        if (
+            self._settings.app.trade_mode is not TradeMode.LIVE
+            or exchange.exchange is not ExchangeType.BINANCE
+            or exchange.market_type is not MarketType.FUTURES
+            or exchange.environment is not ExchangeEnvironment.TESTNET
+        ):
+            return
+
+        scope_suffix = "-".join(
+            (
+                exchange.exchange.value,
+                exchange.market_type.value,
+                exchange.environment.value,
+            )
+        )
+        scoped_suffix = f"-{scope_suffix}"
+        scoped_stem = self._database_path.stem
+        if not scoped_stem.endswith(scoped_suffix):
+            return
+
+        legacy_stem = scoped_stem.removesuffix(scoped_suffix)
+        if not legacy_stem:
+            return
+
+        legacy_path = self._database_path.with_stem(legacy_stem)
+        migration = SQLiteTestnetLegacyLiveLedgerMigration(
+            target_database=database,
+            source_database_path=legacy_path,
+        )
+        if await migration.migrate_if_required():
+            _LOGGER.warning(
+                "Imported legacy Botragram LIVE ledger into isolated TESTNET "
+                "database: source=%s target=%s",
+                legacy_path,
+                self._database_path,
+            )
+
     async def _build_exchange_dependencies(self) -> None:
         """Construct and connect the configured exchange dependencies."""
         exchange = self._settings.exchange
@@ -962,9 +1013,23 @@ class DependencyProvider:
                 rest=exchange_client.rest_transport,
                 websocket_base_url=websocket_base_url,
             ),
+            equity_asset=self._settings.market.quote_asset,
+            equity_observer=self._live_account_drawdown_service,
         )
         await service.start()
         self._live_futures_user_data_service = service
+
+    def _build_live_account_drawdown_service(self) -> None:
+        """Construct durable drawdown state only for LIVE Futures execution."""
+        if (
+            self._settings.app.trade_mode is not TradeMode.LIVE
+            or self._settings.exchange.market_type is not MarketType.FUTURES
+        ):
+            return
+        self._live_account_drawdown_service = LiveAccountDrawdownService(
+            repository=SQLiteLiveEquityHighWaterRepository(database=self.database),
+            asset=self._settings.market.quote_asset,
+        )
 
     def _build_engines(self) -> None:
         """Construct engines from configured strategies and exchange clients."""
@@ -1026,11 +1091,18 @@ class DependencyProvider:
             trade_history=exchange_client,
             lifecycle_coordinator=self._live_position_lifecycle_coordinator,
         )
+        live_user_data_service = self._live_futures_user_data_service
         self._live_entry_risk_evaluation_service = LiveEntryRiskEvaluationService(
-            account_service=self.account_service,
+            account_service=(
+                live_user_data_service
+                if live_user_data_service is not None
+                else self.account_service
+            ),
             position_service=self.position_service,
             trading_engine=self.trading_engine,
             balance_asset=self._settings.market.quote_asset,
+            equity_provider=live_user_data_service,
+            drawdown_service=self._live_account_drawdown_service,
             natural_exit_recovery_service=self.live_natural_exit_recovery_service,
         )
         self._live_position_protection_service = LivePositionProtectionService(
@@ -1364,6 +1436,7 @@ class DependencyProvider:
         self._live_futures_entry_service = None
         self._live_futures_user_data_service = None
         self._live_market_stream_service = None
+        self._live_account_drawdown_service = None
         self._live_natural_exit_recovery_service = None
         self._live_position_lifecycle_coordinator = LivePositionLifecycleCoordinator()
         self._live_post_entry_recovery_service = None

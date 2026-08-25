@@ -386,6 +386,16 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ADD COLUMN pending_protection_step INTEGER NOT NULL DEFAULT 0;
         """,
     ),
+    _Migration(
+        version=14,
+        script="""
+        CREATE TABLE IF NOT EXISTS live_equity_high_water_marks (
+            asset TEXT PRIMARY KEY,
+            equity TEXT NOT NULL,
+            observed_at TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 

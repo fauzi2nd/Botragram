@@ -30,6 +30,7 @@ from botragram.app.market_type_switch import (
     run_until_restart,
 )
 from botragram.app.runtime_control import MarketStreamTelemetry, TradingRuntimeControl
+from botragram.app.runtime_instance_lock import RuntimeInstanceLock
 from botragram.app.settings_manager import SettingsManager
 from botragram.app.shutdown import shutdown_application
 from botragram.app.startup import startup_application
@@ -58,6 +59,7 @@ __all__ = [
     "MarketTypeSwitchService",
     "MultiContextActivationPreconditionProvider",
     "MultiContextRunnerActivationPreconditions",
+    "RuntimeInstanceLock",
     "RuntimeRestartCoordinator",
     "SettingsManager",
     "SingleSymbolTradingCycleExecutor",

@@ -18,6 +18,7 @@ from botragram.services.health_service import HealthReport, HealthService
 from botragram.services.human_confirmed_paper_execution_service import (
     HumanConfirmedPaperExecutionService,
 )
+from botragram.services.live_account_drawdown_service import LiveAccountDrawdownService
 from botragram.services.live_entry_risk_evaluation_service import (
     LiveEntryRiskEvaluationService,
 )
@@ -88,6 +89,7 @@ __all__ = [
     "HealthService",
     "LiveFuturesEntryService",
     "LiveEntryRiskEvaluationService",
+    "LiveAccountDrawdownService",
     "LiveMarketStreamService",
     "MarketTickListener",
     "LiveNaturalExitRecoveryService",

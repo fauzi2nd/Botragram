@@ -23,6 +23,9 @@ from botragram.repositories.candle_repository import CandleRepository
 from botragram.repositories.execution_authorization_repository import (
     ExecutionAuthorizationRepository,
 )
+from botragram.repositories.live_equity_high_water_repository import (
+    LiveEquityHighWaterRepository,
+)
 from botragram.repositories.order_repository import OrderRepository
 from botragram.repositories.position_repository import PositionRepository
 from botragram.repositories.signal_repository import SignalRepository
@@ -37,6 +40,7 @@ __all__ = [
     "ExecutionAuthorizationRepository",
     "SignalRepository",
     "OrderRepository",
+    "LiveEquityHighWaterRepository",
     "TradeRepository",
     "PositionRepository",
     "SubmissionAttemptRepository",

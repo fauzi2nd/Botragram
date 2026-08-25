@@ -54,6 +54,7 @@ from botragram.models.futures_user_data import (
     FuturesUserDataStreamConnected,
 )
 from botragram.models.live_entry_risk_evaluation import LiveEntryRiskEvaluation
+from botragram.models.live_equity_high_water_mark import LiveEquityHighWaterMark
 from botragram.models.live_market_stream_identity import LiveMarketStreamIdentity
 from botragram.models.live_market_stream_state import LiveMarketStreamState
 from botragram.models.live_portfolio_recovery import LivePortfolioRecoveryResult
@@ -112,6 +113,7 @@ __all__ = [
     "LiveMarketStreamIdentity",
     "LiveMarketStreamState",
     "LiveEntryRiskEvaluation",
+    "LiveEquityHighWaterMark",
     "LiveRuntimePortfolioContext",
     "LiveRuntimeHealthSnapshot",
     "LiveRuntimePositionContext",
