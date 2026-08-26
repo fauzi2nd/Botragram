@@ -802,6 +802,7 @@ async def _run_rest_before_private_stream_test(
     await asyncio.wait_for(task, timeout=1.0)
 
     assert recovery.calls == 2
+    assert recovery.activation_requests == [False, False]
     assert executor.calls == 1
     assert not control.is_paused
     assert _count_log(caplog=caplog, text="paused for unattended recovery") == 1

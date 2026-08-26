@@ -1403,6 +1403,38 @@ async def test_live_restart_adopts_proven_persisted_protection_without_post() ->
 
 
 @pytest.mark.asyncio
+async def test_canonical_live_recovery_can_prepare_without_activation() -> None:
+    """Verify contexts, streams, and protection while future cycles stay paused."""
+    position = _position(include_metadata=True)
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = RecoveryExchangeClient(positions=(position,))
+    stream_owner = FakeLiveMarketStreamOwner()
+    monitor_owner = FakeLiveProtectionMonitorOwner()
+    service, control = _recovery_service(
+        trade_mode=TradeMode.LIVE,
+        exchange=exchange,
+        repository=repository,
+        market_stream_service=stream_owner,
+        protection_monitoring_service=monitor_owner,
+        use_canonical_reconciler=True,
+    )
+
+    recovered = await service.recover(activate_runtime=False)
+
+    assert recovered
+    assert control.is_paused
+    assert control.is_position_protection_ready
+    assert len(control.runtime_contexts) == 1
+    authorization = control.live_management_authorization
+    assert authorization is not None
+    assert authorization.authorizes_contexts(contexts=control.runtime_contexts)
+    assert len(stream_owner.stream_states) == 1
+    assert stream_owner.stream_states[0].first_tick_received
+    assert len(monitor_owner.monitor_states) == 1
+
+
+@pytest.mark.asyncio
 async def test_live_startup_recovers_acknowledged_entry_before_runtime_readiness() -> (
     None
 ):

@@ -265,16 +265,24 @@ def test_stale_public_tick_degrades_runtime_health() -> None:
     assert snapshot.affected_contexts == (context,)
 
 
-def test_private_stream_resync_blocks_zero_position_entry_health() -> None:
-    """Degrade an autonomous zero-position runtime while private state is stale."""
+@pytest.mark.parametrize(
+    "status",
+    (
+        LiveFuturesUserDataStatus.STARTING,
+        LiveFuturesUserDataStatus.RESYNCING,
+        LiveFuturesUserDataStatus.STALE,
+    ),
+)
+def test_private_stream_non_ready_blocks_zero_position_entry_health(
+    status: LiveFuturesUserDataStatus,
+) -> None:
+    """Degrade autonomous entry for every non-authoritative private state."""
     service, _ = _service()
     service = LiveRuntimeHealthService(
         runtime_control=service.runtime_control,
         market_stream_service=service.market_stream_service,
         protection_monitoring_service=service.protection_monitoring_service,
-        live_futures_user_data_service=_UserData(
-            status=LiveFuturesUserDataStatus.RESYNCING
-        ),
+        live_futures_user_data_service=_UserData(status=status),
         clock=lambda: 1.0,
     )
 
