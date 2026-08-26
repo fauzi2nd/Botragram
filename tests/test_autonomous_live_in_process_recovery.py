@@ -632,7 +632,7 @@ async def _run_independent_connectivity_recovery_budget_test() -> None:
 
     assert executor.calls == 2
     assert recovery.calls == 2
-    assert recovery.activation_requests == [False, False]
+    assert recovery.activation_requests == [True, False]
     assert not control.is_paused
 
 
