@@ -22,7 +22,12 @@ from botragram.exchanges.binance.futures_user_data_stream import (
     BinanceFuturesUserDataStream,
 )
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
-from botragram.exchanges.binance.rest import BinanceRestClient
+from botragram.exchanges.binance.rest import (
+    BinanceRateLimitGovernor,
+    BinanceRateLimitSnapshot,
+    BinanceRateLimitWindow,
+    BinanceRestClient,
+)
 from botragram.exchanges.binance.stream import BinanceStreamClient
 
 __all__ = [
@@ -30,6 +35,9 @@ __all__ = [
     "BinanceExchangeMapper",
     "BinanceFuturesExchangeClient",
     "BinanceFuturesUserDataStream",
+    "BinanceRateLimitGovernor",
+    "BinanceRateLimitSnapshot",
+    "BinanceRateLimitWindow",
     "BinanceRestClient",
     "BinanceStreamClient",
 ]

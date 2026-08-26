@@ -15,4 +15,5 @@ class GlobalDiscoveryCycleOutcome(BaseEnum):
 
     COMPLETED = "completed"
     SKIPPED_CAPACITY = "skipped_capacity"
+    SKIPPED_RATE_LIMIT = "skipped_rate_limit"
     FAILED = "failed"

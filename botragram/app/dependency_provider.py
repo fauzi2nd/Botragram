@@ -1278,6 +1278,9 @@ class DependencyProvider:
         if policy is ExecutionPolicy.AUTONOMOUS_LIVE:
             if self._settings.exchange.market_type is not MarketType.FUTURES:
                 raise ValueError("Autonomous LIVE execution requires FUTURES")
+            exchange_client = self.exchange_client
+            if not isinstance(exchange_client, BinanceFuturesExchangeClient):
+                raise TypeError("Autonomous LIVE requires Binance Futures")
             authorization = self._autonomous_live_entry_authorization
             intent_service = self._autonomous_live_entry_intent_service
             execution_service = self._autonomous_live_entry_execution_service
@@ -1312,6 +1315,9 @@ class DependencyProvider:
                 strategy_type=self._settings.strategy.strategy_type,
                 live_runtime_portfolio_reconciler=(
                     self.live_runtime_portfolio_reconciliation_service
+                ),
+                discovery_rate_limit_governor=(
+                    exchange_client.rest_transport.rate_limit_governor
                 ),
             )
 

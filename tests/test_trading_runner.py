@@ -1230,6 +1230,29 @@ def test_global_runner_preserves_capacity_skip_outcome_while_waiting() -> None:
     assert waiting.last_outcome is GlobalDiscoveryCycleOutcome.SKIPPED_CAPACITY
 
 
+def test_global_runner_reports_rate_limit_skip_without_failure() -> None:
+    """Expose deliberate discovery throttling as a normal empty cycle."""
+    telemetry = GlobalDiscoveryTelemetry(interval=Interval.M1)
+    executor = ReportingGlobalExecutor(
+        report=GlobalDiscoveryCycleReport(skipped_rate_limit=True)
+    )
+    runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        global_discovery_telemetry=telemetry,
+    )
+
+    assert asyncio.run(runner.run_once()) == ()
+    snapshot = telemetry.get_snapshot()
+    assert snapshot.last_outcome is GlobalDiscoveryCycleOutcome.SKIPPED_RATE_LIMIT
+    assert snapshot.scanned_count == 0
+    assert snapshot.actionable_count == 0
+    assert snapshot.candidates == ()
+    assert executor.report_calls == 1
+    assert executor.legacy_calls == 0
+
+
 def test_global_runner_records_failed_cycle_outcome() -> None:
     """Expose global-cycle failure as telemetry without swallowing the exception."""
     telemetry = GlobalDiscoveryTelemetry(interval=Interval.M1)

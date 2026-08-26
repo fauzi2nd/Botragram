@@ -124,13 +124,20 @@ class GlobalDiscoveryTelemetry:
         batch: DiscoveryUniverseBatch | None = None,
         signals: tuple[Signal, ...] = (),
         skipped_capacity: bool = False,
+        skipped_rate_limit: bool = False,
         stopped_by_capacity: bool = False,
     ) -> None:
-        """Record one normal or capacity-skipped local discovery cycle."""
+        """Record one normal or explicitly skipped local discovery cycle."""
+        if skipped_capacity and skipped_rate_limit:
+            raise ValueError("Discovery cannot have multiple skip reasons")
         if skipped_capacity and (
             batch is not None or signals or results or stopped_by_capacity
         ):
-            raise ValueError("Capacity-skipped discovery must not contain scan results")
+            raise ValueError("Capacity-skipped discovery cannot contain scan results")
+        if skipped_rate_limit and stopped_by_capacity:
+            raise ValueError("Rate-limited discovery cannot stop by capacity")
+        if skipped_rate_limit and batch is None and (signals or results):
+            raise ValueError("Rate-limited candidate facts require a ranked batch")
 
         started = self._started_monotonic
         duration_ms = (
@@ -139,13 +146,16 @@ class GlobalDiscoveryTelemetry:
         candidates = self._build_candidates(
             results=results,
             signals=signals,
+            skipped_rate_limit=skipped_rate_limit,
             stopped_by_capacity=stopped_by_capacity,
         )
         self._snapshot = replace(
             self._snapshot,
             state=GlobalDiscoveryCycleState.COMPLETED,
             last_outcome=(
-                GlobalDiscoveryCycleOutcome.SKIPPED_CAPACITY
+                GlobalDiscoveryCycleOutcome.SKIPPED_RATE_LIMIT
+                if skipped_rate_limit
+                else GlobalDiscoveryCycleOutcome.SKIPPED_CAPACITY
                 if skipped_capacity
                 else GlobalDiscoveryCycleOutcome.COMPLETED
             ),
@@ -159,7 +169,7 @@ class GlobalDiscoveryTelemetry:
                 len(batch.entries)
                 if batch is not None
                 else 0
-                if skipped_capacity
+                if skipped_capacity or skipped_rate_limit
                 else None
             ),
             actionable_count=len(signals) if batch is not None else len(candidates),
@@ -177,6 +187,7 @@ class GlobalDiscoveryTelemetry:
         candidates = self._build_candidates(
             results=results,
             signals=(),
+            skipped_rate_limit=False,
             stopped_by_capacity=False,
         )
         self._snapshot = replace(
@@ -218,6 +229,7 @@ class GlobalDiscoveryTelemetry:
         *,
         results: tuple[TradingResult, ...],
         signals: tuple[Signal, ...],
+        skipped_rate_limit: bool,
         stopped_by_capacity: bool,
     ) -> tuple[GlobalDiscoveryCandidate, ...]:
         """Correlate discovered signals with processing outcomes by exact symbol."""
@@ -243,6 +255,8 @@ class GlobalDiscoveryTelemetry:
                 outcome=(
                     results_by_symbol[signal.symbol].reason
                     if signal.symbol in results_by_symbol
+                    else "skipped_rate_limit"
+                    if skipped_rate_limit
                     else "skipped_capacity"
                     if stopped_by_capacity
                     else None

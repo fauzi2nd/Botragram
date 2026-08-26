@@ -30,6 +30,7 @@ from botragram.enums import (
     StrategyType,
     TradeMode,
 )
+from botragram.exchanges.binance import BinanceRateLimitGovernor
 from botragram.models import (
     AutonomousLiveEntryAuthorization,
     AutonomousLiveEntryExecutionResult,
@@ -182,6 +183,22 @@ class _Reconciler:
         if result is not None:
             self.last_context = result
         return result
+
+
+@dataclass(slots=True)
+class _RateLimitGovernor:
+    """Return one deterministic optional-discovery budget decision."""
+
+    throttled: bool
+    decisions: list[bool] = field(default_factory=list[bool])
+    calls: int = 0
+
+    def should_throttle_discovery(self) -> bool:
+        """Record and return the configured discovery throttle state."""
+        self.calls += 1
+        if self.decisions:
+            return self.decisions.pop(0)
+        return self.throttled
 
 
 @dataclass(slots=True)
@@ -757,6 +774,116 @@ def test_required_reconciler_blocks_discovery_before_candidates() -> None:
         asyncio.run(blocked.execute_global(interval=Interval.M15, candle_limit=100))
 
     assert risk.calls == []
+    assert execution.calls == []
+
+
+def test_rate_limit_gate_runs_after_reconciliation_without_scanning() -> None:
+    """Preserve safety reconciliation while withholding optional new entries."""
+    btc = _signal(symbol="BTCUSDT")
+    claims = _OpportunityClaims()
+    executor, risk, execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+        },
+        claims=claims,
+    )
+    reconciler = _Reconciler()
+    governor = _RateLimitGovernor(throttled=True)
+    blocked = replace(
+        executor,
+        live_runtime_portfolio_reconciler=reconciler,
+        discovery_rate_limit_governor=governor,
+    )
+    universe = blocked.discovery_universe_service
+    discovery = blocked.discovery_service
+    assert isinstance(universe, _Universe)
+    assert isinstance(discovery, _Discovery)
+
+    report = asyncio.run(
+        blocked.execute_global_report(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert report.skipped_rate_limit
+    assert report.skipped_capacity is False
+    assert report.scanned_count == 0
+    assert reconciler.calls == 1
+    assert governor.calls == 1
+    assert universe.get_calls == 0
+    assert discovery.calls == 0
+    assert claims.calls == []
+    assert risk.calls == []
+    assert execution.calls == []
+
+
+def test_retry_after_never_bypasses_safety_reconciliation() -> None:
+    """Run authoritative recovery before applying an optional-work cooldown."""
+    btc = _signal(symbol="BTCUSDT")
+    executor, risk, execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+        },
+    )
+    governor = BinanceRateLimitGovernor()
+    governor.observe_response(
+        headers={},
+        status=429,
+        retry_after_seconds=60,
+    )
+    reconciler = _Reconciler()
+    blocked = replace(
+        executor,
+        live_runtime_portfolio_reconciler=reconciler,
+        discovery_rate_limit_governor=governor,
+    )
+
+    report = asyncio.run(
+        blocked.execute_global_report(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert report.skipped_rate_limit
+    assert reconciler.calls == 1
+    assert risk.calls == []
+    assert execution.calls == []
+
+
+def test_budget_crossing_during_risk_skips_entry_without_trading_error() -> None:
+    """Recheck headroom immediately before mutation after discovery REST work."""
+    btc = _signal(symbol="BTCUSDT")
+    claims = _OpportunityClaims()
+    executor, risk, execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+        },
+        claims=claims,
+    )
+    governor = _RateLimitGovernor(
+        throttled=True,
+        decisions=[False, False, True],
+    )
+    guarded = replace(
+        executor,
+        discovery_rate_limit_governor=governor,
+    )
+
+    report = asyncio.run(
+        guarded.execute_global_report(interval=Interval.M15, candle_limit=100)
+    )
+
+    assert report.skipped_rate_limit
+    assert report.batch is not None
+    assert report.scanned_count == 1
+    assert len(report.results) == 1
+    assert report.results[0].executed is False
+    assert report.results[0].reason == "skipped_rate_limit"
+    assert governor.calls == 3
+    assert [identity[0] for identity in claims.calls] == ["BTCUSDT"]
+    assert risk.calls == ["BTCUSDT"]
     assert execution.calls == []
 
 

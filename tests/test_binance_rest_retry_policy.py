@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from time import monotonic
 
@@ -16,11 +18,13 @@ from botragram.exceptions import (
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderRejectedError,
 )
+from botragram.exchanges.base.rest import JsonObject
 from botragram.exchanges.binance.futures_client import (
     BinanceFuturesExchangeClient,
 )
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import (
+    BinanceRateLimitGovernor,
     BinanceRestClient,
     BinanceRestResponseError,
 )
@@ -172,6 +176,210 @@ async def test_get_rate_limit_honors_retry_after_before_retrying() -> None:
 
     assert attempts == 2
     assert request_times[1] - request_times[0] >= 0.025
+
+
+@pytest.mark.asyncio
+async def test_response_headers_and_exchange_info_drive_discovery_throttle() -> None:
+    """Use authoritative Binance limits and usage headers for headroom gating."""
+    requests = 0
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        """Return exact request and order limits with threshold usage."""
+        nonlocal requests
+        del request
+        requests += 1
+        return web.json_response(
+            {
+                "rateLimits": [
+                    {
+                        "rateLimitType": "REQUEST_WEIGHT",
+                        "interval": "MINUTE",
+                        "intervalNum": 1,
+                        "limit": 1_000,
+                    },
+                    {
+                        "rateLimitType": "ORDERS",
+                        "interval": "SECOND",
+                        "intervalNum": 10,
+                        "limit": 100,
+                    },
+                ]
+            },
+            headers={
+                "X-MBX-USED-WEIGHT-1M": "750",
+                "X-MBX-ORDER-COUNT-10S": "75",
+            },
+        )
+
+    base_url, runner = await _start_server(handler)
+    rest = BinanceRestClient(base_url=base_url)
+
+    try:
+        await rest.get("/fapi/v1/exchangeInfo")
+        snapshot = rest.rate_limit_governor.get_snapshot()
+    finally:
+        await rest.close()
+        await runner.cleanup()
+
+    windows = {
+        (window.rate_limit_type, window.interval_seconds): window
+        for window in snapshot.windows
+    }
+    assert snapshot.discovery_throttled
+    assert snapshot.throttle_reason == "ORDERS:10s"
+    assert snapshot.throttle_percent == 75
+    assert windows[("ORDERS", 10)].usage_percent == 75
+    assert windows[("REQUEST_WEIGHT", 60)].limit == 1_000
+    assert windows[("REQUEST_WEIGHT", 60)].used == 750
+    assert requests == 1
+
+
+def test_governor_expires_usage_and_honors_retry_after_without_network() -> None:
+    """Resume discovery only after both observed windows and cooldown expire."""
+    now = [100.0]
+    governor = BinanceRateLimitGovernor(clock=lambda: now[0])
+    payload: JsonObject = {
+        "rateLimits": [
+            {
+                "rateLimitType": "REQUEST_WEIGHT",
+                "interval": "MINUTE",
+                "intervalNum": 1,
+                "limit": 100,
+            }
+        ]
+    }
+    governor.observe_payload(payload=payload)
+    governor.observe_response(
+        headers={"X-MBX-USED-WEIGHT-1M": "74"},
+        status=200,
+        retry_after_seconds=None,
+    )
+
+    assert governor.should_throttle_discovery() is False
+
+    governor.observe_response(
+        headers={"X-MBX-USED-WEIGHT-1M": "75"},
+        status=429,
+        retry_after_seconds=10,
+    )
+    blocked = governor.get_snapshot()
+    assert blocked.discovery_throttled
+    assert blocked.throttle_reason == "retry_after"
+    assert blocked.retry_after_seconds == 10
+
+    now[0] = 111.0
+    assert governor.should_throttle_discovery()
+
+    now[0] = 161.0
+    resumed = governor.get_snapshot()
+    assert resumed.discovery_throttled is False
+    assert resumed.windows == ()
+
+
+def test_governor_concurrent_updates_keep_highest_active_usage() -> None:
+    """Serialize concurrent response updates without losing high-water usage."""
+    governor = BinanceRateLimitGovernor()
+    payload: JsonObject = {
+        "rateLimits": [
+            {
+                "rateLimitType": "REQUEST_WEIGHT",
+                "interval": "MINUTE",
+                "intervalNum": 1,
+                "limit": 1_000,
+            }
+        ]
+    }
+    governor.observe_payload(payload=payload)
+
+    def observe(used: int) -> None:
+        governor.observe_response(
+            headers={"X-MBX-USED-WEIGHT-1M": str(used)},
+            status=200,
+            retry_after_seconds=None,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        tuple(executor.map(observe, range(900, -1, -1)))
+
+    snapshot = governor.get_snapshot()
+    assert len(snapshot.windows) == 1
+    assert snapshot.windows[0].used == 900
+    assert snapshot.discovery_throttled
+
+
+def test_missing_and_malformed_headers_leave_valid_budget_observation_intact() -> None:
+    """Ignore incomplete telemetry conservatively without raising or erasing state."""
+    governor = BinanceRateLimitGovernor()
+    governor.observe_response(
+        headers={"X-MBX-USED-WEIGHT-1M": "1200"},
+        status=200,
+        retry_after_seconds=None,
+    )
+    governor.observe_response(
+        headers={
+            "X-MBX-USED-WEIGHT-1M": "not-an-integer",
+            "X-MBX-USED-WEIGHT-0M": "2000",
+            "unrelated": "value",
+        },
+        status=200,
+        retry_after_seconds=None,
+    )
+    governor.observe_response(
+        headers={},
+        status=200,
+        retry_after_seconds=None,
+    )
+
+    snapshot = governor.get_snapshot()
+    assert len(snapshot.windows) == 1
+    assert snapshot.windows[0].used == 1200
+    assert snapshot.discovery_throttled is False
+
+
+@pytest.mark.parametrize("status", [418, 429])
+def test_rate_limit_status_blocks_only_optional_budget(status: int) -> None:
+    """Treat bans and throttles as optional-work cooldowns without sleeping."""
+    now = [50.0]
+    governor = BinanceRateLimitGovernor(clock=lambda: now[0])
+
+    governor.observe_response(
+        headers={},
+        status=status,
+        retry_after_seconds=12,
+    )
+
+    snapshot = governor.get_snapshot()
+    assert snapshot.discovery_throttled
+    assert snapshot.throttle_reason == "retry_after"
+    assert snapshot.retry_after_seconds == 12
+    now[0] = 63.0
+    assert governor.should_throttle_discovery() is False
+
+
+def test_governor_logs_only_throttle_transitions(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Expose budget context once per state transition without cycle spam."""
+    now = [100.0]
+    governor = BinanceRateLimitGovernor(clock=lambda: now[0])
+    caplog.set_level(logging.INFO, logger="botragram.exchanges.binance.rest")
+
+    governor.observe_response(
+        headers={"X-MBX-USED-WEIGHT-1M": "1800"},
+        status=200,
+        retry_after_seconds=None,
+    )
+    governor.get_snapshot()
+    governor.get_snapshot()
+    now[0] = 161.0
+    governor.get_snapshot()
+    governor.get_snapshot()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert len(messages) == 2
+    assert "used=1800 limit=2400" in messages[0]
+    assert "threshold_pct=75 headroom=600" in messages[0]
+    assert "resumed" in messages[1]
 
 
 @pytest.mark.asyncio

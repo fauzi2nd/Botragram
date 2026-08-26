@@ -90,6 +90,7 @@ _RESULT_REASON_UNAVAILABLE: Final[str] = "No reason provided"
 _AUTONOMOUS_LIVE_CLOSED_CANDLE_REPLAY_REASON: Final[str] = (
     "closed_candle_opportunity_already_claimed"
 )
+_AUTONOMOUS_LIVE_RATE_LIMIT_REASON: Final[str] = "skipped_rate_limit"
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
@@ -119,19 +120,28 @@ class GlobalDiscoveryCycleReport:
     batch: DiscoveryUniverseBatch | None = None
     signals: tuple[Signal, ...] = ()
     skipped_capacity: bool = False
+    skipped_rate_limit: bool = False
     stopped_by_capacity: bool = False
 
     def __post_init__(self) -> None:
         """Reject contradictory capacity and discovery facts."""
+        if self.skipped_capacity and self.skipped_rate_limit:
+            raise ValueError("Global discovery cannot have multiple skip reasons")
         if self.skipped_capacity and (
             self.batch is not None
             or self.signals
             or self.results
             or self.stopped_by_capacity
         ):
-            raise ValueError(
-                "Capacity-skipped global discovery must not contain scan results"
-            )
+            raise ValueError("Capacity-skipped discovery cannot contain scan results")
+        if self.skipped_rate_limit and self.stopped_by_capacity:
+            raise ValueError("Rate-limited discovery cannot stop by capacity")
+        if (
+            self.skipped_rate_limit
+            and self.batch is None
+            and (self.signals or self.results)
+        ):
+            raise ValueError("Rate-limited candidate facts require a ranked batch")
         if self.batch is None and self.signals:
             raise ValueError("Discovered signals require a ranked universe batch")
         if self.stopped_by_capacity and self.batch is None:
@@ -288,6 +298,14 @@ class DiscoveryUniverseProvider(Protocol):
 
     def complete_batch(self, *, batch: DiscoveryUniverseBatch) -> None:
         """Advance after normal discovery completion."""
+        ...
+
+
+class _DiscoveryRateLimitGovernor(Protocol):
+    """Gate optional discovery without delaying safety-critical exchange work."""
+
+    def should_throttle_discovery(self) -> bool:
+        """Return whether new discovery must yield to exchange headroom."""
         ...
 
 
@@ -642,6 +660,7 @@ class AutonomousLiveTradingCycleExecutor:
     max_open_positions: int
     strategy_type: StrategyType
     live_runtime_portfolio_reconciler: _LiveRuntimePortfolioReconciler
+    discovery_rate_limit_governor: _DiscoveryRateLimitGovernor | None = None
 
     def __post_init__(self) -> None:
         """Validate the static TESTNET discovery composition."""
@@ -687,6 +706,8 @@ class AutonomousLiveTradingCycleExecutor:
             )
         if self._portfolio_is_full(portfolio=portfolio):
             return GlobalDiscoveryCycleReport(skipped_capacity=True)
+        if self._optional_entry_is_rate_limited():
+            return GlobalDiscoveryCycleReport(skipped_rate_limit=True)
 
         batch = await self.discovery_universe_service.get_current_batch()
         signals = tuple(
@@ -701,10 +722,14 @@ class AutonomousLiveTradingCycleExecutor:
         self.discovery_universe_service.complete_batch(batch=batch)
         results: list[TradingResult] = []
         stopped_by_capacity = False
+        skipped_rate_limit = False
 
         for signal in signals:
             if self._portfolio_is_full(portfolio=portfolio):
                 stopped_by_capacity = True
+                break
+            if self._optional_entry_is_rate_limited():
+                skipped_rate_limit = True
                 break
 
             claimed = await self.opportunity_claim_repository.claim(
@@ -731,6 +756,16 @@ class AutonomousLiveTradingCycleExecutor:
                     )
                 )
                 continue
+
+            if self._optional_entry_is_rate_limited():
+                results.append(
+                    self._non_executed_result(
+                        decision=decision,
+                        reason=_AUTONOMOUS_LIVE_RATE_LIMIT_REASON,
+                    )
+                )
+                skipped_rate_limit = True
+                break
 
             execution_result = await self.execution_service.execute(
                 intent=intent_result.intent,
@@ -767,6 +802,7 @@ class AutonomousLiveTradingCycleExecutor:
             results=tuple(results),
             batch=batch,
             signals=signals,
+            skipped_rate_limit=skipped_rate_limit,
             stopped_by_capacity=stopped_by_capacity,
         )
 
@@ -779,6 +815,11 @@ class AutonomousLiveTradingCycleExecutor:
     def _portfolio_is_full(self, *, portfolio: LiveRuntimePortfolioContext) -> bool:
         """Return whether the authoritative managed portfolio has no entry capacity."""
         return len(portfolio.contexts) >= self.max_open_positions
+
+    def _optional_entry_is_rate_limited(self) -> bool:
+        """Gate only fresh discovery and entry without delaying reconciliation."""
+        governor = self.discovery_rate_limit_governor
+        return governor is not None and governor.should_throttle_discovery()
 
     async def execute(
         self,
@@ -1844,6 +1885,9 @@ class TradingRunner:
             batch=report.batch if report is not None else None,
             signals=report.signals if report is not None else (),
             skipped_capacity=(report.skipped_capacity if report is not None else False),
+            skipped_rate_limit=(
+                report.skipped_rate_limit if report is not None else False
+            ),
             stopped_by_capacity=(
                 report.stopped_by_capacity if report is not None else False
             ),
