@@ -406,8 +406,8 @@ class TradingRuntimeObserver(Protocol):
 class _AutonomousLiveRuntimeRecovery(Protocol):
     """Attempt existing runtime recovery without replaying a candidate."""
 
-    async def recover(self) -> bool:
-        """Return whether complete LIVE runtime readiness was restored safely."""
+    async def recover(self, *, activate_runtime: bool = True) -> bool:
+        """Prepare safe LIVE state and optionally activate its runtime."""
         ...
 
 
@@ -1076,6 +1076,7 @@ class TradingRunner:
     )
     _outage_reason: str | None = field(default=None, init=False, repr=False)
     _next_recovery_retry_seconds: float = field(default=0.0, init=False, repr=False)
+    _outage_known_position_count: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Normalize and validate immutable runtime inputs."""
@@ -1507,9 +1508,11 @@ class TradingRunner:
             return False
 
         provider = self.autonomous_live_recovery_provider
-        if provider is None:
+        health_provider = self.live_runtime_health_provider
+        if provider is None or health_provider is None:
             return False
 
+        self._outage_known_position_count = len(self.runtime_control.runtime_contexts)
         self.runtime_control.set_position_protection_ready(False)
         self.runtime_control.pause()
         self._pause_global_discovery_telemetry()
@@ -1528,46 +1531,128 @@ class TradingRunner:
             consecutive_failures=1,
         )
 
-        attempt = 0
-        while not self._stop_event.is_set():
-            attempt += 1
-            delay = self.unattended_recovery_backoff.get_delay(attempt=attempt)
-            self._next_recovery_retry_seconds = delay
-            await self._wait_for_delay(delay_seconds=delay)
-            if self._stop_event.is_set():
+        retry_attempt = 0
+        recovery_attempts = 0
+        waiting_for_private_stream = False
+        try:
+            while not self._stop_event.is_set():
+                health_snapshot = health_provider.get_snapshot()
+                if self._private_user_data_reseed_pending(
+                    snapshot=health_snapshot,
+                ):
+                    if not waiting_for_private_stream:
+                        _LOGGER.warning(
+                            "Autonomous LIVE recovery waiting for Futures User "
+                            "Data Stream REST reseed: entry_enabled=false"
+                        )
+                    waiting_for_private_stream = True
+                    retry_attempt += 1
+                    delay = min(
+                        self.unattended_recovery_backoff.get_delay(
+                            attempt=retry_attempt,
+                        ),
+                        self.autonomous_live_health_check_interval_seconds,
+                    )
+                    self._next_recovery_retry_seconds = delay
+                    await self._wait_for_delay(delay_seconds=delay)
+                    continue
+
+                if waiting_for_private_stream:
+                    waiting_for_private_stream = False
+                    retry_attempt = 0
+
+                retry_attempt += 1
+                delay = self.unattended_recovery_backoff.get_delay(
+                    attempt=retry_attempt,
+                )
+                self._next_recovery_retry_seconds = delay
+                await self._wait_for_delay(delay_seconds=delay)
+                if self._stop_event.is_set():
+                    return False
+
+                recovery_attempts += 1
+                try:
+                    recovered = await provider.recover(activate_runtime=False)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as recovery_error:
+                    if not is_transient_connectivity_error(recovery_error):
+                        _LOGGER.exception(
+                            "Autonomous LIVE unattended recovery failed with a "
+                            "non-transient error: attempt=%d",
+                            recovery_attempts,
+                        )
+                        raise
+                    recovered = False
+
+                self._remember_current_outage_positions()
+                if not recovered:
+                    continue
+
+                health_snapshot = health_provider.get_snapshot()
+                if self._recovery_ready_to_activate(snapshot=health_snapshot):
+                    try:
+                        self._activate_recovered_runtime(
+                            snapshot=health_snapshot,
+                        )
+                    except Exception:
+                        _LOGGER.exception(
+                            "Autonomous LIVE recovered runtime activation failed"
+                        )
+                        return False
+                    health_snapshot = health_provider.get_snapshot()
+
+                if self._authoritative_recovery_converged(
+                    snapshot=health_snapshot,
+                ):
+                    outage_seconds = max(0.0, monotonic() - outage_started)
+                    _LOGGER.warning(
+                        "Autonomous LIVE unattended recovery restored authoritative "
+                        "state: reason=%s attempts=%d outage_seconds=%.1f "
+                        "positions_known=%d positions_state=authoritative",
+                        reason,
+                        recovery_attempts,
+                        outage_seconds,
+                        len(health_snapshot.contexts),
+                    )
+                    return True
+
+                self.runtime_control.set_position_protection_ready(False)
+                self.runtime_control.pause()
+                if self._private_user_data_reseed_pending(
+                    snapshot=health_snapshot,
+                ):
+                    continue
+
+                if health_snapshot.reason in _UNATTENDED_RECOVERY_HEALTH_REASONS:
+                    _LOGGER.warning(
+                        "Autonomous LIVE recovery has not converged: "
+                        "health_status=%s health_reason=%s entry_enabled=false",
+                        health_snapshot.status.value,
+                        (
+                            health_snapshot.reason.value
+                            if health_snapshot.reason is not None
+                            else "unknown"
+                        ),
+                    )
+                    continue
+
+                _LOGGER.critical(
+                    "Autonomous LIVE recovery reported REST success but runtime "
+                    "health is not authoritative: health_status=%s "
+                    "health_reason=%s entry_enabled=false",
+                    health_snapshot.status.value,
+                    (
+                        health_snapshot.reason.value
+                        if health_snapshot.reason is not None
+                        else "unknown"
+                    ),
+                )
                 return False
 
-            try:
-                recovered = await provider.recover()
-            except asyncio.CancelledError:
-                raise
-            except Exception as recovery_error:
-                if not is_transient_connectivity_error(recovery_error):
-                    _LOGGER.exception(
-                        "Autonomous LIVE unattended recovery failed with a "
-                        "non-transient error: attempt=%d",
-                        attempt,
-                    )
-                    raise
-                recovered = False
-
-            if not recovered:
-                continue
-
-            outage_seconds = max(0.0, monotonic() - outage_started)
-            _LOGGER.warning(
-                "Autonomous LIVE unattended recovery restored authoritative state: "
-                "reason=%s attempts=%d outage_seconds=%.1f",
-                reason,
-                attempt,
-                outage_seconds,
-            )
-            self._outage_started_monotonic = None
-            self._outage_reason = None
-            self._next_recovery_retry_seconds = 0.0
-            return True
-
-        return False
+            return False
+        finally:
+            self._clear_outage_observability()
 
     def _unattended_live_recovery_supported(self) -> bool:
         """Return whether authoritative autonomous LIVE recovery is available."""
@@ -1575,7 +1660,89 @@ class TradingRunner:
             self.trade_mode is TradeMode.LIVE
             and self._is_global_cycle_executor()
             and self.autonomous_live_recovery_provider is not None
+            and self.live_runtime_health_provider is not None
         )
+
+    @staticmethod
+    def _private_user_data_reseed_pending(
+        *,
+        snapshot: LiveRuntimeHealthSnapshot,
+    ) -> bool:
+        """Return whether private Futures state still lacks a fresh REST seed."""
+        return snapshot.reason is LiveRuntimeHealthReason.USER_DATA_STREAM_NOT_READY
+
+    def _authoritative_recovery_converged(
+        self,
+        *,
+        snapshot: LiveRuntimeHealthSnapshot,
+    ) -> bool:
+        """Return whether recovered state can safely reopen autonomous entry."""
+        if (
+            snapshot.runner_paused
+            or self.runtime_control.is_paused
+            or not self.runtime_control.is_position_protection_ready
+        ):
+            return False
+        if snapshot.status is LiveRuntimeHealthStatus.ACTIVE:
+            return (
+                snapshot.reason is None
+                and snapshot.authorization_present
+                and snapshot.authorization_exact
+            )
+        return (
+            snapshot.status is LiveRuntimeHealthStatus.INACTIVE
+            and snapshot.reason is LiveRuntimeHealthReason.NO_POSITIONS
+            and not snapshot.contexts
+        )
+
+    def _recovery_ready_to_activate(
+        self,
+        *,
+        snapshot: LiveRuntimeHealthSnapshot,
+    ) -> bool:
+        """Return whether paused recovery substrate is complete and authoritative."""
+        if (
+            not snapshot.runner_paused
+            or not self.runtime_control.is_paused
+            or not self.runtime_control.is_position_protection_ready
+        ):
+            return False
+        if snapshot.contexts:
+            return (
+                snapshot.status is LiveRuntimeHealthStatus.PAUSED
+                and snapshot.reason is LiveRuntimeHealthReason.RUNNER_PAUSED
+                and snapshot.authorization_present
+                and snapshot.authorization_exact
+            )
+        return (
+            snapshot.status is LiveRuntimeHealthStatus.INACTIVE
+            and snapshot.reason is LiveRuntimeHealthReason.NO_POSITIONS
+        )
+
+    def _activate_recovered_runtime(
+        self,
+        *,
+        snapshot: LiveRuntimeHealthSnapshot,
+    ) -> None:
+        """Activate a fully prepared recovered portfolio or authoritative zero."""
+        if snapshot.contexts:
+            self.runtime_control.resume()
+            return
+        self.runtime_control.resume_global_cycle()
+
+    def _remember_current_outage_positions(self) -> None:
+        """Retain the largest pre-convergence context count for observability."""
+        self._outage_known_position_count = max(
+            self._outage_known_position_count,
+            len(self.runtime_control.runtime_contexts),
+        )
+
+    def _clear_outage_observability(self) -> None:
+        """Clear process-local outage telemetry after convergence or shutdown."""
+        self._outage_started_monotonic = None
+        self._outage_reason = None
+        self._next_recovery_retry_seconds = 0.0
+        self._outage_known_position_count = 0
 
     @staticmethod
     def _is_unattended_health_recovery_safe(
@@ -1706,14 +1873,25 @@ class TradingRunner:
                 contexts = self.runtime_control.runtime_contexts
                 outage_started = self._outage_started_monotonic
                 if outage_started is not None:
+                    positions_known = max(
+                        self._outage_known_position_count,
+                        len(contexts),
+                    )
+                    positions_state = (
+                        "known_non_authoritative"
+                        if positions_known
+                        else "unknown_during_outage"
+                    )
                     _LOGGER.warning(
                         "Runtime heartbeat: state=PAUSED reason=%s "
                         "outage_seconds=%.1f next_retry_seconds=%.3f "
-                        "positions_known=%d entry_enabled=false",
+                        "positions_known=%d positions_state=%s "
+                        "entry_enabled=false",
                         self._outage_reason,
                         max(0.0, monotonic() - outage_started),
                         self._next_recovery_retry_seconds,
-                        len(contexts),
+                        positions_known,
+                        positions_state,
                     )
                     continue
                 if len(contexts) > 1:

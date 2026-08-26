@@ -155,8 +155,8 @@ class RuntimeRecoveryService:
         if self.first_tick_timeout_seconds <= 0:
             raise ValueError("First stream tick timeout must be greater than zero")
 
-    async def recover(self) -> bool:
-        """Rebuild runtime state and resume only when every safety gate is ready."""
+    async def recover(self, *, activate_runtime: bool = True) -> bool:
+        """Rebuild safe runtime state and optionally activate future cycles."""
         if self.trade_mode is TradeMode.LIVE:
             if not await self._clear_live_recovery_runtime_state():
                 _LOGGER.critical(
@@ -179,18 +179,21 @@ class RuntimeRecoveryService:
 
                 if not self.runtime_control.runtime_contexts:
                     if self.autonomous_live_entry_authorization is not None:
-                        self.runtime_control.resume_global_cycle()
+                        if activate_runtime:
+                            self.runtime_control.resume_global_cycle()
                         _LOGGER.info(
-                            "TESTNET autonomous LIVE runtime activated after clean "
-                            "portfolio reconciliation"
+                            "TESTNET autonomous LIVE runtime %s after clean "
+                            "portfolio reconciliation",
+                            "activated" if activate_runtime else "prepared",
                         )
                         return True
                     return False
 
-                self.runtime_control.resume()
+                if activate_runtime:
+                    self.runtime_control.resume()
                 _LOGGER.info(
-                    "LIVE portfolio management activated after reconciliation: "
-                    "count=%d",
+                    "LIVE portfolio management %s after reconciliation: count=%d",
+                    "activated" if activate_runtime else "prepared",
                     len(self.runtime_control.runtime_contexts),
                 )
                 return True
@@ -203,10 +206,12 @@ class RuntimeRecoveryService:
                 self.runtime_control.clear_runtime_contexts()
                 if self.autonomous_live_entry_authorization is not None:
                     self.runtime_control.set_position_protection_ready(True)
-                    self.runtime_control.resume_global_cycle()
+                    if activate_runtime:
+                        self.runtime_control.resume_global_cycle()
                     _LOGGER.info(
-                        "TESTNET autonomous LIVE runtime activated after clean "
-                        "portfolio recovery"
+                        "TESTNET autonomous LIVE runtime %s after clean "
+                        "portfolio recovery",
+                        "activated" if activate_runtime else "prepared",
                     )
                     return True
                 return False
@@ -255,7 +260,8 @@ class RuntimeRecoveryService:
                         await self._clear_live_recovery_runtime_state()
                         return False
                     self.runtime_control.set_position_protection_ready(True)
-                    self.runtime_control.resume()
+                    if activate_runtime:
+                        self.runtime_control.resume()
                 except asyncio.CancelledError:
                     await self._clear_live_recovery_runtime_state()
                     raise
@@ -266,7 +272,8 @@ class RuntimeRecoveryService:
                     await self._clear_live_recovery_runtime_state()
                     return False
                 _LOGGER.critical(
-                    "LIVE recovered multi-position management activated: count=%d",
+                    "LIVE recovered multi-position management %s: count=%d",
+                    "activated" if activate_runtime else "prepared",
                     len(portfolio_result.recovered_positions),
                 )
                 return True
@@ -342,10 +349,12 @@ class RuntimeRecoveryService:
                 await self.stream_controller.stop_market_stream()
                 raise
 
-        self.runtime_control.resume()
+        if activate_runtime:
+            self.runtime_control.resume()
         _LOGGER.info(
-            "Active position recovered automatically: mode=%s symbol=%s side=%s "
+            "Active position recovered and %s: mode=%s symbol=%s side=%s "
             "interval=%s strategy=%s",
+            "activated" if activate_runtime else "prepared",
             self.trade_mode.value,
             position.symbol,
             position.side.value,
