@@ -197,9 +197,9 @@ class SQLiteTestnetLegacyLiveLedgerMigration:
         )
         try:
             await source_database.connect()
-            await self._require_matching_schema(source_database=source_database)
             if await self._target_has_durable_ledger():
                 return False
+            await self._require_matching_schema(source_database=source_database)
             if not await self._source_has_durable_ledger(
                 source_database=source_database,
             ):

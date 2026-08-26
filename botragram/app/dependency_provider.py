@@ -467,10 +467,10 @@ class DependencyProvider:
 
         try:
             await database.connect()
+            self._database = database
             await SQLiteMigrationManager(database=database).initialize()
             await self._migrate_legacy_testnet_live_ledger(database=database)
 
-            self._database = database
             self._build_repositories(database=database)
             await self._build_exchange_dependencies()
             self._build_engines()
