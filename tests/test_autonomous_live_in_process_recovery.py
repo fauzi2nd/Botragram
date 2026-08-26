@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -129,21 +130,28 @@ class _RecoveryProvider:
     resume_on_success: bool = True
     failure: BaseException | None = None
     on_success: Callable[[], None] | None = None
+    clear_contexts_on_failure: bool = False
     calls: int = 0
+    activation_requests: list[bool] = field(default_factory=list[bool])
     completed: asyncio.Event = field(default_factory=asyncio.Event)
 
-    async def recover(self) -> bool:
+    async def recover(self, *, activate_runtime: bool = True) -> bool:
         self.calls += 1
+        self.activation_requests.append(activate_runtime)
         if self.failure is not None:
             raise self.failure
         if not self.outcomes:
             raise RuntimeError("Unexpected extra recovery attempt")
         outcome = self.outcomes.pop(0)
+        if not outcome and self.clear_contexts_on_failure:
+            self.control.clear_runtime_contexts()
         if outcome and self.on_success is not None:
             self.on_success()
-        if outcome and self.resume_on_success:
+        if outcome and self.resume_on_success and activate_runtime:
             self.control.set_position_protection_ready(True)
             self.control.resume_global_cycle()
+        elif outcome:
+            self.control.set_position_protection_ready(True)
         self.completed.set()
         return outcome
 
@@ -158,24 +166,48 @@ class _HealthProvider:
     calls: int = 0
 
     def set_active(self) -> None:
-        self.status = LiveRuntimeHealthStatus.ACTIVE
-        self.reason = None
+        if self.control.is_paused:
+            self.set_ready_while_paused()
+        else:
+            self.status = LiveRuntimeHealthStatus.ACTIVE
+            self.reason = None
 
     def set_degraded(self) -> None:
         self.status = LiveRuntimeHealthStatus.DEGRADED
         self.reason = LiveRuntimeHealthReason.STREAM_FAILED
 
+    def set_private_pending(self) -> None:
+        self.status = LiveRuntimeHealthStatus.DEGRADED
+        self.reason = LiveRuntimeHealthReason.USER_DATA_STREAM_NOT_READY
+
+    def set_ready_while_paused(self) -> None:
+        self.status = LiveRuntimeHealthStatus.PAUSED
+        self.reason = LiveRuntimeHealthReason.RUNNER_PAUSED
+
+    def set_inactive(self) -> None:
+        self.status = LiveRuntimeHealthStatus.INACTIVE
+        self.reason = LiveRuntimeHealthReason.NO_POSITIONS
+
     def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
         self.calls += 1
         contexts = self.control.runtime_contexts
-        stream_failed = self.reason is LiveRuntimeHealthReason.STREAM_FAILED
+        status = self.status
+        reason = self.reason
+        if (
+            status is LiveRuntimeHealthStatus.PAUSED
+            and reason is LiveRuntimeHealthReason.RUNNER_PAUSED
+            and not self.control.is_paused
+        ):
+            status = LiveRuntimeHealthStatus.ACTIVE
+            reason = None
+        stream_failed = reason is LiveRuntimeHealthReason.STREAM_FAILED
         return LiveRuntimeHealthSnapshot(
-            status=self.status,
-            reason=self.reason,
+            status=status,
+            reason=reason,
             contexts=contexts,
             affected_contexts=(
                 contexts
-                if self.status
+                if status
                 in {
                     LiveRuntimeHealthStatus.DEGRADED,
                     LiveRuntimeHealthStatus.BLOCKED,
@@ -243,6 +275,8 @@ def _runner(
     maximum_recovery_attempts: int = 1,
     cycle_interval_seconds: float = 0.05,
     health_check_interval_seconds: float = 0.005,
+    heartbeat_interval_seconds: float = 60.0,
+    unattended_recovery_delay_seconds: float = 0.001,
 ) -> TradingRunner:
     return TradingRunner(
         executor=executor,
@@ -256,10 +290,10 @@ def _runner(
         autonomous_live_health_check_interval_seconds=health_check_interval_seconds,
         cycle_interval_seconds=cycle_interval_seconds,
         failure_retry_delay_seconds=0.001,
-        heartbeat_interval_seconds=60.0,
+        heartbeat_interval_seconds=heartbeat_interval_seconds,
         unattended_recovery_backoff=CappedExponentialBackoff(
-            initial_delay_seconds=0.001,
-            maximum_delay_seconds=0.001,
+            initial_delay_seconds=unattended_recovery_delay_seconds,
+            maximum_delay_seconds=unattended_recovery_delay_seconds,
             jitter_ratio=0.0,
             random_source=lambda: 0.5,
         ),
@@ -598,6 +632,7 @@ async def _run_independent_connectivity_recovery_budget_test() -> None:
 
     assert executor.calls == 2
     assert recovery.calls == 2
+    assert recovery.activation_requests == [False, False]
     assert not control.is_paused
 
 
@@ -632,12 +667,24 @@ def test_prolonged_connectivity_outage_stays_paused_then_recovers() -> None:
 
 async def _run_prolonged_connectivity_outage_test() -> None:
     control = _active_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.INACTIVE,
+        reason=LiveRuntimeHealthReason.NO_POSITIONS,
+        authorization_present=False,
+        authorization_exact=False,
+    )
     executor = _GlobalExecutor(
         unsafe_failures_remaining=0,
         connectivity_failures_remaining=1,
     )
     recovery = _RecoveryProvider(control=control, outcomes=[False, False])
-    runner = _runner(executor=executor, control=control, recovery=recovery)
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
     task = asyncio.create_task(runner.run())
 
     await _wait_for_recovery_calls(recovery=recovery, expected=2)
@@ -673,8 +720,7 @@ async def _run_stale_private_stream_health_test() -> None:
     executor = _GlobalExecutor(unsafe_failures_remaining=0)
     recovery = _RecoveryProvider(
         control=control,
-        outcomes=[False, True],
-        on_success=health.set_active,
+        outcomes=[True],
     )
     runner = _runner(
         executor=executor,
@@ -684,13 +730,179 @@ async def _run_stale_private_stream_health_test() -> None:
     )
     task = asyncio.create_task(runner.run())
 
-    await _wait_for_recovery_calls(recovery=recovery, expected=1)
+    async with asyncio.timeout(1.0):
+        while not control.is_paused:
+            await asyncio.sleep(0)
+    await asyncio.sleep(0.01)
     assert executor.calls == 0
+    assert recovery.calls == 0
     assert control.is_paused
 
+    health.set_inactive()
+    await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert recovery.calls == 1
+    assert executor.calls == 1
+
+
+def test_rest_recovery_waits_for_private_stream_in_one_episode(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Do not claim convergence or rerun REST recovery before private READY."""
+    asyncio.run(_run_rest_before_private_stream_test(caplog=caplog))
+
+
+async def _run_rest_before_private_stream_test(
+    *,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="botragram.app.trading_runner")
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.DEGRADED,
+        reason=LiveRuntimeHealthReason.STREAM_FAILED,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    recovery = _RecoveryProvider(control=control, outcomes=[True, True])
+
+    def advance_health() -> None:
+        if recovery.calls == 1:
+            health.set_private_pending()
+        else:
+            health.set_active()
+
+    recovery.on_success = advance_health
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+    task = asyncio.create_task(runner.run())
+
+    await _wait_for_recovery_calls(recovery=recovery, expected=1)
+    async with asyncio.timeout(1.0):
+        while not control.is_paused:
+            await asyncio.sleep(0)
+    await asyncio.sleep(0.01)
+
+    assert not task.done()
+    assert recovery.calls == 1
+    assert executor.calls == 0
+    assert control.is_paused
+    assert _count_log(caplog=caplog, text="paused for unattended recovery") == 1
+    assert _count_log(caplog=caplog, text="restored authoritative state") == 0
+
+    health.set_ready_while_paused()
     await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
     runner.stop()
     await asyncio.wait_for(task, timeout=1.0)
 
     assert recovery.calls == 2
     assert executor.calls == 1
+    assert not control.is_paused
+    assert _count_log(caplog=caplog, text="paused for unattended recovery") == 1
+    assert _count_log(caplog=caplog, text="restored authoritative state") == 1
+
+
+def test_outage_heartbeat_preserves_known_position_count(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Retain pre-outage contexts after a failed recovery clears local state."""
+    asyncio.run(_run_known_position_heartbeat_test(caplog=caplog))
+
+
+async def _run_known_position_heartbeat_test(
+    *,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="botragram.app.trading_runner")
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.ACTIVE,
+        reason=None,
+    )
+    executor = _GlobalExecutor(
+        unsafe_failures_remaining=0,
+        connectivity_failures_remaining=1,
+    )
+    recovery = _RecoveryProvider(
+        control=control,
+        outcomes=[False],
+        clear_contexts_on_failure=True,
+    )
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+        heartbeat_interval_seconds=0.001,
+        unattended_recovery_delay_seconds=0.05,
+    )
+    task = asyncio.create_task(runner.run())
+
+    await _wait_for_recovery_calls(recovery=recovery, expected=1)
+    async with asyncio.timeout(1.0):
+        while (
+            _count_log(
+                caplog=caplog,
+                text="positions_state=known_non_authoritative",
+            )
+            == 0
+        ):
+            await asyncio.sleep(0)
+
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert recovery.calls == 1
+    assert not control.runtime_contexts
+    assert _count_log(caplog=caplog, text="positions_known=1") >= 1
+
+
+def test_explicit_stop_while_private_recovery_is_pending() -> None:
+    """Stop cleanly without REST recovery or a fresh entry while private is stale."""
+    asyncio.run(_run_explicit_stop_during_private_recovery_test())
+
+
+async def _run_explicit_stop_during_private_recovery_test() -> None:
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.DEGRADED,
+        reason=LiveRuntimeHealthReason.USER_DATA_STREAM_NOT_READY,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    recovery = _RecoveryProvider(control=control, outcomes=[True])
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+    task = asyncio.create_task(runner.run())
+
+    async with asyncio.timeout(1.0):
+        while not control.is_paused:
+            await asyncio.sleep(0)
+    await asyncio.sleep(0.01)
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert not runner.is_running
+    assert control.is_paused
+    assert recovery.calls == 0
+    assert executor.calls == 0
+
+
+def _count_log(
+    *,
+    caplog: pytest.LogCaptureFixture,
+    text: str,
+) -> int:
+    """Return the number of captured recovery messages containing text."""
+    return sum(text in record.getMessage() for record in caplog.records)
