@@ -264,11 +264,9 @@ class LivePostEntryRecoveryService:
                     position=persisted,
                 ):
                     return LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
-                lifecycle_id = (
-                    await self._stage_existing_recovery_lifecycle_best_effort(
-                        attempt=attempt,
-                        position=persisted,
-                    )
+                lifecycle_id = await self._stage_existing_recovery_lifecycle(
+                    attempt=attempt,
+                    position=persisted,
                 )
                 await self._resolve_no_exposure(attempt=attempt)
                 await self._complete_recovery_lifecycle_best_effort(
@@ -409,7 +407,7 @@ class LivePostEntryRecoveryService:
                 raise RuntimeError(
                     "Zero exposure could not be proven safe after protection failure"
                 ) from cause
-            lifecycle_id = await self._stage_existing_recovery_lifecycle_best_effort(
+            lifecycle_id = await self._stage_existing_recovery_lifecycle(
                 attempt=attempt,
                 position=position,
             )
@@ -464,7 +462,7 @@ class LivePostEntryRecoveryService:
         if not await self._reconcile_zero_exposure_protection(position=position):
             raise RuntimeError("Emergency exit left protection cleanup unresolved")
 
-        lifecycle_id = await self._stage_recovery_lifecycle_best_effort(
+        lifecycle_id = await self._stage_recovery_lifecycle(
             attempt=attempt,
             position=position,
             exit_order=exit_order,
@@ -561,7 +559,7 @@ class LivePostEntryRecoveryService:
 
         raise RuntimeError("Emergency exit submission budget was exhausted")
 
-    async def _stage_recovery_lifecycle_best_effort(
+    async def _stage_recovery_lifecycle(
         self,
         *,
         attempt: SubmissionAttempt,
@@ -569,40 +567,46 @@ class LivePostEntryRecoveryService:
         exit_order: Order | None,
         close_reason: ClosedPositionReason,
     ) -> str | None:
-        """Stage a proven emergency recovery close without blocking resolution."""
+        """Require durable recovery ownership before terminalizing local identity."""
         service = self.closed_lifecycle_service
-        if service is None or exit_order is None:
+        if service is None:
             return None
-        try:
-            await service.stage(
-                position=position,
-                attempt=attempt,
-                exit_order=exit_order,
-                close_reason=close_reason,
-                provenance=ClosedPositionProvenance.RECOVERY_EMERGENCY_ORDER,
+        if await service.has_durable_ownership(
+            entry_client_order_id=attempt.client_order_id,
+        ):
+            return attempt.client_order_id
+        if exit_order is None:
+            raise RuntimeError(
+                "Recovery cannot terminalize without durable exit ownership"
             )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            _LOGGER.exception(
-                "Recovery close lifecycle staging failed without blocking "
-                "zero-exposure resolution: symbol=%s client_order_id=%s",
-                attempt.symbol,
-                attempt.client_order_id,
-            )
-            return None
+        await service.stage(
+            position=position,
+            attempt=attempt,
+            exit_order=exit_order,
+            close_reason=close_reason,
+            provenance=ClosedPositionProvenance.RECOVERY_EMERGENCY_ORDER,
+        )
         return attempt.client_order_id
 
-    async def _stage_existing_recovery_lifecycle_best_effort(
+    async def _stage_existing_recovery_lifecycle(
         self,
         *,
         attempt: SubmissionAttempt,
         position: Position,
     ) -> str | None:
-        """Recover an exact FILLED emergency identity after a process restart."""
+        """Require existing or recovered ownership before local terminalization."""
+        service = self.closed_lifecycle_service
         order_service = self.order_service
-        if self.closed_lifecycle_service is None or order_service is None:
+        if service is None:
             return None
+        if await service.has_durable_ownership(
+            entry_client_order_id=attempt.client_order_id,
+        ):
+            return attempt.client_order_id
+        if order_service is None:
+            raise RuntimeError(
+                "Recovery cannot prove durable exit ownership without order lookup"
+            )
         exit_client_id = self._emergency_exit_client_order_id(
             entry_client_order_id=attempt.client_order_id,
         )
@@ -621,19 +625,13 @@ class LivePostEntryRecoveryService:
                 raise RuntimeError(
                     "Recovered emergency exit is not in a proven FILLED state"
                 )
-        except ExchangeOrderNotFoundError:
-            return None
+        except ExchangeOrderNotFoundError as error:
+            raise RuntimeError(
+                "Recovery cannot prove a durable emergency exit identity"
+            ) from error
         except asyncio.CancelledError:
             raise
-        except Exception:
-            _LOGGER.exception(
-                "Recovery close identity remains unavailable for performance: "
-                "symbol=%s client_order_id=%s",
-                attempt.symbol,
-                attempt.client_order_id,
-            )
-            return None
-        return await self._stage_recovery_lifecycle_best_effort(
+        return await self._stage_recovery_lifecycle(
             attempt=attempt,
             position=position,
             exit_order=exit_order,

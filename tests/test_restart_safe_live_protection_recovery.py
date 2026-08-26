@@ -32,6 +32,7 @@ from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.models import (
     ExchangeSymbolRules,
     Order,
+    PendingClosedPositionLifecycle,
     Position,
     SubmissionAttempt,
     Trade,
@@ -523,6 +524,84 @@ async def test_crossed_acknowledged_entry_closes_once_and_resolves() -> None:
     assert completed[0].gross_realized_pnl == Decimal("-2")
     assert completed[0].fee == Decimal("0.4")
     assert completed[0].net_pnl == Decimal("-2.4")
+
+
+@pytest.mark.asyncio
+async def test_emergency_stage_failure_preserves_identity_for_restart_retry() -> None:
+    """Resolve once after staging recovers without submitting another close."""
+
+    class FailOnceLifecycleRepository(MemoryClosedPositionLifecycleRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_stage = True
+            self.stage_calls = 0
+
+        async def stage(self, *, lifecycle: PendingClosedPositionLifecycle) -> None:
+            self.stage_calls += 1
+            if self.fail_stage:
+                raise RuntimeError("configured lifecycle stage failure")
+            await super().stage(lifecycle=lifecycle)
+
+    attempt = _attempt()
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+    position = _position()
+    positions = PositionVisibility(current=position, persisted=position)
+    lookup = OrderLookup(
+        orders={
+            _ENTRY_ID: _order(
+                order_id="entry-1",
+                client_id=_ENTRY_ID,
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                status=OrderStatus.FILLED,
+            )
+        }
+    )
+    protection = ProtectionRecovery(fail_ensure=True)
+    exit_exchange = EmergencyExitExchange(positions=positions, lookup=lookup)
+    lifecycle_repository = FailOnceLifecycleRepository()
+
+    def build_service() -> LivePostEntryRecoveryService:
+        return LivePostEntryRecoveryService(
+            submission_attempt_repository=attempts,
+            live_recovery_repository=AtomicRecovery(
+                attempts=attempts,
+                positions=positions,
+            ),
+            position_service=positions,
+            protection_service=protection,
+            runtime_control=TradingRuntimeControl(),
+            order_service=lookup,
+            protection_reconciler=protection,
+            protection_cleanup_service=protection,
+            emergency_exit_exchange=exit_exchange,
+            closed_lifecycle_service=_lifecycle_service(
+                repository=lifecycle_repository
+            ),
+        )
+
+    with pytest.raises(RuntimeError, match="configured lifecycle stage failure"):
+        await build_service().recover_acknowledged(attempt=attempt)
+
+    stored = await attempts.get_by_client_order_id(client_order_id=_ENTRY_ID)
+    assert positions.current is None
+    assert positions.persisted == position
+    assert stored is not None
+    assert stored.status is SubmissionAttemptStatus.ACKNOWLEDGED
+    assert exit_exchange.calls == [("BTCUSDT", _EXIT_ID)]
+    assert await lifecycle_repository.get_completed() == ()
+
+    lifecycle_repository.fail_stage = False
+    result = await build_service().recover_acknowledged(attempt=attempt)
+    completed = await lifecycle_repository.get_completed()
+
+    assert result is LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
+    assert positions.persisted is None
+    assert exit_exchange.calls == [("BTCUSDT", _EXIT_ID)]
+    assert lifecycle_repository.stage_calls == 2
+    assert len(completed) == 1
+    assert completed[0].entry_client_order_id == _ENTRY_ID
 
 
 @pytest.mark.asyncio

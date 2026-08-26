@@ -52,6 +52,12 @@ class ClosedPositionLifecycleService:
 
     repository: ClosedPositionLifecycleRepository
     trade_history: ExactOrderTradeHistory
+    pnl_asset: str = "USDT"
+
+    def __post_init__(self) -> None:
+        """Require an explicit asset for gross PnL and compatible fees."""
+        if not self.pnl_asset.strip():
+            raise ValueError("Closed lifecycle PnL asset must not be empty")
 
     async def stage(
         self,
@@ -106,6 +112,19 @@ class ClosedPositionLifecycleService:
         await self.repository.stage(lifecycle=lifecycle)
         return lifecycle
 
+    async def has_durable_ownership(
+        self,
+        *,
+        entry_client_order_id: str,
+    ) -> bool:
+        """Return whether ownership already survived a prior local commit."""
+        return (
+            await self.repository.get_by_entry_client_order_id(
+                entry_client_order_id=entry_client_order_id,
+            )
+            is not None
+        )
+
     async def complete(self, *, entry_client_order_id: str) -> None:
         """Aggregate exact entry and exit fills into one immutable closed trade."""
         record = await self.repository.get_by_entry_client_order_id(
@@ -143,6 +162,11 @@ class ClosedPositionLifecycleService:
         fee_assets = {fill.fee_asset.upper() for fill in all_fills}
         if len(fee_assets) != 1:
             raise RuntimeError("Closed lifecycle fees use incompatible assets")
+        fee_asset = next(iter(fee_assets))
+        if fee_asset != self.pnl_asset.strip().upper():
+            raise RuntimeError(
+                "Closed lifecycle fee asset does not match the configured PnL asset"
+            )
         gross_realized_pnl = sum(
             (fill.realized_pnl for fill in exit_fills if fill.realized_pnl is not None),
             start=_DECIMAL_ZERO,
@@ -153,7 +177,7 @@ class ClosedPositionLifecycleService:
                 ownership=record,
                 gross_realized_pnl=gross_realized_pnl,
                 fee=fee,
-                fee_asset=next(iter(fee_assets)),
+                fee_asset=fee_asset,
                 net_pnl=gross_realized_pnl - fee,
                 closed_at=max(fill.executed_at for fill in exit_fills),
             )

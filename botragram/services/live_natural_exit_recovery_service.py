@@ -110,7 +110,6 @@ class LiveNaturalExitRecoveryService:
 
     async def reconcile(self) -> None:
         """Remove proven orphan protection and stale local positions."""
-        await self._reconcile_pending_lifecycles_best_effort()
         incomplete_attempts = tuple(
             await self.submission_attempt_repository.get_incomplete()
         )
@@ -193,6 +192,7 @@ class LiveNaturalExitRecoveryService:
                 initial_positions=observed_positions,
                 observed_positions=settled_positions,
             ):
+                await self._reconcile_pending_lifecycles_best_effort()
                 return
             await self._validate_known_portfolio_transition(
                 initial_positions=observed_positions,
@@ -271,7 +271,7 @@ class LiveNaturalExitRecoveryService:
                         "LIVE protection remains before durable position deletion: "
                         f"symbol={position.symbol} count={len(remaining)}"
                     )
-                lifecycle_id = await self._stage_closed_lifecycle_best_effort(
+                lifecycle_id = await self._stage_closed_lifecycle(
                     position=position,
                     filled_exit_orders=filled_exit_orders,
                 )
@@ -295,48 +295,51 @@ class LiveNaturalExitRecoveryService:
         if service is not None:
             await service.reconcile_pending_best_effort()
 
-    async def _stage_closed_lifecycle_best_effort(
+    async def _stage_closed_lifecycle(
         self,
         *,
         position: Position,
         filled_exit_orders: tuple[Order, ...],
     ) -> str | None:
-        """Stage exact lifecycle ownership without blocking position cleanup."""
+        """Require durable ownership before deleting the local position identity."""
         service = self.closed_lifecycle_service
         entry_identity = position.entry_client_order_id
-        if service is None or entry_identity is None or len(filled_exit_orders) != 1:
+        if service is None:
             return None
-        try:
-            attempt = await self.submission_attempt_repository.get_by_client_order_id(
-                client_order_id=entry_identity,
+        if entry_identity is None:
+            raise RuntimeError(
+                "Natural exit cannot delete a position without lifecycle identity"
             )
-            if (
-                attempt is None
-                or attempt.status is not SubmissionAttemptStatus.COMPLETED
-                or attempt.exchange_order_id is None
-            ):
-                return None
-            exit_order = filled_exit_orders[0]
-            await service.stage(
+        if await service.has_durable_ownership(
+            entry_client_order_id=entry_identity,
+        ):
+            return entry_identity
+        if len(filled_exit_orders) != 1:
+            raise RuntimeError(
+                "Natural exit requires exactly one authoritative FILLED exit"
+            )
+        attempt = await self.submission_attempt_repository.get_by_client_order_id(
+            client_order_id=entry_identity,
+        )
+        if (
+            attempt is None
+            or attempt.status is not SubmissionAttemptStatus.COMPLETED
+            or attempt.exchange_order_id is None
+        ):
+            raise RuntimeError(
+                "Natural exit cannot delete an unstaged lifecycle identity"
+            )
+        exit_order = filled_exit_orders[0]
+        await service.stage(
+            position=position,
+            attempt=attempt,
+            exit_order=exit_order,
+            close_reason=self._close_reason(
                 position=position,
-                attempt=attempt,
                 exit_order=exit_order,
-                close_reason=self._close_reason(
-                    position=position,
-                    exit_order=exit_order,
-                ),
-                provenance=ClosedPositionProvenance.PROTECTION_ORDER,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            _LOGGER.exception(
-                "Closed lifecycle ownership staging failed before local cleanup: "
-                "symbol=%s entry_client_order_id=%s",
-                position.symbol,
-                entry_identity,
-            )
-            return None
+            ),
+            provenance=ClosedPositionProvenance.PROTECTION_ORDER,
+        )
         return entry_identity
 
     async def _complete_closed_lifecycle_best_effort(

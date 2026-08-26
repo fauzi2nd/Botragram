@@ -843,6 +843,109 @@ async def test_reconcile_deletes_proven_exit_when_performance_history_fails() ->
     assert len(await lifecycle_repository.get_pending()) == 1
 
 
+@pytest.mark.asyncio
+async def test_staging_failure_preserves_natural_exit_identity_until_restart() -> None:
+    """Retry durable staging without repeating completed protection cleanup."""
+
+    class FailOnceLifecycleRepository(MemoryClosedPositionLifecycleRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_stage = True
+            self.stage_calls = 0
+
+        async def stage(
+            self,
+            *,
+            lifecycle: PendingClosedPositionLifecycle,
+        ) -> None:
+            self.stage_calls += 1
+            if self.fail_stage:
+                raise RuntimeError("configured lifecycle stage failure")
+            await super().stage(lifecycle=lifecycle)
+
+    class ExactTradeHistory:
+        async def get_trades_for_order(
+            self,
+            *,
+            symbol: str,
+            order_id: str,
+        ) -> tuple[Trade, ...]:
+            del symbol
+            return {
+                "entry-1": (
+                    _fill(
+                        trade_id="entry-fill",
+                        order_id="entry-1",
+                        side=OrderSide.SELL,
+                        realized_pnl="0",
+                    ),
+                ),
+                "filled-exit": (
+                    _fill(
+                        trade_id="exit-fill",
+                        order_id="filled-exit",
+                        side=OrderSide.BUY,
+                        realized_pnl="2",
+                    ),
+                ),
+            }[order_id]
+
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycle_repository = FailOnceLifecycleRepository()
+    filled_stop = replace(
+        _protection(
+            order_type=OrderType.STOP_MARKET,
+            client_id=_STOP_ID,
+            trigger="0.01151",
+        ),
+        order_id="filled-exit",
+        status=OrderStatus.FILLED,
+        executed_quantity=position.quantity,
+    )
+    exchange = FakeNaturalExitExchange(
+        protections=(
+            _protection(
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                client_id=_TP_ID,
+                trigger="0.01084",
+            ),
+        ),
+        exact_only_protections=(filled_stop,),
+    )
+
+    def build_service() -> LiveNaturalExitRecoveryService:
+        return LiveNaturalExitRecoveryService(
+            exchange_client=exchange,
+            position_repository=positions,
+            submission_attempt_repository=attempts,
+            closed_lifecycle_service=ClosedPositionLifecycleService(
+                repository=lifecycle_repository,
+                trade_history=ExactTradeHistory(),
+            ),
+        )
+
+    with pytest.raises(RuntimeError, match="configured lifecycle stage failure"):
+        await build_service().reconcile()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) == position
+    assert exchange.cancel_calls == [(_SYMBOL, _TP_ID)]
+    assert await lifecycle_repository.get_completed() == ()
+
+    lifecycle_repository.fail_stage = False
+    await build_service().reconcile()
+    completed = await lifecycle_repository.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert exchange.cancel_calls == [(_SYMBOL, _TP_ID)]
+    assert lifecycle_repository.stage_calls == 2
+    assert len(completed) == 1
+    assert completed[0].entry_client_order_id == position.entry_client_order_id
+
+
 def _fill(
     *,
     trade_id: str,
@@ -965,14 +1068,17 @@ async def test_natural_exit_records_one_tp_sl_or_stepped_stop_lifecycle(
 
 
 @pytest.mark.asyncio
-async def test_performance_repository_failure_never_blocks_safe_cleanup() -> None:
-    """Treat both pending reads and ownership lookups as non-critical telemetry."""
+async def test_performance_ownership_failure_preserves_durable_identity() -> None:
+    """Do not delete Position when lifecycle ownership cannot be proven durable."""
 
     class FailingLifecycleRepository(MemoryClosedPositionLifecycleRepository):
-        async def get_pending(
+        async def get_by_entry_client_order_id(
             self,
-        ) -> tuple[PendingClosedPositionLifecycle, ...]:
-            raise RuntimeError("configured lifecycle read failure")
+            *,
+            entry_client_order_id: str,
+        ) -> ClosedPositionLifecycle | PendingClosedPositionLifecycle | None:
+            del entry_client_order_id
+            raise RuntimeError("configured lifecycle ownership failure")
 
     class EmptyTradeHistory:
         async def get_trades_for_order(
@@ -995,6 +1101,7 @@ async def test_performance_repository_failure_never_blocks_safe_cleanup() -> Non
         ),
     )
 
-    await service.reconcile()
+    with pytest.raises(RuntimeError, match="configured lifecycle ownership failure"):
+        await service.reconcile()
 
-    assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is not None

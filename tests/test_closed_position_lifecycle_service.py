@@ -122,6 +122,7 @@ def _fill(
     order_id: str,
     side: OrderSide,
     fee: str,
+    fee_asset: str = "USDT",
     realized_pnl: str | None,
     seconds: int,
 ) -> Trade:
@@ -135,7 +136,7 @@ def _fill(
         quantity=Decimal("0.5"),
         quote_quantity=Decimal("50"),
         fee=Decimal(fee),
-        fee_asset="USDT",
+        fee_asset=fee_asset,
         realized_pnl=(Decimal(realized_pnl) if realized_pnl is not None else None),
         executed_at=_NOW + timedelta(seconds=seconds),
     )
@@ -270,3 +271,58 @@ async def test_entry_and_exit_fee_can_change_gross_win_into_net_loss() -> None:
     assert snapshot.win_count == 0
     assert snapshot.loss_count == 1
     assert snapshot.break_even_count == 0
+
+
+@pytest.mark.asyncio
+async def test_incompatible_fee_asset_keeps_lifecycle_pending() -> None:
+    """Never invent net PnL by subtracting a fee in a different asset."""
+    repository = MemoryClosedPositionLifecycleRepository()
+    history = ExactTradeHistory(
+        fills_by_order_id={
+            "entry-1": (
+                _fill(
+                    trade_id="entry",
+                    order_id="entry-1",
+                    side=OrderSide.BUY,
+                    fee="0.01",
+                    fee_asset="BNB",
+                    realized_pnl="0",
+                    seconds=1,
+                ),
+            ),
+            "exit-1": (
+                _fill(
+                    trade_id="exit",
+                    order_id="exit-1",
+                    side=OrderSide.SELL,
+                    fee="0.01",
+                    fee_asset="BNB",
+                    realized_pnl="2",
+                    seconds=2,
+                ),
+            ),
+        }
+    )
+    lifecycle_service = ClosedPositionLifecycleService(
+        repository=repository,
+        trade_history=history,
+        pnl_asset="USDT",
+    )
+    await lifecycle_service.stage(
+        position=_position(),
+        attempt=_attempt(),
+        exit_order=_exit_order(),
+        close_reason=ClosedPositionReason.TAKE_PROFIT,
+        provenance=ClosedPositionProvenance.PROTECTION_ORDER,
+    )
+
+    await lifecycle_service.complete_best_effort(entry_client_order_id=_ENTRY_CLIENT_ID)
+    await lifecycle_service.reconcile_pending_best_effort()
+
+    assert len(await repository.get_pending()) == 1
+    assert await repository.get_completed() == ()
+    snapshot = await LiveTradingPerformanceService(
+        lifecycle_repository=repository
+    ).get_snapshot()
+    assert snapshot.closed_trade_count == 0
+    assert snapshot.realized_pnl == Decimal("0")
