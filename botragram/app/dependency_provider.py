@@ -528,6 +528,7 @@ class DependencyProvider:
                 runtime_control=self.runtime_control,
                 market_stream_service=self.live_market_stream_service,
                 protection_monitoring_service=(self.live_protection_monitoring_service),
+                live_futures_user_data_service=self._live_futures_user_data_service,
             )
             self._trading_cycle_executor = self._build_trading_cycle_executor()
 

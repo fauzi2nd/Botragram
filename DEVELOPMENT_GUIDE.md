@@ -623,6 +623,7 @@ Botragram/
 |   |   |-- __init__.py
 |   |   |-- application.py
 |   |   |-- backtest_command.py       # Backtest CLI composition dan report
+|   |   |-- connectivity.py           # Transient dependency-failure classification
 |   |   |-- dependency_provider.py`n|   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
 |   |   |-- environment_provider.py
 |   |   |-- lifecycle.py
@@ -808,6 +809,7 @@ Botragram/
 |       |-- decimal.py
 |       |-- formatter.py
 |       |-- logger.py
+|       |-- retry.py                   # Capped exponential backoff with jitter
 |       `-- validator.py
 |-- tests/
 |   |-- __init__.py

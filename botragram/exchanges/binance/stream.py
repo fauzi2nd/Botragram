@@ -19,7 +19,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from random import SystemRandom
 from typing import Final, cast
 
 # =============================================================================
@@ -35,6 +36,7 @@ from botragram.exchanges.base import BaseStreamClient
 from botragram.exchanges.base.mapper import ExchangePayload
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.models import Candle, Ticker
+from botragram.utils.retry import CappedExponentialBackoff
 
 __all__ = [
     "BinanceStreamClient",
@@ -74,8 +76,15 @@ _KLINE_EVENT_TYPE: Final[str] = "kline"
 
 _DEFAULT_HEARTBEAT_SECONDS: Final[float] = 30.0
 _DEFAULT_RECONNECT_DELAY_SECONDS: Final[float] = 1.0
+_DEFAULT_MAXIMUM_RECONNECT_DELAY_SECONDS: Final[float] = 60.0
+_DEFAULT_RECONNECT_JITTER_RATIO: Final[float] = 0.2
 _DEFAULT_RECEIVE_TIMEOUT_SECONDS: Final[float] = 60.0
 _DEFAULT_QUEUE_MAX_SIZE: Final[int] = 1_000
+
+
+def _random_fraction() -> float:
+    """Return isolated jitter for one public-stream transport."""
+    return SystemRandom().random()
 
 
 # =============================================================================
@@ -99,6 +108,7 @@ class BinanceStreamClient(BaseStreamClient):
         "_mapper",
         "_queue_max_size",
         "_receive_timeout_seconds",
+        "_reconnect_backoff",
         "_reconnect_delay_seconds",
         "_session",
         "_state_lock",
@@ -113,6 +123,11 @@ class BinanceStreamClient(BaseStreamClient):
         heartbeat_seconds: float = _DEFAULT_HEARTBEAT_SECONDS,
         receive_timeout_seconds: float = _DEFAULT_RECEIVE_TIMEOUT_SECONDS,
         reconnect_delay_seconds: float = _DEFAULT_RECONNECT_DELAY_SECONDS,
+        maximum_reconnect_delay_seconds: float = (
+            _DEFAULT_MAXIMUM_RECONNECT_DELAY_SECONDS
+        ),
+        reconnect_jitter_ratio: float = _DEFAULT_RECONNECT_JITTER_RATIO,
+        random_source: Callable[[], float] = _random_fraction,
         queue_max_size: int = _DEFAULT_QUEUE_MAX_SIZE,
     ) -> None:
         """Initialize the Binance streaming client."""
@@ -130,6 +145,15 @@ class BinanceStreamClient(BaseStreamClient):
         if reconnect_delay_seconds < 0:
             raise ValueError("WebSocket reconnect delay must not be negative")
 
+        if maximum_reconnect_delay_seconds <= 0:
+            raise ValueError("Maximum WebSocket reconnect delay must be positive")
+
+        if (
+            reconnect_delay_seconds > 0
+            and maximum_reconnect_delay_seconds < reconnect_delay_seconds
+        ):
+            raise ValueError("Maximum reconnect delay must cover the initial delay")
+
         if queue_max_size <= 0:
             raise ValueError("WebSocket queue size must be greater than zero")
 
@@ -138,6 +162,16 @@ class BinanceStreamClient(BaseStreamClient):
         self._heartbeat_seconds = heartbeat_seconds
         self._receive_timeout_seconds = receive_timeout_seconds
         self._reconnect_delay_seconds = reconnect_delay_seconds
+        self._reconnect_backoff = (
+            CappedExponentialBackoff(
+                initial_delay_seconds=reconnect_delay_seconds,
+                maximum_delay_seconds=maximum_reconnect_delay_seconds,
+                jitter_ratio=reconnect_jitter_ratio,
+                random_source=random_source,
+            )
+            if reconnect_delay_seconds > 0
+            else None
+        )
         self._queue_max_size = queue_max_size
 
         self._session: aiohttp.ClientSession | None = None
@@ -376,16 +410,20 @@ class BinanceStreamClient(BaseStreamClient):
         queue: StreamQueue,
     ) -> None:
         """Receive payloads and place them in a bounded queue."""
+        reconnect_attempt = 0
         try:
             while self.is_connected and not await self._is_cancelled(stream_name):
-                await self._connect_and_consume_stream(
+                connected = await self._connect_and_consume_stream(
                     stream_name=stream_name,
                     expected_event_type=expected_event_type,
                     queue=queue,
                 )
 
                 if self.is_connected and not await self._is_cancelled(stream_name):
-                    await asyncio.sleep(self._reconnect_delay_seconds)
+                    reconnect_attempt = 1 if connected else reconnect_attempt + 1
+                    await asyncio.sleep(
+                        self._get_reconnect_delay(attempt=reconnect_attempt)
+                    )
         finally:
             self._put_stream_closed(queue)
 
@@ -395,8 +433,9 @@ class BinanceStreamClient(BaseStreamClient):
         stream_name: str,
         expected_event_type: str,
         queue: StreamQueue,
-    ) -> None:
+    ) -> bool:
         socket: aiohttp.ClientWebSocketResponse | None = None
+        connected = False
 
         try:
             session = self._require_session()
@@ -407,6 +446,7 @@ class BinanceStreamClient(BaseStreamClient):
                 autoclose=True,
                 autoping=True,
             )
+            connected = True
             await self._register_socket(
                 stream_name=stream_name,
                 socket=socket,
@@ -427,7 +467,7 @@ class BinanceStreamClient(BaseStreamClient):
             ValueError,
         ) as error:
             if not self.is_connected or await self._is_cancelled(stream_name):
-                return
+                return connected
 
             _LOGGER.warning(
                 "Binance WebSocket stream interrupted; reconnecting",
@@ -445,6 +485,12 @@ class BinanceStreamClient(BaseStreamClient):
 
                 if not socket.closed:
                     await socket.close()
+        return connected
+
+    def _get_reconnect_delay(self, *, attempt: int) -> float:
+        """Return one capped reconnect delay while retaining zero-delay tests."""
+        backoff = self._reconnect_backoff
+        return 0.0 if backoff is None else backoff.get_delay(attempt=attempt)
 
     async def _consume_socket_messages(
         self,

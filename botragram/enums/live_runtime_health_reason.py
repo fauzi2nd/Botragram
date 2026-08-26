@@ -20,6 +20,8 @@ class LiveRuntimeHealthReason(BaseEnum):
     STREAM_MISSING = "stream_missing"
     STREAM_NOT_READY = "stream_not_ready"
     STREAM_FAILED = "stream_failed"
+    STREAM_STALE = "stream_stale"
+    USER_DATA_STREAM_NOT_READY = "user_data_stream_not_ready"
     MONITOR_MISSING = "monitor_missing"
     MONITOR_UNHEALTHY = "monitor_unhealthy"
     RUNNER_PAUSED = "runner_paused"

@@ -112,6 +112,30 @@ class FakeEventStream:
         self.released.set()
 
 
+@dataclass(slots=True)
+class FlakyEventStream:
+    """Fail transiently before one connected private-stream session."""
+
+    failures_remaining: int
+    calls: int = 0
+    released: asyncio.Event = field(default_factory=asyncio.Event)
+    closed: bool = False
+
+    async def stream_events(self) -> AsyncIterator[FuturesUserDataEvent]:
+        """Raise connection failures, then expose one connected session."""
+        self.calls += 1
+        if self.failures_remaining > 0:
+            self.failures_remaining -= 1
+            raise ConnectionError("temporary DNS outage")
+        yield FuturesUserDataStreamConnected(observed_at=_NOW)
+        await self.released.wait()
+
+    async def close(self) -> None:
+        """Release the final deterministic stream session."""
+        self.closed = True
+        self.released.set()
+
+
 @pytest.mark.asyncio
 async def test_user_data_stream_cache_uses_startup_snapshot_then_events() -> None:
     """Update balance, position, and order cache without another REST read."""
@@ -197,3 +221,28 @@ async def test_user_data_cache_exposes_resync_and_stale_freshness() -> None:
 
     await cache.mark_stale()
     assert (await cache.get_snapshot()).status is LiveFuturesUserDataStatus.STALE
+
+
+@pytest.mark.asyncio
+async def test_transient_dns_outage_retries_until_rest_resync_is_authoritative() -> (
+    None
+):
+    """Keep startup alive through repeated DNS failures and seed before READY."""
+    stream = FlakyEventStream(failures_remaining=2)
+    snapshots = FakeSnapshotProvider()
+    service = LiveFuturesUserDataService(
+        snapshot_provider=snapshots,
+        event_stream=stream,
+        reconnect_delay_seconds=0.0,
+        random_source=lambda: 0.5,
+    )
+
+    await asyncio.wait_for(service.start(), timeout=1.0)
+
+    assert stream.calls == 3
+    assert snapshots.calls == 1
+    assert service.status is LiveFuturesUserDataStatus.READY
+    assert service.next_retry_seconds == 0.0
+
+    await service.close()
+    assert stream.closed

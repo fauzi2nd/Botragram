@@ -24,6 +24,7 @@ from decimal import Decimal
 from time import monotonic
 from typing import Final, Protocol, runtime_checkable
 
+from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.app.global_discovery_telemetry import (
     GlobalDiscoverySnapshot,
     GlobalDiscoveryTelemetry,
@@ -38,6 +39,7 @@ from botragram.enums import (
     Interval,
     LiveMarketStreamLifecycleStatus,
     LivePortfolioRecoveryStatus,
+    LiveRuntimeHealthReason,
     LiveRuntimeHealthStatus,
     OrderType,
     SignalType,
@@ -63,6 +65,7 @@ from botragram.models import (
     TradingDecision,
     TradingResult,
 )
+from botragram.utils.retry import CappedExponentialBackoff
 
 __all__ = [
     "AutonomousPaperTradingCycleExecutor",
@@ -91,6 +94,19 @@ _AUTONOMOUS_LIVE_CLOSED_CANDLE_REPLAY_REASON: Final[str] = (
     "closed_candle_opportunity_already_claimed"
 )
 _AUTONOMOUS_LIVE_RATE_LIMIT_REASON: Final[str] = "skipped_rate_limit"
+_UNATTENDED_RECOVERY_HEALTH_REASONS: Final[frozenset[LiveRuntimeHealthReason]] = (
+    frozenset(
+        {
+            LiveRuntimeHealthReason.STREAM_MISSING,
+            LiveRuntimeHealthReason.STREAM_NOT_READY,
+            LiveRuntimeHealthReason.STREAM_FAILED,
+            LiveRuntimeHealthReason.STREAM_STALE,
+            LiveRuntimeHealthReason.USER_DATA_STREAM_NOT_READY,
+            LiveRuntimeHealthReason.MONITOR_MISSING,
+            LiveRuntimeHealthReason.MONITOR_UNHEALTHY,
+        }
+    )
+)
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
@@ -1025,6 +1041,10 @@ class TradingRunner:
     maximum_consecutive_failures: int = 1
     failure_retry_delay_seconds: float = 5.0
     heartbeat_interval_seconds: float = _DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+    unattended_recovery_backoff: CappedExponentialBackoff = field(
+        default_factory=CappedExponentialBackoff,
+        repr=False,
+    )
     global_discovery_telemetry: GlobalDiscoveryTelemetry | None = None
     _global_discovery_telemetry: GlobalDiscoveryTelemetry | None = field(
         default=None,
@@ -1049,6 +1069,13 @@ class TradingRunner:
         init=False,
         repr=False,
     )
+    _outage_started_monotonic: float | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _outage_reason: str | None = field(default=None, init=False, repr=False)
+    _next_recovery_retry_seconds: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Normalize and validate immutable runtime inputs."""
@@ -1286,6 +1313,24 @@ class TradingRunner:
                         health_error = _AutonomousLiveRuntimeHealthUnsafeError(
                             snapshot=health_snapshot,
                         )
+                        health_reason = health_snapshot.reason
+                        if self._is_unattended_health_recovery_safe(
+                            snapshot=health_snapshot,
+                        ):
+                            if health_reason is None:
+                                raise RuntimeError(
+                                    "Unattended health recovery reason is missing"
+                                )
+                            recovered = await self._recover_unattended_live_runtime(
+                                error=health_error,
+                                reason=health_reason.value,
+                            )
+                            if not recovered:
+                                break
+                            autonomous_live_recovery_attempts = 0
+                            consecutive_failures = 0
+                            continue
+
                         recovery_allowed = (
                             health_snapshot.status is LiveRuntimeHealthStatus.DEGRADED
                             and health_snapshot.authorization_present
@@ -1387,6 +1432,20 @@ class TradingRunner:
                     await self._wait_for_global_cycle()
                     continue
                 except Exception as error:
+                    if (
+                        self._unattended_live_recovery_supported()
+                        and is_transient_connectivity_error(error)
+                    ):
+                        recovered = await self._recover_unattended_live_runtime(
+                            error=error,
+                            reason="binance_connectivity_unavailable",
+                        )
+                        if not recovered:
+                            break
+                        autonomous_live_recovery_attempts = 0
+                        consecutive_failures = 0
+                        continue
+
                     consecutive_failures += 1
                     _LOGGER.warning(
                         "Trading batch failed: context_count=%d error_type=%s "
@@ -1436,6 +1495,98 @@ class TradingRunner:
             )
         except TimeoutError:
             return
+
+    async def _recover_unattended_live_runtime(
+        self,
+        *,
+        error: Exception,
+        reason: str,
+    ) -> bool:
+        """Stay paused and retry authoritative LIVE recovery until safe or stopped."""
+        if not self._unattended_live_recovery_supported():
+            return False
+
+        provider = self.autonomous_live_recovery_provider
+        if provider is None:
+            return False
+
+        self.runtime_control.set_position_protection_ready(False)
+        self.runtime_control.pause()
+        self._pause_global_discovery_telemetry()
+        outage_started = monotonic()
+        self._outage_started_monotonic = outage_started
+        self._outage_reason = reason
+        self._next_recovery_retry_seconds = 0.0
+        _LOGGER.critical(
+            "Autonomous LIVE runtime paused for unattended recovery: "
+            "reason=%s error_type=%s entry_enabled=false",
+            reason,
+            type(error).__name__,
+        )
+        await self._notify_cycle_failed(
+            error=error,
+            consecutive_failures=1,
+        )
+
+        attempt = 0
+        while not self._stop_event.is_set():
+            attempt += 1
+            delay = self.unattended_recovery_backoff.get_delay(attempt=attempt)
+            self._next_recovery_retry_seconds = delay
+            await self._wait_for_delay(delay_seconds=delay)
+            if self._stop_event.is_set():
+                return False
+
+            try:
+                recovered = await provider.recover()
+            except asyncio.CancelledError:
+                raise
+            except Exception as recovery_error:
+                if not is_transient_connectivity_error(recovery_error):
+                    _LOGGER.exception(
+                        "Autonomous LIVE unattended recovery failed with a "
+                        "non-transient error: attempt=%d",
+                        attempt,
+                    )
+                    raise
+                recovered = False
+
+            if not recovered:
+                continue
+
+            outage_seconds = max(0.0, monotonic() - outage_started)
+            _LOGGER.warning(
+                "Autonomous LIVE unattended recovery restored authoritative state: "
+                "reason=%s attempts=%d outage_seconds=%.1f",
+                reason,
+                attempt,
+                outage_seconds,
+            )
+            self._outage_started_monotonic = None
+            self._outage_reason = None
+            self._next_recovery_retry_seconds = 0.0
+            return True
+
+        return False
+
+    def _unattended_live_recovery_supported(self) -> bool:
+        """Return whether authoritative autonomous LIVE recovery is available."""
+        return (
+            self.trade_mode is TradeMode.LIVE
+            and self._is_global_cycle_executor()
+            and self.autonomous_live_recovery_provider is not None
+        )
+
+    @staticmethod
+    def _is_unattended_health_recovery_safe(
+        *,
+        snapshot: LiveRuntimeHealthSnapshot,
+    ) -> bool:
+        """Allow dependency recovery only with no exposure or exact ownership."""
+        return snapshot.reason in _UNATTENDED_RECOVERY_HEALTH_REASONS and (
+            not snapshot.contexts
+            or (snapshot.authorization_present and snapshot.authorization_exact)
+        )
 
     async def _handle_autonomous_live_runtime_failure(
         self,
@@ -1553,6 +1704,18 @@ class TradingRunner:
             except TimeoutError:
                 state = "PAUSED" if self.runtime_control.is_paused else "RUNNING"
                 contexts = self.runtime_control.runtime_contexts
+                outage_started = self._outage_started_monotonic
+                if outage_started is not None:
+                    _LOGGER.warning(
+                        "Runtime heartbeat: state=PAUSED reason=%s "
+                        "outage_seconds=%.1f next_retry_seconds=%.3f "
+                        "positions_known=%d entry_enabled=false",
+                        self._outage_reason,
+                        max(0.0, monotonic() - outage_started),
+                        self._next_recovery_retry_seconds,
+                        len(contexts),
+                    )
+                    continue
                 if len(contexts) > 1:
                     _LOGGER.info(
                         "Runtime heartbeat: state=%s context_count=%d "
@@ -1987,7 +2150,6 @@ class TradingRunner:
             self.trade_mode is TradeMode.LIVE
             and self._is_global_cycle_executor()
             and self.live_runtime_health_provider is not None
-            and bool(self.runtime_control.runtime_contexts)
         )
 
     def _get_autonomous_live_runtime_health_failure(

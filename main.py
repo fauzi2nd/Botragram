@@ -37,9 +37,11 @@ from botragram.app import (
     TradingRunner,
     run_until_restart,
 )
+from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.config import Settings
 from botragram.enums import ExecutionPolicy, MarketType, TradeMode
 from botragram.utils.logger import configure_logging, shutdown_logging
+from botragram.utils.retry import CappedExponentialBackoff
 
 __all__ = [
     "main",
@@ -55,6 +57,43 @@ _LOGGER: Final[logging.Logger] = logging.getLogger("botragram.main")
 # =============================================================================
 # Runtime Functions
 # =============================================================================
+async def _recover_autonomous_live_until_ready(
+    *,
+    dependency_provider: DependencyProvider,
+) -> None:
+    """Keep startup paused until authoritative autonomous LIVE recovery succeeds."""
+    backoff = CappedExponentialBackoff()
+    attempt = 0
+    while True:
+        try:
+            recovered = await dependency_provider.runtime_recovery_service.recover()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if not is_transient_connectivity_error(error):
+                raise
+            recovered = False
+
+        if recovered:
+            if attempt:
+                _LOGGER.warning(
+                    "Autonomous LIVE startup recovery restored authoritative state: "
+                    "attempts=%d",
+                    attempt,
+                )
+            return
+
+        attempt += 1
+        delay = backoff.get_delay(attempt=attempt)
+        _LOGGER.warning(
+            "Autonomous LIVE startup remains paused; recovery will retry: "
+            "attempt=%d next_retry_seconds=%.3f entry_enabled=false",
+            attempt,
+            delay,
+        )
+        await asyncio.sleep(delay)
+
+
 async def _run_trading(
     *,
     dependency_provider: DependencyProvider,
@@ -113,7 +152,12 @@ async def _run_trading(
         name="botragram-terminal-monitor",
     )
     try:
-        await dependency_provider.runtime_recovery_service.recover()
+        if settings.app.effective_execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE:
+            await _recover_autonomous_live_until_ready(
+                dependency_provider=dependency_provider,
+            )
+        else:
+            await dependency_provider.runtime_recovery_service.recover()
         runtime_contexts = dependency_provider.runtime_control.runtime_contexts
         strategy_types = (
             tuple(context.strategy_type for context in runtime_contexts)

@@ -10,6 +10,7 @@ import pytest
 from botragram.app import TradingRuntimeControl
 from botragram.enums import (
     Interval,
+    LiveFuturesUserDataStatus,
     LiveMarketStreamLifecycleStatus,
     LiveRuntimeHealthReason,
     LiveRuntimeHealthStatus,
@@ -33,6 +34,13 @@ class _Streams:
 @dataclass(slots=True, frozen=True)
 class _Monitors:
     monitor_states: tuple[LiveProtectionMonitorState, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class _UserData:
+    """Expose deterministic private-stream freshness."""
+
+    status: LiveFuturesUserDataStatus
 
 
 def _context(symbol: str) -> LiveRuntimePositionContext:
@@ -102,6 +110,7 @@ def _service(
             runtime_control=control,
             market_stream_service=_Streams(stream_states=streams),
             protection_monitoring_service=_Monitors(monitor_states=monitors),
+            clock=lambda: 1.0,
         ),
         control,
     )
@@ -229,3 +238,48 @@ def test_snapshot_is_immutable() -> None:
     )
     with pytest.raises(AttributeError):
         setattr(snapshot, "status", LiveRuntimeHealthStatus.ACTIVE)
+
+
+def test_stale_public_tick_degrades_runtime_health() -> None:
+    """Treat a connected-but-silent public stream as non-authoritative."""
+    context = _context("BTCUSDT")
+    service, _ = _service(
+        (context,),
+        streams=(_stream(context),),
+        monitors=(_monitor(context),),
+        authorize=True,
+        resume=True,
+    )
+    service = LiveRuntimeHealthService(
+        runtime_control=service.runtime_control,
+        market_stream_service=service.market_stream_service,
+        protection_monitoring_service=service.protection_monitoring_service,
+        stream_stale_after_seconds=30.0,
+        clock=lambda: 31.1,
+    )
+
+    snapshot = service.get_snapshot()
+
+    assert snapshot.status is LiveRuntimeHealthStatus.DEGRADED
+    assert snapshot.reason is LiveRuntimeHealthReason.STREAM_STALE
+    assert snapshot.affected_contexts == (context,)
+
+
+def test_private_stream_resync_blocks_zero_position_entry_health() -> None:
+    """Degrade an autonomous zero-position runtime while private state is stale."""
+    service, _ = _service()
+    service = LiveRuntimeHealthService(
+        runtime_control=service.runtime_control,
+        market_stream_service=service.market_stream_service,
+        protection_monitoring_service=service.protection_monitoring_service,
+        live_futures_user_data_service=_UserData(
+            status=LiveFuturesUserDataStatus.RESYNCING
+        ),
+        clock=lambda: 1.0,
+    )
+
+    snapshot = service.get_snapshot()
+
+    assert snapshot.status is LiveRuntimeHealthStatus.DEGRADED
+    assert snapshot.reason is LiveRuntimeHealthReason.USER_DATA_STREAM_NOT_READY
+    assert snapshot.contexts == ()

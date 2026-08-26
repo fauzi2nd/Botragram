@@ -28,12 +28,14 @@ from botragram.utils.decimal import (
 )
 from botragram.utils.formatter import format_currency, format_percentage
 from botragram.utils.logger import configure_logging, setup_logger, shutdown_logging
+from botragram.utils.retry import CappedExponentialBackoff
 from botragram.utils.validator import (
     validate_positive_decimal,
     validate_symbol,
 )
 
 __all__ = [
+    "CappedExponentialBackoff",
     "current_utc_timestamp_ms",
     "configure_logging",
     "format_currency",

@@ -33,6 +33,7 @@ from botragram.models import (
     TradingDecision,
     TradingResult,
 )
+from botragram.utils.retry import CappedExponentialBackoff
 
 _NOW = datetime(2026, 8, 21, tzinfo=UTC)
 _CONTEXT = LiveRuntimePositionContext(
@@ -68,6 +69,7 @@ def _safe_result() -> TradingResult:
 @dataclass(slots=True, kw_only=True)
 class _GlobalExecutor:
     unsafe_failures_remaining: int
+    connectivity_failures_remaining: int = 0
     result: TradingResult = field(default_factory=_safe_result)
     calls: int = 0
     successful_execution: asyncio.Event = field(default_factory=asyncio.Event)
@@ -80,6 +82,9 @@ class _GlobalExecutor:
     ) -> tuple[TradingResult, ...]:
         del interval, candle_limit
         self.calls += 1
+        if self.connectivity_failures_remaining > 0:
+            self.connectivity_failures_remaining -= 1
+            raise ConnectionError("temporary Binance outage")
         if self.unsafe_failures_remaining > 0:
             self.unsafe_failures_remaining -= 1
             raise AutonomousLiveCycleUnsafeError("configured unsafe LIVE outcome")
@@ -162,13 +167,14 @@ class _HealthProvider:
 
     def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
         self.calls += 1
+        contexts = self.control.runtime_contexts
         stream_failed = self.reason is LiveRuntimeHealthReason.STREAM_FAILED
         return LiveRuntimeHealthSnapshot(
             status=self.status,
             reason=self.reason,
-            contexts=(_CONTEXT,),
+            contexts=contexts,
             affected_contexts=(
-                (_CONTEXT,)
+                contexts
                 if self.status
                 in {
                     LiveRuntimeHealthStatus.DEGRADED,
@@ -251,7 +257,24 @@ def _runner(
         cycle_interval_seconds=cycle_interval_seconds,
         failure_retry_delay_seconds=0.001,
         heartbeat_interval_seconds=60.0,
+        unattended_recovery_backoff=CappedExponentialBackoff(
+            initial_delay_seconds=0.001,
+            maximum_delay_seconds=0.001,
+            jitter_ratio=0.0,
+            random_source=lambda: 0.5,
+        ),
     )
+
+
+async def _wait_for_recovery_calls(
+    *,
+    recovery: _RecoveryProvider,
+    expected: int,
+) -> None:
+    """Wait deterministically for an unattended recovery attempt count."""
+    async with asyncio.timeout(1.0):
+        while recovery.calls < expected:
+            await asyncio.sleep(0)
 
 
 def test_one_bounded_recovery_resumes_with_a_fresh_global_cycle() -> None:
@@ -409,9 +432,6 @@ async def _run_degraded_runtime_health_recovery_test() -> None:
 
     task = asyncio.create_task(runner.run())
     await asyncio.wait_for(recovery.completed.wait(), timeout=1.0)
-    assert executor.calls == 0
-    await asyncio.sleep(0.005)
-    assert executor.calls == 0
     await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
     runner.stop()
     await asyncio.wait_for(task, timeout=1.0)
@@ -528,18 +548,23 @@ async def _run_runtime_health_cadence_wakeup_test() -> None:
 
     health.set_degraded()
     await asyncio.wait_for(recovery.completed.wait(), timeout=0.2)
-    assert executor.calls == 1
-    assert recovery.calls == 1
+    async with asyncio.timeout(1.0):
+        while executor.calls < 2:
+            await asyncio.sleep(0)
 
     runner.stop()
     await asyncio.wait_for(task, timeout=1.0)
 
+    assert executor.calls == 2
+    assert recovery.calls == 1
 
-def test_cycle_and_health_failures_share_one_recovery_budget() -> None:
-    asyncio.run(_run_shared_recovery_budget_test())
+
+def test_connectivity_health_recovery_does_not_consume_safety_budget() -> None:
+    """Retry dependency health separately after one bounded safety recovery."""
+    asyncio.run(_run_independent_connectivity_recovery_budget_test())
 
 
-async def _run_shared_recovery_budget_test() -> None:
+async def _run_independent_connectivity_recovery_budget_test() -> None:
     control = _active_recovered_control()
     health = _HealthProvider(
         control=control,
@@ -549,9 +574,16 @@ async def _run_shared_recovery_budget_test() -> None:
     executor = _GlobalExecutor(unsafe_failures_remaining=1)
     recovery = _RecoveryProvider(
         control=control,
-        outcomes=[True],
-        on_success=health.set_degraded,
+        outcomes=[True, True],
     )
+
+    def update_health_after_recovery() -> None:
+        if recovery.calls == 1:
+            health.set_degraded()
+        else:
+            health.set_active()
+
+    recovery.on_success = update_health_after_recovery
     runner = _runner(
         executor=executor,
         control=control,
@@ -559,11 +591,14 @@ async def _run_shared_recovery_budget_test() -> None:
         health=health,
     )
 
-    await asyncio.wait_for(runner.run(), timeout=1.0)
+    task = asyncio.create_task(runner.run())
+    await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
 
-    assert executor.calls == 1
-    assert recovery.calls == 1
-    assert control.is_paused
+    assert executor.calls == 2
+    assert recovery.calls == 2
+    assert not control.is_paused
 
 
 def test_health_check_interval_must_be_positive() -> None:
@@ -588,3 +623,74 @@ def test_recovery_budget_must_be_positive() -> None:
             recovery=None,
             maximum_recovery_attempts=0,
         )
+
+
+def test_prolonged_connectivity_outage_stays_paused_then_recovers() -> None:
+    """Keep the process alive and avoid fresh cycles until authoritative recovery."""
+    asyncio.run(_run_prolonged_connectivity_outage_test())
+
+
+async def _run_prolonged_connectivity_outage_test() -> None:
+    control = _active_control()
+    executor = _GlobalExecutor(
+        unsafe_failures_remaining=0,
+        connectivity_failures_remaining=1,
+    )
+    recovery = _RecoveryProvider(control=control, outcomes=[False, False])
+    runner = _runner(executor=executor, control=control, recovery=recovery)
+    task = asyncio.create_task(runner.run())
+
+    await _wait_for_recovery_calls(recovery=recovery, expected=2)
+
+    assert not task.done()
+    assert control.is_paused
+    assert executor.calls == 1
+
+    recovery.outcomes.append(True)
+    await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert recovery.calls == 3
+    assert executor.calls == 2
+    assert not control.is_paused
+
+
+def test_stale_private_stream_recovers_before_any_new_cycle() -> None:
+    """Block fresh entry work while private-stream health is non-authoritative."""
+    asyncio.run(_run_stale_private_stream_health_test())
+
+
+async def _run_stale_private_stream_health_test() -> None:
+    control = _active_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.DEGRADED,
+        reason=LiveRuntimeHealthReason.USER_DATA_STREAM_NOT_READY,
+        authorization_present=False,
+        authorization_exact=False,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    recovery = _RecoveryProvider(
+        control=control,
+        outcomes=[False, True],
+        on_success=health.set_active,
+    )
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+    task = asyncio.create_task(runner.run())
+
+    await _wait_for_recovery_calls(recovery=recovery, expected=1)
+    assert executor.calls == 0
+    assert control.is_paused
+
+    await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert recovery.calls == 2
+    assert executor.calls == 1
