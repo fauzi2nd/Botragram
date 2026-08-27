@@ -1120,6 +1120,7 @@ class TerminalMonitor:
         table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False, pad_edge=False)
         table.add_column("Symbol", style="bright_magenta", no_wrap=True)
         table.add_column("Side", no_wrap=True)
+        table.add_column("Lev", justify="right", no_wrap=True)
         table.add_column("Qty", justify="right", no_wrap=True)
         table.add_column("Entry", justify="right", no_wrap=True)
         table.add_column("Mark", justify="right", no_wrap=True)
@@ -1132,7 +1133,7 @@ class TerminalMonitor:
         if health_snapshot is None:
             self._add_paper_position_rows(table=table, status=status)
         elif not health_snapshot.contexts:
-            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "NONE")
+            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "NONE")
         else:
             for context in health_snapshot.contexts:
                 position = next(
@@ -1158,12 +1159,13 @@ class TerminalMonitor:
     def _add_paper_position_rows(self, *, table: Table, status: TerminalStatus) -> None:
         """Render paper positions in the same compact canonical table."""
         if not status.positions:
-            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "NONE")
+            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "NONE")
             return
         for position in status.positions:
             table.add_row(
                 position.symbol,
                 position.side.value.upper(),
+                f"{position.leverage}x",
                 self._format_compact_decimal(position.quantity),
                 self._format_compact_decimal(position.entry_price),
                 self._format_compact_decimal(position.current_price),
@@ -1194,6 +1196,7 @@ class TerminalMonitor:
                 "-",
                 "-",
                 "-",
+                "-",
                 "POSITION MISSING",
             )
             return
@@ -1207,6 +1210,7 @@ class TerminalMonitor:
         table.add_row(
             context.symbol,
             position.side.value.upper(),
+            f"{position.leverage}x",
             self._format_compact_decimal(position.quantity),
             self._format_compact_decimal(position.entry_price),
             self._format_compact_decimal(mark),

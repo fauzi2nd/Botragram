@@ -214,7 +214,7 @@ class FakeRecoveryProvider:
 # =============================================================================
 # Test Helpers
 # =============================================================================
-def _create_position() -> Position:
+def _create_position(*, leverage: int = 1) -> Position:
     """Create one long position for stream-mark PnL testing."""
     observed_at = datetime(2026, 1, 1, tzinfo=UTC)
     return Position(
@@ -224,7 +224,7 @@ def _create_position() -> Position:
         entry_price=Decimal("100"),
         current_price=Decimal("101"),
         unrealized_pnl=Decimal("2"),
-        leverage=1,
+        leverage=leverage,
         opened_at=observed_at,
         updated_at=observed_at,
         stop_loss=Decimal("98"),
@@ -745,7 +745,7 @@ async def _run_terminal_multi_context_health_test() -> None:
     control.set_runtime_contexts(contexts=contexts)
     monitor = _create_monitor(
         runtime_control=control,
-        positions=(_create_position(),),
+        positions=(_create_position(leverage=7),),
         live_runtime_health=health,
         trade_mode=TradeMode.LIVE,
     )
@@ -762,6 +762,8 @@ async def _run_terminal_multi_context_health_test() -> None:
     assert "contexts=2" in compact
     assert "BTCUSDT" in rendered
     assert "ETHUSDT" in rendered
+    assert "Lev" in rendered
+    assert "7x" in rendered
     assert "Health" in rendered
     assert "STREAM WAIT" in rendered
     assert "Management Reason" in rendered
@@ -799,6 +801,8 @@ async def _run_rich_dashboard_render_test() -> None:
     assert "Log Messages" in rendered
     assert "PAPER" in rendered
     assert len(monitor.log_handler.get_entries()) == 1
+    assert "Lev" in rendered
+    assert "1x" in rendered
     assert "Qty" in rendered
     assert "Entry" in rendered and "Mark" in rendered
     assert "Trading Performance" in rendered
