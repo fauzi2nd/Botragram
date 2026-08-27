@@ -8,22 +8,13 @@ Python:
     3.14+
 """
 
-# =============================================================================
-# Future
-# =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Standard Library Imports
-# =============================================================================
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final, Protocol
 
-# =============================================================================
-# Local Imports
-# =============================================================================
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
@@ -32,6 +23,7 @@ from botragram.models import (
     LiveRuntimeHealthSnapshot,
     Order,
     Position,
+    RuntimeRiskLimits,
     Trade,
 )
 
@@ -41,11 +33,11 @@ __all__ = [
     "MARKET_SEARCH_PENDING_KEY",
     "BotContext",
     "BotExecutionAuthorizationProvider",
-    "BotQueryProvider",
     "BotMarketTypeSwitcher",
+    "BotQueryProvider",
     "BotRuntimeControl",
+    "BotRuntimeRiskLimitProvider",
 ]
-
 
 BOT_CONTEXT_KEY: Final[str] = "bot_context"
 ALLOWED_CHAT_IDS_KEY: Final[str] = "allowed_chat_ids"
@@ -188,6 +180,34 @@ class BotRuntimeControl(Protocol):
         ...
 
 
+class BotRuntimeRiskLimitProvider(Protocol):
+    """Read and durably update autonomous LIVE runtime entry limits."""
+
+    @property
+    def max_open_positions_ceiling(self) -> int:
+        """Return the immutable environment capacity ceiling."""
+        ...
+
+    @property
+    def max_position_size_usdt_ceiling(self) -> Decimal:
+        """Return the immutable environment notional ceiling."""
+        ...
+
+    def get_snapshot(self) -> RuntimeRiskLimits:
+        """Return the current immutable runtime limits."""
+        ...
+
+    async def update(
+        self,
+        *,
+        max_open_positions: int,
+        max_position_size_usdt: Decimal,
+        updated_by: str,
+    ) -> RuntimeRiskLimits:
+        """Durably replace runtime entry limits."""
+        ...
+
+
 class BotExecutionAuthorizationProvider(Protocol):
     """Consume prepared PAPER authorizations for Telegram callbacks."""
 
@@ -216,13 +236,7 @@ class BotExecutionAuthorizationProvider(Protocol):
         ...
 
 
-# =============================================================================
-# Bot Context
-# =============================================================================
-@dataclass(
-    slots=True,
-    kw_only=True,
-)
+@dataclass(slots=True, kw_only=True)
 class BotContext:
     """Store the application state displayed by Telegram handlers."""
 
@@ -237,6 +251,7 @@ class BotContext:
     runtime_control: BotRuntimeControl | None = None
     market_type_switcher: BotMarketTypeSwitcher | None = None
     execution_authorization_service: BotExecutionAuthorizationProvider | None = None
+    runtime_risk_limit_service: BotRuntimeRiskLimitProvider | None = None
 
     @property
     def market_type(self) -> MarketType:

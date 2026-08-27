@@ -52,6 +52,16 @@ class RuntimeRiskLimitService:
             updated_by="environment",
         )
 
+    @property
+    def max_open_positions_ceiling(self) -> int:
+        """Return the immutable environment capacity ceiling."""
+        return self.hard_max_open_positions
+
+    @property
+    def max_position_size_usdt_ceiling(self) -> Decimal:
+        """Return the immutable environment notional ceiling."""
+        return self.hard_max_position_size_usdt
+
     async def initialize(self) -> None:
         """Load durable limits or persist the environment-defined initial values."""
         async with self._lock:
@@ -104,7 +114,7 @@ class RuntimeRiskLimitService:
         max_open_positions: int,
         max_position_size_usdt: Decimal,
     ) -> None:
-        """Reject invalid values and all attempts to exceed environment ceilings."""
+        """Reject invalid values and all attempts above environment ceilings."""
         if isinstance(self.hard_max_open_positions, bool) or (
             self.hard_max_open_positions <= 0
         ):

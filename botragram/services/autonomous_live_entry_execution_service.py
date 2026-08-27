@@ -20,6 +20,8 @@ from botragram.exceptions import (
     LiveEntryExistingPositionError,
     LiveEntryPortfolioCapacityError,
     LiveEntryPreflightError,
+    LiveEntryRiskLimitError,
+    LiveEntrySymbolReadinessError,
     LiveSubmissionBlockedError,
     VenueRuleValidationError,
 )
@@ -41,7 +43,6 @@ from botragram.services.live_executable_quote_service import (
 
 __all__ = ["AutonomousLiveEntryExecutionService"]
 
-
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
@@ -51,8 +52,6 @@ def _utc_now() -> datetime:
 
 
 class _LiveEntryRiskEvaluator(Protocol):
-    """Return one fresh authoritative LIVE entry decision."""
-
     async def evaluate(
         self,
         *,
@@ -64,16 +63,12 @@ class _LiveEntryRiskEvaluator(Protocol):
 
 
 class _LiveExecutableQuoteProvider(Protocol):
-    """Provide one current normalized executable market quote."""
-
     async def get_executable_quote(self, *, symbol: str) -> ExecutableQuote:
         """Return the current executable quote for an exact trading symbol."""
         ...
 
 
 class _ProtectedLiveEntryExecutor(Protocol):
-    """Execute one already revalidated protected LIVE entry."""
-
     async def execute(
         self,
         *,
@@ -89,12 +84,7 @@ class _ProtectedLiveEntryExecutor(Protocol):
 
 @dataclass(slots=True, kw_only=True, frozen=True)
 class AutonomousLiveEntryExecutionService:
-    """Revalidate and delegate one network-scoped autonomous protected entry.
-
-    The adapter owns no submission identity, POST retry, reconciliation, or
-    protection workflow. It performs fresh authoritative risk validation for
-    each intent and delegates the sole mutation to LiveFuturesEntryService.
-    """
+    """Revalidate and delegate one network-scoped autonomous protected entry."""
 
     risk_evaluation_service: _LiveEntryRiskEvaluator
     market_service: _LiveExecutableQuoteProvider
@@ -105,7 +95,6 @@ class AutonomousLiveEntryExecutionService:
     utc_now: Callable[[], datetime] = _utc_now
 
     def __post_init__(self) -> None:
-        """Normalize static network-scoped execution configuration."""
         if self.max_executable_quote_age_ms <= 0:
             raise ValueError("Maximum executable quote age must be greater than zero")
         if not self.max_spread_bps.is_finite() or self.max_spread_bps <= Decimal("0"):
@@ -147,13 +136,11 @@ class AutonomousLiveEntryExecutionService:
                 status=AutonomousLiveEntryExecutionStatus.EXISTING_POSITION,
                 decision=decision,
             )
-
         if not decision.should_execute or decision.risk_result is None:
             return AutonomousLiveEntryExecutionResult(
                 status=AutonomousLiveEntryExecutionStatus.RISK_REJECTED,
                 decision=decision,
             )
-
         if self._is_stale_signal(intent=intent):
             return AutonomousLiveEntryExecutionResult(
                 status=AutonomousLiveEntryExecutionStatus.STALE_SIGNAL,
@@ -178,13 +165,18 @@ class AutonomousLiveEntryExecutionService:
                 status=AutonomousLiveEntryExecutionStatus.EXISTING_POSITION,
                 decision=decision,
             )
-        except LiveEntryPortfolioCapacityError:
+        except LiveEntryPortfolioCapacityError, LiveEntryRiskLimitError:
             return AutonomousLiveEntryExecutionResult(
                 status=AutonomousLiveEntryExecutionStatus.RISK_REJECTED,
                 decision=decision,
             )
-        except LiveEntryPreflightError:
-            raise
+        except LiveEntrySymbolReadinessError:
+            return AutonomousLiveEntryExecutionResult(
+                status=(
+                    AutonomousLiveEntryExecutionStatus.SYMBOL_READINESS_REJECTED
+                ),
+                decision=decision,
+            )
         except VenueRuleValidationError:
             return AutonomousLiveEntryExecutionResult(
                 status=AutonomousLiveEntryExecutionStatus.VENUE_RULE_REJECTED,
@@ -195,6 +187,8 @@ class AutonomousLiveEntryExecutionService:
                 status=AutonomousLiveEntryExecutionStatus.EXCHANGE_REJECTED,
                 decision=decision,
             )
+        except LiveEntryPreflightError:
+            raise
         except Exception:
             _LOGGER.exception(
                 "Autonomous LIVE protected entry is unsafe: symbol=%s",
@@ -219,20 +213,17 @@ class AutonomousLiveEntryExecutionService:
     ) -> tuple[AutonomousLiveEntryExecutionResult, ...]:
         """Execute intents sequentially and stop after uncertain mutation state."""
         results: list[AutonomousLiveEntryExecutionResult] = []
-
         for intent in intents:
             result = await self.execute(
                 intent=intent,
                 authorization=authorization,
             )
             results.append(result)
-
             if result.status in {
                 AutonomousLiveEntryExecutionStatus.SUBMISSION_BLOCKED,
                 AutonomousLiveEntryExecutionStatus.EXECUTION_UNSAFE,
             }:
                 break
-
         return tuple(results)
 
     def _is_authorized(
@@ -240,7 +231,6 @@ class AutonomousLiveEntryExecutionService:
         *,
         authorization: AutonomousLiveEntryAuthorization | None,
     ) -> bool:
-        """Require the exact explicit current-network entry capability."""
         return (
             authorization is not None
             and authorization.new_live_entry_allowed
@@ -248,9 +238,11 @@ class AutonomousLiveEntryExecutionService:
         )
 
     def _get_entry_price_override(
-        self, *, quote: ExecutableQuote, signal: Signal
+        self,
+        *,
+        quote: ExecutableQuote,
+        signal: Signal,
     ) -> Decimal | None:
-        """Return a valid side-aware execution reference for an entry signal."""
         return get_executable_entry_price(
             quote=quote,
             signal=signal,
@@ -261,7 +253,6 @@ class AutonomousLiveEntryExecutionService:
 
     @staticmethod
     def _market_reference_rejected_decision(*, signal: Signal) -> TradingDecision:
-        """Return a safe decision when no executable market reference exists."""
         return TradingDecision(
             should_execute=False,
             signal=signal,
@@ -270,17 +261,6 @@ class AutonomousLiveEntryExecutionService:
         )
 
     def _is_stale_signal(self, *, intent: AutonomousLiveEntryIntent) -> bool:
-        """Return whether the signal no longer represents the latest interval.
-
-        Args:
-            intent: Authorized autonomous entry carrying closed-candle provenance.
-
-        Returns:
-            True when execution reaches or exceeds the next expected close.
-
-        Raises:
-            ValueError: If the configured clock or signal timestamp is naive.
-        """
         return is_signal_stale(
             signal=intent.signal,
             interval=intent.interval,

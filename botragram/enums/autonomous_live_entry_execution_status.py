@@ -1,4 +1,4 @@
-"""Outcomes of one TESTNET autonomous protected-entry execution attempt."""
+"""Outcomes of one autonomous protected-entry execution attempt."""
 
 from __future__ import annotations
 
@@ -22,4 +22,5 @@ class AutonomousLiveEntryExecutionStatus(BaseEnum):
     SUBMISSION_BLOCKED = "submission_blocked"
     EXCHANGE_REJECTED = "exchange_rejected"
     VENUE_RULE_REJECTED = "venue_rule_rejected"
+    SYMBOL_READINESS_REJECTED = "symbol_readiness_rejected"
     EXECUTION_UNSAFE = "execution_unsafe"

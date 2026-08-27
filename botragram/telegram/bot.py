@@ -8,26 +8,14 @@ Python:
     3.14+
 """
 
-# =============================================================================
-# Future
-# =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Standard Library Imports
-# =============================================================================
 import logging
 from typing import Any, Final
 
-# =============================================================================
-# Third-Party Imports
-# =============================================================================
 from telegram import BotCommand
 from telegram.ext import ApplicationBuilder
 
-# =============================================================================
-# Local Imports
-# =============================================================================
 from botragram.config.telegram_settings import TelegramSettings
 from botragram.models import ExecutionAuthorization, Notification
 from botragram.telegram.context import (
@@ -39,28 +27,15 @@ from botragram.telegram.handlers import register_handlers
 from botragram.telegram.keyboards import get_execution_authorization_keyboard
 from botragram.telegram.messages import get_execution_authorization_message
 
-__all__ = [
-    "TelegramBot",
-]
+__all__ = ["TelegramBot"]
 
-
-# =============================================================================
-# Constants
-# =============================================================================
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Telegram Bot
-# =============================================================================
 class TelegramBot:
     """Own Telegram polling resources and displayed application context."""
 
-    __slots__ = (
-        "_app",
-        "_context",
-        "_settings",
-    )
+    __slots__ = ("_app", "_context", "_settings")
 
     def __init__(
         self,
@@ -68,19 +43,12 @@ class TelegramBot:
         settings: TelegramSettings | None = None,
         context: BotContext | None = None,
     ) -> None:
-        """Initialize the Telegram adapter.
-
-        Args:
-            settings: Telegram access and lifecycle settings.
-            context: Initial state displayed by handlers.
-        """
         self._settings = settings if settings is not None else TelegramSettings()
         self._context = context if context is not None else BotContext()
         self._app: Any = None
 
     @property
     def is_running(self) -> bool:
-        """Return whether Telegram polling resources are active."""
         return self._app is not None
 
     async def start(self) -> None:
@@ -121,62 +89,46 @@ class TelegramBot:
                     BotCommand("stream", "Kelola market ticker stream"),
                     BotCommand("pause", "Jeda siklus trading baru"),
                     BotCommand("resume", "Lanjutkan siklus trading"),
+                    BotCommand("risklimits", "Lihat limit entry runtime"),
+                    BotCommand("setrisklimits", "Ubah limit runtime saat dijeda"),
                     BotCommand("settings", "Lihat pengaturan bot"),
                     BotCommand("exchange", "Lihat exchange aktif"),
                     BotCommand("stop", "Lihat status penghentian bot"),
                 ]
             )
-
             if updater is not None:
                 await updater.start_polling()
         except BaseException:
             if updater is not None and updater.running:
                 await updater.stop()
-
             if started:
                 await app.stop()
-
             if initialized:
                 await app.shutdown()
-
             raise
 
         self._app = app
         _LOGGER.info("Telegram bot polling started")
 
-    async def sync_context(
-        self,
-        *,
-        context: BotContext,
-    ) -> None:
-        """Replace state displayed by Telegram handlers."""
+    async def sync_context(self, *, context: BotContext) -> None:
         self._context = context
-
         if self._app is not None:
             self._app.bot_data[BOT_CONTEXT_KEY] = context
 
-    async def publish(
-        self,
-        *,
-        notification: Notification,
-    ) -> None:
-        """Send one notification to every configured chat safely."""
+    async def publish(self, *, notification: Notification) -> None:
         if (
             not self._settings.enabled
             or not self._settings.bot_token
             or not self._settings.allowed_chat_ids
         ):
             return
-
         app = self._app
-
         if app is None:
             _LOGGER.warning(
                 "Telegram notification skipped because the bot is not started: %s",
                 notification.title,
             )
             return
-
         for chat_id in self._settings.allowed_chat_ids:
             try:
                 await app.bot.send_message(
@@ -196,16 +148,13 @@ class TelegramBot:
         *,
         authorization: ExecutionAuthorization,
     ) -> None:
-        """Publish one prepared PAPER authorization with confirmation controls."""
         if (
             not self._settings.enabled
             or not self._settings.bot_token
             or not self._settings.allowed_chat_ids
         ):
             return
-
         app = self._app
-
         if app is None:
             _LOGGER.warning(
                 "Telegram authorization notification skipped because the bot is not "
@@ -218,7 +167,6 @@ class TelegramBot:
         reply_markup = get_execution_authorization_keyboard(
             authorization.authorization_id,
         )
-
         for chat_id in self._settings.allowed_chat_ids:
             try:
                 await app.bot.send_message(
@@ -236,18 +184,13 @@ class TelegramBot:
                 )
 
     async def stop(self) -> None:
-        """Stop Telegram polling and release owned resources."""
         app = self._app
         self._app = None
-
         if app is None:
             return
-
         updater = app.updater
-
         if updater is not None and updater.running:
             await updater.stop()
-
         await app.stop()
         await app.shutdown()
         _LOGGER.info("Telegram bot stopped")

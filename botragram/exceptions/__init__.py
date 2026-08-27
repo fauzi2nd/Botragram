@@ -8,14 +8,8 @@ Python:
     3.14+
 """
 
-# =============================================================================
-# Future
-# =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Local Imports
-# =============================================================================
 from botragram.exceptions.ai import (
     AIAuthenticationError,
     AIConfigurationError,
@@ -75,6 +69,8 @@ from botragram.exceptions.trading import (
     LiveEntryExistingPositionError,
     LiveEntryPortfolioCapacityError,
     LiveEntryPreflightError,
+    LiveEntryRiskLimitError,
+    LiveEntrySymbolReadinessError,
     LiveSubmissionBlockedError,
     TradingConfigurationError,
     TradingError,
@@ -85,26 +81,19 @@ from botragram.exceptions.trading import (
     VenueRuleValidationError,
 )
 
-# =============================================================================
-# Exports
-# =============================================================================
 __all__ = [
-    # Base Exception
     "BotragramError",
-    # AI Exceptions
     "AIError",
     "AIConfigurationError",
     "AIAuthenticationError",
     "AIConnectionError",
     "AIRateLimitError",
     "AIResponseError",
-    # Config Exceptions
     "ConfigError",
     "ConfigFileNotFoundError",
     "ConfigKeyError",
     "ConfigTypeError",
     "ConfigValidationError",
-    # Exchange Exceptions
     "ExchangeError",
     "ExchangeAuthenticationError",
     "ExchangeConnectionError",
@@ -120,32 +109,30 @@ __all__ = [
     "ExchangeOrderPriceBandRejectedError",
     "ExchangeInsufficientBalanceError",
     "ExchangeSymbolError",
-    # Indicator Exceptions
     "IndicatorError",
     "IndicatorConfigurationError",
     "IndicatorDataError",
     "IndicatorCalculationError",
     "IndicatorNotFoundError",
-    # Strategy Exceptions
     "StrategyError",
     "StrategyConfigurationError",
     "StrategyValidationError",
     "StrategyExecutionError",
     "StrategySignalError",
     "StrategyNotFoundError",
-    # Telegram Exceptions
     "TelegramError",
     "TelegramConfigurationError",
     "TelegramAPIError",
     "TelegramStateError",
     "TelegramCallbackError",
-    # Trading Exceptions
     "TradingError",
     "TradingConfigurationError",
     "TradingExecutionError",
     "LiveEntryExistingPositionError",
     "LiveEntryPortfolioCapacityError",
     "LiveEntryPreflightError",
+    "LiveEntryRiskLimitError",
+    "LiveEntrySymbolReadinessError",
     "LiveSubmissionBlockedError",
     "VenueRuleValidationError",
     "TradingPositionError",

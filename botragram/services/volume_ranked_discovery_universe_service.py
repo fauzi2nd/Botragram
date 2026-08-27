@@ -8,31 +8,17 @@ Python:
     3.14+
 """
 
-# =============================================================================
-# Future
-# =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Standard Library Imports
-# =============================================================================
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
-# =============================================================================
-# Local Imports
-# =============================================================================
 from botragram.models import DiscoveryUniverseBatch, MarketUniverseEntry
 
-__all__ = [
-    "VolumeRankedDiscoveryUniverseService",
-]
+__all__ = ["VolumeRankedDiscoveryUniverseService"]
 
 
-# =============================================================================
-# Service Contracts
-# =============================================================================
 class RankedMarketUniverseProvider(Protocol):
     """Provide a typed market universe already ordered by quote volume."""
 
@@ -45,12 +31,13 @@ class RankedMarketUniverseProvider(Protocol):
         ...
 
 
-# =============================================================================
-# Service Classes
-# =============================================================================
 @dataclass(slots=True, kw_only=True)
 class VolumeRankedDiscoveryUniverseService:
-    """Rotate deterministic batches through one process-local ranked snapshot."""
+    """Rotate bounded batches through the complete active ranked snapshot.
+
+    ``universe_limit`` is retained as a validated compatibility/telemetry setting;
+    autonomous LIVE no longer truncates the exchange-provided active universe.
+    """
 
     market_service: RankedMarketUniverseProvider
     quote_asset: str
@@ -77,8 +64,6 @@ class VolumeRankedDiscoveryUniverseService:
             raise ValueError("Discovery universe limit must be a positive integer")
         if isinstance(self.batch_size, bool) or self.batch_size <= 0:
             raise ValueError("Discovery batch size must be a positive integer")
-        if self.batch_size > self.universe_limit:
-            raise ValueError("Discovery batch size must not exceed universe limit")
         self.quote_asset = normalized_quote_asset
 
     async def get_current_batch(self) -> DiscoveryUniverseBatch:
@@ -90,7 +75,7 @@ class VolumeRankedDiscoveryUniverseService:
             ranked_entries = await self.market_service.get_market_universe(
                 quote_asset=self.quote_asset,
             )
-            refreshed_snapshot = tuple(ranked_entries[: self.universe_limit])
+            refreshed_snapshot = tuple(ranked_entries)
             if not refreshed_snapshot:
                 raise RuntimeError("Ranked discovery universe must not be empty")
             self._snapshot = refreshed_snapshot

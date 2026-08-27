@@ -48,6 +48,11 @@ class TradingRuntimeControl:
     _strategy_confirmed: bool = field(default=False, init=False, repr=False)
     _position_protection_ready: bool = field(default=True, init=False, repr=False)
     _cycle_in_progress: bool = field(default=False, init=False, repr=False)
+    _risk_limit_change_in_progress: bool = field(
+        default=False,
+        init=False,
+        repr=False,
+    )
     _stream_event_count: int = field(default=0, init=False, repr=False)
     _stream_last_price: Decimal | None = field(default=None, init=False, repr=False)
     _stream_last_event_monotonic: float | None = field(
@@ -174,6 +179,11 @@ class TradingRuntimeControl:
         """Return the read-only LIVE protection gate state."""
         return self._position_protection_ready
 
+    @property
+    def risk_limit_change_in_progress(self) -> bool:
+        """Return whether a durable runtime limit update owns configuration."""
+        return self._risk_limit_change_in_progress
+
     def pause(self) -> bool:
         """Pause future cycles and return whether state changed."""
         if self.is_paused:
@@ -184,6 +194,7 @@ class TradingRuntimeControl:
 
     def resume(self) -> bool:
         """Resume future cycles and return whether state changed."""
+        self._require_no_risk_limit_change()
         if not self.is_paused:
             return False
 
@@ -222,6 +233,7 @@ class TradingRuntimeControl:
         method intentionally does not select a runtime context or alter
         recovered-position management authorization.
         """
+        self._require_no_risk_limit_change()
         if not self.is_paused:
             return False
 
@@ -230,6 +242,22 @@ class TradingRuntimeControl:
 
         self._active_event.set()
         return True
+
+    def begin_risk_limit_change(self) -> None:
+        """Reserve one paused runtime-limit update against resume and cycles."""
+        if not self.is_paused:
+            raise RuntimeError("Pause trading before changing runtime risk limits")
+        if self._cycle_in_progress:
+            raise RuntimeError("Wait for the active trading cycle to finish")
+        if self._risk_limit_change_in_progress:
+            raise RuntimeError("A runtime risk-limit change is already in progress")
+        self._risk_limit_change_in_progress = True
+
+    def end_risk_limit_change(self) -> None:
+        """Release the runtime-limit update reservation."""
+        if not self._risk_limit_change_in_progress:
+            raise RuntimeError("No runtime risk-limit change is in progress")
+        self._risk_limit_change_in_progress = False
 
     def confirm_exchange(self, exchange_type: ExchangeType) -> bool:
         """Confirm the exchange connector already loaded for this process."""
@@ -430,7 +458,7 @@ class TradingRuntimeControl:
         """Lock runtime configuration for one trading cycle."""
         if self._cycle_in_progress:
             raise RuntimeError("A trading cycle is already in progress")
-
+        self._require_no_risk_limit_change()
         self._cycle_in_progress = True
 
     def end_cycle(self) -> None:
@@ -468,10 +496,17 @@ class TradingRuntimeControl:
         if self._cycle_in_progress:
             raise RuntimeError("Wait for the active trading cycle to finish")
 
+        self._require_no_risk_limit_change()
+
         if self.stream_enabled:
             raise RuntimeError(
                 "Stop the market stream before changing runtime settings"
             )
+
+    def _require_no_risk_limit_change(self) -> None:
+        """Reject activation or other configuration while a limit write is pending."""
+        if self._risk_limit_change_in_progress:
+            raise RuntimeError("Runtime risk-limit change is still in progress")
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:

@@ -31,25 +31,39 @@ from botragram.exceptions import (
     LiveEntryExistingPositionError,
     LiveEntryPortfolioCapacityError,
     LiveEntryPreflightError,
+    LiveEntryRiskLimitError,
+    LiveEntrySymbolReadinessError,
     LiveSubmissionBlockedError,
     VenueRuleValidationError,
 )
-from botragram.models import Order, Position, RiskResult, Signal, SubmissionAttempt
+from botragram.models import (
+    Order,
+    Position,
+    RiskResult,
+    RuntimeRiskLimits,
+    Signal,
+    SubmissionAttempt,
+)
 from botragram.repositories import SubmissionAttemptRepository
 
 __all__ = ["LiveFuturesEntryService"]
-
 
 _DECIMAL_ZERO = Decimal("0")
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _CLIENT_ORDER_ID_PREFIX: Final[str] = "btg-"
 _RECONCILIATION_MAX_ATTEMPTS: Final[int] = 2
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
+_DETERMINISTIC_SYMBOL_READINESS_REJECTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "Binance Futures MAINNET entry requires isolated margin",
+        "Binance Futures auto-add margin must be disabled",
+        "Binance Futures symbol leverage exceeds the risk limit",
+        "Binance Futures maximum symbol notional is below the entry",
+    }
+)
 
 
 class LiveOrderSubmission(Protocol):
-    """Submit one already-approved exchange entry order."""
-
     async def submit(
         self,
         *,
@@ -82,8 +96,6 @@ class LiveOrderSubmission(Protocol):
 
 
 class LivePositionSynchronization(Protocol):
-    """Synchronize and persist an exchange position snapshot."""
-
     async def get(self, *, symbol: str, synchronize: bool) -> Position | None:
         """Return one optionally synchronized position."""
         ...
@@ -98,8 +110,6 @@ class LivePositionSynchronization(Protocol):
 
 
 class LiveProtectionReconciliation(Protocol):
-    """Validate and verify SL/TP protection around one LIVE entry."""
-
     async def validate_pre_entry_plan(
         self,
         *,
@@ -108,7 +118,7 @@ class LiveProtectionReconciliation(Protocol):
         stop_loss: Decimal,
         take_profit: Decimal,
     ) -> None:
-        """Reject a plan that is already invalid before the entry mutation."""
+        """Reject a plan that is already invalid before entry mutation."""
         ...
 
     async def ensure(self, *, position: Position) -> Position:
@@ -117,8 +127,6 @@ class LiveProtectionReconciliation(Protocol):
 
 
 class LiveVenueEntryReadiness(Protocol):
-    """Verify existing venue settings without mutating exchange state."""
-
     async def verify_mainnet_symbol_readiness(
         self,
         *,
@@ -127,6 +135,12 @@ class LiveVenueEntryReadiness(Protocol):
         entry_notional: Decimal,
     ) -> None:
         """Fail closed unless one symbol is safe for a MAINNET entry."""
+        ...
+
+
+class _RuntimeRiskLimitProvider(Protocol):
+    def get_snapshot(self) -> RuntimeRiskLimits:
+        """Return the current immutable runtime entry limits."""
         ...
 
 
@@ -144,11 +158,13 @@ class LiveFuturesEntryService:
     max_open_positions: int
     venue_entry_readiness: LiveVenueEntryReadiness | None = None
     maximum_leverage: int = 1
+    runtime_risk_limit_provider: _RuntimeRiskLimitProvider | None = None
 
     def __post_init__(self) -> None:
-        """Validate immutable entry safety configuration."""
         if isinstance(self.maximum_leverage, bool) or self.maximum_leverage <= 0:
             raise ValueError("Maximum leverage must be greater than zero")
+        if isinstance(self.max_open_positions, bool) or self.max_open_positions <= 0:
+            raise ValueError("Maximum open positions must be greater than zero")
 
     async def execute(
         self,
@@ -159,12 +175,24 @@ class LiveFuturesEntryService:
         order_type: OrderType,
         price: Decimal | None,
     ) -> Order:
-        """Submit a MARKET entry, synchronize it, and verify full protection.
-
-        The submission is deliberately single-attempt. Any exception after the
-        protection gate closes is unsafe and propagates to the runtime boundary.
-        """
+        """Submit a MARKET entry, synchronize it, and verify full protection."""
         self._validate_entry(order_type=order_type)
+        limits = (
+            self.runtime_risk_limit_provider.get_snapshot()
+            if self.runtime_risk_limit_provider is not None
+            else None
+        )
+        max_open_positions = (
+            limits.max_open_positions if limits is not None else self.max_open_positions
+        )
+        if (
+            limits is not None
+            and risk_result.position.notional > limits.max_position_size_usdt
+        ):
+            raise LiveEntryRiskLimitError(
+                "LIVE entry exceeds the current runtime position-size limit"
+            )
+
         position_side = self._position_side_for_signal(signal=signal)
         try:
             if await self.submission_attempt_repository.get_unresolved():
@@ -177,14 +205,27 @@ class LiveFuturesEntryService:
                     quantity=risk_result.position.quantity,
                 )
             )
-            if self.venue_entry_readiness is not None:
-                await self.venue_entry_readiness.verify_mainnet_symbol_readiness(
-                    symbol=signal.symbol,
-                    maximum_leverage=self.maximum_leverage,
-                    entry_notional=(
-                        normalized_quantity * risk_result.metrics.entry_price
-                    ),
+            normalized_notional = (
+                normalized_quantity * risk_result.metrics.entry_price
+            )
+            if (
+                limits is not None
+                and normalized_notional > limits.max_position_size_usdt
+            ):
+                raise LiveEntryRiskLimitError(
+                    "Venue-normalized entry exceeds the runtime position-size limit"
                 )
+            if self.venue_entry_readiness is not None:
+                try:
+                    await self.venue_entry_readiness.verify_mainnet_symbol_readiness(
+                        symbol=signal.symbol,
+                        maximum_leverage=self.maximum_leverage,
+                        entry_notional=normalized_notional,
+                    )
+                except RuntimeError as error:
+                    if str(error) in _DETERMINISTIC_SYMBOL_READINESS_REJECTIONS:
+                        raise LiveEntrySymbolReadinessError(str(error)) from error
+                    raise
             await self.protection_service.validate_pre_entry_plan(
                 symbol=signal.symbol,
                 position_side=position_side,
@@ -193,7 +234,12 @@ class LiveFuturesEntryService:
             )
         except asyncio.CancelledError:
             raise
-        except LiveSubmissionBlockedError, VenueRuleValidationError:
+        except (
+            LiveEntryRiskLimitError,
+            LiveEntrySymbolReadinessError,
+            LiveSubmissionBlockedError,
+            VenueRuleValidationError,
+        ):
             raise
         except Exception as error:
             raise LiveEntryPreflightError(
@@ -233,9 +279,7 @@ class LiveFuturesEntryService:
             signal.signal_type.value,
         )
 
-        positions = await self.position_service.get_all(
-            synchronize=True,
-        )
+        positions = await self.position_service.get_all(synchronize=True)
         if self.portfolio_engine.has_position(
             positions=positions,
             symbol=signal.symbol,
@@ -250,7 +294,7 @@ class LiveFuturesEntryService:
             )
         if not self.portfolio_engine.can_open_position(
             positions=positions,
-            max_open_positions=self.max_open_positions,
+            max_open_positions=max_open_positions,
         ):
             await self._persist_attempt(
                 attempt=attempt,
@@ -269,9 +313,7 @@ class LiveFuturesEntryService:
                     position=replace(
                         risk_result.position,
                         quantity=normalized_quantity,
-                        notional=(
-                            normalized_quantity * risk_result.metrics.entry_price
-                        ),
+                        notional=normalized_notional,
                     ),
                 ),
                 order_type=order_type,
@@ -377,16 +419,13 @@ class LiveFuturesEntryService:
         return order
 
     def _validate_entry(self, *, order_type: OrderType) -> None:
-        """Restrict Phase 5A protected execution to supported semantics."""
         if self.market_type is not MarketType.FUTURES:
             raise RuntimeError("Protected LIVE entry currently requires FUTURES")
-
         if order_type is not OrderType.MARKET:
             raise ValueError("Protected LIVE entry currently supports MARKET orders")
 
     @staticmethod
     def _position_side_for_signal(*, signal: Signal) -> PositionSide:
-        """Translate an executable entry signal into the protected position side."""
         if signal.signal_type is SignalType.BUY:
             return PositionSide.LONG
         if signal.signal_type is SignalType.SELL:
@@ -398,7 +437,6 @@ class LiveFuturesEntryService:
         *,
         attempt: SubmissionAttempt,
     ) -> Order:
-        """Resolve a single ambiguous entry using bounded GET-only lookup."""
         for reconciliation_attempt in range(_RECONCILIATION_MAX_ATTEMPTS):
             try:
                 order = await self.order_service.get_by_client_order_id(
@@ -415,10 +453,8 @@ class LiveFuturesEntryService:
                 raise RuntimeError(
                     "Reconciled order returned a mismatched client order ID"
                 )
-
             if order.status is OrderStatus.FILLED:
                 return order
-
             if order.status in {
                 OrderStatus.CANCELED,
                 OrderStatus.EXPIRED,
@@ -430,13 +466,11 @@ class LiveFuturesEntryService:
                     exchange_order_id=order.order_id,
                 )
                 raise RuntimeError("Reconciled entry order was not executed")
-
             raise RuntimeError("Reconciled entry order has an unsafe execution status")
 
         raise RuntimeError("Ambiguous LIVE entry submission remains unresolved")
 
     async def _persist_unresolved_attempt(self, *, attempt: SubmissionAttempt) -> None:
-        """Retain a conservatively unresolved intent after an unsafe outcome."""
         await self._persist_attempt(
             attempt=attempt,
             status=SubmissionAttemptStatus.UNRESOLVED,
@@ -451,7 +485,6 @@ class LiveFuturesEntryService:
         exchange_order_id: str | None = None,
         suppress_failure: bool = False,
     ) -> None:
-        """Persist one lifecycle transition without masking the primary failure."""
         try:
             await self.submission_attempt_repository.save(
                 attempt=replace(
@@ -473,7 +506,6 @@ class LiveFuturesEntryService:
 
     @staticmethod
     def _resolve_strategy_type(strategy_name: str) -> StrategyType | None:
-        """Retain known strategy metadata without rejecting custom strategies."""
         try:
             return StrategyType(strategy_name)
         except ValueError:

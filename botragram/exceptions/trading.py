@@ -8,19 +8,10 @@ Python:
     3.14+
 """
 
-# =============================================================================
-# Future
-# =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Local Imports
-# =============================================================================
 from botragram.exceptions.base import BotragramError
 
-# =============================================================================
-# Exports
-# =============================================================================
 __all__ = [
     "TradingError",
     "TradingConfigurationError",
@@ -28,6 +19,8 @@ __all__ = [
     "LiveEntryExistingPositionError",
     "LiveEntryPortfolioCapacityError",
     "LiveEntryPreflightError",
+    "LiveEntryRiskLimitError",
+    "LiveEntrySymbolReadinessError",
     "LiveSubmissionBlockedError",
     "VenueRuleValidationError",
     "TradingPositionError",
@@ -36,9 +29,6 @@ __all__ = [
 ]
 
 
-# =============================================================================
-# Exceptions
-# =============================================================================
 class TradingError(BotragramError):
     """Base exception for trading-related errors."""
 
@@ -61,6 +51,14 @@ class LiveEntryPortfolioCapacityError(TradingExecutionError, RuntimeError):
 
 class LiveEntryPreflightError(TradingExecutionError, RuntimeError):
     """Raised when LIVE entry preflight fails before mutation can begin."""
+
+
+class LiveEntryRiskLimitError(LiveEntryPreflightError):
+    """Raised when the runtime canary limit deterministically rejects an entry."""
+
+
+class LiveEntrySymbolReadinessError(LiveEntryPreflightError):
+    """Raised when existing MAINNET symbol settings deterministically reject entry."""
 
 
 class LiveSubmissionBlockedError(TradingExecutionError, RuntimeError):

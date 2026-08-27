@@ -49,6 +49,7 @@ botragram/
 |   |-- market_type_switch.py # Guarded Spot/Futures soft-restart coordination
 |   |-- runtime_control.py
 |   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
+|   |-- runtime_limited_autonomous_live_executor.py # Dynamic durable capacity adapter
 |   |-- settings_manager.py
 |   |-- shutdown.py
 |   |-- startup.py
@@ -115,13 +116,14 @@ botragram/
 |   |-- volatility/
 |   `-- volume/
 |-- models/                    # Immutable domain/data models
-|   |-- autonomous_live_entry_authorization.py # TESTNET-only future-entry capability
+|   |-- autonomous_live_entry_authorization.py # Network-scoped future-entry capability
 |   |-- autonomous_live_entry_execution.py # Typed protected-entry execution result
-|   |-- autonomous_live_entry_intent.py # Transient authorized TESTNET entry intent
+|   |-- autonomous_live_entry_intent.py # Transient authorized LIVE entry intent
 |   |-- autonomous_live_recovery_snapshot.py # Immutable durable recovery status
 |   |-- closed_position_lifecycle.py # One authoritative closed LIVE position lifecycle
 |   |-- discovery_universe_batch.py # Immutable contiguous ranked discovery window
 |   |-- live_entry_risk_evaluation.py # Immutable fresh LIVE risk decision
+|   |-- runtime_risk_limits.py # Durable autonomous LIVE runtime entry limits
 |   `-- backtest.py            # Backtest request, trade, metrics, dan result
 |   |-- live_market_stream_identity.py # LIVE ticker subscription identity
 |   |-- live_market_stream_state.py # Immutable per-stream telemetry snapshot
@@ -131,10 +133,11 @@ botragram/
 |   `-- market_universe_entry.py # Binance-independent ranked market fact
 |-- repositories/              # Persistence interfaces, including lifecycle ledger
 |   |-- closed_position_lifecycle_repository.py # Durable entry-identity ledger contract
+|   `-- runtime_risk_limit_repository.py # Durable current-limit + audit boundary
 |-- services/
 |   |-- account_service.py
-|   |-- autonomous_live_entry_execution_service.py # Fresh-risk protected TESTNET entry adapter
-|   |-- autonomous_live_entry_intent_service.py # Pure TESTNET intent authorization
+|   |-- autonomous_live_entry_execution_service.py # Fresh-risk protected network-scoped entry adapter
+|   |-- autonomous_live_entry_intent_service.py # Pure network-scoped intent authorization
 |   |-- autonomous_live_recovery_observability_service.py # Read-only recovery view
 |   |-- live_entry_risk_evaluation_service.py # Authoritative portfolio/balance decision
 |   |-- live_executable_quote_service.py # Shared fresh quote and signal provenance gate
@@ -163,8 +166,9 @@ botragram/
 |   |-- position_service.py
 |   |-- runtime_recovery_service.py # Restart recovery dan live protection gate
 |   |-- runtime_reporter.py
+|   |-- runtime_risk_limit_service.py # Durable runtime canary-limit authority
 |   |-- strategy_service.py
-|   |-- volume_ranked_discovery_universe_service.py # Process-local ranked rotation
+|   |-- volume_ranked_discovery_universe_service.py # Full ranked snapshot, bounded rotation
 |   `-- trading_service.py
 |-- storage/
 |   |-- base/
@@ -174,6 +178,7 @@ botragram/
 |       |-- closed_position_lifecycle_repository.py # SQLite lifecycle ledger
 |       |-- legacy_live_ledger_migration.py # One-time legacy TESTNET LIVE ledger import
 |       |-- migrations.py
+|       |-- runtime_risk_limit_repository.py # Current singleton + append-only audit
 |       `-- *_repository.py
 |-- strategies/
 |   |-- factory.py
@@ -192,6 +197,7 @@ botragram/
 |   |-- handlers.py
 |   |-- keyboards.py
 |   |-- messages.py
+|   |-- risk_limit_commands.py # Paused durable runtime-limit controls
 |   `-- query_service.py
 `-- utils/
     |-- connectivity.py       # Shared transient dependency-failure classification

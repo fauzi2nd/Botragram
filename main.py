@@ -8,23 +8,14 @@ Python:
     3.14+
 """
 
-# =============================================================================
-# Future
-# =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Standard Library Imports
-# =============================================================================
 import asyncio
 import logging
 import sys
 from dataclasses import replace
 from typing import Final
 
-# =============================================================================
-# Local Imports
-# =============================================================================
 from botragram.app import (
     Application,
     ApplicationLifecycle,
@@ -43,20 +34,11 @@ from botragram.enums import ExecutionPolicy, MarketType, TradeMode
 from botragram.utils.logger import configure_logging, shutdown_logging
 from botragram.utils.retry import CappedExponentialBackoff
 
-__all__ = [
-    "main",
-]
+__all__ = ["main"]
 
-
-# =============================================================================
-# Constants
-# =============================================================================
 _LOGGER: Final[logging.Logger] = logging.getLogger("botragram.main")
 
 
-# =============================================================================
-# Runtime Functions
-# =============================================================================
 async def _recover_autonomous_live_until_ready(
     *,
     dependency_provider: DependencyProvider,
@@ -145,7 +127,11 @@ async def _run_trading(
             dependency_provider.autonomous_live_recovery_observability_service
         ),
         global_discovery_telemetry_provider=global_discovery_telemetry,
-        max_open_positions=settings.risk.max_open_positions,
+        max_open_positions=(
+            None
+            if settings.app.effective_execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE
+            else settings.risk.max_open_positions
+        ),
     )
     monitor_task = asyncio.create_task(
         terminal_monitor.run(),

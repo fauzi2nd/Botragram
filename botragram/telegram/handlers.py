@@ -8,24 +8,12 @@ Python:
     3.14+
 """
 
-# =============================================================================
-# Future
-# =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Standard Library
-# =============================================================================
 from typing import Any
 
-# =============================================================================
-# Third Party
-# =============================================================================
 from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
-# =============================================================================
-# Local Imports
-# =============================================================================
 from botragram.constants.telegram import (
     CMD_POSITIONS,
     CMD_SETTINGS,
@@ -50,17 +38,14 @@ from botragram.telegram.commands import (
     strategy_command,
     stream_command,
 )
+from botragram.telegram.risk_limit_commands import (
+    risk_limits_command,
+    set_risk_limits_command,
+)
 
 
-# =============================================================================
-# Registration Function
-# =============================================================================
 def register_handlers(app: Any) -> None:
-    """Register command and callback handlers on Telegram app.
-
-    Args:
-        app: Telegram Application instance.
-    """
+    """Register command and callback handlers on Telegram app."""
     app.add_handler(CommandHandler(CMD_START, start_command))
     app.add_handler(CommandHandler(CMD_STATUS, status_command))
     app.add_handler(CommandHandler(CMD_POSITIONS, positions_command))
@@ -75,6 +60,8 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler("resume", start_bot_command))
     app.add_handler(CommandHandler(CMD_SETTINGS, settings_command))
     app.add_handler(CommandHandler("exchange", exchange_command))
+    app.add_handler(CommandHandler("risklimits", risk_limits_command))
+    app.add_handler(CommandHandler("setrisklimits", set_risk_limits_command))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(
         MessageHandler(

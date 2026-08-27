@@ -8,43 +8,21 @@ Python:
     3.14+
 """
 
-# =============================================================================
-# Future
-# =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Standard Library
-# =============================================================================
 from dataclasses import dataclass
 from decimal import Decimal
 
-# =============================================================================
-# Local Imports
-# =============================================================================
 from botragram.config.risk_settings import RiskSettings
 from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.models import PositionSize, RiskMetrics, RiskResult, Signal
 
-__all__ = [
-    "RiskEngine",
-]
+__all__ = ["RiskEngine"]
 
-
-# =============================================================================
-# Constants
-# =============================================================================
 _DECIMAL_ZERO = Decimal("0")
 
 
-# =============================================================================
-# Risk Engine
-# =============================================================================
-@dataclass(
-    slots=True,
-    kw_only=True,
-    frozen=True,
-)
+@dataclass(slots=True, kw_only=True, frozen=True)
 class RiskEngine:
     """Evaluate trading signals and calculate position sizing."""
 
@@ -84,24 +62,16 @@ class RiskEngine:
         signal: Signal,
         account_balance: Decimal,
         current_drawdown_pct: Decimal = _DECIMAL_ZERO,
+        max_position_size_usdt: Decimal | None = None,
     ) -> RiskResult:
-        """Evaluate a signal against configured risk limits.
-
-        Args:
-            signal: Trading signal to evaluate.
-            account_balance: Available balance in quote currency.
-            current_drawdown_pct: Current account drawdown ratio.
-
-        Returns:
-            Risk evaluation result.
-
-        Raises:
-            ValueError: If inputs are invalid.
-        """
+        """Evaluate a signal against configured and optional runtime limits."""
         self._validate_inputs(
             signal=signal,
             account_balance=account_balance,
             current_drawdown_pct=current_drawdown_pct,
+        )
+        effective_max_position_size = self._resolve_max_position_size(
+            runtime_limit=max_position_size_usdt,
         )
 
         if signal.signal_type is SignalType.HOLD:
@@ -132,7 +102,6 @@ class RiskEngine:
         )
 
         risk_per_unit = abs(signal.price - stop_loss)
-
         if risk_per_unit <= _DECIMAL_ZERO:
             return self._rejected_result(
                 entry_price=signal.price,
@@ -140,17 +109,15 @@ class RiskEngine:
             )
 
         allowed_risk = account_balance * self.settings.risk_per_trade_pct
-
         quantity = allowed_risk / risk_per_unit
         notional = quantity * signal.price
 
-        if notional > self.settings.max_position_size_usdt:
-            notional = self.settings.max_position_size_usdt
+        if notional > effective_max_position_size:
+            notional = effective_max_position_size
             quantity = notional / signal.price
 
         risk_amount = quantity * risk_per_unit
         reward_amount = quantity * abs(take_profit - signal.price)
-
         risk_reward_ratio = (
             reward_amount / risk_amount
             if risk_amount > _DECIMAL_ZERO
@@ -174,6 +141,21 @@ class RiskEngine:
             ),
         )
 
+    def _resolve_max_position_size(
+        self,
+        *,
+        runtime_limit: Decimal | None,
+    ) -> Decimal:
+        """Return a runtime limit without allowing it above the env ceiling."""
+        hard_limit = self.settings.max_position_size_usdt
+        if runtime_limit is None:
+            return hard_limit
+        if not runtime_limit.is_finite() or runtime_limit <= _DECIMAL_ZERO:
+            raise ValueError("Runtime maximum position size must be finite and positive")
+        if runtime_limit > hard_limit:
+            raise ValueError("Runtime maximum position size exceeds configured ceiling")
+        return runtime_limit
+
     def _validate_inputs(
         self,
         *,
@@ -181,13 +163,11 @@ class RiskEngine:
         account_balance: Decimal,
         current_drawdown_pct: Decimal,
     ) -> None:
-        """Validate risk evaluation inputs."""
+        """Validate trading risk inputs."""
         if account_balance <= _DECIMAL_ZERO:
             raise ValueError("Account balance must be greater than zero")
-
         if signal.price <= _DECIMAL_ZERO:
             raise ValueError("Signal price must be greater than zero")
-
         if current_drawdown_pct < _DECIMAL_ZERO:
             raise ValueError("Current drawdown must not be negative")
 
@@ -198,12 +178,9 @@ class RiskEngine:
         entry_price: Decimal,
         stop_loss_pct: Decimal,
     ) -> Decimal:
-        """Calculate stop-loss price."""
         distance = entry_price * stop_loss_pct
-
         if signal_type is SignalType.BUY:
             return entry_price - distance
-
         return entry_price + distance
 
     def _calculate_take_profit(
@@ -213,12 +190,9 @@ class RiskEngine:
         entry_price: Decimal,
         take_profit_pct: Decimal,
     ) -> Decimal:
-        """Calculate take-profit price."""
         distance = entry_price * take_profit_pct
-
         if signal_type is SignalType.BUY:
             return entry_price + distance
-
         return entry_price - distance
 
     def _rejected_result(
@@ -227,7 +201,6 @@ class RiskEngine:
         entry_price: Decimal,
         reason: str,
     ) -> RiskResult:
-        """Create a rejected risk result."""
         return RiskResult(
             approved=False,
             position=PositionSize(
@@ -251,24 +224,20 @@ class RiskEngine:
         *,
         strategy_type: StrategyType | None,
     ) -> tuple[Decimal, Decimal]:
-        """Return the configured exit ratios for a strategy."""
         if strategy_type is StrategyType.EMA_SCALPING:
             return (
                 self.settings.ema_scalping_stop_loss_pct,
                 self.settings.ema_scalping_take_profit_pct,
             )
-
         if strategy_type is StrategyType.EMA_CROSS:
             return (
                 self.settings.ema_cross_stop_loss_pct,
                 self.settings.ema_cross_take_profit_pct,
             )
-
         return self.settings.stop_loss_pct, self.settings.take_profit_pct
 
     @staticmethod
     def _resolve_strategy_type(strategy_name: str) -> StrategyType | None:
-        """Resolve a known strategy name without rejecting custom strategies."""
         try:
             return StrategyType(strategy_name)
         except ValueError:

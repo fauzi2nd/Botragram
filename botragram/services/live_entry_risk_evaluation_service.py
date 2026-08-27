@@ -8,46 +8,43 @@ from decimal import Decimal
 from typing import Protocol
 
 from botragram.engine import TradingEngine
-from botragram.models import LiveEntryRiskEvaluation, Position, Signal
+from botragram.models import LiveEntryRiskEvaluation, Position, RuntimeRiskLimits, Signal
 from botragram.services.live_account_drawdown_service import (
     LiveAccountDrawdownService,
 )
 
 __all__ = ["LiveEntryRiskEvaluationService"]
 
-
 _DECIMAL_ZERO = Decimal("0")
 
 
 class _LiveAccountBalanceProvider(Protocol):
-    """Provide the current LIVE balance for risk evaluation."""
-
     async def get_free_balance(self, *, asset: str) -> Decimal:
         """Return free balance for one quote asset."""
         ...
 
 
 class _LiveAccountEquityProvider(Protocol):
-    """Provide fresh authoritative LIVE collateral equity."""
-
     async def get_equity(self, *, asset: str) -> Decimal:
         """Return current account equity including unrealized PnL."""
         ...
 
 
 class _LivePositionPortfolioProvider(Protocol):
-    """Provide the current authoritative LIVE position portfolio."""
-
     async def get_all(self, *, synchronize: bool = False) -> Sequence[Position]:
         """Return current positions with optional exchange synchronization."""
         ...
 
 
 class _LiveNaturalExitRecovery(Protocol):
-    """Reconcile natural exits before a fresh LIVE risk decision."""
-
     async def reconcile(self) -> None:
         """Remove proven orphan protection or fail closed."""
+        ...
+
+
+class _RuntimeRiskLimitProvider(Protocol):
+    def get_snapshot(self) -> RuntimeRiskLimits:
+        """Return the current immutable runtime entry limits."""
         ...
 
 
@@ -62,14 +59,13 @@ class LiveEntryRiskEvaluationService:
     equity_provider: _LiveAccountEquityProvider | None = None
     drawdown_service: LiveAccountDrawdownService | None = None
     natural_exit_recovery_service: _LiveNaturalExitRecovery | None = None
+    runtime_risk_limit_provider: _RuntimeRiskLimitProvider | None = None
 
     def __post_init__(self) -> None:
         """Normalize and validate the balance asset boundary."""
         normalized_asset = self.balance_asset.strip().upper()
-
         if not normalized_asset:
             raise ValueError("LIVE entry balance asset must not be empty")
-
         object.__setattr__(self, "balance_asset", normalized_asset)
         if (self.equity_provider is None) is not (self.drawdown_service is None):
             raise ValueError(
@@ -82,21 +78,15 @@ class LiveEntryRiskEvaluationService:
         signal: Signal,
         entry_price_override: Decimal | None = None,
     ) -> LiveEntryRiskEvaluation:
-        """Return a fresh portfolio-aware decision for the exact signal.
-
-        Args:
-            signal: Immutable strategy provenance signal.
-            entry_price_override: Optional fresh executable price for risk sizing.
-
-        Returns:
-            Fresh risk decision retaining the original provenance signal.
-
-        Raises:
-            ValueError: If the optional execution price is not finite and positive.
-        """
+        """Return a fresh portfolio-aware decision for the exact signal."""
         evaluation_signal = self._get_evaluation_signal(
             signal=signal,
             entry_price_override=entry_price_override,
+        )
+        runtime_limits = (
+            self.runtime_risk_limit_provider.get_snapshot()
+            if self.runtime_risk_limit_provider is not None
+            else None
         )
         if self.natural_exit_recovery_service is not None:
             await self.natural_exit_recovery_service.reconcile()
@@ -121,6 +111,16 @@ class LiveEntryRiskEvaluationService:
             current_drawdown_pct=current_drawdown_pct,
             has_open_position=has_existing_position,
             open_positions=positions,
+            max_open_positions=(
+                runtime_limits.max_open_positions
+                if runtime_limits is not None
+                else None
+            ),
+            max_position_size_usdt=(
+                runtime_limits.max_position_size_usdt
+                if runtime_limits is not None
+                else None
+            ),
         )
         if entry_price_override is not None:
             decision = replace(decision, signal=signal)
@@ -136,7 +136,6 @@ class LiveEntryRiskEvaluationService:
         signal: Signal,
         entry_price_override: Decimal | None,
     ) -> Signal:
-        """Return a repriced ephemeral signal only when explicitly requested."""
         if entry_price_override is None:
             return signal
         if (
@@ -144,5 +143,4 @@ class LiveEntryRiskEvaluationService:
             or entry_price_override <= _DECIMAL_ZERO
         ):
             raise ValueError("LIVE entry price override must be finite and positive")
-
         return replace(signal, price=entry_price_override)
