@@ -250,6 +250,168 @@ async def test_restart_recreates_proven_missing_persisted_stop_with_same_id() ->
 
 
 @pytest.mark.asyncio
+async def test_restart_adopts_unique_active_stop_after_canceled_predecessor() -> None:
+    """Converge the exact soak race without another exchange mutation."""
+    old_id = "bsl-11111111111111111111111111111111"
+    replacement_id = "bsl-22222222222222222222222222222222"
+    exchange = RestartProtectionExchange()
+    exchange.orders.extend(
+        [
+            _order(
+                order_id="stop-canceled",
+                client_id=old_id,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("98"),
+                status=OrderStatus.CANCELED,
+            ),
+            _order(
+                order_id="stop-replacement",
+                client_id=replacement_id,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("101"),
+            ),
+        ]
+    )
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+    stale = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id=old_id,
+        tp_id="btp-existing",
+    )
+
+    first = await service.ensure(position=stale)
+    second = await service.ensure(position=first)
+    stored = await repository.get_by_symbol(symbol="BTCUSDT")
+
+    assert first.stop_loss_client_algo_id == replacement_id
+    assert first.stop_loss == Decimal("101")
+    assert second == first
+    assert stored == first
+    assert exchange.posts == []
+    assert exchange.cancelled == []
+
+
+@pytest.mark.asyncio
+async def test_restart_rejects_ambiguous_active_stop_replacements() -> None:
+    """Remain fail-closed when more than one owned replacement is active."""
+    old_id = "bsl-11111111111111111111111111111111"
+    exchange = RestartProtectionExchange()
+    exchange.orders.extend(
+        [
+            _order(
+                order_id="stop-canceled",
+                client_id=old_id,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("98"),
+                status=OrderStatus.CANCELED,
+            ),
+            _order(
+                order_id="stop-replacement-one",
+                client_id="bsl-22222222222222222222222222222222",
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("101"),
+            ),
+            _order(
+                order_id="stop-replacement-two",
+                client_id="bsl-33333333333333333333333333333333",
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("102"),
+            ),
+        ]
+    )
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+    stale = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id=old_id,
+        tp_id="btp-existing",
+    )
+
+    with pytest.raises(RuntimeError, match="no unique active Botragram"):
+        await service.ensure(position=stale)
+
+    assert await repository.get_by_symbol(symbol="BTCUSDT") is None
+    assert exchange.posts == []
+    assert exchange.cancelled == []
+
+
+@pytest.mark.asyncio
+async def test_restart_retries_failed_replacement_adoption_without_mutation() -> None:
+    """Retry durable adoption after local persistence recovers."""
+
+    class FailOncePositionRepository(MemoryPositionRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_next_save = True
+
+        async def save(self, *, position: Position) -> None:
+            if self.fail_next_save:
+                self.fail_next_save = False
+                raise RuntimeError("configured durable adoption failure")
+            await super().save(position=position)
+
+    old_id = "bsl-11111111111111111111111111111111"
+    replacement_id = "bsl-22222222222222222222222222222222"
+    exchange = RestartProtectionExchange()
+    exchange.orders.extend(
+        [
+            _order(
+                order_id="stop-canceled",
+                client_id=old_id,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("98"),
+                status=OrderStatus.CANCELED,
+            ),
+            _order(
+                order_id="stop-replacement",
+                client_id=replacement_id,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("101"),
+            ),
+        ]
+    )
+    repository = FailOncePositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+    stale = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id=old_id,
+        tp_id="btp-existing",
+    )
+
+    with pytest.raises(RuntimeError, match="configured durable adoption failure"):
+        await service.ensure(position=stale)
+    recovered = await service.ensure(position=stale)
+
+    assert recovered.stop_loss_client_algo_id == replacement_id
+    assert await repository.get_by_symbol(symbol="BTCUSDT") == recovered
+    assert exchange.posts == []
+    assert exchange.cancelled == []
+
+
+@pytest.mark.asyncio
 async def test_cleanup_skips_terminal_owned_leg_and_cancels_active_peer() -> None:
     exchange = RestartProtectionExchange()
     exchange.orders = [

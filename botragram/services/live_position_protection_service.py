@@ -27,6 +27,9 @@ _RECONCILIATION_MAX_ATTEMPTS: Final[int] = 2
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
 _PROTECTION_VISIBILITY_ATTEMPTS: Final[int] = 5
 _PROTECTION_VISIBILITY_DELAY_SECONDS: Final[float] = 0.2
+_BOTRAGRAM_STOP_CLIENT_ID_PREFIX: Final[str] = "bsl-"
+_CLIENT_ID_HEX_LENGTH: Final[int] = 32
+_LOWER_HEX_CHARACTERS: Final[frozenset[str]] = frozenset("0123456789abcdef")
 _TERMINAL_PROTECTION_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
     {
         OrderStatus.FILLED,
@@ -109,11 +112,22 @@ class LivePositionProtectionService:
         # Resolve it first and fail closed on an unprovable outcome.  Only
         # identities created during this invocation may proceed directly to POST.
         if position.stop_loss_client_algo_id is not None:
-            stop_order = await self._recover_persisted_leg(
+            persisted_stop = await self._recover_persisted_leg(
                 position=position,
                 order_type=OrderType.STOP_MARKET,
                 client_id=position.stop_loss_client_algo_id,
+                allow_canceled=True,
             )
+            if (
+                persisted_stop is not None
+                and persisted_stop.status is OrderStatus.CANCELED
+            ):
+                position, stop_order = await self._adopt_canceled_stop_replacement(
+                    position=position,
+                    canceled_order=persisted_stop,
+                )
+            else:
+                stop_order = persisted_stop
         if position.take_profit_client_algo_id is not None:
             take_profit_order = await self._recover_persisted_leg(
                 position=position,
@@ -493,6 +507,7 @@ class LivePositionProtectionService:
         position: Position,
         order_type: OrderType,
         client_id: str,
+        allow_canceled: bool = False,
     ) -> Order | None:
         """Prove a pre-restart protection mutation through one authoritative GET.
 
@@ -505,6 +520,8 @@ class LivePositionProtectionService:
             position: The live position that requires protection.
             order_type: The logical protection leg to recover.
             client_id: The durable exchange client identity for that leg.
+            allow_canceled: Whether a canceled predecessor may be returned for
+                deterministic stepped STOP replacement recovery.
 
         Returns:
             The authoritative matching protection order, or ``None`` when the
@@ -525,13 +542,17 @@ class LivePositionProtectionService:
             except ExchangeOrderOutcomeUnknownError as error:
                 last_unknown = error
             else:
-                self._validate_reconciled_leg(
+                self._validate_reconciled_leg_identity(
                     order=order,
                     position=position,
                     order_type=order_type,
                     client_id=client_id,
                 )
-                return order
+                if order.status is OrderStatus.NEW or (
+                    allow_canceled and order.status is OrderStatus.CANCELED
+                ):
+                    return order
+                raise RuntimeError("Reconciled protection order does not match its leg")
 
             if attempt + 1 < _PROTECTION_VISIBILITY_ATTEMPTS:
                 await asyncio.sleep(_PROTECTION_VISIBILITY_DELAY_SECONDS)
@@ -550,6 +571,51 @@ class LivePositionProtectionService:
             client_id,
         )
         return None
+
+    async def _adopt_canceled_stop_replacement(
+        self,
+        *,
+        position: Position,
+        canceled_order: Order,
+    ) -> tuple[Position, Order]:
+        """Persist one uniquely proven Botragram stepped STOP replacement.
+
+        The predecessor's exact durable identity must already be proven
+        canceled. Recovery performs only a fresh open-order GET and a local
+        durable save; it never submits or cancels an exchange order.
+        """
+        if canceled_order.status is not OrderStatus.CANCELED:
+            raise RuntimeError("Persisted LIVE STOP predecessor is not canceled")
+
+        open_orders = await self.exchange_client.get_open_protection_orders(
+            symbol=position.symbol,
+        )
+        replacement = self._find_owned_active_stop_replacement(
+            orders=open_orders,
+            position=position,
+            canceled_client_id=canceled_order.client_order_id,
+        )
+        replacement_id = replacement.client_order_id
+        replacement_stop = replacement.stop_price
+        if replacement_id is None or replacement_stop is None:
+            raise RuntimeError("Recovered LIVE STOP replacement is incomplete")
+
+        adopted = replace(
+            position,
+            stop_loss=replacement_stop,
+            stop_loss_client_algo_id=replacement_id,
+        )
+        await self.position_repository.save(position=adopted)
+        _LOGGER.warning(
+            "Canceled persisted LIVE STOP replaced by unique active Botragram "
+            "STOP; durable ownership recovered: symbol=%s old_client_id=%s "
+            "new_client_id=%s stop_loss=%s",
+            adopted.symbol,
+            canceled_order.client_order_id,
+            replacement_id,
+            replacement_stop,
+        )
+        return adopted, replacement
 
     async def cancel_persisted_legs(self, *, position: Position) -> None:
         """Cancel only exact durable protection identities and prove them absent."""
@@ -763,6 +829,69 @@ class LivePositionProtectionService:
             max(matching, key=lambda order: order.stop_price or Decimal("0"))
             if position.side is PositionSide.LONG
             else min(matching, key=lambda order: order.stop_price or Decimal("0"))
+        )
+
+    @staticmethod
+    def _find_owned_active_stop_replacement(
+        *,
+        orders: Sequence[Order],
+        position: Position,
+        canceled_client_id: str | None,
+    ) -> Order:
+        """Return one authoritative Botragram stepped STOP or fail closed."""
+        candidates = tuple(
+            order
+            for order in orders
+            if order.client_order_id != canceled_client_id
+            and LivePositionProtectionService._is_owned_stop_client_id(
+                client_id=order.client_order_id,
+            )
+            and order.symbol.upper() == position.symbol.upper()
+            and order.side is LivePositionProtectionService._closing_side(position.side)
+            and order.order_type is OrderType.STOP_MARKET
+            and order.status is OrderStatus.NEW
+            and order.quantity == position.quantity
+            and LivePositionProtectionService._is_tighter_stepped_stop(
+                position=position,
+                stop_price=order.stop_price,
+            )
+        )
+        if len(candidates) != 1:
+            raise RuntimeError(
+                "Canceled persisted LIVE STOP has no unique active Botragram "
+                "replacement"
+            )
+        return candidates[0]
+
+    @staticmethod
+    def _is_owned_stop_client_id(*, client_id: str | None) -> bool:
+        """Return whether an identity matches Botragram's generated STOP form."""
+        if client_id is None or not client_id.startswith(
+            _BOTRAGRAM_STOP_CLIENT_ID_PREFIX
+        ):
+            return False
+        suffix = client_id.removeprefix(_BOTRAGRAM_STOP_CLIENT_ID_PREFIX)
+        return len(suffix) == _CLIENT_ID_HEX_LENGTH and all(
+            character in _LOWER_HEX_CHARACTERS for character in suffix
+        )
+
+    @staticmethod
+    def _is_tighter_stepped_stop(
+        *,
+        position: Position,
+        stop_price: Decimal | None,
+    ) -> bool:
+        """Require a replacement inside Entry-to-TP and tighter than current."""
+        current_stop = position.stop_loss
+        take_profit = position.take_profit
+        if stop_price is None or current_stop is None or take_profit is None:
+            return False
+        if position.side is PositionSide.LONG:
+            return current_stop < stop_price and (
+                position.entry_price < stop_price < take_profit
+            )
+        return stop_price < current_stop and (
+            take_profit < stop_price < position.entry_price
         )
 
     @staticmethod
