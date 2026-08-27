@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from typing import Final, Protocol
 
@@ -70,6 +71,16 @@ class LiveNaturalExitExchange(Protocol):
         symbol: str | None = None,
     ) -> Sequence[Order]:
         """Return authoritative open conditional protection orders."""
+        ...
+
+    async def get_protection_order_history(
+        self,
+        *,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime | None = None,
+    ) -> Sequence[Order]:
+        """Return bounded authoritative conditional-order history."""
         ...
 
     async def get_protection_order_by_client_id(
@@ -314,6 +325,12 @@ class LiveNaturalExitRecoveryService:
             entry_client_order_id=entry_identity,
         ):
             return entry_identity
+        if not filled_exit_orders:
+            filled_exit_orders = (
+                await self._recover_filled_stepped_stop_from_history(
+                    position=position,
+                ),
+            )
         if len(filled_exit_orders) != 1:
             raise RuntimeError(
                 "Natural exit requires exactly one authoritative FILLED exit"
@@ -342,6 +359,60 @@ class LiveNaturalExitRecoveryService:
         )
         return entry_identity
 
+    async def _recover_filled_stepped_stop_from_history(
+        self,
+        *,
+        position: Position,
+    ) -> Order:
+        """Recover one lost durable stepped-STOP identity through bounded GETs."""
+        history = tuple(
+            await self.exchange_client.get_protection_order_history(
+                symbol=position.symbol,
+                start_time=position.opened_at,
+            )
+        )
+        persisted_ids = {
+            position.stop_loss_client_algo_id,
+            position.take_profit_client_algo_id,
+            position.pending_stop_loss_client_algo_id,
+        }
+        closing_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+        )
+        candidates = tuple(
+            order
+            for order in history
+            if order.client_order_id not in persisted_ids
+            and Position.is_generated_stop_loss_client_algo_id(order.client_order_id)
+            and order.symbol.upper() == position.symbol.upper()
+            and order.created_at >= position.opened_at
+            and order.side is closing_side
+            and order.order_type is OrderType.STOP_MARKET
+            and order.status is OrderStatus.FILLED
+            and order.quantity == position.quantity
+            and order.executed_quantity == position.quantity
+            and order.execution_order_id is not None
+            and self._is_tighter_stepped_stop(
+                position=position,
+                stop_price=order.stop_price,
+            )
+        )
+        if len(candidates) != 1:
+            raise RuntimeError(
+                "Natural exit requires exactly one authoritative FILLED exit"
+            )
+        recovered = candidates[0]
+        _LOGGER.warning(
+            "Natural LIVE exit recovered a lost stepped STOP identity from "
+            "authoritative history: symbol=%s old_client_id=%s "
+            "exit_client_id=%s execution_order_id=%s",
+            position.symbol,
+            position.stop_loss_client_algo_id,
+            recovered.client_order_id,
+            recovered.execution_order_id,
+        )
+        return recovered
+
     async def _complete_closed_lifecycle_best_effort(
         self,
         *,
@@ -365,10 +436,30 @@ class LiveNaturalExitRecoveryService:
             return ClosedPositionReason.TAKE_PROFIT
         if (
             exit_order.client_order_id == position.pending_stop_loss_client_algo_id
+            or exit_order.client_order_id != position.stop_loss_client_algo_id
             or position.protection_step > 0
         ):
             return ClosedPositionReason.STEPPED_STOP
         return ClosedPositionReason.STOP_LOSS
+
+    @staticmethod
+    def _is_tighter_stepped_stop(
+        *,
+        position: Position,
+        stop_price: Decimal | None,
+    ) -> bool:
+        """Require a replacement trigger strictly inside Entry-to-TP."""
+        current_stop = position.stop_loss
+        take_profit = position.take_profit
+        if stop_price is None or current_stop is None or take_profit is None:
+            return False
+        if position.side is PositionSide.LONG:
+            return current_stop < stop_price and (
+                position.entry_price < stop_price < take_profit
+            )
+        return stop_price < current_stop and (
+            take_profit < stop_price < position.entry_price
+        )
 
     @staticmethod
     def _portfolio_snapshots_match(

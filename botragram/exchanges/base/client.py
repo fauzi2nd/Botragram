@@ -249,6 +249,21 @@ class BaseExchangeClient(ABC):
     ) -> Sequence[Order]:
         """Return currently open conditional protection orders."""
 
+    async def get_protection_order_history(
+        self,
+        *,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime | None = None,
+    ) -> Sequence[Order]:
+        """Return bounded conditional-order history for one symbol.
+
+        Connectors without an authoritative conditional-order history endpoint
+        fail closed. Futures connectors override this recovery-only boundary.
+        """
+        del symbol, start_time, end_time
+        raise NotImplementedError("Protection-order history is not supported")
+
     @abstractmethod
     async def get_protection_order_by_client_id(
         self, *, symbol: str, client_id: str

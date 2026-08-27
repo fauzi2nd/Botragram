@@ -31,6 +31,12 @@ __all__ = [
 ]
 
 
+_STOP_LOSS_CLIENT_ALGO_ID_PREFIX = "bsl-"
+_TAKE_PROFIT_CLIENT_ALGO_ID_PREFIX = "btp-"
+_CLIENT_ALGO_ID_HEX_LENGTH = 32
+_LOWER_HEX_CHARACTERS = frozenset("0123456789abcdef")
+
+
 # =============================================================================
 # Domain Models
 # =============================================================================
@@ -103,9 +109,21 @@ class Position:
     @staticmethod
     def create_stop_loss_client_algo_id() -> str:
         """Create a stable client identity for one stop-loss protection leg."""
-        return f"bsl-{uuid4().hex}"
+        return f"{_STOP_LOSS_CLIENT_ALGO_ID_PREFIX}{uuid4().hex}"
 
     @staticmethod
     def create_take_profit_client_algo_id() -> str:
         """Create a stable client identity for one take-profit protection leg."""
-        return f"btp-{uuid4().hex}"
+        return f"{_TAKE_PROFIT_CLIENT_ALGO_ID_PREFIX}{uuid4().hex}"
+
+    @staticmethod
+    def is_generated_stop_loss_client_algo_id(client_id: str | None) -> bool:
+        """Return whether an identity has Botragram's generated STOP form."""
+        if client_id is None or not client_id.startswith(
+            _STOP_LOSS_CLIENT_ALGO_ID_PREFIX
+        ):
+            return False
+        suffix = client_id.removeprefix(_STOP_LOSS_CLIENT_ALGO_ID_PREFIX)
+        return len(suffix) == _CLIENT_ALGO_ID_HEX_LENGTH and all(
+            character in _LOWER_HEX_CHARACTERS for character in suffix
+        )

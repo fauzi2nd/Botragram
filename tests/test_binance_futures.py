@@ -47,6 +47,7 @@ _NOW = datetime(2026, 8, 7, tzinfo=UTC)
 _EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
 _BULK_TICKER_ENDPOINT = "/fapi/v1/ticker/24hr"
 _TRADES_ENDPOINT = "/fapi/v1/userTrades"
+_ALGO_HISTORY_ENDPOINT = "/fapi/v1/allAlgoOrders"
 
 
 class RecordingBinanceRestClient(BinanceRestClient):
@@ -139,6 +140,56 @@ async def test_get_trades_for_order_uses_exact_authenticated_order_identity() ->
             "GET",
             _TRADES_ENDPOINT,
             {"symbol": "BTCUSDT", "orderId": "42", "limit": 1_000},
+            True,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_protection_history_uses_bounded_authenticated_time_window() -> None:
+    """Read historical algo identity instead of a latest-fill window."""
+    timestamp_ms = int(_NOW.timestamp() * 1_000)
+    rest = RecordingBinanceRestClient()
+    rest.get_responses[_ALGO_HISTORY_ENDPOINT] = [
+        {
+            "algoId": 77,
+            "clientAlgoId": "bsl-22222222222222222222222222222222",
+            "symbol": "BTCUSDT",
+            "side": "SELL",
+            "orderType": "STOP_MARKET",
+            "algoStatus": "FINISHED",
+            "quantity": "1",
+            "actualQty": "1",
+            "triggerPrice": "101",
+            "actualOrderId": 88,
+            "createTime": timestamp_ms,
+            "updateTime": timestamp_ms,
+        }
+    ]
+    client = BinanceFuturesExchangeClient(
+        rest=rest,
+        mapper=BinanceExchangeMapper(),
+    )
+
+    orders = await client.get_protection_order_history(
+        symbol="btcusdt",
+        start_time=_NOW,
+        end_time=_NOW,
+    )
+
+    assert len(orders) == 1
+    assert orders[0].status is OrderStatus.FILLED
+    assert orders[0].execution_order_id == "88"
+    assert rest.requests == [
+        (
+            "GET",
+            _ALGO_HISTORY_ENDPOINT,
+            {
+                "symbol": "BTCUSDT",
+                "startTime": timestamp_ms,
+                "endTime": timestamp_ms,
+                "limit": 1_000,
+            },
             True,
         )
     ]

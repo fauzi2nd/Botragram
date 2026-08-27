@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Final
 
@@ -64,6 +64,7 @@ _ORDER_ENDPOINT = "/fapi/v1/order"
 _OPEN_ORDERS_ENDPOINT = "/fapi/v1/openOrders"
 _ALGO_ORDER_ENDPOINT = "/fapi/v1/algoOrder"
 _OPEN_ALGO_ORDERS_ENDPOINT = "/fapi/v1/openAlgoOrders"
+_ALL_ALGO_ORDERS_ENDPOINT = "/fapi/v1/allAlgoOrders"
 _TRADES_ENDPOINT = "/fapi/v1/userTrades"
 _POSITIONS_ENDPOINT = "/fapi/v3/positionRisk"
 _POSITION_MODE_ENDPOINT = "/fapi/v1/positionSide/dual"
@@ -79,6 +80,8 @@ _BINANCE_PERCENT_PRICE_REJECTED_CODE = -4131
 _PROTECTION_RECONCILIATION_ATTEMPTS = 3
 _PROTECTION_RECONCILIATION_DELAY_SECONDS = 0.5
 _ORDER_TRADE_PAGE_LIMIT: Final[int] = 1_000
+_ALGO_ORDER_HISTORY_PAGE_LIMIT: Final[int] = 1_000
+_ALGO_ORDER_HISTORY_WINDOW: Final[timedelta] = timedelta(days=6)
 _TRANSITIONAL_PROTECTION_STATUSES = frozenset({OrderStatus.TRIGGERING})
 
 
@@ -644,6 +647,91 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         return tuple(
             self._mapper.map_algo_order(self._require_mapping(item))
             for item in self._require_sequence(payload)
+        )
+
+    async def get_protection_order_history(
+        self,
+        *,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime | None = None,
+    ) -> Sequence[Order]:
+        """Return complete conditional history in documented sub-seven-day windows."""
+        normalized_symbol = self._normalize_symbol(symbol)
+        start_ms = self._datetime_to_milliseconds(start_time)
+        end_ms = self._datetime_to_milliseconds(end_time or datetime.now(UTC))
+        if start_ms > end_ms:
+            raise ValueError("Protection history start time must not exceed end time")
+
+        window_ms = int(_ALGO_ORDER_HISTORY_WINDOW.total_seconds() * 1_000)
+        orders_by_id: dict[str, Order] = {}
+        window_start_ms = start_ms
+        while window_start_ms <= end_ms:
+            window_end_ms = min(window_start_ms + window_ms, end_ms)
+            page = await self._get_protection_order_history_window(
+                symbol=normalized_symbol,
+                start_ms=window_start_ms,
+                end_ms=window_end_ms,
+            )
+            for order in page:
+                if order.symbol.upper() != normalized_symbol:
+                    raise RuntimeError(
+                        "Binance returned protection history for another symbol"
+                    )
+                existing = orders_by_id.get(order.order_id)
+                if existing is not None and existing != order:
+                    raise RuntimeError(
+                        "Binance returned conflicting protection history identity"
+                    )
+                orders_by_id[order.order_id] = order
+            window_start_ms = window_end_ms + 1
+
+        return tuple(
+            sorted(
+                orders_by_id.values(),
+                key=lambda order: (order.created_at, order.order_id),
+            )
+        )
+
+    async def _get_protection_order_history_window(
+        self,
+        *,
+        symbol: str,
+        start_ms: int,
+        end_ms: int,
+    ) -> tuple[Order, ...]:
+        """Read one complete history window, splitting a saturated response."""
+        payload = await self._rest.get(
+            _ALL_ALGO_ORDERS_ENDPOINT,
+            params={
+                "symbol": symbol,
+                "startTime": start_ms,
+                "endTime": end_ms,
+                "limit": _ALGO_ORDER_HISTORY_PAGE_LIMIT,
+            },
+            authenticated=True,
+        )
+        orders = tuple(
+            self._mapper.map_algo_order(self._require_mapping(item))
+            for item in self._require_sequence(payload)
+        )
+        if len(orders) < _ALGO_ORDER_HISTORY_PAGE_LIMIT:
+            return orders
+        if start_ms >= end_ms:
+            raise RuntimeError("Binance protection history remains truncated")
+
+        midpoint_ms = start_ms + ((end_ms - start_ms) // 2)
+        return (
+            *await self._get_protection_order_history_window(
+                symbol=symbol,
+                start_ms=start_ms,
+                end_ms=midpoint_ms,
+            ),
+            *await self._get_protection_order_history_window(
+                symbol=symbol,
+                start_ms=midpoint_ms + 1,
+                end_ms=end_ms,
+            ),
         )
 
     async def get_protection_order_by_client_id(

@@ -55,15 +55,18 @@ class FakeNaturalExitExchange:
         positions: tuple[Position, ...] = (),
         protections: tuple[Order, ...] = (),
         exact_only_protections: tuple[Order, ...] = (),
+        protection_history: tuple[Order, ...] = (),
         ambiguous_after_remove: bool = False,
         keep_after_cancel: bool = False,
     ) -> None:
         self.positions = positions
         self.protections = list(protections)
         self.exact_only_protections = list(exact_only_protections)
+        self.protection_history = protection_history
         self.ambiguous_after_remove = ambiguous_after_remove
         self.keep_after_cancel = keep_after_cancel
         self.cancel_calls: list[tuple[str, str]] = []
+        self.history_calls: list[tuple[str, datetime]] = []
 
     async def get_positions(
         self,
@@ -97,6 +100,19 @@ class FakeNaturalExitExchange:
             if order.symbol == symbol.upper() and order.client_order_id == client_id:
                 return order
         raise ExchangeOrderNotFoundError("configured protection not found")
+
+    async def get_protection_order_history(
+        self,
+        *,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime | None = None,
+    ) -> tuple[Order, ...]:
+        del end_time
+        self.history_calls.append((symbol.upper(), start_time))
+        return tuple(
+            order for order in self.protection_history if order.symbol == symbol.upper()
+        )
 
     async def cancel_protection_order(
         self,
@@ -944,6 +960,122 @@ async def test_staging_failure_preserves_natural_exit_identity_until_restart() -
     assert lifecycle_repository.stage_calls == 2
     assert len(completed) == 1
     assert completed[0].entry_client_order_id == position.entry_client_order_id
+
+
+class _ExactLifecycleTradeHistory:
+    """Return complete fills for the shared entry and recovered exit IDs."""
+
+    async def get_trades_for_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> tuple[Trade, ...]:
+        del symbol
+        if order_id == "entry-1":
+            return (
+                _fill(
+                    trade_id="entry-fill",
+                    order_id=order_id,
+                    side=OrderSide.SELL,
+                    realized_pnl="0",
+                ),
+            )
+        if order_id == "filled-exit":
+            return (
+                _fill(
+                    trade_id="exit-fill",
+                    order_id=order_id,
+                    side=OrderSide.BUY,
+                    realized_pnl="2",
+                ),
+            )
+        return ()
+
+
+@pytest.mark.asyncio
+async def test_restart_recovers_filled_stop_replacement_lost_before_commit() -> None:
+    """Converge the soak race from bounded authoritative algo history."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    replacement = replace(
+        _protection(
+            order_type=OrderType.STOP_MARKET,
+            client_id="bsl-22222222222222222222222222222222",
+            trigger="0.01120",
+        ),
+        order_id="replacement-algo",
+        execution_order_id="filled-exit",
+        status=OrderStatus.FILLED,
+        executed_quantity=position.quantity,
+    )
+    exchange = FakeNaturalExitExchange(protection_history=(replacement,))
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=_ExactLifecycleTradeHistory(),
+        ),
+    )
+
+    await service.reconcile()
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert exchange.history_calls == [(_SYMBOL, position.opened_at)]
+    assert exchange.cancel_calls == []
+    assert len(completed) == 1
+    assert completed[0].ownership.exit_client_order_id == replacement.client_order_id
+    assert completed[0].ownership.close_reason is ClosedPositionReason.STEPPED_STOP
+
+
+@pytest.mark.asyncio
+async def test_restart_keeps_identity_when_filled_replacement_is_ambiguous() -> None:
+    """Never guess lifecycle ownership from multiple matching historical exits."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    replacements = tuple(
+        replace(
+            _protection(
+                order_type=OrderType.STOP_MARKET,
+                client_id=f"bsl-{digit * 32}",
+                trigger=trigger,
+            ),
+            order_id=f"replacement-{digit}",
+            execution_order_id=f"filled-{digit}",
+            status=OrderStatus.FILLED,
+            executed_quantity=position.quantity,
+        )
+        for digit, trigger in (("2", "0.01120"), ("3", "0.01110"))
+    )
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    exchange = FakeNaturalExitExchange(protection_history=replacements)
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=_ExactLifecycleTradeHistory(),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="exactly one authoritative FILLED"):
+        await service.reconcile()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) == position
+    assert await lifecycles.get_completed() == ()
+    assert exchange.cancel_calls == []
 
 
 def _fill(

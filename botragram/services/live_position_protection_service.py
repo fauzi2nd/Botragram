@@ -27,9 +27,6 @@ _RECONCILIATION_MAX_ATTEMPTS: Final[int] = 2
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
 _PROTECTION_VISIBILITY_ATTEMPTS: Final[int] = 5
 _PROTECTION_VISIBILITY_DELAY_SECONDS: Final[float] = 0.2
-_BOTRAGRAM_STOP_CLIENT_ID_PREFIX: Final[str] = "bsl-"
-_CLIENT_ID_HEX_LENGTH: Final[int] = 32
-_LOWER_HEX_CHARACTERS: Final[frozenset[str]] = frozenset("0123456789abcdef")
 _TERMINAL_PROTECTION_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
     {
         OrderStatus.FILLED,
@@ -843,9 +840,7 @@ class LivePositionProtectionService:
             order
             for order in orders
             if order.client_order_id != canceled_client_id
-            and LivePositionProtectionService._is_owned_stop_client_id(
-                client_id=order.client_order_id,
-            )
+            and Position.is_generated_stop_loss_client_algo_id(order.client_order_id)
             and order.symbol.upper() == position.symbol.upper()
             and order.side is LivePositionProtectionService._closing_side(position.side)
             and order.order_type is OrderType.STOP_MARKET
@@ -862,18 +857,6 @@ class LivePositionProtectionService:
                 "replacement"
             )
         return candidates[0]
-
-    @staticmethod
-    def _is_owned_stop_client_id(*, client_id: str | None) -> bool:
-        """Return whether an identity matches Botragram's generated STOP form."""
-        if client_id is None or not client_id.startswith(
-            _BOTRAGRAM_STOP_CLIENT_ID_PREFIX
-        ):
-            return False
-        suffix = client_id.removeprefix(_BOTRAGRAM_STOP_CLIENT_ID_PREFIX)
-        return len(suffix) == _CLIENT_ID_HEX_LENGTH and all(
-            character in _LOWER_HEX_CHARACTERS for character in suffix
-        )
 
     @staticmethod
     def _is_tighter_stepped_stop(
