@@ -92,11 +92,28 @@ class FakeTickListener:
 
 @dataclass(slots=True)
 class FakePaperBalanceProvider:
-    """Satisfy query service construction without portfolio access."""
+    """Satisfy query service construction and record portfolio access."""
+
+    calls: int = 0
 
     async def get_available_balance(self) -> Decimal:
         """Return a deterministic paper balance."""
+        self.calls += 1
         return Decimal("10000")
+
+
+@dataclass(slots=True)
+class FakeLiveBalanceProvider:
+    """Return deterministic LIVE balance without paper reconstruction."""
+
+    balance: Decimal
+    calls: int = 0
+
+    async def get_free_balance(self, *, asset: str) -> Decimal:
+        """Return the configured LIVE balance."""
+        assert asset == "USDT"
+        self.calls += 1
+        return self.balance
 
 
 def _create_ticker(*, symbol: str, price: Decimal) -> Ticker:
@@ -108,6 +125,39 @@ def _create_ticker(*, symbol: str, price: Decimal) -> Ticker:
         last_price=price,
         timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
+
+
+def test_telegram_query_service_uses_live_balance_provider() -> None:
+    """Keep LIVE status balance reads out of PaperTradingService."""
+    asyncio.run(_run_live_balance_provider_test())
+
+
+async def _run_live_balance_provider_test() -> None:
+    """Read LIVE free balance without reconstructing a paper portfolio."""
+    market_service = FakeStreamMarketService()
+    runtime_control = FakeRuntimeStreamControl()
+    stream_owner = LiveMarketStreamService(
+        market_service=market_service,
+        runtime_control=runtime_control,
+    )
+    unused_repository = object()
+    paper_balance = FakePaperBalanceProvider()
+    live_balance = FakeLiveBalanceProvider(balance=Decimal("321.50"))
+    service = TelegramQueryService(
+        symbol="BTCUSDT",
+        market_service=market_service,
+        paper_trading_service=paper_balance,
+        live_balance_provider=live_balance,
+        position_repository=cast(PositionRepository, unused_repository),
+        trade_repository=cast(TradeRepository, unused_repository),
+        order_repository=cast(OrderRepository, unused_repository),
+        market_stream_service=stream_owner,
+        runtime_control=runtime_control,
+    )
+
+    assert await service.get_available_balance() == Decimal("321.50")
+    assert live_balance.calls == 1
+    assert paper_balance.calls == 0
 
 
 def test_telegram_query_service_owns_real_stream_lifecycle() -> None:

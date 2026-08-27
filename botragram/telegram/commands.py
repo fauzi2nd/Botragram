@@ -366,8 +366,9 @@ async def status_command(
             exchange_type=ctx.exchange_type,
             market_type=ctx.market_type,
             strategy_name=(
-                None
-                if _uses_multi_context_runtime(live_runtime_health)
+                ctx.strategy_name
+                if ctx.runtime_risk_limit_service is not None
+                or _uses_multi_context_runtime(live_runtime_health)
                 else _get_runtime_strategy(ctx)
             ),
             interval=(

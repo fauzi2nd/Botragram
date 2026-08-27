@@ -492,6 +492,13 @@ class DependencyProvider:
                 symbol=self._settings.market.symbol,
                 market_service=self.market_service,
                 paper_trading_service=self.paper_trading_service,
+                live_balance_provider=(
+                    self._live_futures_user_data_service
+                    if self._live_futures_user_data_service is not None
+                    else self.account_service
+                    if self._settings.app.trade_mode is TradeMode.LIVE
+                    else None
+                ),
                 position_repository=self.position_repository,
                 trade_repository=self.trade_repository,
                 order_repository=self.order_repository,

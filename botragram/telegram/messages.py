@@ -162,6 +162,7 @@ def get_status_message(
     if is_multi_context_runtime:
         configuration_summary = (
             f"📁 <b>Recovered LIVE Portfolio</b> · {multi_context_count} contexts\n"
+            f"🧠 Strategy Type: {escape(strategy)}\n"
         )
     elif missing:
         configured_count = len(configuration_requirements) - len(missing)
@@ -174,7 +175,7 @@ def get_status_message(
             f"🏦 {escape(exchange)} · {escape(market)}\n"
             f"📈 <b>{escape(selected_symbol)}</b> · "
             f"{escape(candle_interval)}\n"
-            f"🧠 {escape(strategy)}\n"
+            f"🧠 Strategy Type: {escape(strategy)}\n"
         )
     lines = [
         f"📊 <b>{APP_NAME.upper()} CONTROL CENTER</b>\n"

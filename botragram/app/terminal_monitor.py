@@ -51,6 +51,7 @@ from botragram.enums import (
     LiveMarketStreamLifecycleStatus,
     LiveRuntimeHealthStatus,
     PositionSide,
+    StrategyType,
     TradeMode,
 )
 from botragram.models import (
@@ -249,6 +250,7 @@ class TerminalMonitor:
     pnl_engine: PnLEngine
     trade_mode: TradeMode
     quote_asset: str
+    configured_strategy_type: StrategyType = StrategyType.EMA_CROSS
     live_runtime_health_service: LiveRuntimeHealthProvider | None = None
     live_trading_performance_service: LiveTradingPerformanceProvider | None = None
     autonomous_live_recovery_observability_service: (
@@ -456,7 +458,7 @@ class TerminalMonitor:
     def render_dashboard(self, status: TerminalStatus) -> Layout:
         """Build a full-width managed-position dashboard for one snapshot."""
         managed_height = self._managed_positions_height(status)
-        summary_height = 16 if status.global_discovery is not None else 14
+        summary_height = 17 if status.global_discovery is not None else 15
         layout = Layout(name="root")
         layout.split_column(
             Layout(name="summary", size=summary_height),
@@ -646,6 +648,10 @@ class TerminalMonitor:
                 "Global Runner",
                 "PAUSED" if self.runtime_control.is_paused else "RUNNING",
             )
+            table.add_row(
+                "Strategy Type",
+                self.configured_strategy_type.value.upper(),
+            )
             table.add_row("Position Management", health.status.value.upper())
             if health.reason is not None:
                 table.add_row("Management Reason", health.reason.value.upper())
@@ -673,6 +679,10 @@ class TerminalMonitor:
             table.add_row(
                 "Global Runner",
                 "PAUSED" if self.runtime_control.is_paused else "RUNNING",
+            )
+            table.add_row(
+                "Strategy Type",
+                self.configured_strategy_type.value.upper(),
             )
             table.add_row("Mode", self.trade_mode.value.upper())
             table.add_row("Portfolio", self._format_portfolio_capacity(status))
@@ -963,6 +973,10 @@ class TerminalMonitor:
                 self._format_candidate_result(discovery.last_outcome.value),
             )
         details.add_row("Interval", discovery.interval.value)
+        details.add_row(
+            "Strategy",
+            self.configured_strategy_type.value.upper(),
+        )
         details.add_row("Window", self._format_discovery_window(discovery))
         details.add_row("Scope", self._format_discovery_scope(discovery))
         details.add_row(

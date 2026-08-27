@@ -627,6 +627,7 @@ async def _run_multi_context_status_presentation_test() -> None:
                 BOT_CONTEXT_KEY: BotContext(
                     is_running=True,
                     trade_mode="LIVE",
+                    strategy_name=StrategyType.SUPERTREND.value,
                     query_provider=provider,
                     runtime_control=control,
                 ),
@@ -643,6 +644,7 @@ async def _run_multi_context_status_presentation_test() -> None:
         assert "ETHUSDT" in rendered
         assert "ema_cross" in rendered
         assert "ema_scalping" in rendered
+        assert "Strategy Type: supertrend" in rendered
         assert "New LIVE Exposure: <b>DISABLED</b>" in rendered
     assert provider.last_price_calls == 0
 

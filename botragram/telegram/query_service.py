@@ -65,6 +65,14 @@ class PaperBalanceProvider(Protocol):
         ...
 
 
+class LiveBalanceProvider(Protocol):
+    """Read normalized LIVE exchange balance."""
+
+    async def get_free_balance(self, *, asset: str) -> Decimal:
+        """Return free exchange funds for one asset."""
+        ...
+
+
 class RuntimeSymbolProvider(Protocol):
     """Expose the currently selected runtime symbol."""
 
@@ -111,6 +119,7 @@ class TelegramQueryService:
     trade_repository: TradeRepository
     order_repository: OrderRepository
     market_stream_service: LiveMarketStreamService
+    live_balance_provider: LiveBalanceProvider | None = None
     quote_asset: str = "USDT"
     interval: Interval = Interval.M15
     strategy_type: StrategyType = StrategyType.EMA_CROSS
@@ -176,7 +185,10 @@ class TelegramQueryService:
         return symbols
 
     async def get_available_balance(self) -> Decimal:
-        """Return reconstructed free paper balance."""
+        """Return the mode-appropriate available portfolio balance."""
+        live_provider = self.live_balance_provider
+        if live_provider is not None:
+            return await live_provider.get_free_balance(asset=self.quote_asset)
         return await self.paper_trading_service.get_available_balance()
 
     async def get_latest_trades(self, *, limit: int) -> Sequence[Trade]:

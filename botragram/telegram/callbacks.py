@@ -316,8 +316,9 @@ async def handle_callback_query(
             else bot_context.symbol
         )
         strategy_name = (
-            None
-            if is_multi_context_runtime
+            bot_context.strategy_name
+            if bot_context.runtime_risk_limit_service is not None
+            or is_multi_context_runtime
             else runtime_control.strategy_type.value
             if runtime_control is not None
             else bot_context.strategy_name

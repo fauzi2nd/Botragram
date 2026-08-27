@@ -56,7 +56,7 @@ class BotQueryProvider(Protocol):
         ...
 
     async def get_available_balance(self) -> Decimal:
-        """Return available paper balance."""
+        """Return the mode-appropriate available portfolio balance."""
         ...
 
     async def get_latest_trades(self, *, limit: int) -> Sequence[Trade]:

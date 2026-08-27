@@ -119,6 +119,7 @@ async def _run_trading(
         pnl_engine=dependency_provider.pnl_engine,
         trade_mode=settings.app.trade_mode,
         quote_asset=settings.market.quote_asset,
+        configured_strategy_type=settings.strategy.strategy_type,
         live_runtime_health_service=dependency_provider.live_runtime_health_service,
         live_trading_performance_service=(
             dependency_provider.live_trading_performance_service

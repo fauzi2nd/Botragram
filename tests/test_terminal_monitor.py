@@ -225,6 +225,7 @@ def _create_monitor(
     live_balance: FakeLiveBalanceProvider | None = None,
     positions: tuple[Position, ...] = (),
     trade_mode: TradeMode = TradeMode.PAPER,
+    configured_strategy_type: StrategyType = StrategyType.EMA_CROSS,
     output: list[str] | None = None,
     console: Console | None = None,
     refresh_interval_seconds: float = 1.0,
@@ -259,6 +260,7 @@ def _create_monitor(
         pnl_engine=PnLEngine(),
         trade_mode=trade_mode,
         quote_asset="usdt",
+        configured_strategy_type=configured_strategy_type,
         live_runtime_health_service=(
             FakeLiveRuntimeHealthProvider(snapshot=live_runtime_health)
             if live_runtime_health is not None
@@ -467,6 +469,7 @@ async def _run_zero_position_global_discovery_test() -> None:
     telemetry.wait_until(next_eligible_monotonic=monotonic() + 60)
     monitor = _create_monitor(
         trade_mode=TradeMode.LIVE,
+        configured_strategy_type=StrategyType.SUPERTREND,
         live_runtime_health=health,
         live_balance=FakeLiveBalanceProvider(balance=Decimal("321.50")),
     )
@@ -501,6 +504,8 @@ async def _run_zero_position_global_discovery_test() -> None:
     rendered = output.getvalue()
     assert "Global Discovery" in rendered
     assert "1m" in rendered
+    assert "Strategy Type" in rendered
+    assert rendered.count("SUPERTREND") >= 2
     assert "U20/B-/T5" in rendered
     assert "321.50 USDT" in rendered
     assert "0 / 1" in rendered
