@@ -38,6 +38,7 @@ from botragram.app import TerminalMonitor, TradingRuntimeControl
 from botragram.app.global_discovery_telemetry import GlobalDiscoveryTelemetry
 from botragram.engine import PnLEngine
 from botragram.enums import (
+    AutonomousLiveRecoveryReason,
     AutonomousLiveRecoveryStatus,
     GlobalDiscoveryCycleOutcome,
     Interval,
@@ -48,6 +49,7 @@ from botragram.enums import (
     PositionSide,
     SignalType,
     StrategyType,
+    SubmissionAttemptStatus,
     TradeMode,
 )
 from botragram.models import (
@@ -61,6 +63,7 @@ from botragram.models import (
     LiveRuntimePositionContext,
     MarketUniverseEntry,
     Position,
+    RuntimeRiskLimits,
     Signal,
     TradingDecision,
     TradingResult,
@@ -186,6 +189,17 @@ class CountingLiveRuntimeHealthProvider:
         return self.snapshot
 
 
+@dataclass(slots=True, kw_only=True)
+class FakeRuntimeRiskLimitProvider:
+    """Expose a replaceable current runtime-limit snapshot."""
+
+    snapshot: RuntimeRiskLimits
+
+    def get_snapshot(self) -> RuntimeRiskLimits:
+        """Return the current immutable runtime limits."""
+        return self.snapshot
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class FakeRecoveryProvider:
     """Return a deterministic read-only autonomous recovery snapshot."""
@@ -226,6 +240,7 @@ def _create_monitor(
     positions: tuple[Position, ...] = (),
     trade_mode: TradeMode = TradeMode.PAPER,
     configured_strategy_type: StrategyType = StrategyType.EMA_CROSS,
+    runtime_risk_limits: FakeRuntimeRiskLimitProvider | None = None,
     output: list[str] | None = None,
     console: Console | None = None,
     refresh_interval_seconds: float = 1.0,
@@ -261,6 +276,7 @@ def _create_monitor(
         trade_mode=trade_mode,
         quote_asset="usdt",
         configured_strategy_type=configured_strategy_type,
+        runtime_risk_limit_provider=runtime_risk_limits,
         live_runtime_health_service=(
             FakeLiveRuntimeHealthProvider(snapshot=live_runtime_health)
             if live_runtime_health is not None
@@ -467,14 +483,22 @@ async def _run_zero_position_global_discovery_test() -> None:
     )
     telemetry.begin_cycle(interval=Interval.M1)
     telemetry.wait_until(next_eligible_monotonic=monotonic() + 60)
+    runtime_limits = FakeRuntimeRiskLimitProvider(
+        snapshot=RuntimeRiskLimits(
+            max_open_positions=1,
+            max_position_size_usdt=Decimal("5"),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_by="test",
+        )
+    )
     monitor = _create_monitor(
         trade_mode=TradeMode.LIVE,
         configured_strategy_type=StrategyType.SUPERTREND,
+        runtime_risk_limits=runtime_limits,
         live_runtime_health=health,
         live_balance=FakeLiveBalanceProvider(balance=Decimal("321.50")),
     )
     monitor.global_discovery_telemetry_provider = telemetry
-    monitor.max_open_positions = 1
     monitor.runtime_control.resume_global_cycle()
     monitor.autonomous_live_recovery_observability_service = FakeRecoveryProvider(
         snapshot=AutonomousLiveRecoverySnapshot(
@@ -515,6 +539,116 @@ async def _run_zero_position_global_discovery_test() -> None:
     assert "NONE" in rendered
     assert "WAITING #1" in rendered
     assert "Next" in rendered
+
+
+def test_terminal_recovery_block_prevents_enabled_entry_label() -> None:
+    """Do not present autonomous entry as enabled during incomplete recovery."""
+    asyncio.run(_run_terminal_recovery_block_test())
+
+
+async def _run_terminal_recovery_block_test() -> None:
+    """Render recovery as the dominant fail-closed entry gate."""
+    health = LiveRuntimeHealthSnapshot(
+        status=LiveRuntimeHealthStatus.ACTIVE,
+        reason=None,
+        contexts=(),
+        affected_contexts=(),
+        authorization_present=True,
+        authorization_exact=True,
+        runner_paused=False,
+        cycle_in_progress=False,
+        stream_states=(),
+        monitor_states=(),
+    )
+    monitor = _create_monitor(
+        trade_mode=TradeMode.LIVE,
+        live_runtime_health=health,
+        runtime_risk_limits=FakeRuntimeRiskLimitProvider(
+            snapshot=RuntimeRiskLimits(
+                max_open_positions=1,
+                max_position_size_usdt=Decimal("5"),
+                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+                updated_by="test",
+            )
+        ),
+    )
+    monitor.runtime_control.resume_global_cycle()
+    monitor.autonomous_live_recovery_observability_service = FakeRecoveryProvider(
+        snapshot=AutonomousLiveRecoverySnapshot(
+            status=AutonomousLiveRecoveryStatus.POST_ENTRY_RECOVERY_REQUIRED,
+            reason=AutonomousLiveRecoveryReason.ACKNOWLEDGED_UNCOMPLETED,
+            incomplete_attempt_count=1,
+            attempt_status=SubmissionAttemptStatus.ACKNOWLEDGED,
+            client_order_id="btg-test",
+            symbol="BEAMXUSDT",
+            autonomous_entry_authorized=True,
+            new_entry_blocked_by_recovery=True,
+        )
+    )
+
+    status = await monitor.collect_status()
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=180).print(
+        monitor.render_dashboard(status)
+    )
+    rendered = output.getvalue()
+
+    assert "New LIVE Exposure" in rendered
+    assert "BLOCKED" in rendered
+    assert "ENABLED - TESTNET" not in rendered
+
+
+def test_terminal_runtime_capacity_tracks_current_durable_snapshot() -> None:
+    """Refresh displayed capacity from the authoritative runtime-limit provider."""
+    asyncio.run(_run_dynamic_runtime_capacity_test())
+
+
+async def _run_dynamic_runtime_capacity_test() -> None:
+    """Change a limit snapshot without rebuilding the terminal monitor."""
+    health = LiveRuntimeHealthSnapshot(
+        status=LiveRuntimeHealthStatus.ACTIVE,
+        reason=None,
+        contexts=(),
+        affected_contexts=(),
+        authorization_present=True,
+        authorization_exact=True,
+        runner_paused=False,
+        cycle_in_progress=False,
+        stream_states=(),
+        monitor_states=(),
+    )
+    provider = FakeRuntimeRiskLimitProvider(
+        snapshot=RuntimeRiskLimits(
+            max_open_positions=1,
+            max_position_size_usdt=Decimal("5"),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_by="test",
+        )
+    )
+    monitor = _create_monitor(
+        trade_mode=TradeMode.LIVE,
+        live_runtime_health=health,
+        runtime_risk_limits=provider,
+    )
+    first_status = await monitor.collect_status()
+    first_output = StringIO()
+    Console(file=first_output, force_terminal=False, width=180).print(
+        monitor.render_dashboard(first_status)
+    )
+    assert "0 / 1" in first_output.getvalue()
+
+    provider.snapshot = replace(
+        provider.snapshot,
+        max_open_positions=2,
+        updated_at=datetime(2026, 1, 2, tzinfo=UTC),
+        updated_by="telegram:test",
+    )
+    second_status = await monitor.collect_status()
+    second_output = StringIO()
+    Console(file=second_output, force_terminal=False, width=180).print(
+        monitor.render_dashboard(second_status)
+    )
+    assert "0 / 2" in second_output.getvalue()
 
 
 def test_terminal_stale_single_context_health_survives_multi_context_transition() -> (

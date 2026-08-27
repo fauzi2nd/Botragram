@@ -293,15 +293,25 @@ async def handle_callback_query(
         last_price = bot_context.last_price
         available_balance = None
         live_runtime_health = None
+        autonomous_live_recovery = None
         positions = bot_context.positions
         provider = bot_context.query_provider
+        is_autonomous_live = bot_context.is_autonomous_live
+        runtime_limits = (
+            bot_context.runtime_risk_limit_service.get_snapshot()
+            if bot_context.runtime_risk_limit_service is not None
+            else None
+        )
 
         if provider is not None:
             try:
                 live_runtime_health = provider.get_live_runtime_health()
+                autonomous_live_recovery = await provider.get_autonomous_live_recovery()
                 positions = tuple(await provider.get_positions())
                 available_balance = await provider.get_available_balance()
-                if not _uses_multi_context_runtime(live_runtime_health):
+                if not is_autonomous_live and not _uses_multi_context_runtime(
+                    live_runtime_health
+                ):
                     last_price = await provider.get_last_price()
             except Exception:
                 _LOGGER.exception("Telegram callback status query failed")
@@ -310,32 +320,35 @@ async def handle_callback_query(
         runtime_control = bot_context.runtime_control
         symbol = (
             None
-            if is_multi_context_runtime
+            if is_autonomous_live or is_multi_context_runtime
             else runtime_control.symbol
             if runtime_control is not None
             else bot_context.symbol
         )
         strategy_name = (
             bot_context.strategy_name
-            if bot_context.runtime_risk_limit_service is not None
-            or is_multi_context_runtime
+            if is_autonomous_live or is_multi_context_runtime
             else runtime_control.strategy_type.value
             if runtime_control is not None
             else bot_context.strategy_name
         )
         interval = (
-            runtime_control.interval.value
+            bot_context.configured_interval.value
+            if is_autonomous_live
+            else runtime_control.interval.value
             if runtime_control is not None and not is_multi_context_runtime
             else None
         )
         stream_active = (
-            runtime_control.stream_enabled
+            None
+            if is_autonomous_live
+            else runtime_control.stream_enabled
             if runtime_control is not None and not is_multi_context_runtime
             else None
         )
         missing_configuration_requirements = (
             ()
-            if is_multi_context_runtime
+            if is_autonomous_live or is_multi_context_runtime
             else runtime_control.get_missing_configuration_requirements()
             if runtime_control is not None
             else ("exchange", "market type", "symbol", "interval", "strategy")
@@ -364,6 +377,18 @@ async def handle_callback_query(
             ),
             missing_configuration_requirements=missing_configuration_requirements,
             live_runtime_health=live_runtime_health,
+            autonomous_live_recovery=autonomous_live_recovery,
+            autonomous_live=is_autonomous_live,
+            max_open_positions=(
+                runtime_limits.max_open_positions
+                if runtime_limits is not None
+                else None
+            ),
+            position_protection_ready=(
+                runtime_control.is_position_protection_ready
+                if runtime_control is not None
+                else None
+            ),
         )
         await query.edit_message_text(message, parse_mode=DEFAULT_PARSE_MODE)
     elif data == "cb_positions":

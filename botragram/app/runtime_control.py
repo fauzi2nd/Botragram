@@ -419,10 +419,7 @@ class TradingRuntimeControl:
         return True
 
     def _reset_singular_runtime_state(self) -> None:
-        """Clear stream telemetry and stale legacy values without selecting context."""
-        self.symbol = "BTCUSDT"
-        self.interval = Interval.M15
-        self.strategy_type = StrategyType.EMA_CROSS
+        """Clear transient singular state without replacing configured defaults."""
         self._symbol_confirmed = False
         self._interval_confirmed = False
         self._strategy_confirmed = False

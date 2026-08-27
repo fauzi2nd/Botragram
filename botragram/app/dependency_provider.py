@@ -553,6 +553,7 @@ class DependencyProvider:
                     trade_mode=self._settings.app.trade_mode.value,
                     symbol=self._settings.market.symbol,
                     strategy_name=self._settings.strategy.strategy_type.value,
+                    configured_interval=self._settings.market.interval,
                     exchange_type=self._settings.exchange.exchange.value,
                     query_provider=query_service,
                     runtime_control=self.runtime_control,

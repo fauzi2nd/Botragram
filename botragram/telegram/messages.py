@@ -24,7 +24,12 @@ from html import escape
 # Local Imports
 # =============================================================================
 from botragram.constants.app import APP_NAME, APP_VERSION
-from botragram.enums import AuthorizationStatus, MarketType, SignalType
+from botragram.enums import (
+    AuthorizationStatus,
+    LiveRuntimeHealthStatus,
+    MarketType,
+    SignalType,
+)
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
     ExecutionAuthorization,
@@ -111,6 +116,9 @@ def get_status_message(
     missing_configuration_requirements: Sequence[str] = (),
     live_runtime_health: LiveRuntimeHealthSnapshot | None = None,
     autonomous_live_recovery: AutonomousLiveRecoverySnapshot | None = None,
+    autonomous_live: bool = False,
+    max_open_positions: int | None = None,
+    position_protection_ready: bool | None = None,
 ) -> str:
     """Return a compact application, market, and portfolio control center."""
     multi_context_count = (
@@ -127,7 +135,9 @@ def get_status_message(
         state = "🟡 PAUSED"
     else:
         state = "🟢 RUNNING" if is_running else "🔴 STOPPED"
-    if is_multi_context_runtime:
+    if autonomous_live:
+        stream = "RUNTIME-MANAGED"
+    elif is_multi_context_runtime:
         stream = "MULTI-CONTEXT"
     elif stream_active is None:
         stream = "⚪ UNKNOWN"
@@ -148,18 +158,35 @@ def get_status_message(
     )
     strategy = (
         strategy_name
-        if strategy_name and "strategy" not in missing
+        if strategy_name and (autonomous_live or "strategy" not in missing)
         else "BELUM DIPILIH"
     )
     candle_interval = (
-        interval if interval and "interval" not in missing else "BELUM DIPILIH"
+        interval
+        if interval and (autonomous_live or "interval" not in missing)
+        else "BELUM DIPILIH"
     )
     price = (
-        format_currency(last_price, symbol="USDT")
+        "GLOBAL DISCOVERY"
+        if autonomous_live
+        else format_currency(last_price, symbol="USDT")
         if not is_multi_context_runtime and "symbol" not in missing and last_price > 0
         else "WAITING"
     )
-    if is_multi_context_runtime:
+    autonomous_environment = (
+        autonomous_live_recovery.autonomous_entry_environment.value.upper()
+        if autonomous_live_recovery is not None
+        and autonomous_live_recovery.autonomous_entry_environment is not None
+        else "LIVE"
+    )
+    if autonomous_live:
+        configuration_summary = (
+            f"🤖 <b>Autonomous LIVE</b> · {escape(autonomous_environment)}\n"
+            f"🏦 {escape(exchange)} · {escape(market)}\n"
+            f"🌐 Discovery: GLOBAL · {escape(candle_interval)}\n"
+            f"🧠 Strategy Type: {escape(strategy)}\n"
+        )
+    elif is_multi_context_runtime:
         configuration_summary = (
             f"📁 <b>Recovered LIVE Portfolio</b> · {multi_context_count} contexts\n"
             f"🧠 Strategy Type: {escape(strategy)}\n"
@@ -204,13 +231,73 @@ def get_status_message(
         )
 
     if live_runtime_health is not None:
-        lines.append(get_live_runtime_health_message(snapshot=live_runtime_health))
+        lines.append(
+            get_live_runtime_health_message(
+                snapshot=live_runtime_health,
+                new_live_exposure_state=_get_new_live_exposure_state(
+                    autonomous_live=autonomous_live,
+                    is_paused=is_paused,
+                    open_position_count=open_position_count,
+                    max_open_positions=max_open_positions,
+                    position_protection_ready=position_protection_ready,
+                    live_runtime_health=live_runtime_health,
+                    autonomous_live_recovery=autonomous_live_recovery,
+                ),
+            )
+        )
     if autonomous_live_recovery is not None:
         lines.append(
             get_autonomous_live_recovery_message(snapshot=autonomous_live_recovery)
         )
 
     return "".join(lines)
+
+
+def _get_new_live_exposure_state(
+    *,
+    autonomous_live: bool,
+    is_paused: bool,
+    open_position_count: int | None,
+    max_open_positions: int | None,
+    position_protection_ready: bool | None,
+    live_runtime_health: LiveRuntimeHealthSnapshot | None,
+    autonomous_live_recovery: AutonomousLiveRecoverySnapshot | None,
+) -> str:
+    """Return one fail-closed operator state for future autonomous exposure."""
+    if not autonomous_live:
+        return "DISABLED"
+    recovery = autonomous_live_recovery
+    if recovery is None or not recovery.autonomous_entry_authorized:
+        return "DISABLED"
+    if recovery.new_entry_blocked_by_recovery:
+        return "BLOCKED - RECOVERY"
+    if open_position_count is None or max_open_positions is None:
+        return "BLOCKED - LIMITS"
+    if open_position_count >= max_open_positions:
+        return "BLOCKED - CAPACITY"
+    if is_paused:
+        return "BLOCKED - PAUSED"
+    if position_protection_ready is not True:
+        return "BLOCKED - PROTECTION"
+
+    health = live_runtime_health
+    if health is None:
+        return "BLOCKED - HEALTH"
+    if open_position_count != len(health.contexts):
+        return "BLOCKED - HEALTH"
+    if health.contexts and not (
+        health.status is LiveRuntimeHealthStatus.ACTIVE
+        and health.authorization_present
+        and health.authorization_exact
+    ):
+        return "BLOCKED - HEALTH"
+
+    environment = (
+        recovery.autonomous_entry_environment.value.upper()
+        if recovery.autonomous_entry_environment is not None
+        else "LIVE"
+    )
+    return f"ENABLED - {environment}"
 
 
 def get_autonomous_live_recovery_message(
@@ -249,7 +336,11 @@ def get_autonomous_live_recovery_message(
     return "".join(lines)
 
 
-def get_live_runtime_health_message(*, snapshot: LiveRuntimeHealthSnapshot) -> str:
+def get_live_runtime_health_message(
+    *,
+    snapshot: LiveRuntimeHealthSnapshot,
+    new_live_exposure_state: str = "DISABLED",
+) -> str:
     """Render one immutable recovered LIVE health snapshot without controls."""
     lines = [
         "\n\n<b>RECOVERED LIVE RUNTIME</b>\n",
@@ -257,7 +348,7 @@ def get_live_runtime_health_message(*, snapshot: LiveRuntimeHealthSnapshot) -> s
         f"Contexts: {len(snapshot.contexts)}\n",
         "Management Authorization: "
         f"{'EXACT' if snapshot.authorization_exact else 'UNAVAILABLE'}\n",
-        "New LIVE Exposure: <b>DISABLED</b>\n",
+        f"New LIVE Exposure: <b>{escape(new_live_exposure_state)}</b>\n",
     ]
     if snapshot.reason is not None:
         lines.append(f"Reason: <b>{escape(snapshot.reason.value.upper())}</b>\n")

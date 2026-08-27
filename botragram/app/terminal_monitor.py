@@ -60,6 +60,7 @@ from botragram.models import (
     LiveRuntimeHealthSnapshot,
     LiveRuntimePositionContext,
     Position,
+    RuntimeRiskLimits,
 )
 from botragram.services.live_futures_user_data_cache import (
     LiveFuturesUserDataSnapshot,
@@ -154,6 +155,14 @@ class GlobalDiscoveryTelemetryProvider(Protocol):
 
     def get_global_discovery_snapshot(self) -> GlobalDiscoverySnapshot | None:
         """Return an immutable process-local discovery snapshot."""
+        ...
+
+
+class RuntimeRiskLimitSnapshotProvider(Protocol):
+    """Read the current durable autonomous LIVE entry limits."""
+
+    def get_snapshot(self) -> RuntimeRiskLimits:
+        """Return the authoritative immutable runtime-limit snapshot."""
         ...
 
 
@@ -258,6 +267,7 @@ class TerminalMonitor:
     ) = None
     global_discovery_telemetry_provider: GlobalDiscoveryTelemetryProvider | None = None
     live_futures_user_data_service: LiveFuturesUserDataSnapshotProvider | None = None
+    runtime_risk_limit_provider: RuntimeRiskLimitSnapshotProvider | None = None
     max_open_positions: int | None = None
     console: Console = field(default_factory=Console)
     log_handler: DashboardLogHandler = field(default_factory=DashboardLogHandler)
@@ -724,10 +734,18 @@ class TerminalMonitor:
             return
         table.add_row("Account Stream", user_data.status.value.upper())
 
+    def _get_max_open_positions(self) -> int | None:
+        """Return the current runtime capacity, falling back to static settings."""
+        provider = self.runtime_risk_limit_provider
+        if provider is not None:
+            return provider.get_snapshot().max_open_positions
+        return self.max_open_positions
+
     def _format_portfolio_capacity(self, status: TerminalStatus) -> str:
         """Format the actual and configured position capacity without symbols."""
-        maximum = "-" if self.max_open_positions is None else self.max_open_positions
-        return f"{status.position_count} / {maximum}"
+        maximum = self._get_max_open_positions()
+        rendered_maximum = "-" if maximum is None else maximum
+        return f"{status.position_count} / {rendered_maximum}"
 
     def _add_global_discovery_rows(
         self, *, table: Table, status: TerminalStatus
@@ -811,10 +829,8 @@ class TerminalMonitor:
         has_no_positions = status.position_count == 0 and (
             health is None or not health.contexts
         )
-        has_capacity = (
-            self.max_open_positions is None
-            or status.position_count < self.max_open_positions
-        )
+        maximum = self._get_max_open_positions()
+        has_capacity = maximum is None or status.position_count < maximum
         entry_environment = (
             recovery.autonomous_entry_environment.value.upper()
             if recovery is not None
@@ -834,6 +850,7 @@ class TerminalMonitor:
             else f"ENABLED - {entry_environment}"
             if recovery is not None
             and recovery.autonomous_entry_authorized
+            and not recovery.new_entry_blocked_by_recovery
             and not self.runtime_control.is_paused
             and self.runtime_control.is_position_protection_ready
             and health_is_entry_safe
@@ -854,14 +871,11 @@ class TerminalMonitor:
 
         if position is None:
             if status.global_discovery is not None:
-                maximum = (
-                    "-"
-                    if self.max_open_positions is None
-                    else str(self.max_open_positions)
-                )
+                maximum = self._get_max_open_positions()
+                rendered_maximum = "-" if maximum is None else str(maximum)
                 table.add_row(
                     "Portfolio",
-                    f"positions=0 / max_open_positions={maximum}",
+                    f"positions=0 / max_open_positions={rendered_maximum}",
                 )
             table.add_row("Position (0)", "NONE")
             table.add_row("Entry / Mark", "-")
@@ -872,12 +886,12 @@ class TerminalMonitor:
         mark_price = self._get_position_mark_price(position=position, status=status)
         risk_amount = self._calculate_position_risk(position=position)
         if status.global_discovery is not None:
-            maximum = (
-                "-" if self.max_open_positions is None else str(self.max_open_positions)
-            )
+            maximum = self._get_max_open_positions()
+            rendered_maximum = "-" if maximum is None else str(maximum)
             table.add_row(
                 "Portfolio",
-                f"positions={status.position_count} / max_open_positions={maximum}",
+                "positions="
+                f"{status.position_count} / max_open_positions={rendered_maximum}",
             )
         table.add_row(
             f"Position ({status.position_count})",

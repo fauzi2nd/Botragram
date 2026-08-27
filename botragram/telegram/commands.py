@@ -19,6 +19,7 @@ import logging
 # Standard Library
 # =============================================================================
 from decimal import Decimal
+from html import escape
 from typing import Final
 
 # =============================================================================
@@ -199,6 +200,37 @@ def _get_startup_configuration_message(context: BotContext) -> str:
     )
 
 
+async def _resume_autonomous_live(context: BotContext) -> bool:
+    """Resume autonomous LIVE only from a reconciled fail-closed runtime state."""
+    control = context.runtime_control
+    provider = context.query_provider
+    if control is None or provider is None:
+        raise RuntimeError("Autonomous LIVE runtime observability is unavailable")
+
+    recovery = await provider.get_autonomous_live_recovery()
+    if recovery is None:
+        raise RuntimeError("Autonomous LIVE recovery state is unavailable")
+    if recovery.new_entry_blocked_by_recovery:
+        raise RuntimeError("Autonomous LIVE recovery is incomplete")
+
+    positions = tuple(await provider.get_positions())
+    runtime_contexts = control.runtime_contexts
+    managed_symbols = {runtime_context.symbol for runtime_context in runtime_contexts}
+    position_symbols = {position.symbol for position in positions}
+
+    if runtime_contexts:
+        if managed_symbols != position_symbols:
+            raise RuntimeError("LIVE portfolio requires reconciliation before resume")
+        return control.resume()
+
+    if positions:
+        raise RuntimeError("Unmanaged LIVE positions require recovery before resume")
+    if not recovery.autonomous_entry_authorized:
+        raise RuntimeError("Autonomous LIVE entry is not authorized")
+
+    return control.resume_global_cycle()
+
+
 async def _reply_data_unavailable(update: Update) -> None:
     """Return a truthful transient query failure response."""
     if update.message is not None:
@@ -333,6 +365,12 @@ async def status_command(
         autonomous_live_recovery = None
         positions = ctx.positions
         provider = ctx.query_provider
+        is_autonomous_live = ctx.is_autonomous_live
+        runtime_limits = (
+            ctx.runtime_risk_limit_service.get_snapshot()
+            if ctx.runtime_risk_limit_service is not None
+            else None
+        )
 
         if provider is not None:
             try:
@@ -340,7 +378,9 @@ async def status_command(
                 autonomous_live_recovery = await provider.get_autonomous_live_recovery()
                 positions = tuple(await provider.get_positions())
                 available_balance = await provider.get_available_balance()
-                if not _uses_multi_context_runtime(live_runtime_health):
+                if not is_autonomous_live and not _uses_multi_context_runtime(
+                    live_runtime_health
+                ):
                     last_price = await provider.get_last_price()
             except Exception:
                 logger.exception("Telegram status query failed")
@@ -352,7 +392,8 @@ async def status_command(
             trade_mode=ctx.trade_mode,
             symbol=(
                 None
-                if _uses_multi_context_runtime(live_runtime_health)
+                if is_autonomous_live
+                or _uses_multi_context_runtime(live_runtime_health)
                 else _get_runtime_symbol(ctx)
             ),
             last_price=last_price,
@@ -367,18 +408,22 @@ async def status_command(
             market_type=ctx.market_type,
             strategy_name=(
                 ctx.strategy_name
-                if ctx.runtime_risk_limit_service is not None
+                if is_autonomous_live
                 or _uses_multi_context_runtime(live_runtime_health)
                 else _get_runtime_strategy(ctx)
             ),
             interval=(
-                ctx.runtime_control.interval.value
+                ctx.configured_interval.value
+                if is_autonomous_live
+                else ctx.runtime_control.interval.value
                 if ctx.runtime_control is not None
                 and not _uses_multi_context_runtime(live_runtime_health)
                 else None
             ),
             stream_active=(
-                ctx.runtime_control.stream_enabled
+                None
+                if is_autonomous_live
+                else ctx.runtime_control.stream_enabled
                 if ctx.runtime_control is not None
                 and not _uses_multi_context_runtime(live_runtime_health)
                 else None
@@ -389,11 +434,23 @@ async def status_command(
             ),
             missing_configuration_requirements=(
                 ()
-                if _uses_multi_context_runtime(live_runtime_health)
+                if is_autonomous_live
+                or _uses_multi_context_runtime(live_runtime_health)
                 else _get_missing_configuration_requirements(ctx)
             ),
             live_runtime_health=live_runtime_health,
             autonomous_live_recovery=autonomous_live_recovery,
+            autonomous_live=is_autonomous_live,
+            max_open_positions=(
+                runtime_limits.max_open_positions
+                if runtime_limits is not None
+                else None
+            ),
+            position_protection_ready=(
+                ctx.runtime_control.is_position_protection_ready
+                if ctx.runtime_control is not None
+                else None
+            ),
         )
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
@@ -750,10 +807,27 @@ async def start_bot_command(
             return
 
         try:
-            msg = get_resume_message(changed=control.resume())
-        except RuntimeError:
-            checklist = _get_startup_configuration_message(ctx)
-            msg = f"⚠️ <b>Trading belum dapat dimulai.</b>\n\n{checklist}"
+            changed = (
+                await _resume_autonomous_live(ctx)
+                if ctx.is_autonomous_live
+                else control.resume()
+            )
+            msg = get_resume_message(changed=changed)
+        except RuntimeError as error:
+            if ctx.is_autonomous_live:
+                msg = (
+                    "⚠️ <b>Autonomous LIVE belum dapat dilanjutkan.</b>\n"
+                    f"<code>{escape(str(error))}</code>"
+                )
+            else:
+                checklist = _get_startup_configuration_message(ctx)
+                msg = f"⚠️ <b>Trading belum dapat dimulai.</b>\n\n{checklist}"
+        except Exception:
+            logger.exception("Autonomous LIVE resume verification failed")
+            msg = (
+                "⚠️ <b>Autonomous LIVE belum dapat dilanjutkan.</b> "
+                "Runtime state tidak tersedia."
+            )
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
 

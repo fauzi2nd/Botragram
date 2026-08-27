@@ -22,7 +22,11 @@ from botragram.constants.telegram import (
 )
 from botragram.enums import (
     AuthorizationStatus,
+    AutonomousLiveRecoveryReason,
+    AutonomousLiveRecoveryStatus,
+    ExchangeEnvironment,
     Interval,
+    LiveRuntimeHealthReason,
     LiveRuntimeHealthStatus,
     MarketType,
     OrderSide,
@@ -31,6 +35,7 @@ from botragram.enums import (
     PositionSide,
     SignalType,
     StrategyType,
+    SubmissionAttemptStatus,
 )
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
@@ -40,6 +45,7 @@ from botragram.models import (
     LiveRuntimePositionContext,
     Order,
     Position,
+    RuntimeRiskLimits,
     Signal,
     Trade,
     TradingDecision,
@@ -65,6 +71,35 @@ from botragram.telegram.context import (
 
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _ALLOWED_CHAT_ID = 12345
+
+
+def _runtime_limits(
+    *,
+    max_open_positions: int = 1,
+    max_position_size_usdt: Decimal = Decimal("5"),
+) -> RuntimeRiskLimits:
+    """Build one deterministic current runtime-limit snapshot."""
+    return RuntimeRiskLimits(
+        max_open_positions=max_open_positions,
+        max_position_size_usdt=max_position_size_usdt,
+        updated_at=_NOW,
+        updated_by="test",
+    )
+
+
+def _clear_autonomous_recovery() -> AutonomousLiveRecoverySnapshot:
+    """Build one safe TESTNET autonomous recovery snapshot."""
+    return AutonomousLiveRecoverySnapshot(
+        status=AutonomousLiveRecoveryStatus.CLEAR,
+        reason=None,
+        incomplete_attempt_count=0,
+        attempt_status=None,
+        client_order_id=None,
+        symbol=None,
+        autonomous_entry_authorized=True,
+        new_entry_blocked_by_recovery=False,
+        autonomous_entry_environment=ExchangeEnvironment.TESTNET,
+    )
 
 
 @dataclass(slots=True)
@@ -203,6 +238,35 @@ class FakeQueryProvider:
     async def stop_market_stream(self) -> bool:
         """Pretend to stop a test market subscription."""
         return True
+
+
+@dataclass(slots=True)
+class FakeRuntimeRiskLimitService:
+    """Expose current autonomous limits for Telegram control tests."""
+
+    snapshot: RuntimeRiskLimits
+    max_open_positions_ceiling: int = 10
+    max_position_size_usdt_ceiling: Decimal = Decimal("10")
+
+    def get_snapshot(self) -> RuntimeRiskLimits:
+        """Return the configured immutable limits."""
+        return self.snapshot
+
+    async def update(
+        self,
+        *,
+        max_open_positions: int,
+        max_position_size_usdt: Decimal,
+        updated_by: str,
+    ) -> RuntimeRiskLimits:
+        """Replace the current test snapshot."""
+        self.snapshot = RuntimeRiskLimits(
+            max_open_positions=max_open_positions,
+            max_position_size_usdt=max_position_size_usdt,
+            updated_at=_NOW,
+            updated_by=updated_by,
+        )
+        return self.snapshot
 
 
 @dataclass(slots=True)
@@ -647,6 +711,199 @@ async def _run_multi_context_status_presentation_test() -> None:
         assert "Strategy Type: supertrend" in rendered
         assert "New LIVE Exposure: <b>DISABLED</b>" in rendered
     assert provider.last_price_calls == 0
+
+
+def test_autonomous_live_status_uses_global_config_without_manual_setup() -> None:
+    """Render configured autonomous strategy and interval without Telegram setup."""
+    asyncio.run(_run_autonomous_live_status_test())
+
+
+async def _run_autonomous_live_status_test() -> None:
+    """Exercise command and callback against zero-context autonomous LIVE."""
+    health = LiveRuntimeHealthSnapshot(
+        status=LiveRuntimeHealthStatus.INACTIVE,
+        reason=LiveRuntimeHealthReason.NO_POSITIONS,
+        contexts=(),
+        affected_contexts=(),
+        authorization_present=False,
+        authorization_exact=False,
+        runner_paused=False,
+        cycle_in_progress=False,
+        stream_states=(),
+        monitor_states=(),
+    )
+    provider = FakeQueryProvider(
+        positions=(),
+        trades=(),
+        orders=(),
+        balance=Decimal("14882.62"),
+        last_price=Decimal("65000"),
+        live_runtime_health=health,
+        autonomous_live_recovery=_clear_autonomous_recovery(),
+    )
+    control = TradingRuntimeControl(
+        market_type=MarketType.FUTURES,
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+    )
+    control.resume_global_cycle()
+    risk_limits = FakeRuntimeRiskLimitService(snapshot=_runtime_limits())
+    message = FakeMessage()
+    callback = FakeCallbackQuery(data="cb_status")
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=message,
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=callback,
+        ),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: BotContext(
+                    is_running=True,
+                    trade_mode="LIVE",
+                    strategy_name=StrategyType.EMA_SCALPING.value,
+                    configured_interval=Interval.M1,
+                    exchange_type="BINANCE",
+                    query_provider=provider,
+                    runtime_control=control,
+                    runtime_risk_limit_service=risk_limits,
+                ),
+            }
+        ),
+    )
+
+    await status_command(update, context)
+    await handle_callback_query(update, context)
+
+    for rendered in (message.replies[-1], callback.replies[-1]):
+        assert "Autonomous LIVE" in rendered
+        assert "TESTNET" in rendered
+        assert "Strategy Type: ema_scalping" in rendered
+        assert "Discovery: GLOBAL · 1m" in rendered
+        assert "Setup:" not in rendered
+        assert "BELUM DIPILIH" not in rendered
+        assert "GLOBAL DISCOVERY" in rendered
+        assert "14882.62 USDT" in rendered
+        assert "New LIVE Exposure: <b>ENABLED - TESTNET</b>" in rendered
+    assert provider.last_price_calls == 0
+
+
+def test_autonomous_live_resume_uses_global_cycle_without_manual_setup() -> None:
+    """Resume a reconciled zero-position autonomous runtime directly."""
+    asyncio.run(_run_autonomous_live_resume_test())
+
+
+async def _run_autonomous_live_resume_test() -> None:
+    """Keep manual startup confirmation out of autonomous resume."""
+    control = TradingRuntimeControl(
+        market_type=MarketType.FUTURES,
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+    )
+    provider = FakeQueryProvider(
+        positions=(),
+        trades=(),
+        orders=(),
+        balance=Decimal("100"),
+        last_price=Decimal("1"),
+        autonomous_live_recovery=_clear_autonomous_recovery(),
+    )
+    message = FakeMessage()
+    update = cast(
+        Update,
+        FakeUpdate(message=message, effective_chat=FakeChat(id=_ALLOWED_CHAT_ID)),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: BotContext(
+                    is_running=True,
+                    trade_mode="LIVE",
+                    configured_interval=Interval.M1,
+                    strategy_name=StrategyType.EMA_SCALPING.value,
+                    query_provider=provider,
+                    runtime_control=control,
+                    runtime_risk_limit_service=FakeRuntimeRiskLimitService(
+                        snapshot=_runtime_limits()
+                    ),
+                ),
+            }
+        ),
+    )
+
+    await start_bot_command(update, context)
+
+    assert not control.is_paused
+    assert "Trading berhasil dilanjutkan" in message.replies[-1]
+    assert "Startup Configuration" not in message.replies[-1]
+
+
+def test_autonomous_live_resume_rejects_incomplete_recovery() -> None:
+    """Keep operator resume fail-closed while a durable entry is unresolved."""
+    asyncio.run(_run_autonomous_live_blocked_resume_test())
+
+
+async def _run_autonomous_live_blocked_resume_test() -> None:
+    """Reject global activation until acknowledged entry recovery completes."""
+    control = TradingRuntimeControl(
+        market_type=MarketType.FUTURES,
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+    )
+    blocked = AutonomousLiveRecoverySnapshot(
+        status=AutonomousLiveRecoveryStatus.POST_ENTRY_RECOVERY_REQUIRED,
+        reason=AutonomousLiveRecoveryReason.ACKNOWLEDGED_UNCOMPLETED,
+        incomplete_attempt_count=1,
+        attempt_status=SubmissionAttemptStatus.ACKNOWLEDGED,
+        client_order_id="btg-test",
+        symbol="BEAMXUSDT",
+        autonomous_entry_authorized=True,
+        new_entry_blocked_by_recovery=True,
+        autonomous_entry_environment=ExchangeEnvironment.TESTNET,
+    )
+    provider = FakeQueryProvider(
+        positions=(),
+        trades=(),
+        orders=(),
+        balance=Decimal("100"),
+        last_price=Decimal("1"),
+        autonomous_live_recovery=blocked,
+    )
+    message = FakeMessage()
+    update = cast(
+        Update,
+        FakeUpdate(message=message, effective_chat=FakeChat(id=_ALLOWED_CHAT_ID)),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: BotContext(
+                    is_running=True,
+                    trade_mode="LIVE",
+                    query_provider=provider,
+                    runtime_control=control,
+                    runtime_risk_limit_service=FakeRuntimeRiskLimitService(
+                        snapshot=_runtime_limits()
+                    ),
+                ),
+            }
+        ),
+    )
+
+    await start_bot_command(update, context)
+
+    assert control.is_paused
+    assert "Autonomous LIVE belum dapat dilanjutkan" in message.replies[-1]
+    assert "recovery is incomplete" in message.replies[-1]
 
 
 def test_market_search_returns_selectable_exchange_symbols() -> None:

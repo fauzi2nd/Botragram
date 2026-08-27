@@ -98,6 +98,22 @@ def test_clear_contexts_resets_single_and_multiple_runtime_state() -> None:
     assert control.get_stream_telemetry().event_count == 0
 
 
+def test_clear_contexts_preserves_configured_future_cycle_defaults() -> None:
+    """Restore deployment configuration after managed contexts disappear."""
+    control = TradingRuntimeControl(
+        symbol="ETHUSDT",
+        interval=Interval.M5,
+        strategy_type=StrategyType.SUPERTREND,
+    )
+    control.set_runtime_contexts(contexts=(_context("BTCUSDT"), _context("SOLUSDT")))
+    control.clear_runtime_contexts()
+
+    assert control.runtime_contexts == ()
+    assert control.symbol == "ETHUSDT"
+    assert control.interval is Interval.M5
+    assert control.strategy_type is StrategyType.SUPERTREND
+
+
 def test_single_managed_live_context_resumes_without_legacy_configuration() -> None:
     """Activate one exact managed LIVE context without Telegram confirmations."""
     control = TradingRuntimeControl()

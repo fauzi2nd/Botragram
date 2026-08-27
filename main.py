@@ -128,6 +128,12 @@ async def _run_trading(
             dependency_provider.autonomous_live_recovery_observability_service
         ),
         global_discovery_telemetry_provider=global_discovery_telemetry,
+        runtime_risk_limit_provider=(
+            dependency_provider.runtime_risk_limit_service
+            if settings.app.effective_execution_policy
+            is ExecutionPolicy.AUTONOMOUS_LIVE
+            else None
+        ),
         max_open_positions=(
             None
             if settings.app.effective_execution_policy

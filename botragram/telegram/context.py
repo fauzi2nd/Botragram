@@ -21,6 +21,7 @@ from botragram.models import (
     ExecutionAuthorization,
     ExecutionAuthorizationOutcome,
     LiveRuntimeHealthSnapshot,
+    LiveRuntimePositionContext,
     Order,
     Position,
     RuntimeRiskLimits,
@@ -128,6 +129,20 @@ class BotRuntimeControl(Protocol):
 
     def resume(self) -> bool:
         """Resume and return whether state changed."""
+        ...
+
+    def resume_global_cycle(self) -> bool:
+        """Resume an already-authorized autonomous global workflow."""
+        ...
+
+    @property
+    def runtime_contexts(self) -> tuple[LiveRuntimePositionContext, ...]:
+        """Return the canonical managed LIVE runtime contexts."""
+        ...
+
+    @property
+    def is_position_protection_ready(self) -> bool:
+        """Return whether the LIVE position-protection gate is ready."""
         ...
 
     @property
@@ -244,6 +259,7 @@ class BotContext:
     trade_mode: str = "PAPER"
     symbol: str = "BTCUSDT"
     strategy_name: str = "EMA_CROSS"
+    configured_interval: Interval = Interval.M15
     exchange_type: str = "BINANCE"
     last_price: Decimal = Decimal("0")
     positions: tuple[Position, ...] = ()
@@ -252,6 +268,14 @@ class BotContext:
     market_type_switcher: BotMarketTypeSwitcher | None = None
     execution_authorization_service: BotExecutionAuthorizationProvider | None = None
     runtime_risk_limit_service: BotRuntimeRiskLimitProvider | None = None
+
+    @property
+    def is_autonomous_live(self) -> bool:
+        """Return whether this context owns autonomous LIVE runtime limits."""
+        return (
+            self.trade_mode.strip().upper() == "LIVE"
+            and self.runtime_risk_limit_service is not None
+        )
 
     @property
     def market_type(self) -> MarketType:
