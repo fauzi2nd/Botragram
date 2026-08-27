@@ -39,6 +39,9 @@ from botragram.storage.sqlite.order_repository import (
 from botragram.storage.sqlite.position_repository import (
     SQLitePositionRepository,
 )
+from botragram.storage.sqlite.runtime_risk_limit_repository import (
+    SQLiteRuntimeRiskLimitRepository,
+)
 from botragram.storage.sqlite.signal_repository import (
     SQLiteSignalRepository,
 )
@@ -62,4 +65,5 @@ __all__ = [
     "SQLiteSignalRepository",
     "SQLiteTradeRepository",
     "SQLiteSubmissionAttemptRepository",
+    "SQLiteRuntimeRiskLimitRepository",
 ]

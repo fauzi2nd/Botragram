@@ -429,6 +429,32 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ON closed_position_lifecycles (closed_at);
         """,
     ),
+    _Migration(
+        version=16,
+        script="""
+        CREATE TABLE IF NOT EXISTS runtime_risk_limits (
+            scope TEXT PRIMARY KEY,
+            max_open_positions INTEGER NOT NULL,
+            max_position_size_usdt TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            CHECK (scope = 'active'),
+            CHECK (max_open_positions > 0)
+        );
+
+        CREATE TABLE IF NOT EXISTS runtime_risk_limit_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            max_open_positions INTEGER NOT NULL,
+            max_position_size_usdt TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            CHECK (max_open_positions > 0)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_risk_limit_events_updated_at
+        ON runtime_risk_limit_events (updated_at);
+        """,
+    ),
 )
 
 

@@ -79,6 +79,7 @@ from botragram.services.position_protection_manager import PositionProtectionMan
 from botragram.services.position_service import PositionService
 from botragram.services.runtime_recovery_service import RuntimeRecoveryService
 from botragram.services.runtime_reporter import RuntimeReporter
+from botragram.services.runtime_risk_limit_service import RuntimeRiskLimitService
 from botragram.services.strategy_service import StrategyService
 from botragram.services.trading_service import TradingService
 from botragram.services.volume_ranked_discovery_universe_service import (
@@ -126,6 +127,7 @@ __all__ = [
     "PositionProtectionManager",
     "RuntimeReporter",
     "RuntimeRecoveryService",
+    "RuntimeRiskLimitService",
     "StrategyService",
     "TradingService",
     "VolumeRankedDiscoveryUniverseService",
