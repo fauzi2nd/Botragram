@@ -16,3 +16,4 @@ htmlcov/
 /botragram.db
 /data/*
 !/data/.gitkeep
+test_binance_mainnet_key.py
