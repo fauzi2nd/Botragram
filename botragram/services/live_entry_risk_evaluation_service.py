@@ -8,7 +8,13 @@ from decimal import Decimal
 from typing import Protocol
 
 from botragram.engine import TradingEngine
-from botragram.models import LiveEntryRiskEvaluation, Position, RuntimeRiskLimits, Signal
+from botragram.models import (
+    LiveEntryRiskEvaluation,
+    Position,
+    RuntimeRiskLimits,
+    Signal,
+    TradingDecision,
+)
 from botragram.services.live_account_drawdown_service import (
     LiveAccountDrawdownService,
 )
@@ -98,6 +104,20 @@ class LiveEntryRiskEvaluationService:
             for position in positions
         )
         balance = await self.account_service.get_free_balance(asset=self.balance_asset)
+        if balance <= _DECIMAL_ZERO:
+            decision = TradingDecision(
+                should_execute=False,
+                signal=evaluation_signal,
+                risk_result=None,
+                reason="Insufficient available balance",
+            )
+            if entry_price_override is not None:
+                decision = replace(decision, signal=signal)
+            return LiveEntryRiskEvaluation(
+                decision=decision,
+                has_existing_position=has_existing_position,
+            )
+
         current_drawdown_pct = _DECIMAL_ZERO
         equity_provider = self.equity_provider
         drawdown_service = self.drawdown_service
