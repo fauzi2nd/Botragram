@@ -20,16 +20,15 @@ class RuntimeRiskLimits:
 
     def __post_init__(self) -> None:
         """Validate positive limits and normalized audit provenance."""
-        if (
-            isinstance(self.max_open_positions, bool)
-            or self.max_open_positions <= 0
-        ):
+        if isinstance(self.max_open_positions, bool) or self.max_open_positions <= 0:
             raise ValueError("Runtime maximum open positions must be positive")
         if (
             not self.max_position_size_usdt.is_finite()
             or self.max_position_size_usdt <= Decimal("0")
         ):
-            raise ValueError("Runtime maximum position size must be finite and positive")
+            raise ValueError(
+                "Runtime maximum position size must be finite and positive"
+            )
         if self.updated_at.tzinfo is None or self.updated_at.utcoffset() is None:
             raise ValueError("Runtime risk-limit timestamp must be timezone-aware")
 

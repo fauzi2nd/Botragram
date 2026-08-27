@@ -128,10 +128,11 @@ class RuntimeRiskLimitService:
             raise ValueError("Runtime maximum open positions must be positive")
         if max_open_positions > self.hard_max_open_positions:
             raise ValueError("Runtime maximum open positions exceeds hard limit")
-        if (
-            not max_position_size_usdt.is_finite()
-            or max_position_size_usdt <= Decimal("0")
+        if not max_position_size_usdt.is_finite() or max_position_size_usdt <= Decimal(
+            "0"
         ):
-            raise ValueError("Runtime maximum position size must be finite and positive")
+            raise ValueError(
+                "Runtime maximum position size must be finite and positive"
+            )
         if max_position_size_usdt > self.hard_max_position_size_usdt:
             raise ValueError("Runtime maximum position size exceeds hard limit")

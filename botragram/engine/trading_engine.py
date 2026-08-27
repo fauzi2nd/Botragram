@@ -122,7 +122,9 @@ class TradingEngine:
         if isinstance(runtime_limit, bool) or runtime_limit <= 0:
             raise ValueError("Runtime maximum open positions must be positive")
         if runtime_limit > hard_limit:
-            raise ValueError("Runtime maximum open positions exceeds configured ceiling")
+            raise ValueError(
+                "Runtime maximum open positions exceeds configured ceiling"
+            )
         return runtime_limit
 
     @staticmethod

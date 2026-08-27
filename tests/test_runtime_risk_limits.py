@@ -9,7 +9,7 @@ from decimal import Decimal
 import pytest
 
 from botragram.app.runtime_control import TradingRuntimeControl
-from botragram.config import RiskSettings
+from botragram.config.risk_settings import RiskSettings
 from botragram.engine import RiskEngine, TradingEngine
 from botragram.enums import SignalType
 from botragram.models import RuntimeRiskLimits, Signal
@@ -157,7 +157,29 @@ def test_trading_engine_runtime_capacity_override_is_bounded_by_env_ceiling() ->
     engine = TradingEngine(
         risk_engine=RiskEngine(settings=RiskSettings(max_open_positions=5)),
     )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100"),
+        confidence=Decimal("0.8"),
+        strategy_name="ema_cross",
+        generated_at=_NOW,
+    )
 
-    assert engine._resolve_max_open_positions(runtime_limit=2) == 2
+    decision = engine.evaluate(
+        signal=signal,
+        account_balance=Decimal("1000"),
+        has_open_position=False,
+        open_positions=(),
+        max_open_positions=2,
+    )
+    assert decision.should_execute
+
     with pytest.raises(ValueError, match="configured ceiling"):
-        engine._resolve_max_open_positions(runtime_limit=6)
+        engine.evaluate(
+            signal=signal,
+            account_balance=Decimal("1000"),
+            has_open_position=False,
+            open_positions=(),
+            max_open_positions=6,
+        )

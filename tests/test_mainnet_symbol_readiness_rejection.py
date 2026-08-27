@@ -146,7 +146,9 @@ class _Protection:
         del symbol, position_side, stop_loss, take_profit
 
     async def ensure(self, *, position: Position) -> Position:
-        raise AssertionError(f"Protection is not expected before POST: {position.symbol}")
+        raise AssertionError(
+            f"Protection is not expected before POST: {position.symbol}"
+        )
 
 
 @dataclass(slots=True)

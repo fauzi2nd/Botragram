@@ -135,7 +135,9 @@ from botragram.storage.sqlite import (
     SQLiteTestnetLegacyLiveLedgerMigration,
     SQLiteTradeRepository,
 )
-from botragram.storage.sqlite.live_recovery_repository import SQLiteLiveRecoveryRepository
+from botragram.storage.sqlite.live_recovery_repository import (
+    SQLiteLiveRecoveryRepository,
+)
 from botragram.strategies.factory import StrategyFactory
 from botragram.telegram import TelegramBot
 from botragram.telegram.context import BotContext
@@ -250,7 +252,9 @@ class DependencyProvider:
             strategy_type=self._settings.strategy.strategy_type,
         )
         if market_type_confirmed:
-            self._runtime_control.confirm_market_type(self._settings.exchange.market_type)
+            self._runtime_control.confirm_market_type(
+                self._settings.exchange.market_type
+            )
         self._restart_coordinator = (
             restart_coordinator
             if restart_coordinator is not None
@@ -326,9 +330,9 @@ class DependencyProvider:
         self._live_futures_entry_service: LiveFuturesEntryService | None = None
         self._live_futures_user_data_service: LiveFuturesUserDataService | None = None
         self._live_market_stream_service: LiveMarketStreamService | None = None
-        self._live_natural_exit_recovery_service: LiveNaturalExitRecoveryService | None = (
-            None
-        )
+        self._live_natural_exit_recovery_service: (
+            LiveNaturalExitRecoveryService | None
+        ) = None
         self._live_position_lifecycle_coordinator = LivePositionLifecycleCoordinator()
         self._live_post_entry_recovery_service: LivePostEntryRecoveryService | None = (
             None
@@ -336,10 +340,12 @@ class DependencyProvider:
         self._live_position_protection_service: LivePositionProtectionService | None = (
             None
         )
-        self._live_protection_monitoring_service: LiveProtectionMonitoringService | None = (
+        self._live_protection_monitoring_service: (
+            LiveProtectionMonitoringService | None
+        ) = None
+        self._live_portfolio_recovery_service: LivePortfolioRecoveryService | None = (
             None
         )
-        self._live_portfolio_recovery_service: LivePortfolioRecoveryService | None = None
         self._live_runtime_health_service: LiveRuntimeHealthService | None = None
         self._live_runtime_portfolio_reconciliation_service: (
             LiveRuntimePortfolioReconciliationService | None
@@ -465,20 +471,15 @@ class DependencyProvider:
                 runtime_control=self.runtime_control,
                 tick_listeners=tick_listeners,
             )
-            self._live_runtime_portfolio_reconciliation_service = (
-                LiveRuntimePortfolioReconciliationService(
-                    runtime_control=self.runtime_control,
-                    live_portfolio_recovery_service=self.live_portfolio_recovery_service,
-                    market_stream_service=self.live_market_stream_service,
-                    protection_monitoring_service=(
-                        self.live_protection_monitoring_service
-                    ),
-                    first_tick_timeout_seconds=15.0,
-                    live_natural_exit_recovery_service=(
-                        self.live_natural_exit_recovery_service
-                    ),
-                )
+            reconciliation_service = LiveRuntimePortfolioReconciliationService(
+                runtime_control=self.runtime_control,
+                live_portfolio_recovery_service=self.live_portfolio_recovery_service,
+                market_stream_service=self.live_market_stream_service,
+                protection_monitoring_service=self.live_protection_monitoring_service,
+                first_tick_timeout_seconds=15.0,
+                live_natural_exit_recovery_service=self.live_natural_exit_recovery_service,
             )
+            self._live_runtime_portfolio_reconciliation_service = reconciliation_service
             self._live_runtime_health_service = LiveRuntimeHealthService(
                 runtime_control=self.runtime_control,
                 market_stream_service=self.live_market_stream_service,
@@ -1156,7 +1157,9 @@ class DependencyProvider:
     def _build_trading_cycle_executor(self) -> TradingCycleExecutor:
         policy = self._settings.app.effective_execution_policy
         if policy is ExecutionPolicy.SINGLE_SYMBOL:
-            return SingleSymbolTradingCycleExecutor(trading_service=self.trading_service)
+            return SingleSymbolTradingCycleExecutor(
+                trading_service=self.trading_service
+            )
         if policy is ExecutionPolicy.AUTONOMOUS_LIVE:
             if self._settings.exchange.market_type is not MarketType.FUTURES:
                 raise ValueError("Autonomous LIVE execution requires FUTURES")

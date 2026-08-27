@@ -30,6 +30,10 @@ def test_live_settings_scope_database_by_venue_network(
     monkeypatch.setenv("BINANCE_TESTNET", str(testnet).lower())
     monkeypatch.setenv("BINANCE_API_KEY", "test-key")
     monkeypatch.setenv("BINANCE_API_SECRET", "test-secret")
+    monkeypatch.setenv("EXECUTION_POLICY", "single_symbol")
+    monkeypatch.setenv("AUTONOMOUS_EXECUTION_ENABLED", "false")
+    monkeypatch.setenv("AUTONOMOUS_LIVE_ENTRY_ENABLED", "false")
+    monkeypatch.setenv("AUTONOMOUS_MAINNET_ENTRY_ENABLED", "false")
     monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)
 
     settings = SettingsManager(

@@ -172,7 +172,9 @@ async def test_safe_candidate_rejections_continue_to_later_symbols() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ambiguous_preflight_failure_is_not_downgraded_to_safe_rejection() -> None:
+async def test_ambiguous_preflight_failure_is_not_downgraded_to_safe_rejection() -> (
+    None
+):
     entry = _Entry(errors={"BTCUSDT": LiveEntryPreflightError("timeout")})
     service = AutonomousLiveEntryExecutionService(
         risk_evaluation_service=_RiskEvaluator(),

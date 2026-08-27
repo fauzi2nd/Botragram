@@ -191,7 +191,9 @@ async def _run_incompatible_legacy_schema_test() -> None:
                 source_database_path=source.database_path,
             )
 
-            with pytest.raises(RuntimeError, match="source=14 target=15"):
+            target_version = SQLiteMigrationManager(database=target).latest_version
+            expected_error = f"source=14 target={target_version}"
+            with pytest.raises(RuntimeError, match=expected_error):
                 await migration.migrate_if_required()
         finally:
             await target.close()

@@ -67,14 +67,15 @@ async def set_risk_limits_command(
     if not control.is_paused:
         await message.reply_text("Pause trading before changing runtime risk limits.")
         return
-    if len(context.args) != 2:
+    args = context.args or []
+    if len(args) != 2:
         await message.reply_text(f"Usage: {_USAGE}")
         return
 
     try:
-        max_open_positions = int(context.args[0])
-        max_position_size_usdt = Decimal(context.args[1])
-    except (ValueError, InvalidOperation):
+        max_open_positions = int(args[0])
+        max_position_size_usdt = Decimal(args[1])
+    except ValueError, InvalidOperation:
         await message.reply_text(f"Invalid values. Usage: {_USAGE}")
         return
 

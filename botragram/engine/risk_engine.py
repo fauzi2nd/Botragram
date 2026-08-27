@@ -151,7 +151,9 @@ class RiskEngine:
         if runtime_limit is None:
             return hard_limit
         if not runtime_limit.is_finite() or runtime_limit <= _DECIMAL_ZERO:
-            raise ValueError("Runtime maximum position size must be finite and positive")
+            raise ValueError(
+                "Runtime maximum position size must be finite and positive"
+            )
         if runtime_limit > hard_limit:
             raise ValueError("Runtime maximum position size exceeds configured ceiling")
         return runtime_limit

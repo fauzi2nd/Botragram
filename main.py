@@ -129,7 +129,8 @@ async def _run_trading(
         global_discovery_telemetry_provider=global_discovery_telemetry,
         max_open_positions=(
             None
-            if settings.app.effective_execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE
+            if settings.app.effective_execution_policy
+            is ExecutionPolicy.AUTONOMOUS_LIVE
             else settings.risk.max_open_positions
         ),
     )

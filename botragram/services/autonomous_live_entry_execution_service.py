@@ -172,9 +172,7 @@ class AutonomousLiveEntryExecutionService:
             )
         except LiveEntrySymbolReadinessError:
             return AutonomousLiveEntryExecutionResult(
-                status=(
-                    AutonomousLiveEntryExecutionStatus.SYMBOL_READINESS_REJECTED
-                ),
+                status=(AutonomousLiveEntryExecutionStatus.SYMBOL_READINESS_REJECTED),
                 decision=decision,
             )
         except VenueRuleValidationError:

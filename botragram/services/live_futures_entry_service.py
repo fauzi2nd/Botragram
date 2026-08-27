@@ -205,9 +205,7 @@ class LiveFuturesEntryService:
                     quantity=risk_result.position.quantity,
                 )
             )
-            normalized_notional = (
-                normalized_quantity * risk_result.metrics.entry_price
-            )
+            normalized_notional = normalized_quantity * risk_result.metrics.entry_price
             if (
                 limits is not None
                 and normalized_notional > limits.max_position_size_usdt

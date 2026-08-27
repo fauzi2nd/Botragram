@@ -117,6 +117,7 @@ def test_environment_provider_defaults_mainnet_activation_to_false(
     tmp_path: Path,
 ) -> None:
     """Parse the additional opt-in strictly while preserving a safe default."""
+    monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)
     monkeypatch.delenv("AUTONOMOUS_MAINNET_ENTRY_ENABLED", raising=False)
     provider = EnvironmentProvider(env_path=str(tmp_path / "missing.env"))
 

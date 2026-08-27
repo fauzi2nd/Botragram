@@ -103,7 +103,7 @@ async def test_lifecycle_identity_is_durable_and_idempotent_after_reopen() -> No
         await first_database.connect()
         try:
             manager = SQLiteMigrationManager(database=first_database)
-            assert await manager.initialize() == 15
+            assert await manager.initialize() == manager.latest_version
             first_repository = SQLiteClosedPositionLifecycleRepository(
                 database=first_database
             )
