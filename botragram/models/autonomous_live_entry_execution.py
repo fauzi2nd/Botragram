@@ -1,4 +1,4 @@
-"""Typed outcomes for TESTNET autonomous protected-entry execution."""
+"""Typed outcomes for network-scoped autonomous protected-entry execution."""
 
 from __future__ import annotations
 

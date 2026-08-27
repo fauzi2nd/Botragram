@@ -197,13 +197,35 @@ def test_ranked_candidates_keep_the_existing_deterministic_sequence() -> None:
     )
 
 
-def test_mainnet_boundary_cannot_be_constructed() -> None:
-    """Reject MAINNET before any candidate can reach an intent boundary."""
-    with pytest.raises(ValueError, match="TESTNET"):
-        AutonomousLiveEntryIntentService(
-            execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+def test_mainnet_boundary_requires_exact_mainnet_capability() -> None:
+    """Authorize MAINNET only with its separate exact-network capability."""
+    service = AutonomousLiveEntryIntentService(
+        execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+        environment=ExchangeEnvironment.MAINNET,
+    )
+    decision = _evaluate(signal=_create_signal())
+
+    rejected = service.authorize(
+        decision=decision,
+        interval=Interval.M15,
+        strategy_type=StrategyType.EMA_CROSS,
+        authorization=_create_authorization(),
+    )
+    accepted = service.authorize(
+        decision=decision,
+        interval=Interval.M15,
+        strategy_type=StrategyType.EMA_CROSS,
+        authorization=AutonomousLiveEntryAuthorization(
             environment=ExchangeEnvironment.MAINNET,
-        )
+            explicit_opt_in=True,
+            mainnet_explicit_opt_in=True,
+        ),
+    )
+
+    assert rejected.status is AutonomousLiveEntryIntentStatus.AUTHORIZATION_REQUIRED
+    assert rejected.intent is None
+    assert accepted.status is AutonomousLiveEntryIntentStatus.AUTHORIZED
+    assert accepted.intent is not None
 
 
 def test_authorized_intent_rejects_conflicting_strategy_metadata() -> None:

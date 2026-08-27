@@ -805,6 +805,12 @@ class TerminalMonitor:
             self.max_open_positions is None
             or status.position_count < self.max_open_positions
         )
+        entry_environment = (
+            recovery.autonomous_entry_environment.value.upper()
+            if recovery is not None
+            and recovery.autonomous_entry_environment is not None
+            else "TESTNET"
+        )
         health_is_entry_safe = has_no_positions or (
             health is not None
             and health.status is LiveRuntimeHealthStatus.ACTIVE
@@ -815,7 +821,7 @@ class TerminalMonitor:
         entry_status = (
             "BLOCKED - CAPACITY"
             if not has_capacity
-            else "ENABLED - TESTNET"
+            else f"ENABLED - {entry_environment}"
             if recovery is not None
             and recovery.autonomous_entry_authorized
             and not self.runtime_control.is_paused

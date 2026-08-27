@@ -33,6 +33,7 @@ from botragram.constants.env import (
     ENV_AI_PROVIDER,
     ENV_AUTONOMOUS_EXECUTION_ENABLED,
     ENV_AUTONOMOUS_LIVE_ENTRY_ENABLED,
+    ENV_AUTONOMOUS_MAINNET_ENTRY_ENABLED,
     ENV_BINANCE_API_KEY,
     ENV_BINANCE_API_SECRET,
     ENV_BINANCE_MARKET_TYPE,
@@ -426,8 +427,12 @@ class EnvironmentProvider:
         return self._get_bool(ENV_AUTONOMOUS_EXECUTION_ENABLED, default=False)
 
     def get_autonomous_live_entry_enabled(self) -> bool:
-        """Return explicit opt-in for future TESTNET autonomous LIVE entry."""
+        """Return the base explicit opt-in for autonomous LIVE entry."""
         return self._get_bool(ENV_AUTONOMOUS_LIVE_ENTRY_ENABLED, default=False)
+
+    def get_autonomous_mainnet_entry_enabled(self) -> bool:
+        """Return the additional explicit opt-in for MAINNET autonomous entry."""
+        return self._get_bool(ENV_AUTONOMOUS_MAINNET_ENTRY_ENABLED, default=False)
 
     def get_execution_policy(self) -> str:
         """Return the optional explicit runtime execution policy."""

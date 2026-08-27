@@ -1,4 +1,4 @@
-"""TESTNET autonomous protected-entry execution adapter tests."""
+"""Network-scoped autonomous protected-entry execution adapter tests."""
 
 from __future__ import annotations
 
@@ -365,11 +365,15 @@ def _create_position(*, symbol: str) -> Position:
     )
 
 
-def _create_authorization() -> AutonomousLiveEntryAuthorization:
-    """Create the explicit TESTNET new-entry capability."""
+def _create_authorization(
+    *,
+    environment: ExchangeEnvironment = ExchangeEnvironment.TESTNET,
+) -> AutonomousLiveEntryAuthorization:
+    """Create the explicit new-entry capability for one exact network."""
     return AutonomousLiveEntryAuthorization(
-        environment=ExchangeEnvironment.TESTNET,
+        environment=environment,
         explicit_opt_in=True,
+        mainnet_explicit_opt_in=environment is ExchangeEnvironment.MAINNET,
     )
 
 
@@ -383,6 +387,7 @@ def _create_service(
     max_spread_bps: Decimal = Decimal("5_000"),
     utc_now: Callable[[], datetime] = lambda: _NOW,
     market_service: _FakeMarketService | None = None,
+    environment: ExchangeEnvironment = ExchangeEnvironment.TESTNET,
 ) -> AutonomousLiveEntryExecutionService:
     """Create the adapter around canonical fresh-risk dependencies."""
     return AutonomousLiveEntryExecutionService(
@@ -402,11 +407,51 @@ def _create_service(
             else _FakeMarketService(quote=_create_executable_quote())
         ),
         live_futures_entry_service=protected_entry_service,
-        environment=ExchangeEnvironment.TESTNET,
+        environment=environment,
         max_executable_quote_age_ms=max_executable_quote_age_ms,
         max_spread_bps=max_spread_bps,
         utc_now=utc_now,
     )
+
+
+def test_mainnet_execution_requires_exact_mainnet_capability() -> None:
+    """Reject cross-network capability before reads and accept exact MAINNET."""
+    accounts = _FakeAccountService(balances=[Decimal("500")])
+    positions = _FakePositionService(portfolios=[()])
+    protected_entry = _FakeProtectedEntryService()
+    service = _create_service(
+        account_service=accounts,
+        position_service=positions,
+        protected_entry_service=protected_entry,
+        environment=ExchangeEnvironment.MAINNET,
+    )
+    intent = _create_intent()
+
+    rejected = asyncio.run(
+        service.execute(
+            intent=intent,
+            authorization=_create_authorization(),
+        )
+    )
+
+    assert rejected.status is AutonomousLiveEntryExecutionStatus.AUTHORIZATION_REJECTED
+    assert accounts.calls == 0
+    assert positions.calls == 0
+    assert protected_entry.calls == []
+
+    executed = asyncio.run(
+        service.execute(
+            intent=intent,
+            authorization=_create_authorization(
+                environment=ExchangeEnvironment.MAINNET
+            ),
+        )
+    )
+
+    assert executed.status is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+    assert accounts.calls == 1
+    assert positions.calls == 1
+    assert len(protected_entry.calls) == 1
 
 
 def test_authorization_is_required_before_authoritative_revalidation() -> None:

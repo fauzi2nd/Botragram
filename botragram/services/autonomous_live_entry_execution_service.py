@@ -1,4 +1,4 @@
-"""TESTNET autonomous adapter for the protected LIVE entry boundary."""
+"""Network-scoped autonomous adapter for the protected LIVE entry boundary."""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ class _ProtectedLiveEntryExecutor(Protocol):
 
 @dataclass(slots=True, kw_only=True, frozen=True)
 class AutonomousLiveEntryExecutionService:
-    """Revalidate and delegate one TESTNET autonomous protected entry.
+    """Revalidate and delegate one network-scoped autonomous protected entry.
 
     The adapter owns no submission identity, POST retry, reconciliation, or
     protection workflow. It performs fresh authoritative risk validation for
@@ -105,9 +105,7 @@ class AutonomousLiveEntryExecutionService:
     utc_now: Callable[[], datetime] = _utc_now
 
     def __post_init__(self) -> None:
-        """Normalize static TESTNET execution configuration."""
-        if self.environment is not ExchangeEnvironment.TESTNET:
-            raise ValueError("Autonomous LIVE execution requires TESTNET")
+        """Normalize static network-scoped execution configuration."""
         if self.max_executable_quote_age_ms <= 0:
             raise ValueError("Maximum executable quote age must be greater than zero")
         if not self.max_spread_bps.is_finite() or self.max_spread_bps <= Decimal("0"):
@@ -242,11 +240,10 @@ class AutonomousLiveEntryExecutionService:
         *,
         authorization: AutonomousLiveEntryAuthorization | None,
     ) -> bool:
-        """Require the exact explicit TESTNET new-entry capability."""
+        """Require the exact explicit current-network entry capability."""
         return (
             authorization is not None
             and authorization.new_live_entry_allowed
-            and authorization.environment is ExchangeEnvironment.TESTNET
             and authorization.environment is self.environment
         )
 

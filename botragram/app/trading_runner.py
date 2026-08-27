@@ -349,7 +349,7 @@ class LiveEntryRiskEvaluationProvider(Protocol):
 
 
 class AutonomousLiveEntryExecutionProvider(Protocol):
-    """Execute one authorized TESTNET protected entry."""
+    """Execute one authorized network-scoped protected entry."""
 
     async def execute(
         self,
@@ -655,7 +655,7 @@ class AutonomousPaperTradingCycleExecutor:
 
 @dataclass(slots=True, kw_only=True, frozen=True)
 class AutonomousLiveTradingCycleExecutor:
-    """Compose ranked TESTNET discovery with sequential protected LIVE entry.
+    """Compose ranked network discovery with sequential protected LIVE entry.
 
     It has no exchange client dependency. Discovery binds each candidate to
     the executor's explicit closed-candle strategy context before the durable
@@ -679,7 +679,7 @@ class AutonomousLiveTradingCycleExecutor:
     discovery_rate_limit_governor: _DiscoveryRateLimitGovernor | None = None
 
     def __post_init__(self) -> None:
-        """Validate the static TESTNET discovery composition."""
+        """Validate the static network-scoped discovery composition."""
         quote_asset = self.quote_asset.strip().upper()
         if not quote_asset:
             raise ValueError("Autonomous LIVE quote asset must not be empty")
@@ -692,7 +692,7 @@ class AutonomousLiveTradingCycleExecutor:
         if self.top_n > self.discovery_universe_service.batch_size:
             raise ValueError("Autonomous LIVE top N must not exceed batch size")
         if not self.authorization.new_live_entry_allowed:
-            raise ValueError("Autonomous LIVE requires TESTNET entry authorization")
+            raise ValueError("Autonomous LIVE requires network entry authorization")
         object.__setattr__(self, "quote_asset", quote_asset)
 
     async def execute_global(

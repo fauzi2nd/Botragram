@@ -216,8 +216,15 @@ def get_autonomous_live_recovery_message(
     *, snapshot: AutonomousLiveRecoverySnapshot
 ) -> str:
     """Render durable autonomous recovery state without controls or mutation."""
+    entry_environment = (
+        snapshot.autonomous_entry_environment.value.upper()
+        if snapshot.autonomous_entry_environment is not None
+        else "TESTNET"
+    )
     entry_state = (
-        "ENABLED — TESTNET" if snapshot.autonomous_entry_authorized else "DISABLED"
+        f"ENABLED — {entry_environment}"
+        if snapshot.autonomous_entry_authorized
+        else "DISABLED"
     )
     new_entry_state = (
         "BLOCKED"

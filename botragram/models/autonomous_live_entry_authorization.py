@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Immutable TESTNET-only authorization for future autonomous LIVE entry.
+    Immutable network-scoped authorization for autonomous LIVE entry.
 
 Python:
     3.14+
@@ -31,7 +31,7 @@ __all__ = ["AutonomousLiveEntryAuthorization"]
 # =============================================================================
 @dataclass(slots=True, kw_only=True, frozen=True)
 class AutonomousLiveEntryAuthorization:
-    """Represent explicit future autonomous new-LIVE-entry permission.
+    """Represent explicit network-scoped autonomous new-LIVE-entry permission.
 
     This capability is intentionally independent from recovered-position
     management authorization. It is configuration-derived and never persisted.
@@ -39,14 +39,27 @@ class AutonomousLiveEntryAuthorization:
 
     environment: ExchangeEnvironment
     explicit_opt_in: bool
+    mainnet_explicit_opt_in: bool = False
 
     def __post_init__(self) -> None:
         """Reject unsafe or implicit autonomous LIVE entry authorization."""
-        if self.environment is not ExchangeEnvironment.TESTNET:
-            raise ValueError("Autonomous LIVE entry authorization requires TESTNET")
-
         if not self.explicit_opt_in:
             raise ValueError("Autonomous LIVE entry authorization requires opt-in")
+
+        if (
+            self.environment is ExchangeEnvironment.MAINNET
+            and not self.mainnet_explicit_opt_in
+        ):
+            raise ValueError(
+                "Autonomous LIVE entry authorization requires TESTNET or explicit "
+                "MAINNET opt-in"
+            )
+
+        if (
+            self.environment is ExchangeEnvironment.TESTNET
+            and self.mainnet_explicit_opt_in
+        ):
+            raise ValueError("MAINNET entry opt-in requires MAINNET environment")
 
     @property
     def new_live_entry_allowed(self) -> bool:

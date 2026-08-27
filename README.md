@@ -47,11 +47,13 @@ approval time. Equivalent symbol/direction/strategy candidates are suppressed
 while an approval remains pending. Both PAPER market-wide policies are rejected in
 `TRADE_MODE=LIVE`.
 
-## TESTNET autonomous LIVE entry
+## Guarded autonomous LIVE entry
 
-AUTONOMOUS LIVE = TESTNET ONLY. The explicit `autonomous_live` execution policy
-is operational only with `TRADE_MODE=LIVE`,
-`AUTONOMOUS_LIVE_ENTRY_ENABLED=true`, and an exchange TESTNET connection.
+Autonomous LIVE is default-denied. TESTNET requires the explicit
+`autonomous_live` execution policy, `TRADE_MODE=LIVE`,
+`AUTONOMOUS_LIVE_ENTRY_ENABLED=true`, and a TESTNET connection. MAINNET requires
+all of those gates plus `AUTONOMOUS_MAINNET_ENTRY_ENABLED=true` and a selected
+MAINNET profile whose exchange network is MAINNET.
 Autonomous LIVE discovers active Binance USD-M USDT perpetual symbols from a
 typed market universe ranked by 24-hour quote volume. The ranked snapshot is
 process-local and rotates through bounded contiguous batches; the default LIVE
@@ -71,7 +73,8 @@ The existing final authoritative portfolio and venue-entry checks remain in plac
 as defense in depth. Successful entries remain PREPARED-before-POST,
 exactly-one-POST reconciled, and must finish with verified STOP/TP protection.
 Unsafe mutation outcomes stop later candidates; recovered positions participate
-in capacity and risk. MAINNET autonomous LIVE remains rejected.
+in capacity and risk. MAINNET remains rejected unless its additional explicit
+opt-in and existing account/symbol readiness checks all pass.
 
 EMA cross and EMA scalping now have independent percentage-based stop-loss and
 take-profit settings. `EMA_CROSS_STOP_LOSS_PCT` and
@@ -87,13 +90,13 @@ paused.
 
 After the existing discovery, ranking, position, and risk gates have approved a
 candidate, the pure authorization boundary may create a transient typed entry
-intent. An explicit TESTNET-only adapter can consume that intent only after a
+intent. A network-scoped adapter can consume that intent only after a
 fresh authoritative account/portfolio risk evaluation, then delegates to the
 existing protected-entry lifecycle. The decision-time quantity is never reused
 as mutation-time authority. PREPARED-before-POST, one-POST reconciliation, and
-verified protection remain mandatory. MAINNET remains rejected, PAPER remains
-separate, and recovered-position management authorization cannot grant
-permission for new LIVE exposure.
+verified protection remain mandatory. The capability must match the selected
+network exactly; PAPER remains separate, and recovered-position management
+authorization cannot grant permission for new LIVE exposure.
 
 Protected Futures MARKET entries convert risk sizing into a venue-valid quantity
 before durable `PREPARED` and before the first POST. Botragram reads
@@ -141,9 +144,10 @@ the existing trigger creates no identity, POST, or cancellation; invalid stepped
 candidates leave the existing verified STOP untouched. Phase 5C recovery-state
 and fresh TESTNET acceptance completed in `v0.5.0`.
 
-### Autonomous TESTNET recovery policy
+### Autonomous LIVE recovery policy
 
-Recoverable TESTNET autonomous LIVE failures use unlimited operational recovery.
+Recoverable autonomous LIVE failures on the selected network use unlimited
+operational recovery.
 After a typed `SUBMISSION_BLOCKED`, `EXECUTION_UNSAFE`, transient connectivity
 failure, or eligible runtime-health degradation, the runner remains paused,
 marks protection readiness false, disables new entry, and retries the existing
@@ -169,15 +173,16 @@ recoverable runtime failure -> UNSAFE_PAUSED -> bounded-backoff recovery -> READ
 blocked/non-recoverable state -> UNSAFE_PAUSED -> restart/operator recovery
 ```
 
-`AutonomousLiveEntryAuthorization` authorizes only creation of new TESTNET
-exposure. It is not required to reconcile an existing submission or protect an
-existing exchange position. Therefore, if an operator disables autonomous entry
-after a crash, LIVE recovery still runs, but no new autonomous discovery cycle
-is activated. MAINNET autonomous entry remains rejected.
+`AutonomousLiveEntryAuthorization` authorizes only creation of new exposure on
+its exact configured network. MAINNET additionally requires the separate
+MAINNET opt-in. The capability is not required to reconcile an existing
+submission or protect an existing exchange position. Therefore, if an operator
+disables autonomous entry after a crash, LIVE recovery still runs, but no new
+autonomous discovery cycle is activated.
 
 | Durable state or condition | Authoritative recovery action | New POST allowed? | Autonomous entry / runner |
 | --- | --- | --- | --- |
-| No positions, no incomplete attempt | Full portfolio read is clean | Yes, only with current TESTNET capability | Global cycle may start |
+| No positions, no incomplete attempt | Full portfolio read is clean | Yes, only with the exact current-network capability | Global cycle may start |
 | `PREPARED` or `UNRESOLVED` | GET by durable `client_order_id` only | No | Blocked until ACKNOWLEDGED or terminal rejection |
 | `ACKNOWLEDGED` | Authoritative position read, persistence, protection verification, then `COMPLETED` | No | Blocked until complete |
 | `REJECTED` | Terminal; no exposure recovery is required | A later, newly discovered candidate only | Normal fresh discovery may continue |
@@ -264,11 +269,11 @@ authoritative for the actual fill.
 
 ### MAINNET-candidate release gate
 
-MAINNET-candidate applies only to operator-started, single-symbol Binance USD-M
-Futures `MARKET` entry. Autonomous MAINNET remains rejected by settings
-validation. A failed account, quote, risk, symbol, quantity, or protection
-preflight must produce no new exchange mutation; symbol readiness runs before a
-durable `PREPARED` attempt.
+MAINNET-candidate includes guarded autonomous Binance USD-M Futures entry, but
+the boundary remains default-denied and requires the two-key explicit opt-in. A
+failed account, quote, risk, symbol, quantity, or protection preflight must
+produce no new exchange mutation; symbol readiness runs before a durable
+`PREPARED` attempt.
 
 Before promoting a revision, the operator must verify:
 
@@ -316,7 +321,7 @@ a required branch-protection check.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an
-authorization source. For TESTNET autonomous LIVE, a DEGRADED recovered runtime
+authorization source. For autonomous LIVE, a DEGRADED recovered runtime
 with the exact current management authorization may only deny a fresh cycle and
 trigger unlimited operational recovery with capped backoff; it never grants
 entry permission. Missing or mismatched authorization cannot be masked by a
@@ -352,9 +357,10 @@ Before any extended TESTNET soak, an operator must verify all of the following:
   Telegram/terminal recovery status remains truthful.
 - A graceful shutdown leaves verified exchange protection intact and no
   process-local stream, monitor, or runner task remains active.
-- MAINNET autonomous configuration is rejected before mutation.
+- MAINNET remains rejected before mutation unless both explicit entry opt-ins,
+  exact MAINNET network selection, and all readiness gates are satisfied.
 
-Unlimited operational recovery is enabled only for the TESTNET autonomous-LIVE
+Unlimited operational recovery is enabled for the network-scoped autonomous-LIVE
 runner. Typed recoverable entry outcomes, eligible DEGRADED stream/monitor
 health, and transient connectivity failure share the existing capped backoff,
 not a shutdown budget. Runtime health is checked before a fresh global cycle and
@@ -390,6 +396,35 @@ controls together with `DISCOVERY_UNIVERSE_LIMIT=100`,
 For multi-position acceptance, change only the ignored local soak copy (for
 example `MAX_OPEN_POSITIONS=5`); do not weaken or commit the shared safe default.
 Only after the preflight succeeds should the separate acceptance soak start.
+
+### Guarded autonomous MAINNET activation
+
+The committed default remains disabled. An operator must select the MAINNET
+profile and deliberately satisfy the complete handshake in the ignored local
+base configuration:
+
+```dotenv
+BOTRAGRAM_PROFILE=MAINNET
+TRADE_MODE=LIVE
+BINANCE_MARKET_TYPE=FUTURES
+EXECUTION_POLICY=autonomous_live
+AUTONOMOUS_LIVE_ENTRY_ENABLED=true
+AUTONOMOUS_MAINNET_ENTRY_ENABLED=true
+```
+
+The selected `.env.mainnet` must contain MAINNET credentials and
+`BINANCE_TESTNET=false`; profile/network disagreement fails startup. MAINNET
+uses its own database and runtime-lock scope. Startup performs authenticated
+GET-only account readiness checks before runtime activation. Immediately before
+each new entry, GET-only symbol readiness must confirm isolated margin, disabled
+auto-add margin, leverage within the configured maximum, and sufficient maximum
+notional. Botragram never changes those account settings automatically.
+
+Enabling the boundary is not an unattended production proof. The first MAINNET
+canary remains a separate, explicitly authorized operator action using the
+smallest approved sizing, one open position, continuous observation, independent
+exchange alerts, and a tested stop/rollback procedure. Automated tests and
+configuration audits must never place that canary order.
 
 ## Backtest
 
@@ -531,7 +566,8 @@ membersihkan ownership process-local sebelumnya, lalu membangun ulang seluruh
 portfolio; tidak ada fallback ke subset posisi yang masih sehat. Streaming bersamaan
 untuk symbol yang sama dengan interval berbeda belum didukung karena API
 `MarketService` masih dialamatkan berdasarkan symbol; autonomous LIVE hanya
-diizinkan pada TESTNET dengan opt-in eksplisit.
+diizinkan pada network yang dipilih dengan capability eksplisit; MAINNET
+memerlukan opt-in kedua.
 `TradingRuntimeControl` dapat menyimpan nol, satu, atau beberapa runtime context
 LIVE yang immutable. Penggantian seluruh context portfolio bersifat atomik dan
 memvalidasi duplicate symbol terlebih dahulu; urutan dipertahankan untuk
@@ -554,7 +590,7 @@ beberapa posisi, management cycle produksi sekarang aktif hanya setelah context,
 stream, monitor, dan authorization exact diverifikasi; satu `TradingRunner`
 menjalankan context secara sequential. Authorization dihapus dan runtime dipause
 jika portfolio, stream, atau monitor menjadi stale. Ini tetap tidak mengizinkan
-entry LIVE baru selain workflow autonomous TESTNET yang eksplisit.
+entry LIVE baru selain workflow autonomous LIVE network-scoped yang eksplisit.
 `LiveRuntimeHealthService` menyediakan snapshot operational immutable dan read-only
 yang merangkum context, authorization, stream, serta monitor. Kegagalan stream,
 monitor, atau kebutuhan rekonsiliasi menyebut context yang terdampak dan menilai
@@ -568,8 +604,8 @@ yang durable tidak dibatalkan. Reset runtime menghapus seluruh context dan
 telemetry stream singular.
 Telegram dan terminal hanya menampilkan health portfolio LIVE secara read-only;
 Telegram tidak menyediakan kontrol interaktif multi-symbol. Autonomous LIVE
-entry hanya tersedia pada FUTURES TESTNET dengan capability eksplisit; MAINNET
-tetap ditolak.
+entry hanya tersedia pada FUTURES dengan capability yang cocok persis terhadap
+network; MAINNET juga memerlukan opt-in tambahan yang default-nya false.
 Jika sinkronisasi, pemasangan proteksi, verifikasi, atau tick pertama gagal, bot
 tetap paused dan terminal mencatat penyebabnya. Perilaku ini bukan pengganti
 pemantauan account dan order secara independen pada exchange.

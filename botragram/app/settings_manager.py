@@ -114,6 +114,9 @@ class SettingsManager:
             autonomous_live_entry_enabled=(
                 self._environment_provider.get_autonomous_live_entry_enabled()
             ),
+            autonomous_mainnet_entry_enabled=(
+                self._environment_provider.get_autonomous_mainnet_entry_enabled()
+            ),
             execution_policy=(
                 self._parse_enum(
                     enum_type=ExecutionPolicy,
@@ -375,11 +378,17 @@ class SettingsManager:
             if settings.exchange.market_type is not MarketType.FUTURES:
                 raise ValueError("Autonomous LIVE execution requires FUTURES")
 
-            if settings.exchange.environment is not ExchangeEnvironment.TESTNET:
-                raise ValueError("Autonomous LIVE execution requires TESTNET")
-
             if not settings.app.autonomous_live_entry_enabled:
                 raise ValueError("Autonomous LIVE execution requires explicit opt-in")
+
+            if (
+                settings.exchange.environment is ExchangeEnvironment.MAINNET
+                and not settings.app.autonomous_mainnet_entry_enabled
+            ):
+                raise ValueError(
+                    "Autonomous LIVE execution requires TESTNET or explicit "
+                    "MAINNET opt-in"
+                )
 
         if settings.app.autonomous_live_entry_enabled:
             if settings.app.trade_mode is not TradeMode.LIVE:
@@ -387,8 +396,29 @@ class SettingsManager:
                     "Autonomous LIVE entry authorization requires LIVE mode"
                 )
 
-            if settings.exchange.environment is not ExchangeEnvironment.TESTNET:
-                raise ValueError("Autonomous LIVE entry authorization requires TESTNET")
+            if (
+                settings.exchange.environment is ExchangeEnvironment.MAINNET
+                and not settings.app.autonomous_mainnet_entry_enabled
+            ):
+                raise ValueError(
+                    "Autonomous LIVE entry authorization requires TESTNET or "
+                    "explicit MAINNET opt-in"
+                )
+
+        if settings.app.autonomous_mainnet_entry_enabled:
+            if settings.exchange.environment is not ExchangeEnvironment.MAINNET:
+                raise ValueError(
+                    "Autonomous MAINNET entry authorization requires MAINNET"
+                )
+            if not settings.app.autonomous_live_entry_enabled:
+                raise ValueError(
+                    "Autonomous MAINNET entry authorization requires base LIVE opt-in"
+                )
+            if policy is not ExecutionPolicy.AUTONOMOUS_LIVE:
+                raise ValueError(
+                    "Autonomous MAINNET entry authorization requires autonomous LIVE "
+                    "execution policy"
+                )
 
         if settings.telegram.enabled and not settings.telegram.bot_token:
             raise ValueError("Enabled Telegram integration requires a bot token")

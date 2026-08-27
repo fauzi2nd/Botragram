@@ -1,4 +1,4 @@
-"""Transient TESTNET autonomous LIVE entry-intent domain models."""
+"""Transient network-scoped autonomous LIVE entry-intent domain models."""
 
 from __future__ import annotations
 

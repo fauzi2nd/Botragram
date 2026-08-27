@@ -48,6 +48,7 @@ class AppSettings:
     execution_policy: ExecutionPolicy | None = None
     autonomous_execution_enabled: bool = False
     autonomous_live_entry_enabled: bool = False
+    autonomous_mainnet_entry_enabled: bool = False
     database_path: Path = Path("data") / "botragram.db"
 
     def __post_init__(self) -> None:

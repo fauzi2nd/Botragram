@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from botragram.enums import (
     AutonomousLiveRecoveryReason,
     AutonomousLiveRecoveryStatus,
+    ExchangeEnvironment,
     SubmissionAttemptStatus,
 )
 
@@ -25,6 +26,7 @@ class AutonomousLiveRecoverySnapshot:
     symbol: str | None
     autonomous_entry_authorized: bool
     new_entry_blocked_by_recovery: bool
+    autonomous_entry_environment: ExchangeEnvironment | None = None
 
     def __post_init__(self) -> None:
         """Reject ambiguous operator-visible recovery state combinations."""

@@ -1,4 +1,4 @@
-"""Pure TESTNET autonomous LIVE entry-intent authorization boundary."""
+"""Pure network-scoped autonomous LIVE entry-intent authorization boundary."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ __all__ = ["AutonomousLiveEntryIntentService"]
 
 @dataclass(slots=True, kw_only=True, frozen=True)
 class AutonomousLiveEntryIntentService:
-    """Authorize transient TESTNET intents after an existing risk decision.
+    """Authorize transient network-scoped intents after an existing risk decision.
 
     This service is deliberately pure: it accepts completed decisions in their
     existing deterministic ranking order and creates no order, submission
@@ -35,12 +35,9 @@ class AutonomousLiveEntryIntentService:
     environment: ExchangeEnvironment
 
     def __post_init__(self) -> None:
-        """Restrict the boundary to the explicit TESTNET LIVE workflow."""
+        """Restrict the boundary to the explicit autonomous LIVE workflow."""
         if self.execution_policy is not ExecutionPolicy.AUTONOMOUS_LIVE:
             raise ValueError("Autonomous LIVE entry intents require autonomous LIVE")
-
-        if self.environment is not ExchangeEnvironment.TESTNET:
-            raise ValueError("Autonomous LIVE entry intents require TESTNET")
 
     def authorize(
         self,

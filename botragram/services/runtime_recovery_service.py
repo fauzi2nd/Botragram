@@ -182,8 +182,9 @@ class RuntimeRecoveryService:
                         if activate_runtime:
                             self.runtime_control.resume_global_cycle()
                         _LOGGER.info(
-                            "TESTNET autonomous LIVE runtime %s after clean "
+                            "%s autonomous LIVE runtime %s after clean "
                             "portfolio reconciliation",
+                            self.autonomous_live_entry_authorization.environment.value.upper(),
                             "activated" if activate_runtime else "prepared",
                         )
                         return True
@@ -209,8 +210,8 @@ class RuntimeRecoveryService:
                     if activate_runtime:
                         self.runtime_control.resume_global_cycle()
                     _LOGGER.info(
-                        "TESTNET autonomous LIVE runtime %s after clean "
-                        "portfolio recovery",
+                        "%s autonomous LIVE runtime %s after clean portfolio recovery",
+                        self.autonomous_live_entry_authorization.environment.value.upper(),
                         "activated" if activate_runtime else "prepared",
                     )
                     return True

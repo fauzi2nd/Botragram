@@ -43,6 +43,9 @@ class AutonomousLiveRecoveryObservabilityService:
         authorized = (
             self.authorization is not None and self.authorization.new_live_entry_allowed
         )
+        environment = (
+            self.authorization.environment if self.authorization is not None else None
+        )
         if not attempts:
             return AutonomousLiveRecoverySnapshot(
                 status=AutonomousLiveRecoveryStatus.CLEAR,
@@ -53,6 +56,7 @@ class AutonomousLiveRecoveryObservabilityService:
                 symbol=None,
                 autonomous_entry_authorized=authorized,
                 new_entry_blocked_by_recovery=False,
+                autonomous_entry_environment=environment,
             )
         if len(attempts) > 1:
             return AutonomousLiveRecoverySnapshot(
@@ -64,6 +68,7 @@ class AutonomousLiveRecoveryObservabilityService:
                 symbol=None,
                 autonomous_entry_authorized=authorized,
                 new_entry_blocked_by_recovery=True,
+                autonomous_entry_environment=environment,
             )
         attempt = attempts[0]
         status, reason = self._classify_attempt(attempt=attempt)
@@ -76,6 +81,7 @@ class AutonomousLiveRecoveryObservabilityService:
             symbol=attempt.symbol,
             autonomous_entry_authorized=authorized,
             new_entry_blocked_by_recovery=True,
+            autonomous_entry_environment=environment,
         )
 
     @staticmethod

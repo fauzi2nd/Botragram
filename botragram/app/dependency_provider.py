@@ -401,21 +401,21 @@ class DependencyProvider:
     def autonomous_live_entry_authorization(
         self,
     ) -> AutonomousLiveEntryAuthorization | None:
-        """Return the TESTNET-only future autonomous LIVE entry capability."""
+        """Return the network-scoped autonomous LIVE entry capability."""
         return self._autonomous_live_entry_authorization
 
     @property
     def autonomous_live_entry_intent_service(
         self,
     ) -> AutonomousLiveEntryIntentService | None:
-        """Return the pure TESTNET autonomous LIVE intent boundary, if enabled."""
+        """Return the pure network-scoped LIVE intent boundary, if enabled."""
         return self._autonomous_live_entry_intent_service
 
     @property
     def autonomous_live_entry_execution_service(
         self,
     ) -> AutonomousLiveEntryExecutionService | None:
-        """Return the protected TESTNET intent execution adapter, if configured."""
+        """Return the protected network-scoped execution adapter, if configured."""
         return self._autonomous_live_entry_execution_service
 
     @property
@@ -682,7 +682,7 @@ class DependencyProvider:
     def autonomous_live_opportunity_claim_repository(
         self,
     ) -> AutonomousLiveOpportunityClaimRepository:
-        """Return durable TESTNET autonomous closed-candle replay denial."""
+        """Return durable network-scoped autonomous closed-candle replay denial."""
         return self._require(self._autonomous_live_opportunity_claim_repository)
 
     @property
@@ -1292,7 +1292,7 @@ class DependencyProvider:
                 or execution_service is None
             ):
                 raise ValueError(
-                    "Autonomous LIVE execution requires complete TESTNET composition"
+                    "Autonomous LIVE execution requires complete network composition"
                 )
             market = self._settings.market
             return AutonomousLiveTradingCycleExecutor(
@@ -1349,7 +1349,7 @@ class DependencyProvider:
     def _build_autonomous_live_entry_authorization(
         self,
     ) -> AutonomousLiveEntryAuthorization | None:
-        """Build only the explicit TESTNET future-entry capability.
+        """Build only the explicit network-scoped future-entry capability.
 
         The capability is deliberately not injected into any execution path in
         Phase 5C.1.
@@ -1365,12 +1365,13 @@ class DependencyProvider:
         return AutonomousLiveEntryAuthorization(
             environment=self._settings.exchange.environment,
             explicit_opt_in=app_settings.autonomous_live_entry_enabled,
+            mainnet_explicit_opt_in=(app_settings.autonomous_mainnet_entry_enabled),
         )
 
     def _build_autonomous_live_entry_intent_service(
         self,
     ) -> AutonomousLiveEntryIntentService | None:
-        """Build only the pure TESTNET autonomous intent boundary.
+        """Build only the pure network-scoped autonomous intent boundary.
 
         Phase 5C.2A intentionally does not attach this service to a runner or
         protected LIVE entry service. The future mutation boundary remains
@@ -1397,7 +1398,7 @@ class DependencyProvider:
     def _build_autonomous_live_entry_execution_service(
         self,
     ) -> AutonomousLiveEntryExecutionService | None:
-        """Build the isolated TESTNET protected-entry adapter without runtime wiring."""
+        """Build the isolated network-scoped protected-entry adapter."""
         if (
             self._settings.app.effective_execution_policy
             is not ExecutionPolicy.AUTONOMOUS_LIVE
