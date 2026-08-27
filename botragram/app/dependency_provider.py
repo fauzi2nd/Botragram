@@ -1147,6 +1147,7 @@ class DependencyProvider:
             runtime_control=self.runtime_control,
             signal_repository=self.signal_repository,
             candle_repository=self.candle_repository,
+            lifecycle_coordinator=self._live_position_lifecycle_coordinator,
         )
 
         self._live_submission_recovery_service = LiveSubmissionRecoveryService(

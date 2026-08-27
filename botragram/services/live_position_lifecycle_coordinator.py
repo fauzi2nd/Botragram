@@ -29,11 +29,11 @@ __all__ = [
 # Service Classes
 # =============================================================================
 class LivePositionLifecycleCoordinator:
-    """Serialize LIVE protection ticks with natural-exit cleanup.
+    """Serialize LIVE protection ticks with recovery and exit cleanup.
 
-    One process-local lock intentionally covers the short critical sections that
-    can mutate one durable LIVE position. The coordinator also versions deleted
-    positions so a later market tick cannot reuse a stale local cache.
+    One process-local lock intentionally covers safety-critical sections that
+    can mutate durable LIVE position ownership. The coordinator also versions
+    deleted positions so a later market tick cannot reuse a stale local cache.
     """
 
     __slots__ = ("_lock", "_position_versions")
@@ -53,6 +53,17 @@ class LivePositionLifecycleCoordinator:
         self._position_versions[normalized_symbol] = (
             self._position_versions.get(normalized_symbol, 0) + 1
         )
+
+    @asynccontextmanager
+    async def hold_portfolio(self) -> AsyncGenerator[None]:
+        """Serialize one authoritative portfolio recovery.
+
+        Yields:
+            None while portfolio synchronization, persistence, and protection
+            verification own the lifecycle coordinator.
+        """
+        async with self._lock:
+            yield
 
     @asynccontextmanager
     async def hold(self, *, symbol: str) -> AsyncGenerator[None]:

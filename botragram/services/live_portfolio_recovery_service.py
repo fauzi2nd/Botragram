@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Final, Protocol
 
@@ -20,6 +20,9 @@ from botragram.enums import (
 )
 from botragram.models import LivePortfolioRecoveryResult, Position
 from botragram.repositories import CandleRepository, SignalRepository
+from botragram.services.live_position_lifecycle_coordinator import (
+    LivePositionLifecycleCoordinator,
+)
 
 __all__ = ["LivePortfolioRecoveryService"]
 
@@ -56,6 +59,9 @@ class LivePortfolioRecoveryService:
     runtime_control: TradingRuntimeControl
     signal_repository: SignalRepository
     candle_repository: CandleRepository
+    lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
+        default_factory=LivePositionLifecycleCoordinator,
+    )
 
     async def recover(self) -> LivePortfolioRecoveryResult:
         """Synchronize, persist, and verify the complete LIVE portfolio.
@@ -66,6 +72,11 @@ class LivePortfolioRecoveryService:
         Raises:
             asyncio.CancelledError: If synchronization or recovery is cancelled.
         """
+        async with self.lifecycle_coordinator.hold_portfolio():
+            return await self._recover_owned_portfolio()
+
+    async def _recover_owned_portfolio(self) -> LivePortfolioRecoveryResult:
+        """Recover the complete portfolio while lifecycle mutation is excluded."""
         self.runtime_control.set_position_protection_ready(False)
 
         try:

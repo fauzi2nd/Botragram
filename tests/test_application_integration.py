@@ -106,6 +106,10 @@ async def _run_application_dependency_smoke_test() -> None:
                 LivePortfolioRecoveryService,
             )
             assert (
+                provider.live_portfolio_recovery_service.lifecycle_coordinator
+                is provider.live_natural_exit_recovery_service.lifecycle_coordinator
+            )
+            assert (
                 provider.runtime_recovery_service.live_portfolio_recovery_service
                 is provider.live_portfolio_recovery_service
             )

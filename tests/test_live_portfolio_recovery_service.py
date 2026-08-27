@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -18,7 +18,10 @@ from botragram.enums import (
     StrategyType,
 )
 from botragram.models import LivePortfolioRecoveryResult, Position
-from botragram.services import LivePortfolioRecoveryService
+from botragram.services import (
+    LivePortfolioRecoveryService,
+    LivePositionLifecycleCoordinator,
+)
 from botragram.storage.memory import MemoryCandleRepository, MemorySignalRepository
 
 _NOW = datetime(2026, 8, 18, tzinfo=UTC)
@@ -66,6 +69,45 @@ class RecordingProtectionService:
         if position.symbol == self.fail_symbol:
             raise RuntimeError("configured protection failure")
         return position
+
+
+@dataclass(slots=True)
+class RacingPositionService:
+    """Reproduce a stepped STOP racing one stale portfolio snapshot."""
+
+    stale_position: Position
+    replacement_position: Position
+    lifecycle_coordinator: LivePositionLifecycleCoordinator
+    events: list[str]
+    sync_started: asyncio.Event = field(default_factory=asyncio.Event)
+    continue_sync: asyncio.Event = field(default_factory=asyncio.Event)
+    replacement_started: asyncio.Event = field(default_factory=asyncio.Event)
+    durable_position: Position = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Initialize storage with the pre-replacement durable position."""
+        self.durable_position = self.stale_position
+
+    async def sync(self) -> tuple[Position, ...]:
+        """Pause after the stale portfolio snapshot is captured."""
+        self.events.append("sync")
+        self.sync_started.set()
+        await self.continue_sync.wait()
+        return (self.stale_position,)
+
+    async def save(self, *, position: Position) -> None:
+        """Persist the recovery snapshot into simulated durable storage."""
+        self.events.append(f"{position.symbol}:persist")
+        self.durable_position = position
+
+    async def replace_stop(self) -> None:
+        """Simulate a stepped STOP update through the shared coordinator."""
+        self.replacement_started.set()
+        async with self.lifecycle_coordinator.hold(
+            symbol=self.replacement_position.symbol,
+        ):
+            self.events.append(f"{self.replacement_position.symbol}:stepped_stop")
+            self.durable_position = self.replacement_position
 
 
 def _position(
@@ -204,6 +246,54 @@ async def test_multiple_positions_are_recovered_in_symbol_order_and_stay_gated()
         "SOLUSDT:protect",
     ]
     assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_recovery_excludes_concurrent_stepped_stop_snapshot_overwrite() -> None:
+    """Keep a stepped STOP durable when recovery began from an older snapshot."""
+    events: list[str] = []
+    stale_position = _position("VELVETUSDT")
+    replacement_position = replace(
+        stale_position,
+        stop_loss=Decimal("100"),
+        stop_loss_client_algo_id="bsl-stepped",
+        protection_step=1,
+    )
+    coordinator = LivePositionLifecycleCoordinator()
+    position_service = RacingPositionService(
+        stale_position=stale_position,
+        replacement_position=replacement_position,
+        lifecycle_coordinator=coordinator,
+        events=events,
+    )
+    service = LivePortfolioRecoveryService(
+        position_service=position_service,
+        protection_service=RecordingProtectionService(events=events),
+        runtime_control=TradingRuntimeControl(),
+        signal_repository=MemorySignalRepository(),
+        candle_repository=MemoryCandleRepository(),
+        lifecycle_coordinator=coordinator,
+    )
+
+    recovery_task = asyncio.create_task(service.recover())
+    await position_service.sync_started.wait()
+    replacement_task = asyncio.create_task(position_service.replace_stop())
+    await position_service.replacement_started.wait()
+    replacement_was_blocked = not replacement_task.done()
+    position_service.continue_sync.set()
+
+    result = await recovery_task
+    await replacement_task
+
+    assert replacement_was_blocked
+    assert result.status is LivePortfolioRecoveryStatus.SINGLE_POSITION_SAFE
+    assert position_service.durable_position == replacement_position
+    assert events == [
+        "sync",
+        "VELVETUSDT:persist",
+        "VELVETUSDT:protect",
+        "VELVETUSDT:stepped_stop",
+    ]
 
 
 @pytest.mark.asyncio
