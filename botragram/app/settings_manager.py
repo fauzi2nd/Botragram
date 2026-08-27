@@ -37,6 +37,7 @@ from botragram.enums import (
     Interval,
     LogLevel,
     MarketType,
+    StrategyType,
     TradeMode,
 )
 
@@ -287,8 +288,19 @@ class SettingsManager:
         return base_path.with_stem(f"{base_path.stem}-{scope}")
 
     def load_strategy_settings(self) -> StrategySettings:
-        """Load strategy settings using their configured defaults."""
-        return StrategySettings()
+        """Load strategy settings with strict optional environment selection."""
+        raw_strategy_type = self._environment_provider.get_strategy_type()
+        return StrategySettings(
+            strategy_type=(
+                self._parse_enum(
+                    enum_type=StrategyType,
+                    raw_value=raw_strategy_type,
+                    setting_name="STRATEGY_TYPE",
+                )
+                if raw_strategy_type
+                else StrategyType.EMA_CROSS
+            )
+        )
 
     def load_logging_settings(self) -> LoggingSettings:
         """Load logging settings from the environment."""
@@ -449,6 +461,7 @@ class SettingsManager:
             ExecutionPolicy,
             LogLevel,
             MarketType,
+            StrategyType,
             TradeMode,
         ),
     ](

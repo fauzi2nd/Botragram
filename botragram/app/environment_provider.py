@@ -74,6 +74,7 @@ from botragram.constants.env import (
     ENV_OPENAI_API_KEY,
     ENV_OPENROUTER_API_KEY,
     ENV_RISK_PER_TRADE_PCT,
+    ENV_STRATEGY_TYPE,
     ENV_TELEGRAM_CHAT_ID,
     ENV_TELEGRAM_TOKEN,
     ENV_TELEGRAM_TOKEN_LEGACY,
@@ -437,6 +438,10 @@ class EnvironmentProvider:
     def get_execution_policy(self) -> str:
         """Return the optional explicit runtime execution policy."""
         return self._get_var(ENV_EXECUTION_POLICY)
+
+    def get_strategy_type(self) -> str:
+        """Return the optional configured trading strategy type."""
+        return self._get_var(ENV_STRATEGY_TYPE)
 
     def get_ema_cross_stop_loss_pct(self) -> str:
         """Return the EMA cross stop-loss ratio."""
