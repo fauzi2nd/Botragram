@@ -11,6 +11,9 @@ berasal dari `DEVELOPMENT_GUIDE.md`.
 
 ```text
 Botragram/
+|-- .github/
+|   `-- workflows/
+|       `-- quality.yml       # Supplemental non-blocking quality signal
 |-- botragram/                 # Production package
 |-- tests/                     # Automated dan manual tests
 |-- data/                      # SQLite runtime data; ignored by Git

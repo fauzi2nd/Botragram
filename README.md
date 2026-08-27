@@ -143,18 +143,20 @@ and fresh TESTNET acceptance completed in `v0.5.0`.
 
 ### Autonomous TESTNET recovery policy
 
-Recovery remains restart/operator-driven by default. Phase 5C.3C adds one
-strictly bounded in-process recovery opportunity for TESTNET autonomous LIVE:
-after a typed `SUBMISSION_BLOCKED` or `EXECUTION_UNSAFE` result, the runner pauses,
-marks protection readiness false, and may invoke the existing
-`RuntimeRecoveryService` once per runner lifecycle. The failed candidate is never
-replayed. Recovery uses the same durable submission/protection identities and
-existing read-first reconciliation boundaries; there is no generic entry,
-protection, or delete mutation retry. Only a complete recovery that actively
-resumes runtime readiness may continue only after the normal global cadence,
-so the failed cycle is not immediately rediscovered. A failed recovery or any
-later unsafe result exhausts the in-process budget and requires restart/operator
-recovery.
+Recoverable TESTNET autonomous LIVE failures use unlimited operational recovery.
+After a typed `SUBMISSION_BLOCKED`, `EXECUTION_UNSAFE`, transient connectivity
+failure, or eligible runtime-health degradation, the runner remains paused,
+marks protection readiness false, disables new entry, and retries the existing
+`RuntimeRecoveryService` with capped exponential backoff. The attempt counter is
+observability only and never becomes a shutdown budget. The failed candidate is
+never replayed. Recovery uses the same durable submission/protection identities
+and read-first reconciliation boundaries; it does not add generic entry,
+protection, cancellation, or deletion mutation retries. Discovery resumes only
+after authoritative portfolio/protection recovery, private user-data readiness,
+and runtime health have converged. `CancelledError` and explicit shutdown still
+stop the loop; non-recoverable configuration, programming, startup, or blocked
+authorization/reconciliation failures may still terminate or require an
+operator restart.
 
 Startup always runs in this order before autonomous discovery is eligible:
 
@@ -163,7 +165,8 @@ STARTING -> RECOVERING -> submission reconciliation -> acknowledged-entry recove
          -> authoritative portfolio/protection recovery -> runtime readiness
          -> READY -> AUTONOMOUS_RUNNING
 
-any unsafe/incomplete result -> UNSAFE_PAUSED -> restart/operator recovery
+recoverable runtime failure -> UNSAFE_PAUSED -> bounded-backoff recovery -> READY
+blocked/non-recoverable state -> UNSAFE_PAUSED -> restart/operator recovery
 ```
 
 `AutonomousLiveEntryAuthorization` authorizes only creation of new TESTNET
@@ -181,7 +184,7 @@ is activated. MAINNET autonomous entry remains rejected.
 | `COMPLETED` with verified protection | Authoritative portfolio recovery confirms state | A later, newly discovered candidate only | Eligible only after all recovery/readiness gates pass |
 | Multiple incomplete attempts | Do not guess or select one | No | Paused; operator/recovery intervention required |
 | Unknown portfolio metadata or failed protection | Fail closed | No | Paused |
-| Failed/missing stream or unhealthy/missing monitor | Fresh entry is blocked; existing exact runtime recovery may run once | No generic retry | One shared bounded in-process recovery pass, then fail closed |
+| Failed/missing stream or unhealthy/missing monitor | Fresh entry is blocked; retry exact runtime recovery with capped backoff | No generic mutation retry | Remain paused until authoritative recovery converges or shutdown is requested |
 | Reconciliation marker or authorization mismatch | Do not infer or repair from health text | No | Paused; restart/operator recovery required |
 
 Crash-window policy is likewise read-first and fail-closed:
@@ -305,30 +308,37 @@ python -m pytest
 git diff --check
 ```
 
+These full local Windows gates are the release authority. The restored
+`.github/workflows/quality.yml` runs the same compile, Ruff, Pyright, MyPy, and
+pytest checks on one standard GitHub-hosted Ubuntu runner only as supplemental,
+non-blocking feedback. It has no schedule or deployment job and must not be made
+a required branch-protection check.
+
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an
 authorization source. For TESTNET autonomous LIVE, a DEGRADED recovered runtime
 with the exact current management authorization may only deny a fresh cycle and
-trigger the existing bounded recovery boundary; it never grants entry
-permission. Missing or mismatched authorization cannot be masked by a concurrent
-stream/monitor degradation. BLOCKED reconciliation or authorization state
-remains restart/operator-only and cannot consume an automatic recovery pass.
+trigger unlimited operational recovery with capped backoff; it never grants
+entry permission. Missing or mismatched authorization cannot be masked by a
+concurrent stream/monitor degradation. BLOCKED reconciliation or authorization
+state remains restart/operator-only and cannot enter operational recovery.
 
 Operator status now additionally exposes a read-only durable autonomous recovery
 snapshot. `PREPARED`, `UNRESOLVED`, `ACKNOWLEDGED`, and multiple incomplete
 attempts are distinct; recovery remains visible when autonomous entry is
 disabled. Rendering status performs no reconciliation, exchange I/O, mutation,
-or authorization change. Recovery remains restart/operator-driven.
+or authorization change. Blocked or non-recoverable state remains
+restart/operator-driven.
 
 ### TESTNET failure-injection and soak readiness
 
 Phase 5C.4A adds deterministic automated coverage for the protected-entry
 failure boundaries alongside the existing submission, post-entry, protection,
-runtime-recovery, runner, configuration, and PAPER regressions. It does not add
-automatic recovery. The operational policy remains fail closed, inspect the
-typed status, then use restart/operator-driven recovery followed by fresh
-discovery. Transient intents and candidate batches remain process-local and are
-never replayed after a crash.
+runtime-recovery, runner, configuration, and PAPER regressions. Operational
+recovery remains fail closed and retries only the existing authoritative
+recovery boundary; blocked/non-recoverable state still requires operator action.
+Transient intents and candidate batches remain process-local and are never
+replayed after a crash.
 
 Before any extended TESTNET soak, an operator must verify all of the following:
 
@@ -344,17 +354,16 @@ Before any extended TESTNET soak, an operator must verify all of the following:
   process-local stream, monitor, or runner task remains active.
 - MAINNET autonomous configuration is rejected before mutation.
 
-Bounded in-process autonomous recovery is enabled only for the TESTNET
-autonomous-LIVE runner and is limited to one existing runtime-recovery pass per
-runner lifecycle. The single budget is shared by typed unsafe entry outcomes and
-DEGRADED stream/monitor health. Runtime health is checked before a fresh global
-cycle and while waiting for the next cadence, so degraded ownership cannot start
-another cycle first. A failed protection-monitor owner is quarantined locally
-until runtime recovery replaces it; subsequent ticks cannot re-enter that
-manager. It does not replay transient intents or candidate batches,
-and it does not introduce generic mutation retries. BLOCKED reconciliation or
-authorization health never self-heals. If safe runtime readiness cannot be
-re-established, the runner remains fail closed for operator/restart recovery.
+Unlimited operational recovery is enabled only for the TESTNET autonomous-LIVE
+runner. Typed recoverable entry outcomes, eligible DEGRADED stream/monitor
+health, and transient connectivity failure share the existing capped backoff,
+not a shutdown budget. Runtime health is checked before a fresh global cycle and
+while waiting for the next cadence, so degraded ownership cannot start another
+cycle first. A failed protection-monitor owner is quarantined locally until
+runtime recovery replaces it; subsequent ticks cannot re-enter that manager.
+Recovery does not replay transient intents or candidate batches and does not
+introduce generic mutation retries. BLOCKED reconciliation or authorization
+health never self-heals and remains operator/restart-driven.
 
 ### Dedicated autonomous TESTNET soak profile
 

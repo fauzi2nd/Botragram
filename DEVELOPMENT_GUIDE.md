@@ -528,21 +528,26 @@ Perbedaan fitur terhadap PAPER/LIVE runtime WAJIB muncul sebagai warning report.
 
 ## 19. Quality Gates
 
-Sebelum perubahan dinyatakan selesai, jalankan dari root repository:
+Full local Windows release gates adalah satu-satunya release authority. Sebelum
+perubahan dinyatakan selesai, jalankan dari root repository pada terminal
+Windows deployment:
 
 ```powershell
-python -m compileall -q botragram tests
+python -m compileall -q botragram tests main.py
+python -c "import main"
 python -m ruff format --check .
 python -m ruff check .
 python -m pyright
+python -m mypy botragram
 python -m pytest
+git diff --check
 ```
 
-Jalankan MyPy strict pada seluruh scope yang dikonfigurasi:
-
-```powershell
-python -m mypy
-```
+`.github/workflows/quality.yml` hanya menyediakan sinyal CI supplemental yang
+non-blocking pada standard GitHub-hosted runner. Workflow tersebut bukan release
+authority dan tidak boleh dijadikan required check atau branch-protection
+blocker. Kegagalan CI tetap harus ditinjau, tetapi tidak menggantikan satu run
+lengkap gates Windows di atas dari worktree bersih.
 
 Kriteria lulus:
 
@@ -550,7 +555,7 @@ Kriteria lulus:
 - Ruff format dan lint bersih.
 - Pyright strict: 0 error dan 0 warning.
 - Pylance workspace diagnostics: 0 error dan 0 warning, termasuk `tests/`.
-- MyPy: 0 issue pada production code, automated test, dan manual test.
+- MyPy: 0 issue pada production package `botragram`.
 - Semua automated test lulus.
 - Tidak ada warning baru dari source proyek.
 - Coverage tidak turun tanpa alasan yang disetujui.
@@ -617,6 +622,9 @@ di bawah WAJIB tetap konsisten dengannya.
 
 ```text
 Botragram/
+|-- .github/
+|   `-- workflows/
+|       `-- quality.yml           # Supplemental non-blocking quality signal
 |-- botragram/
 |   |-- __init__.py
 |   |-- app/
