@@ -1762,7 +1762,7 @@ class TradingRunner:
         attempts_used: int,
         recovery_allowed: bool,
     ) -> tuple[bool, int]:
-        """Pause first, then consume at most one shared in-process recovery pass."""
+        """Pause first, then retry operational recovery until safe or stopped."""
         self.runtime_control.set_position_protection_ready(False)
         self.runtime_control.pause()
         self._pause_global_discovery_telemetry()
@@ -1787,27 +1787,43 @@ class TradingRunner:
         if self.autonomous_live_recovery_provider is None:
             return False, attempts_used
 
-        if attempts_used >= self.maximum_autonomous_live_recovery_attempts:
-            _LOGGER.critical(
-                "Autonomous LIVE in-process recovery budget exhausted: attempts=%d",
-                attempts_used,
+        attempt = attempts_used
+        while not self._stop_event.is_set():
+            attempt += 1
+            recovered = await self._recover_autonomous_live_runtime(
+                error=error,
+                attempt=attempt,
             )
-            return False, attempts_used
+            if recovered is True:
+                return True, attempt
+            if recovered is None:
+                return False, attempt
 
-        attempt = attempts_used + 1
-        recovered = await self._recover_autonomous_live_runtime(
-            error=error,
-            attempt=attempt,
-        )
-        return recovered, attempt
+            if attempt % self.maximum_autonomous_live_recovery_attempts == 0:
+                _LOGGER.warning(
+                    "Autonomous LIVE operational recovery remains pending: "
+                    "attempts=%d reporting_interval=%d entry_enabled=false",
+                    attempt,
+                    self.maximum_autonomous_live_recovery_attempts,
+                )
+            delay = self.unattended_recovery_backoff.get_delay(attempt=attempt)
+            _LOGGER.warning(
+                "Autonomous LIVE operational recovery retry scheduled: "
+                "attempt=%d delay_seconds=%.3f entry_enabled=false",
+                attempt + 1,
+                delay,
+            )
+            await self._wait_for_delay(delay_seconds=delay)
+
+        return False, attempt
 
     async def _recover_autonomous_live_runtime(
         self,
         *,
         error: Exception,
         attempt: int,
-    ) -> bool:
-        """Run one bounded autonomous-LIVE recovery pass without candidate replay."""
+    ) -> bool | None:
+        """Run one recovery pass and classify retryable versus fatal failure."""
         if (
             self.trade_mode is not TradeMode.LIVE
             or not self._is_global_cycle_executor()
@@ -1815,28 +1831,36 @@ class TradingRunner:
             _LOGGER.critical(
                 "Autonomous LIVE in-process recovery rejected outside global LIVE mode"
             )
-            return False
+            return None
 
         provider = self.autonomous_live_recovery_provider
         if provider is None:
-            return False
+            return None
 
         _LOGGER.warning(
-            "Autonomous LIVE in-process recovery started: attempt=%d/%d error_type=%s",
+            "Autonomous LIVE in-process recovery started: attempt=%d error_type=%s",
             attempt,
-            self.maximum_autonomous_live_recovery_attempts,
             type(error).__name__,
         )
         try:
             recovered = await provider.recover()
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as recovery_error:
+            if is_transient_connectivity_error(recovery_error):
+                _LOGGER.warning(
+                    "Autonomous LIVE in-process recovery dependency unavailable: "
+                    "attempt=%d error_type=%s",
+                    attempt,
+                    type(recovery_error).__name__,
+                )
+                return False
             _LOGGER.exception(
-                "Autonomous LIVE in-process recovery raised unexpectedly: attempt=%d",
+                "Autonomous LIVE in-process recovery raised a non-recoverable "
+                "error: attempt=%d",
                 attempt,
             )
-            return False
+            return None
 
         if not recovered:
             _LOGGER.critical(

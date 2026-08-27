@@ -623,7 +623,7 @@ Botragram/
 |   |   |-- __init__.py
 |   |   |-- application.py
 |   |   |-- backtest_command.py       # Backtest CLI composition dan report
-|   |   |-- connectivity.py           # Transient dependency-failure classification
+|   |   |-- connectivity.py           # Backward-compatible classifier re-export
 |   |   |-- dependency_provider.py`n|   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
 |   |   |-- environment_provider.py
 |   |   |-- lifecycle.py
@@ -805,6 +805,7 @@ Botragram/
 |   |   `-- query_service.py
 |   `-- utils/
 |       |-- __init__.py
+|       |-- connectivity.py            # Shared transient dependency-failure classification
 |       |-- datetime.py
 |       |-- decimal.py
 |       |-- formatter.py

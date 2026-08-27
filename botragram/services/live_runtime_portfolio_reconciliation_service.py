@@ -36,6 +36,7 @@ from botragram.models import (
     LiveRuntimePositionContext,
     Position,
 )
+from botragram.utils.connectivity import is_transient_connectivity_error
 
 __all__ = ["LiveRuntimePortfolioReconciliationService"]
 
@@ -143,6 +144,7 @@ class LiveRuntimePortfolioReconciliationService:
 
         Raises:
             asyncio.CancelledError: If reconciliation is cancelled.
+            Exception: If a transient connectivity failure prevents reconciliation.
 
         Returns:
             Exact managed runtime portfolio when safe, otherwise ``None``.
@@ -197,9 +199,11 @@ class LiveRuntimePortfolioReconciliationService:
         except asyncio.CancelledError:
             await self._fail_closed()
             raise
-        except Exception:
+        except Exception as error:
             _LOGGER.exception("LIVE runtime portfolio reconciliation failed")
             await self._fail_closed()
+            if is_transient_connectivity_error(error):
+                raise
             return None
 
     async def _remove_stale_ownership(

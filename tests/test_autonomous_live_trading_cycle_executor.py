@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from socket import gaierror
 
 import pytest
 
@@ -183,6 +184,17 @@ class _Reconciler:
         if result is not None:
             self.last_context = result
         return result
+
+
+@dataclass(slots=True)
+class _FailingReconciler:
+    """Raise one original reconciliation dependency failure."""
+
+    error: Exception
+
+    async def reconcile_context(self) -> LiveRuntimePortfolioContext | None:
+        """Preserve the configured exception at the executor boundary."""
+        raise self.error
 
 
 @dataclass(slots=True)
@@ -773,6 +785,29 @@ def test_required_reconciler_blocks_discovery_before_candidates() -> None:
     with pytest.raises(AutonomousLiveCycleUnsafeError, match="before discovery"):
         asyncio.run(blocked.execute_global(interval=Interval.M15, candle_limit=100))
 
+    assert risk.calls == []
+    assert execution.calls == []
+
+
+def test_transient_reconciliation_failure_is_not_wrapped_as_cycle_unsafe() -> None:
+    """Allow the runner to classify a DNS outage as unattended connectivity loss."""
+    btc = _signal(symbol="BTCUSDT")
+    executor, risk, execution = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={},
+    )
+    error = gaierror(11001, "configured DNS failure")
+    blocked = replace(
+        executor,
+        live_runtime_portfolio_reconciler=_FailingReconciler(error=error),
+    )
+
+    with pytest.raises(gaierror) as raised:
+        asyncio.run(blocked.execute_global(interval=Interval.M15, candle_limit=100))
+
+    assert raised.value is error
+    assert not isinstance(raised.value, AutonomousLiveCycleUnsafeError)
     assert risk.calls == []
     assert execution.calls == []
 

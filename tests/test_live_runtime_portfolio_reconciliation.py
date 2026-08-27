@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from socket import gaierror
 
 import pytest
 
@@ -55,6 +56,14 @@ class _PortfolioRecovery:
 
     async def recover(self) -> LivePortfolioRecoveryResult:
         return self.results[0] if len(self.results) == 1 else self.results.pop(0)
+
+
+@dataclass(slots=True)
+class _FailingPortfolioRecovery:
+    error: Exception
+
+    async def recover(self) -> LivePortfolioRecoveryResult:
+        raise self.error
 
 
 def _position(symbol: str) -> Position:
@@ -179,6 +188,14 @@ class _NaturalExit:
 class _CancelledNaturalExit:
     async def reconcile(self) -> None:
         raise asyncio.CancelledError()
+
+
+@dataclass(slots=True)
+class _FailingNaturalExit:
+    error: Exception
+
+    async def reconcile(self) -> None:
+        raise self.error
 
 
 @dataclass(slots=True)
@@ -376,6 +393,51 @@ def test_unsafe_recovery_does_not_adopt_anything() -> None:
     _closed(control)
     assert streams.events == []
     assert monitors.events == []
+
+
+@pytest.mark.parametrize("source", ["natural_exit", "portfolio"])
+def test_transient_failure_fails_closed_and_preserves_exception(source: str) -> None:
+    service, control, streams, monitors = _service([_safe(_position("BTCUSDT"))])
+    error = gaierror(11001, "configured DNS failure")
+    if source == "natural_exit":
+        service = replace(
+            service,
+            live_natural_exit_recovery_service=_FailingNaturalExit(error=error),
+        )
+    else:
+        service = replace(
+            service,
+            live_portfolio_recovery_service=_FailingPortfolioRecovery(error=error),
+        )
+
+    with pytest.raises(gaierror) as raised:
+        asyncio.run(service.reconcile_context())
+
+    assert raised.value is error
+    _closed(control)
+    assert streams.stream_states == ()
+    assert monitors.monitor_states == ()
+
+
+@pytest.mark.parametrize("source", ["natural_exit", "portfolio"])
+def test_non_transient_failure_remains_existing_fail_closed_path(source: str) -> None:
+    service, control, streams, monitors = _service([_safe(_position("BTCUSDT"))])
+    error = RuntimeError("configured domain reconciliation failure")
+    if source == "natural_exit":
+        service = replace(
+            service,
+            live_natural_exit_recovery_service=_FailingNaturalExit(error=error),
+        )
+    else:
+        service = replace(
+            service,
+            live_portfolio_recovery_service=_FailingPortfolioRecovery(error=error),
+        )
+
+    assert asyncio.run(service.reconcile_context()) is None
+    _closed(control)
+    assert streams.stream_states == ()
+    assert monitors.monitor_states == ()
 
 
 @pytest.mark.parametrize("field", ["interval", "strategy_type"])

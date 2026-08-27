@@ -71,6 +71,7 @@ def _safe_result() -> TradingResult:
 class _GlobalExecutor:
     unsafe_failures_remaining: int
     connectivity_failures_remaining: int = 0
+    failure_sequence: list[Exception] = field(default_factory=list[Exception])
     result: TradingResult = field(default_factory=_safe_result)
     calls: int = 0
     successful_execution: asyncio.Event = field(default_factory=asyncio.Event)
@@ -83,6 +84,8 @@ class _GlobalExecutor:
     ) -> tuple[TradingResult, ...]:
         del interval, candle_limit
         self.calls += 1
+        if self.failure_sequence:
+            raise self.failure_sequence.pop(0)
         if self.connectivity_failures_remaining > 0:
             self.connectivity_failures_remaining -= 1
             raise ConnectionError("temporary Binance outage")
@@ -311,11 +314,11 @@ async def _wait_for_recovery_calls(
             await asyncio.sleep(0)
 
 
-def test_one_bounded_recovery_resumes_with_a_fresh_global_cycle() -> None:
-    asyncio.run(_run_one_bounded_recovery_test())
+def test_one_operational_recovery_resumes_with_a_fresh_global_cycle() -> None:
+    asyncio.run(_run_one_operational_recovery_test())
 
 
-async def _run_one_bounded_recovery_test() -> None:
+async def _run_one_operational_recovery_test() -> None:
     control = _active_control()
     executor = _GlobalExecutor(unsafe_failures_remaining=1)
     recovery = _RecoveryProvider(control=control, outcomes=[True])
@@ -332,34 +335,57 @@ async def _run_one_bounded_recovery_test() -> None:
     assert not control.is_paused
 
 
-def test_second_unsafe_outcome_exhausts_process_recovery_budget() -> None:
-    asyncio.run(_run_recovery_budget_exhaustion_test())
+def test_repeated_unsafe_outcomes_do_not_exhaust_recovery_budget() -> None:
+    asyncio.run(_run_repeated_unsafe_outcome_recovery_test())
 
 
-async def _run_recovery_budget_exhaustion_test() -> None:
+async def _run_repeated_unsafe_outcome_recovery_test() -> None:
     control = _active_control()
     executor = _GlobalExecutor(unsafe_failures_remaining=2)
-    recovery = _RecoveryProvider(control=control, outcomes=[True])
+    recovery = _RecoveryProvider(control=control, outcomes=[True, True])
     runner = _runner(executor=executor, control=control, recovery=recovery)
-    await asyncio.wait_for(runner.run(), timeout=1.0)
-    assert executor.calls == 2
-    assert recovery.calls == 1
-    assert control.is_paused
+    task = asyncio.create_task(runner.run())
+    await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+    assert executor.calls == 3
+    assert recovery.calls == 2
+    assert not control.is_paused
 
 
-def test_failed_recovery_remains_fail_closed_without_fresh_cycle() -> None:
-    asyncio.run(_run_failed_recovery_test())
+def test_recovery_retries_indefinitely_until_it_eventually_succeeds() -> None:
+    asyncio.run(_run_eventual_recovery_test())
 
 
-async def _run_failed_recovery_test() -> None:
+async def _run_eventual_recovery_test() -> None:
     control = _active_control()
     executor = _GlobalExecutor(unsafe_failures_remaining=1)
-    recovery = _RecoveryProvider(control=control, outcomes=[False])
-    runner = _runner(executor=executor, control=control, recovery=recovery)
-    await asyncio.wait_for(runner.run(), timeout=1.0)
+    recovery = _RecoveryProvider(
+        control=control,
+        outcomes=[False, False, False, False],
+    )
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        unattended_recovery_delay_seconds=0.02,
+    )
+    task = asyncio.create_task(runner.run())
+
+    await _wait_for_recovery_calls(recovery=recovery, expected=3)
+
+    assert not task.done()
     assert executor.calls == 1
-    assert recovery.calls == 1
     assert control.is_paused
+
+    recovery.outcomes.append(True)
+    await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert executor.calls == 2
+    assert recovery.calls == 5
+    assert not control.is_paused
 
 
 def test_recovery_success_must_actively_resume_runtime() -> None:
@@ -371,14 +397,22 @@ async def _run_false_success_recovery_test() -> None:
     executor = _GlobalExecutor(unsafe_failures_remaining=1)
     recovery = _RecoveryProvider(
         control=control,
-        outcomes=[True],
+        outcomes=[True, True, True, True],
         resume_on_success=False,
     )
-    runner = _runner(executor=executor, control=control, recovery=recovery)
-    await asyncio.wait_for(runner.run(), timeout=1.0)
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        unattended_recovery_delay_seconds=0.02,
+    )
+    task = asyncio.create_task(runner.run())
+    await _wait_for_recovery_calls(recovery=recovery, expected=3)
+    assert not task.done()
     assert executor.calls == 1
-    assert recovery.calls == 1
     assert control.is_paused
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
 
 
 def test_recovery_provider_is_rejected_outside_global_live_mode() -> None:
@@ -633,6 +667,57 @@ async def _run_independent_connectivity_recovery_budget_test() -> None:
     assert executor.calls == 2
     assert recovery.calls == 2
     assert recovery.activation_requests == [True, False]
+    assert not control.is_paused
+
+
+def test_reconciliation_outage_survives_after_safety_budget_was_used() -> None:
+    """Keep DNS recovery unbounded and paused after one bounded safety recovery."""
+    asyncio.run(_run_reconciliation_outage_after_safety_recovery_test())
+
+
+async def _run_reconciliation_outage_after_safety_recovery_test() -> None:
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.ACTIVE,
+        reason=None,
+    )
+    executor = _GlobalExecutor(
+        unsafe_failures_remaining=0,
+        failure_sequence=[
+            AutonomousLiveCycleUnsafeError("configured safety failure"),
+            ConnectionError("configured reconciliation DNS outage"),
+        ],
+    )
+    recovery = _RecoveryProvider(
+        control=control,
+        outcomes=[True, False, False, False],
+        on_success=health.set_active,
+    )
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+        unattended_recovery_delay_seconds=0.02,
+    )
+    task = asyncio.create_task(runner.run())
+
+    await _wait_for_recovery_calls(recovery=recovery, expected=3)
+
+    assert not task.done()
+    assert control.is_paused
+    assert executor.calls == 2
+    assert recovery.activation_requests == [True, False, False]
+
+    recovery.outcomes.append(True)
+    await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert executor.calls == 3
+    assert recovery.calls == 5
+    assert recovery.activation_requests == [True, False, False, False, False]
     assert not control.is_paused
 
 
