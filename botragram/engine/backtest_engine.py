@@ -290,11 +290,17 @@ class BacktestEngine:
         locked_progress = _PROGRESS_THRESHOLDS[step - 1] - _LOCKED_PROGRESS_LAG
         if position.side is PositionSide.LONG:
             replacement_stop = position.entry_price + tp_distance * locked_progress
-            if position.stop_loss is not None and replacement_stop <= position.stop_loss:
+            if (
+                position.stop_loss is not None
+                and replacement_stop <= position.stop_loss
+            ):
                 return
         else:
             replacement_stop = position.entry_price - tp_distance * locked_progress
-            if position.stop_loss is not None and replacement_stop >= position.stop_loss:
+            if (
+                position.stop_loss is not None
+                and replacement_stop >= position.stop_loss
+            ):
                 return
 
         await position_repository.update(
