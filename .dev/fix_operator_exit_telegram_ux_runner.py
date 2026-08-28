@@ -23,5 +23,27 @@ if callback_replace not in text:
     raise SystemExit("Telegram UX callback replacement hook was not found")
 text = text.replace(callback_replace, callback_replace_fixed, 1)
 
+import_line = "from textwrap import dedent\n"
+if import_line not in text:
+    raise SystemExit("Telegram UX textwrap import was not found")
+text = text.replace(import_line, "from textwrap import dedent, indent\n", 1)
+
+operator_block_replace = (
+    '    replace_once(root, path, marker, "\\n" + block + '
+    '"    if data.startswith(_POLICY_SELECT_CALLBACK_PREFIX):\\n")\n'
+)
+operator_block_replace_fixed = '''    replace_once(
+        root,
+        path,
+        marker,
+        "\\n"
+        + indent(block, "    ")
+        + "    if data.startswith(_POLICY_SELECT_CALLBACK_PREFIX):\\n",
+    )
+'''
+if operator_block_replace not in text:
+    raise SystemExit("Telegram UX operator callback insertion hook was not found")
+text = text.replace(operator_block_replace, operator_block_replace_fixed, 1)
+
 path.write_text(text, encoding="utf-8", newline="\n")
 print("Telegram UX patch validators corrected")
