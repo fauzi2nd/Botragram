@@ -17,7 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
 from typing import Final
@@ -59,8 +59,17 @@ __all__ = [
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DECIMAL_HUNDRED: Final[Decimal] = Decimal("100")
 _STRATEGY_WINDOW: Final[int] = 500
+_PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = (
+    Decimal("0.50"),
+    Decimal("0.60"),
+    Decimal("0.70"),
+    Decimal("0.80"),
+    Decimal("0.90"),
+)
+_LOCKED_PROGRESS_LAG: Final[Decimal] = Decimal("0.20")
 _PROTECTION_WARNING: Final[str] = (
-    "Stepped SL+ is not simulated; only baseline SL/TP and strategy exits apply"
+    "Stepped SL+ uses conservative next-candle activation because OHLC does not "
+    "encode intrabar high/low order"
 )
 
 
@@ -119,6 +128,11 @@ class BacktestEngine:
                     paper_service=paper_service,
                     initial_balance=request.initial_balance,
                     peak_equity=peak_equity,
+                )
+            else:
+                await self._advance_stepped_protection(
+                    candle=candle,
+                    position_repository=position_repository,
                 )
 
             if index + 1 < self.strategy.minimum_candles:
@@ -248,6 +262,49 @@ class BacktestEngine:
         )
         still_open = await position_repository.get_by_symbol(symbol=candle.symbol)
         return reason if still_open is None else None
+
+    @staticmethod
+    async def _advance_stepped_protection(
+        *,
+        candle: Candle,
+        position_repository: MemoryPositionRepository,
+    ) -> None:
+        """Arm stepped SL from this candle for use starting with the next candle."""
+        position = await position_repository.get_by_symbol(symbol=candle.symbol)
+        if position is None or position.take_profit is None:
+            return
+
+        tp_distance = abs(position.take_profit - position.entry_price)
+        if tp_distance <= _DECIMAL_ZERO:
+            return
+
+        if position.side is PositionSide.LONG:
+            progress = (candle.high_price - position.entry_price) / tp_distance
+        else:
+            progress = (position.entry_price - candle.low_price) / tp_distance
+
+        step = sum(1 for threshold in _PROGRESS_THRESHOLDS if progress >= threshold)
+        if step <= position.protection_step:
+            return
+
+        locked_progress = _PROGRESS_THRESHOLDS[step - 1] - _LOCKED_PROGRESS_LAG
+        if position.side is PositionSide.LONG:
+            replacement_stop = position.entry_price + tp_distance * locked_progress
+            if position.stop_loss is not None and replacement_stop <= position.stop_loss:
+                return
+        else:
+            replacement_stop = position.entry_price - tp_distance * locked_progress
+            if position.stop_loss is not None and replacement_stop >= position.stop_loss:
+                return
+
+        await position_repository.update(
+            position=replace(
+                position,
+                stop_loss=replacement_stop,
+                protection_step=step,
+                updated_at=candle.close_time,
+            )
+        )
 
     @staticmethod
     async def _equity_state(
