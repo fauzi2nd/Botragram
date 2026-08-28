@@ -125,7 +125,11 @@ class TerminalMonitor(BaseTerminalMonitor):
         else:
             for context in health_snapshot.contexts:
                 position = next(
-                    (item for item in status.positions if item.symbol == context.symbol),
+                    (
+                        item
+                        for item in status.positions
+                        if item.symbol == context.symbol
+                    ),
                     None,
                 )
                 if position is None:
