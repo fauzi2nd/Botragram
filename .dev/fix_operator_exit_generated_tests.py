@@ -9,10 +9,76 @@ def write(root: Path, path: str, content: str) -> None:
     (root / path).write_text(content, encoding="utf-8", newline="\n")
 
 
+def replace_once(root: Path, path: str, old: str, new: str) -> None:
+    file_path = root / path
+    text = file_path.read_text(encoding="utf-8")
+    count = text.count(old)
+    if count != 1:
+        raise RuntimeError(f"Expected one protocol replacement in {path}, found {count}")
+    file_path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
+
+
+def patch_protocol_contracts(root: Path) -> None:
+    path = "botragram/services/operator_exit_service.py"
+    replacements = (
+        (
+            '        """Return current positions, optionally synchronized from exchange."""\n',
+            '        """Return current positions, optionally synchronized from exchange."""\n        ...\n',
+        ),
+        (
+            '        """Read one authoritative position without mutating persistence."""\n',
+            '        """Read one authoritative position without mutating persistence."""\n        ...\n',
+        ),
+        (
+            '        """Submit one reduce-only close with a durable client identity."""\n',
+            '        """Submit one reduce-only close with a durable client identity."""\n        ...\n',
+        ),
+        (
+            '        """Return one exact close order without creating another order."""\n',
+            '        """Return one exact close order without creating another order."""\n        ...\n',
+        ),
+        (
+            '        """Close one PAPER position or return None when already flat."""\n',
+            '        """Close one PAPER position or return None when already flat."""\n        ...\n',
+        ),
+        (
+            '        """Return one current market ticker."""\n',
+            '        """Return one current market ticker."""\n        ...\n',
+        ),
+        (
+            '        """Return reconciled context or None when safety remains unresolved."""\n',
+            '        """Return reconciled context or None when safety remains unresolved."""\n        ...\n',
+        ),
+        (
+            '        """Stop every owned market stream."""\n',
+            '        """Stop every owned market stream."""\n        ...\n',
+        ),
+        (
+            '        """Return the policy owned by the current runtime session."""\n',
+            '        """Return the policy owned by the current runtime session."""\n        ...\n',
+        ),
+        (
+            '        """Return policies inside the immutable boot capability envelope."""\n',
+            '        """Return policies inside the immutable boot capability envelope."""\n        ...\n',
+        ),
+        (
+            '        """Stage one target after fresh safety validation."""\n',
+            '        """Stage one target after fresh safety validation."""\n        ...\n',
+        ),
+        (
+            '        """Commit one already-staged target."""\n',
+            '        """Commit one already-staged target."""\n        ...\n',
+        ),
+    )
+    for old, new in replacements:
+        replace_once(root, path, old, new)
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         raise SystemExit("Usage: fix_operator_exit_generated_tests.py <target-root>")
     root = Path(sys.argv[1]).resolve()
+    patch_protocol_contracts(root)
 
     write(
         root,
@@ -210,7 +276,7 @@ def main() -> None:
         ),
     )
 
-    print("Generated operator-exit tests tightened")
+    print("Operator-exit protocol contracts and generated tests tightened")
 
 
 if __name__ == "__main__":
