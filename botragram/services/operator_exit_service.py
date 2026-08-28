@@ -76,9 +76,11 @@ class _LivePositionAuthority(Protocol):
 
     async def get_all(self, *, synchronize: bool = False) -> Sequence[Position]:
         """Return current positions, optionally synchronized from exchange."""
+        ...
 
     async def observe(self, *, symbol: str) -> Position | None:
         """Read one authoritative position without mutating persistence."""
+        ...
 
 
 class _LiveOperatorExitExchange(Protocol):
@@ -91,6 +93,7 @@ class _LiveOperatorExitExchange(Protocol):
         client_order_id: str | None = None,
     ) -> Order:
         """Submit one reduce-only close with a durable client identity."""
+        ...
 
     async def get_order_by_client_order_id(
         self,
@@ -99,6 +102,7 @@ class _LiveOperatorExitExchange(Protocol):
         client_order_id: str,
     ) -> Order:
         """Return one exact close order without creating another order."""
+        ...
 
 
 class _PaperOperatorExit(Protocol):
@@ -112,6 +116,7 @@ class _PaperOperatorExit(Protocol):
         closed_at: datetime,
     ) -> TradingResult | None:
         """Close one PAPER position or return None when already flat."""
+        ...
 
 
 class _MarketPriceProvider(Protocol):
@@ -119,6 +124,7 @@ class _MarketPriceProvider(Protocol):
 
     async def get_ticker(self, *, symbol: str) -> Ticker:
         """Return one current market ticker."""
+        ...
 
 
 class _RuntimePortfolioReconciler(Protocol):
@@ -126,6 +132,7 @@ class _RuntimePortfolioReconciler(Protocol):
 
     async def reconcile_context(self) -> object | None:
         """Return reconciled context or None when safety remains unresolved."""
+        ...
 
 
 class _MarketStreamOwner(Protocol):
@@ -133,6 +140,7 @@ class _MarketStreamOwner(Protocol):
 
     async def stop_all(self) -> None:
         """Stop every owned market stream."""
+        ...
 
 
 class _ExecutionPolicySwitcher(Protocol):
@@ -141,9 +149,11 @@ class _ExecutionPolicySwitcher(Protocol):
     @property
     def current_execution_policy(self) -> ExecutionPolicy:
         """Return the policy owned by the current runtime session."""
+        ...
 
     def available_execution_policies(self) -> tuple[ExecutionPolicy, ...]:
         """Return policies inside the immutable boot capability envelope."""
+        ...
 
     async def prepare_execution_policy(
         self,
@@ -152,6 +162,7 @@ class _ExecutionPolicySwitcher(Protocol):
         allow_operator_exit: bool = False,
     ) -> bool:
         """Stage one target after fresh safety validation."""
+        ...
 
     def commit_execution_policy(
         self,
@@ -159,6 +170,7 @@ class _ExecutionPolicySwitcher(Protocol):
         execution_policy: ExecutionPolicy,
     ) -> None:
         """Commit one already-staged target."""
+        ...
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -426,7 +438,9 @@ class OperatorExitService:
         challenge = pending.challenge
         supplied = "" if token is None else token.strip().upper()
         if supplied != challenge.required_token:
-            raise RuntimeError("The explicit operator-exit confirmation token is invalid")
+            raise RuntimeError(
+                "The explicit operator-exit confirmation token is invalid"
+            )
 
         now = datetime.now(UTC)
         operation = OperatorExitOperation(
@@ -504,7 +518,10 @@ class OperatorExitService:
                 latest = await self.operator_exit_repository.get_operation(
                     operation_id=operation.operation_id
                 )
-                if latest is not None and latest.status is OperatorExitStatus.SWITCH_PENDING:
+                if (
+                    latest is not None
+                    and latest.status is OperatorExitStatus.SWITCH_PENDING
+                ):
                     return
                 recovery_attempt = 0
                 continue

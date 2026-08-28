@@ -22,9 +22,7 @@ class OperatorExitRepository(ABC):
         """Persist or replace one operation state."""
 
     @abstractmethod
-    async def get_operation(
-        self, *, operation_id: str
-    ) -> OperatorExitOperation | None:
+    async def get_operation(self, *, operation_id: str) -> OperatorExitOperation | None:
         """Return one operation by its durable identity."""
 
     @abstractmethod

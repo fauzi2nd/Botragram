@@ -73,6 +73,7 @@ from botragram.repositories import (
     CandleRepository,
     ClosedPositionLifecycleRepository,
     ExecutionAuthorizationRepository,
+    OperatorExitRepository,
     OrderRepository,
     PositionRepository,
     RuntimeRiskLimitRepository,
@@ -106,6 +107,7 @@ from botragram.services import (
     LiveSubmissionRecoveryService,
     LiveTradingPerformanceService,
     MarketService,
+    OperatorExitService,
     OpportunityDiscoveryService,
     OrderService,
     PaperTradingService,
@@ -127,6 +129,7 @@ from botragram.storage.sqlite import (
     SQLiteDatabase,
     SQLiteLiveEquityHighWaterRepository,
     SQLiteMigrationManager,
+    SQLiteOperatorExitRepository,
     SQLiteOrderRepository,
     SQLitePositionRepository,
     SQLiteRuntimeRiskLimitRepository,
@@ -189,7 +192,9 @@ class DependencyProvider:
         "_live_trading_performance_service",
         "_market_service",
         "_market_type_switch_service",
+        "_operator_exit_service",
         "_opportunity_discovery_service",
+        "_operator_exit_repository",
         "_order_engine",
         "_order_repository",
         "_order_service",
@@ -284,6 +289,7 @@ class DependencyProvider:
         ) = None
         self._submission_attempt_repository: SubmissionAttemptRepository | None = None
         self._runtime_risk_limit_repository: RuntimeRiskLimitRepository | None = None
+        self._operator_exit_repository: OperatorExitRepository | None = None
         self._order_repository: OrderRepository | None = None
         self._trade_repository: TradeRepository | None = None
         self._position_repository: PositionRepository | None = None
@@ -357,6 +363,7 @@ class DependencyProvider:
             None
         )
         self._market_type_switch_service: MarketTypeSwitchService | None = None
+        self._operator_exit_service: OperatorExitService | None = None
         self._initialized = False
 
     @property
@@ -513,6 +520,37 @@ class DependencyProvider:
                 ),
             )
             self._telegram_query_service = query_service
+            self._market_type_switch_service = MarketTypeSwitchService(
+                trade_mode=self._settings.app.trade_mode,
+                runtime_control=self.runtime_control,
+                position_repository=self.position_repository,
+                position_service=self.position_service,
+                restart_coordinator=self.restart_coordinator,
+                settings=self._settings,
+                submission_attempt_repository=self.submission_attempt_repository,
+            )
+            self._operator_exit_service = OperatorExitService(
+                trade_mode=self._settings.app.trade_mode,
+                market_type=self._settings.exchange.market_type,
+                exchange_environment=self._settings.exchange.environment,
+                runtime_control=self.runtime_control,
+                operator_exit_repository=self.operator_exit_repository,
+                position_repository=self.position_repository,
+                market_stream_owner=self.live_market_stream_service,
+                execution_policy_switcher=self.market_type_switch_service,
+                live_position_service=self.position_service,
+                live_exchange=self.exchange_client,
+                submission_attempt_repository=self.submission_attempt_repository,
+                closed_lifecycle_service=self._closed_position_lifecycle_service,
+                live_runtime_reconciler=(
+                    self.live_runtime_portfolio_reconciliation_service
+                ),
+                order_repository=self.order_repository,
+                lifecycle_coordinator=self._live_position_lifecycle_coordinator,
+                paper_trading_service=self.paper_trading_service,
+                market_price_provider=self.market_service,
+            )
+            await self.operator_exit_service.initialize()
             self._runtime_recovery_service = RuntimeRecoveryService(
                 trade_mode=self._settings.app.trade_mode,
                 market_type=self._settings.exchange.market_type,
@@ -533,21 +571,13 @@ class DependencyProvider:
                 live_natural_exit_recovery_service=(
                     self.live_natural_exit_recovery_service
                 ),
+                operator_exit_recovery_service=self.operator_exit_service,
                 autonomous_live_entry_authorization=(
                     self._autonomous_live_entry_authorization
                     if self._settings.app.effective_execution_policy
                     is ExecutionPolicy.AUTONOMOUS_LIVE
                     else None
                 ),
-            )
-            self._market_type_switch_service = MarketTypeSwitchService(
-                trade_mode=self._settings.app.trade_mode,
-                runtime_control=self.runtime_control,
-                position_repository=self.position_repository,
-                position_service=self.position_service,
-                restart_coordinator=self.restart_coordinator,
-                settings=self._settings,
-                submission_attempt_repository=self.submission_attempt_repository,
             )
             await self.telegram_bot.sync_context(
                 context=BotContext(
@@ -563,6 +593,7 @@ class DependencyProvider:
                     market_type_switcher=self.market_type_switch_service,
                     execution_authorization_service=self._execution_authorization_service,
                     runtime_risk_limit_service=self._runtime_risk_limit_service,
+                    operator_exit_service=self.operator_exit_service,
                 )
             )
             try:
@@ -582,6 +613,7 @@ class DependencyProvider:
         exchange_client = self._exchange_client
         stream_client = self._stream_client
         telegram_bot = self._telegram_bot
+        operator_exit_service = self._operator_exit_service
         live_market_stream_service = self._live_market_stream_service
         live_futures_user_data_service = self._live_futures_user_data_service
         live_protection_monitoring_service = self._live_protection_monitoring_service
@@ -593,27 +625,31 @@ class DependencyProvider:
                 await telegram_bot.stop()
         finally:
             try:
-                if live_futures_user_data_service is not None:
-                    await live_futures_user_data_service.close()
+                if operator_exit_service is not None:
+                    await operator_exit_service.close()
             finally:
                 try:
-                    if live_protection_monitoring_service is not None:
-                        live_protection_monitoring_service.stop_all()
+                    if live_futures_user_data_service is not None:
+                        await live_futures_user_data_service.close()
                 finally:
                     try:
-                        if live_market_stream_service is not None:
-                            await live_market_stream_service.stop_all()
+                        if live_protection_monitoring_service is not None:
+                            live_protection_monitoring_service.stop_all()
                     finally:
                         try:
-                            if stream_client is not None:
-                                await stream_client.close()
+                            if live_market_stream_service is not None:
+                                await live_market_stream_service.stop_all()
                         finally:
                             try:
-                                if exchange_client is not None:
-                                    await exchange_client.close()
+                                if stream_client is not None:
+                                    await stream_client.close()
                             finally:
-                                if database is not None:
-                                    await database.close()
+                                try:
+                                    if exchange_client is not None:
+                                        await exchange_client.close()
+                                finally:
+                                    if database is not None:
+                                        await database.close()
         _LOGGER.info("Dependencies shut down")
 
     @property
@@ -639,6 +675,10 @@ class DependencyProvider:
     @property
     def runtime_risk_limit_repository(self) -> RuntimeRiskLimitRepository:
         return self._require(self._runtime_risk_limit_repository)
+
+    @property
+    def operator_exit_repository(self) -> OperatorExitRepository:
+        return self._require(self._operator_exit_repository)
 
     @property
     def order_repository(self) -> OrderRepository:
@@ -785,6 +825,10 @@ class DependencyProvider:
         return self._require(self._market_type_switch_service)
 
     @property
+    def operator_exit_service(self) -> OperatorExitService:
+        return self._require(self._operator_exit_service)
+
+    @property
     def strategy_service(self) -> StrategyService:
         return self._require(self._strategy_service)
 
@@ -827,6 +871,7 @@ class DependencyProvider:
         self._runtime_risk_limit_repository = SQLiteRuntimeRiskLimitRepository(
             database=database
         )
+        self._operator_exit_repository = SQLiteOperatorExitRepository(database=database)
         self._order_repository = SQLiteOrderRepository(database=database)
         self._trade_repository = SQLiteTradeRepository(database=database)
         self._position_repository = SQLitePositionRepository(database=database)
@@ -1022,6 +1067,7 @@ class DependencyProvider:
             exchange_client=exchange_client,
             position_repository=self.position_repository,
             submission_attempt_repository=self.submission_attempt_repository,
+            operator_exit_repository=self.operator_exit_repository,
             closed_lifecycle_service=self._closed_position_lifecycle_service,
             lifecycle_coordinator=self._live_position_lifecycle_coordinator,
         )
@@ -1346,6 +1392,8 @@ class DependencyProvider:
         self._submission_attempt_repository = None
         self._runtime_risk_limit_repository = None
         self._runtime_risk_limit_service = None
+        self._operator_exit_repository = None
+        self._operator_exit_service = None
         self._order_repository = None
         self._trade_repository = None
         self._position_repository = None

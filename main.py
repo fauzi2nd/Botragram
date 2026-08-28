@@ -43,19 +43,25 @@ _LOGGER: Final[logging.Logger] = logging.getLogger("botragram.main")
 async def _recover_autonomous_live_until_ready(
     *,
     dependency_provider: DependencyProvider,
+    activate_runtime: bool,
 ) -> None:
     """Keep startup paused until authoritative autonomous LIVE recovery succeeds."""
     backoff = CappedExponentialBackoff()
     attempt = 0
     while True:
         try:
-            recovered = await dependency_provider.runtime_recovery_service.recover()
+            recovered = await dependency_provider.runtime_recovery_service.recover(
+                activate_runtime=activate_runtime,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as error:
             if not is_transient_connectivity_error(error):
                 raise
             recovered = False
+
+        if dependency_provider.restart_coordinator.has_committed_restart:
+            return
 
         if recovered:
             if attempt:
@@ -148,12 +154,21 @@ async def _run_trading(
         name="botragram-terminal-monitor",
     )
     try:
+        activate_runtime = not isinstance(restart_target, ExecutionPolicy)
         if settings.app.effective_execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE:
             await _recover_autonomous_live_until_ready(
                 dependency_provider=dependency_provider,
+                activate_runtime=activate_runtime,
             )
         else:
-            await dependency_provider.runtime_recovery_service.recover()
+            await dependency_provider.runtime_recovery_service.recover(
+                activate_runtime=activate_runtime,
+            )
+        if restart_coordinator.has_committed_restart:
+            _LOGGER.info(
+                "Runtime recovery committed a soft restart before runner activation"
+            )
+            return
         await prepare_restarted_runtime_session(
             restart_target=restart_target,
             runtime_control=dependency_provider.runtime_control,

@@ -109,6 +109,18 @@ class LiveNaturalExitRecovery(Protocol):
         ...
 
 
+class OperatorExitRecovery(Protocol):
+    """Recover durable operator exits before ordinary runtime recovery."""
+
+    async def has_incomplete_operation(self) -> bool:
+        """Return whether an operator action still owns the mutation boundary."""
+        ...
+
+    async def recover_until_safe(self) -> None:
+        """Converge confirmed operator work without blind mutations."""
+        ...
+
+
 class LiveProtectionMonitorOwner(Protocol):
     """Own independent per-position protection monitors during recovery."""
 
@@ -148,6 +160,7 @@ class RuntimeRecoveryService:
     live_submission_recovery_service: LiveIncompleteSubmissionRecovery | None = None
     live_post_entry_recovery_service: LiveAcknowledgedEntryRecovery | None = None
     live_natural_exit_recovery_service: LiveNaturalExitRecovery | None = None
+    operator_exit_recovery_service: OperatorExitRecovery | None = None
     autonomous_live_entry_authorization: AutonomousLiveEntryAuthorization | None = None
 
     def __post_init__(self) -> None:
@@ -157,6 +170,19 @@ class RuntimeRecoveryService:
 
     async def recover(self, *, activate_runtime: bool = True) -> bool:
         """Rebuild safe runtime state and optionally activate future cycles."""
+        operator_exit_recovery = self.operator_exit_recovery_service
+        if (
+            operator_exit_recovery is not None
+            and await operator_exit_recovery.has_incomplete_operation()
+        ):
+            self.runtime_control.pause()
+            await operator_exit_recovery.recover_until_safe()
+            if await operator_exit_recovery.has_incomplete_operation():
+                _LOGGER.info(
+                    "Runtime recovery remains PAUSED for pending operator-exit "
+                    "transition"
+                )
+                return False
         if self.trade_mode is TradeMode.LIVE:
             if not await self._clear_live_recovery_runtime_state():
                 _LOGGER.critical(

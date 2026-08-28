@@ -29,8 +29,8 @@ from botragram.repositories.execution_authorization_repository import (
 from botragram.repositories.live_equity_high_water_repository import (
     LiveEquityHighWaterRepository,
 )
-from botragram.repositories.order_repository import OrderRepository
 from botragram.repositories.operator_exit_repository import OperatorExitRepository
+from botragram.repositories.order_repository import OrderRepository
 from botragram.repositories.position_repository import PositionRepository
 from botragram.repositories.runtime_risk_limit_repository import (
     RuntimeRiskLimitRepository,

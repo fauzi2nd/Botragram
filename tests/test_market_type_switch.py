@@ -260,6 +260,16 @@ async def _run_live_execution_policy_recovery_guard_test() -> None:
         )
 
 
+def test_restart_coordinator_exposes_committed_pre_runner_restart() -> None:
+    coordinator = RuntimeRestartCoordinator()
+    coordinator.stage(execution_policy=ExecutionPolicy.AUTONOMOUS_PAPER)
+    assert not coordinator.has_committed_restart
+    coordinator.commit(execution_policy=ExecutionPolicy.AUTONOMOUS_PAPER)
+    assert coordinator.has_committed_restart
+    assert coordinator.consume() is ExecutionPolicy.AUTONOMOUS_PAPER
+    assert not coordinator.has_committed_restart
+
+
 def test_market_type_switch_fails_closed_for_live_positions() -> None:
     """Synchronize live positions and block a product switch when one exists."""
     asyncio.run(_run_live_position_guard_test())

@@ -189,9 +189,7 @@ async def close_all_and_switch_command(
         target = ExecutionPolicy(args[0].strip().lower())
     except ValueError:
         values = ", ".join(policy.value for policy in ExecutionPolicy)
-        await message.reply_text(
-            f"Invalid execution policy. Allowed values: {values}"
-        )
+        await message.reply_text(f"Invalid execution policy. Allowed values: {values}")
         return
     if target is bot_context.execution_policy:
         await message.reply_text("Target execution policy is already active.")
@@ -273,4 +271,6 @@ async def cancel_exit_command(
     except (RuntimeError, ValueError) as error:
         await message.reply_text(f"Operator exit cancellation rejected: {error}")
         return
-    await message.reply_text("Operator exit confirmation cancelled. No close order sent.")
+    await message.reply_text(
+        "Operator exit confirmation cancelled. No close order sent."
+    )

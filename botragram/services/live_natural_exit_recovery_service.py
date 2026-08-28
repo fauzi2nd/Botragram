@@ -121,6 +121,14 @@ class LiveNaturalExitExchange(Protocol):
         ...
 
 
+class LiveOperatorExitRecoveryState(Protocol):
+    """Expose operator closes that still own exact exit reconciliation."""
+
+    async def get_incomplete_attempts(self) -> Sequence[object]:
+        """Return operator-exit attempts that must block natural cleanup."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class LiveNaturalExitRecoveryService:
     """Reconcile zero-exposure exits before another LIVE entry can be allowed.
@@ -133,6 +141,7 @@ class LiveNaturalExitRecoveryService:
     exchange_client: LiveNaturalExitExchange
     position_repository: PositionRepository
     submission_attempt_repository: SubmissionAttemptRepository
+    operator_exit_repository: LiveOperatorExitRecoveryState | None = None
     closed_lifecycle_service: ClosedPositionLifecycleService | None = None
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
         default_factory=LivePositionLifecycleCoordinator,
@@ -140,6 +149,15 @@ class LiveNaturalExitRecoveryService:
 
     async def reconcile(self) -> None:
         """Remove proven orphan protection and stale local positions."""
+        operator_repository = self.operator_exit_repository
+        if (
+            operator_repository is not None
+            and await operator_repository.get_incomplete_attempts()
+        ):
+            raise RuntimeError(
+                "Incomplete LIVE operator exit requires exact recovery before "
+                "natural-exit reconciliation"
+            )
         incomplete_attempts = tuple(
             await self.submission_attempt_repository.get_incomplete()
         )

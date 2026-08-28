@@ -25,11 +25,11 @@ from botragram.storage.memory.closed_position_lifecycle_repository import (
 from botragram.storage.memory.execution_authorization_repository import (
     MemoryExecutionAuthorizationRepository,
 )
-from botragram.storage.memory.order_repository import (
-    MemoryOrderRepository,
-)
 from botragram.storage.memory.operator_exit_repository import (
     MemoryOperatorExitRepository,
+)
+from botragram.storage.memory.order_repository import (
+    MemoryOrderRepository,
 )
 from botragram.storage.memory.position_repository import (
     MemoryPositionRepository,

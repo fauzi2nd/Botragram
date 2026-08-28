@@ -36,5 +36,17 @@ def test_live_post_entry_recovery_service_has_order_service() -> None:
             getattr(service, "protection_reconciler", None)
             is provider.live_position_protection_service
         )
+        operator_exit = provider.operator_exit_service
+        assert (
+            operator_exit.operator_exit_repository is provider.operator_exit_repository
+        )
+        assert (
+            provider.runtime_recovery_service.operator_exit_recovery_service
+            is operator_exit
+        )
+        assert (
+            provider.live_natural_exit_recovery_service.operator_exit_repository
+            is provider.operator_exit_repository
+        )
     finally:
         asyncio.run(provider.close())

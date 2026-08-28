@@ -71,13 +71,13 @@ from botragram.models.live_runtime_portfolio_context import LiveRuntimePortfolio
 from botragram.models.live_runtime_position_context import LiveRuntimePositionContext
 from botragram.models.market_universe_entry import MarketUniverseEntry
 from botragram.models.notification import Notification
-from botragram.models.order import Order
 from botragram.models.operator_exit import (
     OperatorExitAttempt,
     OperatorExitConfirmation,
     OperatorExitOperation,
     OperatorExitSnapshot,
 )
+from botragram.models.order import Order
 from botragram.models.position import Position
 from botragram.models.risk import (
     PositionSize,

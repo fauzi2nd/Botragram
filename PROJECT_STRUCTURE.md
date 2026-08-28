@@ -121,6 +121,7 @@ botragram/
 |   |-- autonomous_live_entry_intent.py # Transient authorized LIVE entry intent
 |   |-- autonomous_live_recovery_snapshot.py # Immutable durable recovery status
 |   |-- closed_position_lifecycle.py # One authoritative closed LIVE position lifecycle
+|   |-- operator_exit.py # Durable operator exit operation/attempt/confirmation snapshots
 |   |-- discovery_universe_batch.py # Immutable contiguous ranked discovery window
 |   |-- live_entry_risk_evaluation.py # Immutable fresh LIVE risk decision
 |   |-- runtime_risk_limits.py # Durable autonomous LIVE runtime entry limits
@@ -133,6 +134,7 @@ botragram/
 |   `-- market_universe_entry.py # Binance-independent ranked market fact
 |-- repositories/              # Persistence interfaces, including lifecycle ledger
 |   |-- closed_position_lifecycle_repository.py # Durable entry-identity ledger contract
+|   |-- operator_exit_repository.py # Restart-safe operator exit ownership contract
 |   `-- runtime_risk_limit_repository.py # Durable current-limit + audit boundary
 |-- services/
 |   |-- account_service.py
@@ -160,6 +162,7 @@ botragram/
 |   |-- closed_position_lifecycle_service.py # Exact-order gross/fee/net enrichment
 |   |-- live_trading_performance_service.py # One net outcome per completed lifecycle
 |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
+|   |-- operator_exit_service.py # Guarded PAPER/LIVE close + flatten-and-switch orchestration
 |   |-- order_service.py
 |   |-- paper_trading_service.py
 |   |-- position_protection_manager.py # Stream-driven stepped SL+
@@ -178,6 +181,7 @@ botragram/
 |       |-- closed_position_lifecycle_repository.py # SQLite lifecycle ledger
 |       |-- legacy_live_ledger_migration.py # One-time legacy TESTNET LIVE ledger import
 |       |-- migrations.py
+|       |-- operator_exit_repository.py # Durable operator exit operations and attempts
 |       |-- runtime_risk_limit_repository.py # Current singleton + append-only audit
 |       `-- *_repository.py
 |-- strategies/
@@ -197,6 +201,7 @@ botragram/
 |   |-- handlers.py
 |   |-- keyboards.py
 |   |-- messages.py
+|   |-- operator_exit_commands.py # Explicit chat-bound portfolio exit controls
 |   |-- risk_limit_commands.py # Paused durable runtime-limit controls
 |   `-- query_service.py
 `-- utils/

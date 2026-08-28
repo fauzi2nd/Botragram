@@ -126,6 +126,11 @@ class RuntimeRestartCoordinator:
             raise RuntimeError("Runtime restart request is not staged")
         self._restart_event.set()
 
+    @property
+    def has_committed_restart(self) -> bool:
+        """Return whether a validated restart is waiting to be consumed."""
+        return self._restart_event.is_set()
+
     async def wait(self) -> RuntimeRestartTarget:
         """Wait until Telegram commits one runtime-session restart request."""
         await self._restart_event.wait()
