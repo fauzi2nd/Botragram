@@ -16,9 +16,7 @@ concurrency:
 jobs:
   quality:
     name: Supplemental Python 3.14
-    runs-on: self-hosted
-    env:
-      TAR_PATH: 'C:\Windows\System32\tar.exe'
+    runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 30
 
@@ -50,8 +48,4 @@ jobs:
         run: python -m mypy botragram
 
       - name: Run tests
-        # Pytest gives its base temp a private ACL on Windows. Keep it outside
-        # the checkout so the next self-hosted job can clean the workspace.
-        run: >-
-          python -m pytest --basetemp
-          "${env:RUNNER_TEMP}\botragram-pytest-${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}"
+        run: python -m pytest
