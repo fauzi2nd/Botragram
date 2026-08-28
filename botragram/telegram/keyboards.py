@@ -46,6 +46,8 @@ from botragram.constants.telegram import (
     MENU_ORDERS,
     MENU_PAUSE,
     MENU_POSITIONS,
+    MENU_RESUME,
+    MENU_RISK_LIMITS,
     MENU_SETTINGS,
     MENU_START,
     MENU_STATUS,
@@ -53,16 +55,19 @@ from botragram.constants.telegram import (
     MENU_STREAM,
     MENU_TEST,
     MENU_TRADING,
+    MENU_TRADING_MODE,
     TELEGRAM_INTERVALS,
     TELEGRAM_MARKET_SYMBOLS,
 )
-from botragram.enums import MarketType
+from botragram.enums import ExecutionPolicy, MarketType
 
 __all__ = [
     "get_activity_menu_keyboard",
     "get_configuration_menu_keyboard",
     "get_dashboard_menu_keyboard",
     "get_exchange_keyboard",
+    "get_execution_policy_confirmation_keyboard",
+    "get_execution_policy_keyboard",
     "get_interval_keyboard",
     "get_main_menu_keyboard",
     "get_market_keyboard",
@@ -80,15 +85,89 @@ _MARKET_PAGE_SIZE: Final[int] = 10
 # =============================================================================
 # Keyboard Helpers
 # =============================================================================
-def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
-    """Get the persistent main menu shown below Telegram's input field.
+def get_main_menu_keyboard(
+    *,
+    execution_policy: ExecutionPolicy = ExecutionPolicy.SINGLE_SYMBOL,
+    is_paused: bool = True,
+) -> ReplyKeyboardMarkup:
+    """Return a persistent menu whose controls match the active workflow."""
+    if execution_policy is ExecutionPolicy.SINGLE_SYMBOL:
+        return _get_reply_keyboard(
+            [
+                [MENU_DASHBOARD, MENU_TRADING],
+                [MENU_CONFIGURATION, MENU_ACTIVITY],
+                [MENU_TRADING_MODE],
+            ]
+        )
 
-    Returns:
-        ReplyKeyboardMarkup instance.
-    """
+    runtime_action = MENU_RESUME if is_paused else MENU_PAUSE
+    if execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE:
+        return _get_reply_keyboard(
+            [
+                [MENU_STATUS, MENU_POSITIONS],
+                [MENU_RISK_LIMITS, MENU_ACTIVITY],
+                [runtime_action, MENU_TRADING_MODE],
+            ]
+        )
+
     return _get_reply_keyboard(
-        [[MENU_DASHBOARD, MENU_TRADING], [MENU_CONFIGURATION, MENU_ACTIVITY]]
+        [
+            [MENU_STATUS, MENU_POSITIONS],
+            [MENU_ACTIVITY, runtime_action],
+            [MENU_TRADING_MODE],
+        ]
     )
+
+
+def get_execution_policy_keyboard(
+    *,
+    current_policy: ExecutionPolicy,
+    available_policies: Sequence[ExecutionPolicy],
+) -> InlineKeyboardMarkup:
+    """Return only workflows allowed by the immutable boot capability envelope."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                (
+                    f"{'✅ ' if policy is current_policy else ''}"
+                    f"{_get_execution_policy_label(policy)}"
+                ),
+                callback_data=f"cb_policy_select_{policy.value}",
+            )
+        ]
+        for policy in available_policies
+    ]
+    rows.append([InlineKeyboardButton("✖️ Close", callback_data="cb_policy_cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
+def get_execution_policy_confirmation_keyboard(
+    *,
+    execution_policy: ExecutionPolicy,
+) -> InlineKeyboardMarkup:
+    """Require a second explicit action before committing a session restart."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm Switch",
+                    callback_data=f"cb_policy_confirm_{execution_policy.value}",
+                ),
+                InlineKeyboardButton("Cancel", callback_data="cb_policy_cancel"),
+            ]
+        ]
+    )
+
+
+def _get_execution_policy_label(policy: ExecutionPolicy) -> str:
+    """Return one compact operator-facing workflow label."""
+    match policy:
+        case ExecutionPolicy.SINGLE_SYMBOL:
+            return "🎯 Single Symbol"
+        case ExecutionPolicy.AUTONOMOUS_PAPER | ExecutionPolicy.AUTONOMOUS_LIVE:
+            return "🤖 Auto Discovery"
+        case ExecutionPolicy.HUMAN_CONFIRMED_PAPER:
+            return "✅ Human Confirmed"
 
 
 def get_dashboard_menu_keyboard() -> ReplyKeyboardMarkup:

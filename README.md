@@ -478,21 +478,36 @@ The same `BINANCE_API_KEY` and `BINANCE_API_SECRET` pair is used for both Spot
 and Futures. Enable the required Binance API permissions for both products
 before switching them during live operation.
 
-Trading selalu dimulai dalam state `CONFIGURING`. Melalui Telegram, konfirmasikan
-exchange aktif lalu pilih product Spot/Futures, market USDT, candle interval, dan
-strategy. Nilai awal dari `.env` hanya menjadi default dan tidak ditandai sudah
-dipilih. Setelah itu aktifkan Stream dan tunggu tick pertama sebelum menekan
-`Start Bot`. Perubahan
-runtime hanya diterima saat trading paused, stream berhenti, dan tidak ada posisi
-terbuka. Exchange yang ditampilkan Telegram adalah connector yang sudah dimuat
-oleh environment profile; menggantinya memerlukan profile lain dan restart.
-Reply keyboard Telegram memakai navigasi bertingkat agar tidak memenuhi layar:
-menu Home hanya berisi Dashboard, Trading, Configuration, dan Activity. Setiap
-submenu memiliki maksimal empat baris serta tombol Home. Dashboard Status
-merangkum runtime, exchange product, strategy, interval, stream, balance, posisi,
-dan unrealized PnL dalam satu control center.
+Workflow `single_symbol` selalu dimulai dalam state `CONFIGURING`. Melalui
+Telegram, konfirmasikan exchange aktif lalu pilih product Spot/Futures, market
+USDT, candle interval, dan strategy. Nilai awal dari `.env` hanya menjadi default
+dan tidak ditandai sudah dipilih. Setelah itu aktifkan Stream dan tunggu tick
+pertama sebelum menekan `Start Bot`. Perubahan runtime hanya diterima saat
+trading paused, stream berhenti, dan tidak ada posisi terbuka. Exchange yang
+ditampilkan Telegram adalah connector yang sudah dimuat oleh environment
+profile; menggantinya memerlukan profile lain dan restart.
+Reply keyboard Telegram memakai navigasi bertingkat dan menyesuaikan
+`ExecutionPolicy` aktif. Home `single_symbol` berisi Dashboard, Trading,
+Configuration, Activity, dan Trading Mode. Workflow discovery menampilkan
+monitoring, activity, kontrol Pause/Resume, Trading Mode, serta Risk Limits
+khusus `autonomous_live`; kontrol single-symbol Exchange, Market, Strategy,
+Interval, dan Stream disembunyikan dan ditolak. Pilihan mode yang sama tersedia
+melalui perintah `/mode`. Dashboard Status merangkum runtime, exchange product,
+strategy, interval, stream, balance, posisi, dan unrealized PnL dalam satu
+control center.
 Sebelum konfigurasi lengkap, Status menampilkan progres setup ringkas dan
 `WAITING`, bukan deretan nilai default internal dari `.env`.
+
+`Trading Mode` atau `/mode` hanya menampilkan `ExecutionPolicy` yang valid di
+dalam capability envelope saat boot dan memerlukan konfirmasi eksplisit.
+Pergantian hanya diterima ketika runtime PAUSED, cycle tidak berjalan, stream
+mati, dan posisi authoritative kosong. Untuk LIVE, runtime context juga harus
+kosong, protection berstatus READY, dan tidak boleh ada durable submission
+attempt yang belum selesai. Soft restart ini tidak mengubah `TradeMode`,
+network, credential, pilihan TESTNET/MAINNET, atau flag authorization
+`AUTONOMOUS_LIVE_ENTRY_ENABLED` dan
+`AUTONOMOUS_MAINNET_ENTRY_ENABLED`. Session `ExecutionPolicy` baru selalu
+dimulai PAUSED, tanpa resume otomatis dan tanpa authorization entry implisit.
 
 Produk Binance Spot/Futures dapat dipilih dari menu Exchange tanpa mengubah
 `.env`. Pergantian hanya diterima ketika trading paused, cycle tidak berjalan,

@@ -426,11 +426,9 @@ class SettingsManager:
                 raise ValueError(
                     "Autonomous MAINNET entry authorization requires base LIVE opt-in"
                 )
-            if policy is not ExecutionPolicy.AUTONOMOUS_LIVE:
-                raise ValueError(
-                    "Autonomous MAINNET entry authorization requires autonomous LIVE "
-                    "execution policy"
-                )
+            # The MAINNET flag is an immutable boot capability envelope.
+            # The active workflow may remain SINGLE_SYMBOL until a validated
+            # in-process switch explicitly selects AUTONOMOUS_LIVE.
 
         if settings.telegram.enabled and not settings.telegram.bot_token:
             raise ValueError("Enabled Telegram integration requires a bot token")

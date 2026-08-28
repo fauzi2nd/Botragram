@@ -15,7 +15,13 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final, Protocol
 
-from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
+from botragram.enums import (
+    ExchangeType,
+    ExecutionPolicy,
+    Interval,
+    MarketType,
+    StrategyType,
+)
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
     ExecutionAuthorization,
@@ -112,6 +118,31 @@ class BotMarketTypeSwitcher(Protocol):
 
     def commit(self, *, market_type: MarketType) -> None:
         """Commit a prepared switch after its Telegram acknowledgement."""
+        ...
+
+    @property
+    def current_execution_policy(self) -> ExecutionPolicy:
+        """Return the execution workflow owned by this runtime session."""
+        ...
+
+    def available_execution_policies(self) -> tuple[ExecutionPolicy, ...]:
+        """Return workflows allowed by the immutable boot capability envelope."""
+        ...
+
+    async def prepare_execution_policy(
+        self,
+        *,
+        execution_policy: ExecutionPolicy,
+    ) -> bool:
+        """Validate and stage a safe execution-policy session replacement."""
+        ...
+
+    def commit_execution_policy(
+        self,
+        *,
+        execution_policy: ExecutionPolicy,
+    ) -> None:
+        """Commit a prepared execution-policy replacement."""
         ...
 
 
@@ -257,6 +288,7 @@ class BotContext:
 
     is_running: bool = False
     trade_mode: str = "PAPER"
+    execution_policy: ExecutionPolicy = ExecutionPolicy.SINGLE_SYMBOL
     symbol: str = "BTCUSDT"
     strategy_name: str = "EMA_CROSS"
     configured_interval: Interval = Interval.M15
@@ -270,10 +302,23 @@ class BotContext:
     runtime_risk_limit_service: BotRuntimeRiskLimitProvider | None = None
 
     @property
-    def is_autonomous_live(self) -> bool:
-        """Return whether this context owns autonomous LIVE runtime limits."""
+    def is_discovery_workflow(self) -> bool:
+        """Return whether symbol selection is owned by a discovery workflow."""
         return (
-            self.trade_mode.strip().upper() == "LIVE"
+            self.execution_policy is not ExecutionPolicy.SINGLE_SYMBOL
+            or self.is_autonomous_live
+        )
+
+    @property
+    def is_autonomous_live(self) -> bool:
+        """Return whether the active workflow is autonomous LIVE discovery."""
+        if self.execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE:
+            return True
+        # Compatibility for older adapter tests/contexts created before the
+        # execution-policy field existed. Production composition sets it explicitly.
+        return (
+            self.execution_policy is ExecutionPolicy.SINGLE_SYMBOL
+            and self.trade_mode.strip().upper() == "LIVE"
             and self.runtime_risk_limit_service is not None
         )
 

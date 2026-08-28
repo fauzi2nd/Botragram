@@ -25,6 +25,7 @@ from botragram.enums import (
     AutonomousLiveRecoveryReason,
     AutonomousLiveRecoveryStatus,
     ExchangeEnvironment,
+    ExecutionPolicy,
     Interval,
     LiveRuntimeHealthReason,
     LiveRuntimeHealthStatus,
@@ -275,6 +276,23 @@ class FakeMarketTypeSwitcher:
 
     prepared: list[MarketType] = field(default_factory=list[MarketType])
     committed: list[MarketType] = field(default_factory=list[MarketType])
+    execution_policy: ExecutionPolicy = ExecutionPolicy.SINGLE_SYMBOL
+    available_policies: tuple[ExecutionPolicy, ...] = (ExecutionPolicy.SINGLE_SYMBOL,)
+    prepared_execution_policies: list[ExecutionPolicy] = field(
+        default_factory=list[ExecutionPolicy]
+    )
+    committed_execution_policies: list[ExecutionPolicy] = field(
+        default_factory=list[ExecutionPolicy]
+    )
+
+    @property
+    def current_execution_policy(self) -> ExecutionPolicy:
+        """Return the execution policy owned by the fake runtime session."""
+        return self.execution_policy
+
+    def available_execution_policies(self) -> tuple[ExecutionPolicy, ...]:
+        """Return execution policies allowed by the fake boot settings."""
+        return self.available_policies
 
     async def prepare(self, *, market_type: MarketType) -> bool:
         """Record a prepared target and require a connector change."""
@@ -284,6 +302,24 @@ class FakeMarketTypeSwitcher:
     def commit(self, *, market_type: MarketType) -> None:
         """Record the target committed after Telegram acknowledgement."""
         self.committed.append(market_type)
+
+    async def prepare_execution_policy(
+        self,
+        *,
+        execution_policy: ExecutionPolicy,
+    ) -> bool:
+        """Record a prepared policy and require a session replacement."""
+        self.prepared_execution_policies.append(execution_policy)
+        return execution_policy is not self.execution_policy
+
+    def commit_execution_policy(
+        self,
+        *,
+        execution_policy: ExecutionPolicy,
+    ) -> None:
+        """Record and activate the acknowledged execution policy."""
+        self.committed_execution_policies.append(execution_policy)
+        self.execution_policy = execution_policy
 
 
 @dataclass(slots=True)
@@ -1056,7 +1092,7 @@ async def _run_menu_navigation_test() -> None:
         for markup in message.reply_markups
         if isinstance(markup, ReplyKeyboardMarkup)
     ]
-    assert row_counts == [3, 4, 2]
+    assert row_counts == [3, 4, 3]
     assert "Dashboard" in message.replies[0]
     assert "Configuration" in message.replies[1]
     assert "Botragram Home" in message.replies[2]

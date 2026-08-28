@@ -546,11 +546,14 @@ class DependencyProvider:
                 position_repository=self.position_repository,
                 position_service=self.position_service,
                 restart_coordinator=self.restart_coordinator,
+                settings=self._settings,
+                submission_attempt_repository=self.submission_attempt_repository,
             )
             await self.telegram_bot.sync_context(
                 context=BotContext(
                     is_running=True,
                     trade_mode=self._settings.app.trade_mode.value,
+                    execution_policy=self._settings.app.effective_execution_policy,
                     symbol=self._settings.market.symbol,
                     strategy_name=self._settings.strategy.strategy_type.value,
                     configured_interval=self._settings.market.interval,

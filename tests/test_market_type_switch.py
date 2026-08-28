@@ -16,7 +16,17 @@ from botragram.app import (
     TradingRuntimeControl,
     run_until_restart,
 )
-from botragram.enums import MarketType, PositionSide, TradeMode
+from botragram.config import Settings
+from botragram.config.app_settings import AppSettings
+from botragram.config.exchange_settings import ExchangeSettings
+from botragram.config.telegram_settings import TelegramSettings
+from botragram.enums import (
+    ExchangeType,
+    ExecutionPolicy,
+    MarketType,
+    PositionSide,
+    TradeMode,
+)
 from botragram.models import Position
 
 _NOW = datetime(2026, 8, 7, tzinfo=UTC)
@@ -44,6 +54,17 @@ class FakeLivePositions:
         """Return configured live positions and record synchronization intent."""
         self.synchronized = synchronize
         return self.positions
+
+
+@dataclass(slots=True, kw_only=True)
+class FakeIncompleteSubmissions:
+    """Return deterministic incomplete LIVE submission ownership."""
+
+    incomplete: tuple[object, ...] = ()
+
+    async def get_incomplete(self) -> Sequence[object]:
+        """Return configured incomplete attempts."""
+        return self.incomplete
 
 
 @dataclass(slots=True)
@@ -170,6 +191,73 @@ async def _run_unsafe_runtime_test() -> None:
 
     with pytest.raises(RuntimeError, match="Stop the market stream"):
         await service.prepare(market_type=MarketType.FUTURES)
+
+
+def test_execution_policy_switch_uses_shared_soft_restart() -> None:
+    """Switch PAPER workflow without terminating the Botragram process."""
+    asyncio.run(_run_execution_policy_switch_test())
+
+
+async def _run_execution_policy_switch_test() -> None:
+    """Stage and commit autonomous PAPER through the shared coordinator."""
+    coordinator = RuntimeRestartCoordinator()
+    service = MarketTypeSwitchService(
+        trade_mode=TradeMode.PAPER,
+        runtime_control=TradingRuntimeControl(),
+        position_repository=FakeStoredPositions(),
+        position_service=FakeLivePositions(),
+        restart_coordinator=coordinator,
+        settings=Settings(telegram=TelegramSettings(enabled=False)),
+        submission_attempt_repository=FakeIncompleteSubmissions(),
+    )
+
+    assert ExecutionPolicy.AUTONOMOUS_PAPER in service.available_execution_policies()
+    assert await service.prepare_execution_policy(
+        execution_policy=ExecutionPolicy.AUTONOMOUS_PAPER
+    )
+    service.commit_execution_policy(execution_policy=ExecutionPolicy.AUTONOMOUS_PAPER)
+
+    assert await coordinator.wait() is ExecutionPolicy.AUTONOMOUS_PAPER
+    assert coordinator.consume() is ExecutionPolicy.AUTONOMOUS_PAPER
+
+
+def test_live_execution_policy_switch_requires_clean_submission_state() -> None:
+    """Keep incomplete LIVE submission ownership authoritative during switching."""
+    asyncio.run(_run_live_execution_policy_recovery_guard_test())
+
+
+async def _run_live_execution_policy_recovery_guard_test() -> None:
+    """Reject autonomous activation while an incomplete LIVE attempt exists."""
+    settings = Settings(
+        app=AppSettings(
+            trade_mode=TradeMode.LIVE,
+            execution_policy=ExecutionPolicy.SINGLE_SYMBOL,
+            autonomous_live_entry_enabled=True,
+        ),
+        exchange=ExchangeSettings(
+            exchange=ExchangeType.BINANCE,
+            market_type=MarketType.FUTURES,
+            api_key="key",
+            api_secret="secret",
+            testnet=True,
+        ),
+        telegram=TelegramSettings(enabled=False),
+    )
+    service = MarketTypeSwitchService(
+        trade_mode=TradeMode.LIVE,
+        runtime_control=TradingRuntimeControl(market_type=MarketType.FUTURES),
+        position_repository=FakeStoredPositions(),
+        position_service=FakeLivePositions(),
+        restart_coordinator=RuntimeRestartCoordinator(),
+        settings=settings,
+        submission_attempt_repository=FakeIncompleteSubmissions(incomplete=(object(),)),
+    )
+
+    assert ExecutionPolicy.AUTONOMOUS_LIVE in service.available_execution_policies()
+    with pytest.raises(RuntimeError, match="Incomplete LIVE submission"):
+        await service.prepare_execution_policy(
+            execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE
+        )
 
 
 def test_market_type_switch_fails_closed_for_live_positions() -> None:

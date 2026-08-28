@@ -17,6 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 # =============================================================================
@@ -78,6 +79,27 @@ def test_mainnet_activation_requires_second_explicit_opt_in() -> None:
         SettingsManager.validate(settings=_mainnet_settings(mainnet_opt_in=False))
 
     SettingsManager.validate(settings=_mainnet_settings(mainnet_opt_in=True))
+
+
+def test_mainnet_capability_can_remain_inactive_under_single_symbol_policy() -> None:
+    """Keep MAINNET authorization dormant until autonomous policy is selected."""
+    autonomous = _mainnet_settings(mainnet_opt_in=True)
+    single_symbol = replace(
+        autonomous,
+        app=replace(
+            autonomous.app,
+            execution_policy=ExecutionPolicy.SINGLE_SYMBOL,
+        ),
+    )
+
+    SettingsManager.validate(settings=single_symbol)
+
+    provider = DependencyProvider(
+        database_path="data/test-mainnet-capability.db",
+        settings=single_symbol,
+    )
+    assert provider.autonomous_live_entry_authorization is not None
+    asyncio.run(provider.close())
 
 
 def test_mainnet_opt_in_cannot_authorize_testnet_or_replace_base_opt_in() -> None:

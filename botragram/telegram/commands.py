@@ -46,6 +46,8 @@ from botragram.constants.telegram import (
     MENU_ORDERS,
     MENU_PAUSE,
     MENU_POSITIONS,
+    MENU_RESUME,
+    MENU_RISK_LIMITS,
     MENU_SETTINGS,
     MENU_START,
     MENU_STATUS,
@@ -54,6 +56,7 @@ from botragram.constants.telegram import (
     MENU_STREAM,
     MENU_TEST,
     MENU_TRADING,
+    MENU_TRADING_MODE,
 )
 from botragram.models import LiveRuntimeHealthSnapshot, Order, Trade
 from botragram.telegram.access import is_authorized_update
@@ -67,6 +70,7 @@ from botragram.telegram.keyboards import (
     get_configuration_menu_keyboard,
     get_dashboard_menu_keyboard,
     get_exchange_keyboard,
+    get_execution_policy_keyboard,
     get_interval_keyboard,
     get_main_menu_keyboard,
     get_market_keyboard,
@@ -96,6 +100,7 @@ from botragram.telegram.messages import (
     get_test_message,
     get_welcome_message,
 )
+from botragram.telegram.risk_limit_commands import risk_limits_command
 
 logger: Final[logging.Logger] = logging.getLogger(__name__)
 _HISTORY_LIMIT: Final[int] = 10
@@ -116,6 +121,8 @@ _MENU_ACTIONS: Final[frozenset[str]] = frozenset(
         MENU_ORDERS,
         MENU_PAUSE,
         MENU_POSITIONS,
+        MENU_RESUME,
+        MENU_RISK_LIMITS,
         MENU_SETTINGS,
         MENU_START,
         MENU_STATUS,
@@ -124,6 +131,7 @@ _MENU_ACTIONS: Final[frozenset[str]] = frozenset(
         MENU_STREAM,
         MENU_TEST,
         MENU_TRADING,
+        MENU_TRADING_MODE,
     }
 )
 _DATA_UNAVAILABLE_MESSAGE: Final[str] = (
@@ -231,6 +239,35 @@ async def _resume_autonomous_live(context: BotContext) -> bool:
     return control.resume_global_cycle()
 
 
+def _get_context_main_menu_keyboard(context: BotContext) -> ReplyKeyboardMarkup:
+    """Return a persistent keyboard that cannot mix incompatible workflows."""
+    control = context.runtime_control
+    return get_main_menu_keyboard(
+        execution_policy=context.execution_policy,
+        is_paused=control.is_paused if control is not None else True,
+    )
+
+
+async def _reject_discovery_managed_configuration(
+    *,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> bool:
+    """Reject single-symbol configuration controls in discovery workflows."""
+    bot_context = _get_context(context)
+    if not bot_context.is_discovery_workflow:
+        return False
+    if update.message is not None:
+        await update.message.reply_text(
+            "ℹ️ <b>Konfigurasi market dikelola oleh discovery workflow.</b>\n\n"
+            "Gunakan <b>Trading Mode</b> dan pindah ke <b>Single Symbol</b> "
+            "untuk memilih exchange product, symbol, strategy, interval, atau stream.",
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=_get_context_main_menu_keyboard(bot_context),
+        )
+    return True
+
+
 async def _reply_data_unavailable(update: Update) -> None:
     """Return a truthful transient query failure response."""
     if update.message is not None:
@@ -333,12 +370,14 @@ async def start_command(
             return
 
         ctx = _get_context(context)
-        checklist = _get_startup_configuration_message(ctx)
+        checklist = (
+            "" if ctx.is_discovery_workflow else _get_startup_configuration_message(ctx)
+        )
         msg = get_welcome_message()
 
         if checklist:
             msg = f"{msg}\n\n{checklist}"
-        kb = get_main_menu_keyboard()
+        kb = _get_context_main_menu_keyboard(ctx)
         await update.message.reply_text(
             msg, parse_mode=DEFAULT_PARSE_MODE, reply_markup=kb
         )
@@ -520,6 +559,11 @@ async def exchange_command(
     if update.message:
         if not is_authorized_update(update=update, context=context):
             return
+        if await _reject_discovery_managed_configuration(
+            update=update,
+            context=context,
+        ):
+            return
 
         ctx = _get_context(context)
         exchange_confirmed = _is_runtime_confirmed(ctx, "exchange")
@@ -547,6 +591,11 @@ async def market_command(
 ) -> None:
     if update.message:
         if not is_authorized_update(update=update, context=context):
+            return
+        if await _reject_discovery_managed_configuration(
+            update=update,
+            context=context,
+        ):
             return
 
         ctx = _get_context(context)
@@ -697,6 +746,11 @@ async def strategy_command(
     if update.message:
         if not is_authorized_update(update=update, context=context):
             return
+        if await _reject_discovery_managed_configuration(
+            update=update,
+            context=context,
+        ):
+            return
 
         ctx = _get_context(context)
         fast_period = 9
@@ -726,6 +780,11 @@ async def interval_command(
     if update.message:
         if not is_authorized_update(update=update, context=context):
             return
+        if await _reject_discovery_managed_configuration(
+            update=update,
+            context=context,
+        ):
+            return
 
         ctx = _get_context(context)
         control = ctx.runtime_control
@@ -753,6 +812,11 @@ async def stream_command(
 ) -> None:
     if update.message:
         if not is_authorized_update(update=update, context=context):
+            return
+        if await _reject_discovery_managed_configuration(
+            update=update,
+            context=context,
+        ):
             return
 
         ctx = _get_context(context)
@@ -850,6 +914,36 @@ async def pause_bot_command(
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
 
+async def trading_mode_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Show workflows allowed inside the immutable boot capability envelope."""
+    if update.message is None:
+        return
+    if not is_authorized_update(update=update, context=context):
+        return
+
+    bot_context = _get_context(context)
+    switcher = bot_context.market_type_switcher
+    available = (
+        switcher.available_execution_policies()
+        if switcher is not None
+        else (bot_context.execution_policy,)
+    )
+    await update.message.reply_text(
+        "🔄 <b>Trading Mode</b>\n\n"
+        f"Current: <code>{bot_context.execution_policy.value}</code>\n\n"
+        "Pergantian mode hanya mengganti trading session dalam process yang sama. "
+        "Trade mode, network, credential, dan MAINNET authorization tidak berubah.",
+        parse_mode=DEFAULT_PARSE_MODE,
+        reply_markup=get_execution_policy_keyboard(
+            current_policy=bot_context.execution_policy,
+            available_policies=available,
+        ),
+    )
+
+
 async def test_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -879,6 +973,7 @@ async def menu_message_handler(
         return
 
     action = update.message.text or ""
+    bot_context = _get_context(context)
     chat_data = context.chat_data
     search_pending = bool(
         chat_data is not None and chat_data.get(MARKET_SEARCH_PENDING_KEY) is True
@@ -895,6 +990,29 @@ async def menu_message_handler(
                 keyword=action,
             )
             return
+
+    if bot_context.is_discovery_workflow and action in {
+        MENU_DASHBOARD,
+        MENU_TRADING,
+        MENU_CONFIGURATION,
+        MENU_EXCHANGE,
+        MENU_MARKET,
+        MENU_MARKET_OVERVIEW,
+        MENU_STRATEGY,
+        MENU_INTERVAL,
+        MENU_STREAM,
+        MENU_START,
+    }:
+        await _show_navigation(
+            update=update,
+            title="Discovery Workflow",
+            description=(
+                "Single-symbol controls disembunyikan. Gunakan Status, Positions, "
+                "runtime control, risk limits, atau Trading Mode."
+            ),
+            keyboard=_get_context_main_menu_keyboard(bot_context),
+        )
+        return
 
     if action == MENU_DASHBOARD:
         await _show_navigation(
@@ -929,7 +1047,7 @@ async def menu_message_handler(
             update=update,
             title="Botragram Home",
             description="Pilih kategori sesuai pekerjaan yang ingin dilakukan.",
-            keyboard=get_main_menu_keyboard(),
+            keyboard=_get_context_main_menu_keyboard(bot_context),
         )
     elif action == MENU_STATUS:
         await status_command(update, context)
@@ -955,10 +1073,14 @@ async def menu_message_handler(
         await interval_command(update, context)
     elif action == MENU_STREAM:
         await stream_command(update, context)
-    elif action == MENU_START:
+    elif action in {MENU_START, MENU_RESUME}:
         await start_bot_command(update, context)
     elif action == MENU_PAUSE:
         await pause_bot_command(update, context)
+    elif action == MENU_RISK_LIMITS:
+        await risk_limits_command(update, context)
+    elif action == MENU_TRADING_MODE:
+        await trading_mode_command(update, context)
     elif action == MENU_TEST:
         await test_command(update, context)
     elif action == MENU_STOP:

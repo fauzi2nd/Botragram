@@ -32,7 +32,13 @@ from telegram.ext import ContextTypes
 # Local Imports
 # =============================================================================
 from botragram.constants.telegram import DEFAULT_PARSE_MODE
-from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
+from botragram.enums import (
+    ExchangeType,
+    ExecutionPolicy,
+    Interval,
+    MarketType,
+    StrategyType,
+)
 from botragram.models import LiveRuntimeHealthSnapshot
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import (
@@ -43,6 +49,8 @@ from botragram.telegram.context import (
 )
 from botragram.telegram.keyboards import (
     get_exchange_keyboard,
+    get_execution_policy_confirmation_keyboard,
+    get_execution_policy_keyboard,
     get_interval_keyboard,
     get_market_keyboard,
     get_market_search_keyboard,
@@ -86,6 +94,9 @@ _STRATEGY_CALLBACK_PREFIX: Final[str] = "cb_strategy_"
 _PRODUCT_CALLBACK_PREFIX: Final[str] = "cb_product_"
 _OPPORTUNITY_APPROVE_CALLBACK_PREFIX: Final[str] = "cb_opportunity_approve_"
 _OPPORTUNITY_REJECT_CALLBACK_PREFIX: Final[str] = "cb_opportunity_reject_"
+_POLICY_SELECT_CALLBACK_PREFIX: Final[str] = "cb_policy_select_"
+_POLICY_CONFIRM_CALLBACK_PREFIX: Final[str] = "cb_policy_confirm_"
+_POLICY_CANCEL_CALLBACK: Final[str] = "cb_policy_cancel"
 
 
 # =============================================================================
@@ -204,6 +215,32 @@ def _uses_multi_context_runtime(
     return health is not None and len(health.contexts) > 1
 
 
+def _parse_execution_policy_callback(
+    *,
+    callback_data: str,
+    prefix: str,
+) -> ExecutionPolicy | None:
+    """Parse one exact execution-policy callback payload."""
+    try:
+        return ExecutionPolicy(callback_data.removeprefix(prefix))
+    except ValueError:
+        return None
+
+
+def _is_single_symbol_configuration_callback(callback_data: str) -> bool:
+    """Return whether an inline action belongs only to single-symbol setup."""
+    return (
+        callback_data == "cb_exchange"
+        or callback_data in _EXCHANGE_CALLBACKS
+        or callback_data.startswith(_PRODUCT_CALLBACK_PREFIX)
+        or callback_data.startswith(_MARKET_CALLBACK_PREFIX)
+        or callback_data.startswith(_MARKET_PAGE_CALLBACK_PREFIX)
+        or callback_data.startswith(_INTERVAL_CALLBACK_PREFIX)
+        or callback_data.startswith(_STRATEGY_CALLBACK_PREFIX)
+        or callback_data.startswith("cb_stream_")
+    )
+
+
 async def _handle_execution_authorization_callback(
     *,
     query: CallbackQuery,
@@ -287,6 +324,118 @@ async def handle_callback_query(
         bot_context=bot_context,
         callback_data=data,
     ):
+        return
+
+    if data.startswith(_POLICY_SELECT_CALLBACK_PREFIX):
+        target = _parse_execution_policy_callback(
+            callback_data=data,
+            prefix=_POLICY_SELECT_CALLBACK_PREFIX,
+        )
+        switcher = bot_context.market_type_switcher
+        available = (
+            switcher.available_execution_policies() if switcher is not None else ()
+        )
+        if target is None or switcher is None or target not in available:
+            await query.edit_message_text(
+                "⚠️ <b>Trading mode tidak diizinkan oleh boot configuration.</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+        if target is bot_context.execution_policy:
+            await query.edit_message_text(
+                "ℹ️ <b>Trading mode tersebut sudah aktif.</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=get_execution_policy_keyboard(
+                    current_policy=bot_context.execution_policy,
+                    available_policies=available,
+                ),
+            )
+            return
+        await query.edit_message_text(
+            "🔄 <b>Switch Trading Mode</b>\n\n"
+            f"<code>{bot_context.execution_policy.value}</code> → "
+            f"<code>{target.value}</code>\n\n"
+            "Syarat: runtime PAUSED, tidak ada posisi, tidak ada cycle aktif, "
+            "dan untuk LIVE recovery/protection harus bersih.\n\n"
+            "Trading session akan direbuild dalam process yang sama dan "
+            "session baru tetap PAUSED.",
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_execution_policy_confirmation_keyboard(
+                execution_policy=target,
+            ),
+        )
+        return
+
+    if data.startswith(_POLICY_CONFIRM_CALLBACK_PREFIX):
+        target = _parse_execution_policy_callback(
+            callback_data=data,
+            prefix=_POLICY_CONFIRM_CALLBACK_PREFIX,
+        )
+        switcher = bot_context.market_type_switcher
+        if target is None or switcher is None:
+            await query.edit_message_text(
+                "⚠️ <b>Trading-mode switch tidak tersedia.</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+        try:
+            changed = await switcher.prepare_execution_policy(
+                execution_policy=target,
+            )
+        except Exception as error:
+            _LOGGER.exception("Telegram execution-policy switch validation failed")
+            await query.edit_message_text(
+                f"⚠️ <b>{escape(str(error))}</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=get_execution_policy_keyboard(
+                    current_policy=bot_context.execution_policy,
+                    available_policies=switcher.available_execution_policies(),
+                ),
+            )
+            return
+        if not changed:
+            await query.edit_message_text(
+                "ℹ️ <b>Trading mode tersebut sudah aktif.</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+        await query.edit_message_text(
+            "🔄 <b>Trading session sedang direstart.</b>\n\n"
+            f"Target: <code>{target.value}</code>\n"
+            "Process Botragram tetap hidup. Session baru akan mulai dalam "
+            "keadaan PAUSED.",
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
+        switcher.commit_execution_policy(execution_policy=target)
+        return
+
+    if data == _POLICY_CANCEL_CALLBACK:
+        switcher = bot_context.market_type_switcher
+        available = (
+            switcher.available_execution_policies()
+            if switcher is not None
+            else (bot_context.execution_policy,)
+        )
+        await query.edit_message_text(
+            "🔄 <b>Trading Mode</b>\n\n"
+            f"Current: <code>{bot_context.execution_policy.value}</code>",
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_execution_policy_keyboard(
+                current_policy=bot_context.execution_policy,
+                available_policies=available,
+            ),
+        )
+        return
+
+    if bot_context.is_discovery_workflow and _is_single_symbol_configuration_callback(
+        data
+    ):
+        await query.edit_message_text(
+            "ℹ️ <b>Single-symbol configuration tidak aktif pada discovery mode.</b>\n\n"
+            "Pindah ke <b>Single Symbol</b> melalui Trading Mode untuk "
+            "menggunakan kontrol ini.",
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
         return
 
     if data in {"cb_status", "cb_back_main"}:

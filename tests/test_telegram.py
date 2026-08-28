@@ -22,9 +22,19 @@ from decimal import Decimal
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.constants.telegram import MENU_MARKET, MENU_MARKET_OVERVIEW
+from botragram.constants.telegram import (
+    MENU_CONFIGURATION,
+    MENU_MARKET,
+    MENU_MARKET_OVERVIEW,
+    MENU_PAUSE,
+    MENU_RESUME,
+    MENU_RISK_LIMITS,
+    MENU_TRADING,
+    MENU_TRADING_MODE,
+)
 from botragram.enums import (
     AuthorizationStatus,
+    ExecutionPolicy,
     MarketType,
     OrderSide,
     OrderStatus,
@@ -40,6 +50,7 @@ from botragram.telegram.keyboards import (
     get_dashboard_menu_keyboard,
     get_exchange_keyboard,
     get_execution_authorization_keyboard,
+    get_execution_policy_keyboard,
     get_interval_keyboard,
     get_main_menu_keyboard,
     get_market_keyboard,
@@ -67,6 +78,60 @@ from botragram.telegram.messages import (
 # Constants
 # =============================================================================
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+# =============================================================================
+# Mode-aware Menu Tests
+# =============================================================================
+def test_autonomous_live_home_hides_single_symbol_controls() -> None:
+    """Expose monitoring/risk/runtime controls without manual symbol setup."""
+    running = get_main_menu_keyboard(
+        execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+        is_paused=False,
+    )
+    paused = get_main_menu_keyboard(
+        execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+        is_paused=True,
+    )
+    running_labels = {button.text for row in running.keyboard for button in row}
+    paused_labels = {button.text for row in paused.keyboard for button in row}
+
+    assert MENU_CONFIGURATION not in running_labels
+    assert MENU_TRADING not in running_labels
+    assert MENU_RISK_LIMITS in running_labels
+    assert MENU_TRADING_MODE in running_labels
+    assert MENU_PAUSE in running_labels
+    assert MENU_RESUME in paused_labels
+
+
+def test_single_symbol_home_keeps_setup_and_adds_mode_switch() -> None:
+    """Keep manual configuration available only in single-symbol workflow."""
+    keyboard = get_main_menu_keyboard(
+        execution_policy=ExecutionPolicy.SINGLE_SYMBOL,
+        is_paused=True,
+    )
+    labels = {button.text for row in keyboard.keyboard for button in row}
+
+    assert MENU_CONFIGURATION in labels
+    assert MENU_TRADING in labels
+    assert MENU_TRADING_MODE in labels
+    assert MENU_RISK_LIMITS not in labels
+
+
+def test_execution_policy_keyboard_shows_only_allowed_targets() -> None:
+    """Never render a workflow outside the boot capability envelope."""
+    markup = get_execution_policy_keyboard(
+        current_policy=ExecutionPolicy.SINGLE_SYMBOL,
+        available_policies=(
+            ExecutionPolicy.SINGLE_SYMBOL,
+            ExecutionPolicy.AUTONOMOUS_LIVE,
+        ),
+    )
+    labels = {button.text for row in markup.inline_keyboard for button in row}
+
+    assert any("Single Symbol" in label for label in labels)
+    assert any("Auto Discovery" in label for label in labels)
+    assert not any("Human Confirmed" in label for label in labels)
 
 
 # =============================================================================
@@ -359,7 +424,7 @@ def test_main_menu_and_exchange_keyboard_have_stable_actions() -> None:
     dashboard_menu = get_dashboard_menu_keyboard()
     configuration_menu = get_configuration_menu_keyboard()
 
-    assert len(main_menu.keyboard) == 2
+    assert len(main_menu.keyboard) == 3
     assert all(len(keyboard.keyboard) <= 4 for keyboard in submenu_keyboards)
     assert all(
         any(button.text == "🏠 Home" for row in keyboard.keyboard for button in row)

@@ -46,7 +46,7 @@ botragram/
 |   |-- environment_provider.py
 |   |-- global_discovery_telemetry.py # Read-only ranked discovery phase/outcome snapshot
 |   |-- lifecycle.py
-|   |-- market_type_switch.py # Guarded Spot/Futures soft-restart coordination
+|   |-- market_type_switch.py # Guarded MarketType/ExecutionPolicy in-process reconfiguration/soft restart
 |   |-- runtime_control.py
 |   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
 |   |-- runtime_limited_autonomous_live_executor.py # Dynamic durable capacity adapter

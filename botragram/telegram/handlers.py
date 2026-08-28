@@ -37,6 +37,7 @@ from botragram.telegram.commands import (
     status_command,
     strategy_command,
     stream_command,
+    trading_mode_command,
 )
 from botragram.telegram.risk_limit_commands import (
     risk_limits_command,
@@ -60,6 +61,7 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler("resume", start_bot_command))
     app.add_handler(CommandHandler(CMD_SETTINGS, settings_command))
     app.add_handler(CommandHandler("exchange", exchange_command))
+    app.add_handler(CommandHandler("mode", trading_mode_command))
     app.add_handler(CommandHandler("risklimits", risk_limits_command))
     app.add_handler(CommandHandler("setrisklimits", set_risk_limits_command))
     app.add_handler(CallbackQueryHandler(handle_callback_query))

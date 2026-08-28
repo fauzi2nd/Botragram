@@ -81,6 +81,7 @@ async def _run_trading(
     dependency_provider: DependencyProvider,
     settings: Settings,
     restart_coordinator: RuntimeRestartCoordinator,
+    start_paused: bool = False,
 ) -> None:
     """Build and run trading orchestration after resources are initialized."""
     global_discovery_telemetry = (
@@ -152,6 +153,8 @@ async def _run_trading(
             )
         else:
             await dependency_provider.runtime_recovery_service.recover()
+        if start_paused:
+            dependency_provider.runtime_control.pause()
         runtime_contexts = dependency_provider.runtime_control.runtime_contexts
         strategy_types = (
             tuple(context.strategy_type for context in runtime_contexts)
@@ -233,6 +236,7 @@ async def main() -> None:
         lock_path=settings.app.database_path.with_suffix(".lock"),
     )
     market_type_confirmed = False
+    start_paused_after_restart = False
     configure_logging(settings=settings.logging)
 
     try:
@@ -265,26 +269,46 @@ async def main() -> None:
                     dependency_provider=dependency_provider,
                     settings=settings,
                     restart_coordinator=restart_coordinator,
+                    start_paused=start_paused_after_restart,
                 ),
             )
             await application.run()
-            requested_market_type = restart_coordinator.consume()
+            requested_restart = restart_coordinator.consume()
 
-            if requested_market_type is None:
+            if requested_restart is None:
                 break
+
+            if isinstance(requested_restart, MarketType):
+                settings = replace(
+                    settings,
+                    exchange=replace(
+                        settings.exchange,
+                        market_type=requested_restart,
+                    ),
+                )
+                settings_manager.validate(settings=settings)
+                market_type_confirmed = True
+                start_paused_after_restart = False
+                _LOGGER.info(
+                    "Application restarting with Binance market type: %s",
+                    requested_restart.value,
+                )
+                continue
 
             settings = replace(
                 settings,
-                exchange=replace(
-                    settings.exchange,
-                    market_type=requested_market_type,
+                app=replace(
+                    settings.app,
+                    execution_policy=requested_restart,
+                    autonomous_execution_enabled=False,
                 ),
             )
             settings_manager.validate(settings=settings)
-            market_type_confirmed = True
+            start_paused_after_restart = True
             _LOGGER.info(
-                "Application restarting with Binance market type: %s",
-                requested_market_type.value,
+                "Application restarting with execution policy: %s; "
+                "next_session_paused=true",
+                requested_restart.value,
             )
     finally:
         runtime_lock.release()

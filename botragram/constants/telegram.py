@@ -39,6 +39,9 @@ __all__ = [
     "MENU_STREAM",
     "MENU_START",
     "MENU_PAUSE",
+    "MENU_RESUME",
+    "MENU_RISK_LIMITS",
+    "MENU_TRADING_MODE",
     "MENU_TEST",
     "MENU_STOP",
     "MENU_TRADING",
@@ -88,6 +91,9 @@ MENU_STREAM: str = "📡 Stream"
 
 MENU_START: str = "▶️ Start Bot"
 MENU_PAUSE: str = "⏸️ Pause Bot"
+MENU_RESUME: str = "▶️ Resume"
+MENU_RISK_LIMITS: str = "⚙️ Risk Limits"
+MENU_TRADING_MODE: str = "🔄 Trading Mode"
 MENU_TEST: str = "🧪 Test"
 MENU_STOP: str = "⏹️ Stop Bot"
 
