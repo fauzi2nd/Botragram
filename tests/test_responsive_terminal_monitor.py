@@ -14,7 +14,7 @@ from botragram.app import TerminalMonitor, TradingRuntimeControl
 from botragram.app.runtime_control import MarketStreamTelemetry
 from botragram.app.terminal_monitor import TerminalStatus
 from botragram.engine import PnLEngine
-from botragram.enums import TradeMode
+from botragram.enums import PositionSide, TradeMode
 from botragram.models import Position
 from botragram.services.paper_trading_service import PaperPortfolioSnapshot
 
@@ -50,8 +50,8 @@ class _PositionProvider:
         return ()
 
 
-def _monitor(*, width: int) -> TerminalMonitor:
-    """Build one monitor against a deterministic terminal width."""
+def _monitor(*, width: int, height: int = 60) -> TerminalMonitor:
+    """Build one monitor against deterministic terminal dimensions."""
     return TerminalMonitor(
         runtime_control=TradingRuntimeControl(),
         paper_balance_provider=_PaperBalanceProvider(),
@@ -64,18 +64,21 @@ def _monitor(*, width: int) -> TerminalMonitor:
             file=StringIO(),
             force_terminal=False,
             width=width,
-            height=60,
+            height=height,
         ),
     )
 
 
-def _status() -> TerminalStatus:
-    """Build one minimal terminal snapshot with no managed positions."""
+def _status(*, positions: tuple[Position, ...] = ()) -> TerminalStatus:
+    """Build one terminal snapshot with optional managed-position data."""
     return TerminalStatus(
         observed_at=datetime(2026, 1, 1, tzinfo=UTC),
         balance=Decimal("100"),
-        position_count=0,
-        unrealized_pnl=Decimal("0"),
+        position_count=len(positions),
+        unrealized_pnl=sum(
+            (position.unrealized_pnl for position in positions),
+            start=Decimal("0"),
+        ),
         stream=MarketStreamTelemetry(
             enabled=False,
             event_count=0,
@@ -85,15 +88,45 @@ def _status() -> TerminalStatus:
         stream_rate=0.0,
         stream_age_ms=None,
         missing_startup_requirements=(),
+        positions=positions,
     )
 
 
-def _render(*, width: int, monitor: TerminalMonitor | None = None) -> str:
-    """Render one dashboard to plain text at a selected width."""
+def _position(index: int) -> Position:
+    """Build one deterministic protected position for portrait rendering."""
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    return Position(
+        symbol=f"PAIR{index}USDT",
+        side=PositionSide.LONG if index % 2 else PositionSide.SHORT,
+        quantity=Decimal("1.25"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("101"),
+        unrealized_pnl=Decimal("1.25"),
+        leverage=1,
+        opened_at=now,
+        updated_at=now,
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        protection_step=index,
+    )
+
+
+def _render(
+    *,
+    width: int,
+    monitor: TerminalMonitor | None = None,
+    status: TerminalStatus | None = None,
+) -> str:
+    """Render one dashboard to plain text at selected terminal dimensions."""
     active_monitor = monitor or _monitor(width=width)
     output = StringIO()
-    console = Console(file=output, force_terminal=False, width=width, height=60)
-    console.print(active_monitor.render_dashboard(_status()))
+    console = Console(
+        file=output,
+        force_terminal=False,
+        width=width,
+        height=active_monitor.console.size.height,
+    )
+    console.print(active_monitor.render_dashboard(status or _status()))
     return output.getvalue()
 
 
@@ -102,6 +135,7 @@ def test_compact_terminal_keeps_readable_performance_summary() -> None:
     rendered = _render(width=72)
 
     assert "Runtime & Safety" in rendered
+    assert "Strategy Type" not in rendered
     assert "Global Discovery" in rendered
     assert "Trading Performance" in rendered
     assert "Trades / W-L" in rendered
@@ -135,6 +169,26 @@ def test_compact_terminal_humanizes_discovery_rejection_events() -> None:
     assert "QUOTE REJECT" in rendered
     assert "market_reference_rejected" not in rendered
     assert "trading_runner" not in rendered
+
+
+def test_compact_terminal_keeps_five_positions_with_dense_rows() -> None:
+    """Fit five position summaries without the previous five-row expansion."""
+    positions = tuple(_position(index) for index in range(1, 6))
+    monitor = _monitor(width=72, height=60)
+
+    rendered = _render(
+        width=72,
+        monitor=monitor,
+        status=_status(positions=positions),
+    )
+
+    for index in range(1, 6):
+        assert f"PAIR{index}USDT" in rendered
+        assert f"STEP {index}" in rendered
+    assert "Entry / Mark / SL / TP" in rendered
+    assert "Protection Step" not in rendered
+    assert "Strategy Type" not in rendered
+    assert "Runtime Events" in rendered
 
 
 def test_medium_terminal_uses_two_column_summary() -> None:
