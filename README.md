@@ -484,7 +484,11 @@ diproses satu per satu tanpa melihat candle berikutnya. Jika satu candle
 menyentuh SL dan TP sekaligus, backtest memakai asumsi konservatif: SL diproses
 lebih dahulu. Fee, slippage, sizing, leverage, serta baseline SL/TP memakai
 konfigurasi PAPER yang sama; notional dibatasi oleh saldo backtest. Stepped SL+
-belum disimulasikan dan ditampilkan sebagai warning pada report.
+juga disimulasikan secara konservatif: SL yang sudah aktif diperiksa lebih dulu,
+kemudian TP; jika posisi tetap terbuka, favorable excursion pada candle tersebut
+dapat menaikkan stepped SL, tetapi level baru baru efektif mulai candle berikutnya.
+Aturan ini menghindari asumsi urutan intrabar high/low yang tidak tersedia pada
+OHLC dan dilindungi oleh regression test khusus.
 
 Report terminal menampilkan saldo awal/akhir, net PnL, return, drawdown, fee,
 jumlah long/short, win rate, profit factor, dan maksimal 50 trade terakhir.
