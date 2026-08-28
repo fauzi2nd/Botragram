@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -87,12 +88,12 @@ def _status() -> TerminalStatus:
     )
 
 
-def _render(*, width: int) -> str:
+def _render(*, width: int, monitor: TerminalMonitor | None = None) -> str:
     """Render one dashboard to plain text at a selected width."""
-    monitor = _monitor(width=width)
+    active_monitor = monitor or _monitor(width=width)
     output = StringIO()
     console = Console(file=output, force_terminal=False, width=width, height=60)
-    console.print(monitor.render_dashboard(_status()))
+    console.print(active_monitor.render_dashboard(_status()))
     return output.getvalue()
 
 
@@ -106,9 +107,34 @@ def test_compact_terminal_keeps_readable_performance_summary() -> None:
     assert "Trades / W-L" in rendered
     assert "Win Rate / PnL" in rendered
     assert "Managed LIVE Positions" in rendered
-    assert "Runtime Events | Log Messages" in rendered
+    assert "Runtime Events" in rendered
     assert "Positions" in rendered
     assert "NONE" in rendered
+
+
+def test_compact_terminal_humanizes_discovery_rejection_events() -> None:
+    """Hide internal snake-case diagnostics from the portrait operator view."""
+    monitor = _monitor(width=72)
+    record = logging.LogRecord(
+        name="botragram.app.trading_runner",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg=(
+            "Global discovery candidate processed: symbol=MAGICUSDT side=sell "
+            "confidence=0.0002516 outcome=market_reference_rejected"
+        ),
+        args=(),
+        exc_info=None,
+    )
+    monitor.log_handler.emit(record)
+
+    rendered = _render(width=72, monitor=monitor)
+
+    assert "Candidate MAGICUSDT SELL" in rendered
+    assert "QUOTE REJECT" in rendered
+    assert "market_reference_rejected" not in rendered
+    assert "trading_runner" not in rendered
 
 
 def test_medium_terminal_uses_two_column_summary() -> None:
