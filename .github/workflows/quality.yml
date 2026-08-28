@@ -16,7 +16,7 @@ concurrency:
 jobs:
   quality:
     name: Supplemental Python 3.14
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     continue-on-error: true
     timeout-minutes: 30
 
