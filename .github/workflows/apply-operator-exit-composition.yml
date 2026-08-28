@@ -55,7 +55,8 @@ jobs:
 
       - name: Import application entry point
         working-directory: target-${{ github.run_id }}
-        run: python -c "import main; print('import main: PASS')"
+        run: |
+          python -c "import main; print('import main: PASS')"
 
       - name: Check formatting
         working-directory: target-${{ github.run_id }}
