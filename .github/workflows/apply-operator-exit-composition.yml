@@ -1,4 +1,4 @@
-name: Validate Telegram Command Registry Cleanup
+name: Validate Operator Exit Documentation
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: telegram-command-registry-cleanup
+  group: operator-exit-documentation
   cancel-in-progress: true
 
 jobs:
@@ -35,19 +35,12 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Apply command registry cleanup
-        run: python helper/.dev/apply_telegram_command_registry_cleanup.py target
+      - name: Apply operator-exit documentation
+        run: python helper/.dev/apply_operator_exit_docs.py target
 
       - name: Install project and quality dependencies
         working-directory: target
         run: python -m pip install -e ".[dev]"
-
-      - name: Normalize generated changes
-        working-directory: target
-        run: |
-          python -m ruff format .
-          python -m ruff check --fix .
-          python -m ruff format .
 
       - name: Compile sources
         working-directory: target
@@ -82,12 +75,12 @@ jobs:
         working-directory: target
         run: git diff --check
 
-      - name: Commit and push cleanup
+      - name: Commit and push documentation
         working-directory: target
         run: |
           git config user.name "Fauzi Pranata"
           git config user.email "spacetone2nd@gmail.com"
-          git add -A
+          git add README.md
           git diff --cached --check
-          git commit -m "fix: deduplicate Telegram command registry"
+          git commit -m "docs: document operator exit controls"
           git push origin HEAD:feature/operator-exit-control-plane
