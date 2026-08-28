@@ -39,9 +39,7 @@ jobs:
         run: python helper/.dev/apply_operator_exit_recovery_hardening.py "target-${{ github.run_id }}"
 
       - name: Normalize generated SQLite column layout
-        working-directory: target-${{ github.run_id }}
-        run: |
-          python -c 'from pathlib import Path; p=Path("botragram/storage/sqlite/operator_exit_repository.py"); t=p.read_text(encoding="utf-8"); old="symbol, authorized_symbols, target_execution_policy, failure_reason, created_at, updated_at"; new="symbol, authorized_symbols, target_execution_policy, failure_reason, created_at,\nupdated_at"; assert old in t; p.write_text(t.replace(old, new, 1), encoding="utf-8")'
+        run: python helper/.dev/fix_operator_exit_scope_layout.py "target-${{ github.run_id }}"
 
       - name: Install project and quality dependencies
         working-directory: target-${{ github.run_id }}
