@@ -354,9 +354,11 @@ git diff --check
 
 These full local Windows gates are the release authority. The restored
 `.github/workflows/quality.yml` runs the same compile, Ruff, Pyright, MyPy, and
-pytest checks on one standard GitHub-hosted Ubuntu runner only as supplemental,
-non-blocking feedback. It has no schedule or deployment job and must not be made
-a required branch-protection check.
+pytest checks on a self-hosted Linux ARM64 runner as supplemental, non-blocking
+feedback. The validated runner requires its Linux userland to provide the shared
+libraries needed by the Python/Node toolchain (including `libatomic.so.1`). The
+workflow has no schedule or deployment job and must not be made a required
+branch-protection check.
 
 Current health views describe recovered runtime/stream/monitor state and the
 read-only typed autonomous-recovery lifecycle. Health text is never an
