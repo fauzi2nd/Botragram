@@ -6,7 +6,7 @@ import logging
 from html import escape
 from typing import Final
 
-from telegram import Update
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from botragram.constants.telegram import (
@@ -16,18 +16,94 @@ from botragram.constants.telegram import (
     MENU_START,
 )
 from botragram.telegram.access import is_authorized_update
-from botragram.telegram.commands import (
-    _get_context,
-    _get_context_main_menu_keyboard,
-    _get_startup_configuration_message,
-    _reply_data_unavailable,
-    _resume_autonomous_live,
-    menu_message_handler,
+from botragram.telegram.commands import menu_message_handler
+from botragram.telegram.context import (
+    BOT_CONTEXT_KEY,
+    MARKET_SEARCH_PENDING_KEY,
+    BotContext,
 )
-from botragram.telegram.context import MARKET_SEARCH_PENDING_KEY
-from botragram.telegram.messages import get_resume_message, get_runtime_pause_message
+from botragram.telegram.keyboards import get_main_menu_keyboard
+from botragram.telegram.messages import (
+    get_resume_message,
+    get_runtime_pause_message,
+    get_startup_configuration_message,
+)
 
 logger: Final[logging.Logger] = logging.getLogger(__name__)
+_DATA_UNAVAILABLE_MESSAGE: Final[str] = (
+    "⚠️ <b>Data sementara tidak tersedia.</b> Silakan coba lagi."
+)
+
+
+def _get_bot_context(context: ContextTypes.DEFAULT_TYPE) -> BotContext:
+    """Return the active BotContext or a safe default context."""
+    candidate = context.bot_data.get(BOT_CONTEXT_KEY)
+    return candidate if isinstance(candidate, BotContext) else BotContext()
+
+
+def _get_runtime_menu_keyboard(bot_context: BotContext) -> ReplyKeyboardMarkup:
+    """Derive the persistent menu from authoritative runtime pause state."""
+    control = bot_context.runtime_control
+    return get_main_menu_keyboard(
+        execution_policy=bot_context.execution_policy,
+        is_paused=control.is_paused if control is not None else True,
+    )
+
+
+def _get_runtime_startup_checklist(bot_context: BotContext) -> str:
+    """Return the current startup checklist for non-discovery workflows."""
+    control = bot_context.runtime_control
+    if control is None:
+        return ""
+    return get_startup_configuration_message(
+        exchange=bot_context.exchange_type,
+        market_type=control.market_type.value,
+        symbol=control.symbol,
+        interval=control.interval.value,
+        strategy=control.strategy_type.value,
+        missing_requirements=control.get_missing_startup_requirements(),
+    )
+
+
+async def _reply_data_unavailable(update: Update) -> None:
+    """Send the standard Telegram unavailable-data response."""
+    if update.message is None:
+        return
+    await update.message.reply_text(
+        _DATA_UNAVAILABLE_MESSAGE,
+        parse_mode=DEFAULT_PARSE_MODE,
+    )
+
+
+async def _resume_autonomous_live(bot_context: BotContext) -> bool:
+    """Resume autonomous LIVE only from a reconciled fail-closed runtime state."""
+    control = bot_context.runtime_control
+    provider = bot_context.query_provider
+    if control is None or provider is None:
+        raise RuntimeError("Autonomous LIVE runtime observability is unavailable")
+
+    recovery = await provider.get_autonomous_live_recovery()
+    if recovery is None:
+        raise RuntimeError("Autonomous LIVE recovery state is unavailable")
+    if recovery.new_entry_blocked_by_recovery:
+        raise RuntimeError("Autonomous LIVE recovery is incomplete")
+
+    positions = tuple(await provider.get_positions())
+    runtime_contexts = control.runtime_contexts
+    managed_symbols = {runtime_context.symbol for runtime_context in runtime_contexts}
+    position_symbols = {position.symbol for position in positions}
+
+    if runtime_contexts:
+        if managed_symbols != position_symbols:
+            raise RuntimeError("LIVE portfolio requires reconciliation before resume")
+        return control.resume()
+
+    if positions:
+        raise RuntimeError("Unmanaged LIVE positions require recovery before resume")
+    if not recovery.autonomous_entry_authorized:
+        raise RuntimeError("Autonomous LIVE entry is not authorized")
+
+    return control.resume_global_cycle()
 
 
 async def start_bot_command_with_menu_refresh(
@@ -40,7 +116,7 @@ async def start_bot_command_with_menu_refresh(
     if not is_authorized_update(update=update, context=context):
         return
 
-    bot_context = _get_context(context)
+    bot_context = _get_bot_context(context)
     control = bot_context.runtime_control
     if control is None:
         await _reply_data_unavailable(update)
@@ -60,7 +136,7 @@ async def start_bot_command_with_menu_refresh(
                 f"<code>{escape(str(error))}</code>"
             )
         else:
-            checklist = _get_startup_configuration_message(bot_context)
+            checklist = _get_runtime_startup_checklist(bot_context)
             message = f"⚠️ <b>Trading belum dapat dimulai.</b>\n\n{checklist}"
     except Exception:
         logger.exception("Autonomous LIVE resume verification failed")
@@ -72,7 +148,7 @@ async def start_bot_command_with_menu_refresh(
     await update.message.reply_text(
         message,
         parse_mode=DEFAULT_PARSE_MODE,
-        reply_markup=_get_context_main_menu_keyboard(bot_context),
+        reply_markup=_get_runtime_menu_keyboard(bot_context),
     )
 
 
@@ -86,7 +162,7 @@ async def pause_bot_command_with_menu_refresh(
     if not is_authorized_update(update=update, context=context):
         return
 
-    bot_context = _get_context(context)
+    bot_context = _get_bot_context(context)
     control = bot_context.runtime_control
     if control is None:
         await _reply_data_unavailable(update)
@@ -96,7 +172,7 @@ async def pause_bot_command_with_menu_refresh(
     await update.message.reply_text(
         message,
         parse_mode=DEFAULT_PARSE_MODE,
-        reply_markup=_get_context_main_menu_keyboard(bot_context),
+        reply_markup=_get_runtime_menu_keyboard(bot_context),
     )
 
 
@@ -116,7 +192,7 @@ async def menu_message_handler_with_runtime_refresh(
     if not is_authorized_update(update=update, context=context):
         return
 
-    bot_context = _get_context(context)
+    bot_context = _get_bot_context(context)
     if action == MENU_START and bot_context.is_discovery_workflow:
         await menu_message_handler(update, context)
         return
