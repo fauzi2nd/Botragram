@@ -20,6 +20,7 @@ from rich.text import Text
 
 from botragram.app.terminal_monitor import TerminalMonitor as BaseTerminalMonitor
 from botragram.app.terminal_monitor import TerminalStatus
+from botragram.enums import TradeMode
 
 __all__ = ["TerminalMonitor"]
 
@@ -66,7 +67,7 @@ class TerminalMonitor(BaseTerminalMonitor):
         return layout
 
     def _render_compact_dashboard(self, status: TerminalStatus) -> Layout:
-        """Prioritize operational safety and logs on narrow portrait terminals."""
+        """Prioritize safety while retaining compact performance telemetry."""
         managed_height = self._compact_positions_height(status)
         discovery_height = 14 if status.global_discovery is not None else 5
         layout = Layout(name="root")
@@ -82,6 +83,11 @@ class TerminalMonitor(BaseTerminalMonitor):
                 size=discovery_height,
             ),
             Layout(
+                self._build_compact_performance_panel(status),
+                name="performance",
+                size=5,
+            ),
+            Layout(
                 self._build_compact_positions_panel(status),
                 name="managed_positions",
                 size=managed_height,
@@ -93,6 +99,41 @@ class TerminalMonitor(BaseTerminalMonitor):
             ),
         )
         return layout
+
+    def _build_compact_performance_panel(self, status: TerminalStatus) -> Panel:
+        """Render the highest-value performance metrics in two portrait rows."""
+        table = Table.grid(expand=True, padding=(0, 1))
+        table.add_column(style="bright_green", no_wrap=True)
+        table.add_column(style="white")
+
+        if self.trade_mode is TradeMode.LIVE:
+            performance = status.trading_performance
+            if performance is None:
+                table.add_row("Trades / W-L", "N/A / N/A")
+                table.add_row("Win Rate / PnL", "N/A / N/A")
+            else:
+                table.add_row(
+                    "Trades / W-L",
+                    f"{performance.closed_trade_count} / "
+                    f"{performance.win_count}-{performance.loss_count}",
+                )
+                table.add_row(
+                    "Win Rate / PnL",
+                    f"{performance.win_rate_percent:.1f}% / "
+                    f"{performance.realized_pnl:+,.2f} {self.quote_asset}",
+                )
+        else:
+            table.add_row("Trades / W-L", "N/A / N/A")
+            table.add_row(
+                "Win Rate / PnL",
+                f"N/A / {self._format_realized_pnl(status.realized_pnl)}",
+            )
+
+        return Panel(
+            table,
+            title="[bold]Trading Performance[/bold]",
+            border_style="green",
+        )
 
     def _build_compact_positions_panel(self, status: TerminalStatus) -> Panel:
         """Render managed positions as vertical key/value blocks on small screens."""
