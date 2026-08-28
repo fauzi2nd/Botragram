@@ -30,10 +30,42 @@ from botragram.telegram.keyboards import (
 )
 from botragram.telegram.messages import get_execution_authorization_message
 
-__all__ = ["TelegramBot"]
+__all__ = ["TelegramBot", "get_bot_commands"]
 
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _TRADING_MODE_SWITCHED_MESSAGE: Final[str] = "Trading Mode Switched"
+
+
+def get_bot_commands() -> tuple[BotCommand, ...]:
+    """Return the unique public Telegram command registry."""
+    commands = (
+        BotCommand("start", "Mulai bot dan tampilkan menu utama"),
+        BotCommand("status", "Lihat status bot dan pasar"),
+        BotCommand("positions", "Lihat posisi trading aktif"),
+        BotCommand("balance", "Lihat saldo paper tersedia"),
+        BotCommand("history", "Lihat riwayat paper trading"),
+        BotCommand("market", "Pilih pair crypto saat bot dijeda"),
+        BotCommand("strategy", "Pilih strategy saat bot dijeda"),
+        BotCommand("interval", "Pilih candle interval saat bot dijeda"),
+        BotCommand("stream", "Kelola market ticker stream"),
+        BotCommand("pause", "Jeda siklus trading baru"),
+        BotCommand("resume", "Lanjutkan siklus trading"),
+        BotCommand("risklimits", "Lihat limit entry runtime"),
+        BotCommand("setrisklimits", "Ubah limit runtime saat dijeda"),
+        BotCommand("exitstatus", "Lihat status operator exit"),
+        BotCommand("closeposition", "Tutup satu posisi saat PAUSED"),
+        BotCommand("closeall", "Tutup semua posisi saat PAUSED"),
+        BotCommand("closeandswitch", "Flatten lalu ganti trading mode"),
+        BotCommand("confirmexit", "Konfirmasi operator exit"),
+        BotCommand("cancelexit", "Batalkan konfirmasi operator exit"),
+        BotCommand("settings", "Lihat pengaturan bot"),
+        BotCommand("exchange", "Lihat exchange aktif"),
+        BotCommand("stop", "Lihat status penghentian bot"),
+    )
+    names = tuple(command.command for command in commands)
+    if len(names) != len(set(names)):
+        raise RuntimeError("Telegram command registry contains duplicate commands")
+    return commands
 
 
 class TelegramBot:
@@ -80,26 +112,7 @@ class TelegramBot:
             initialized = True
             await app.start()
             started = True
-            await app.bot.set_my_commands(
-                [
-                    BotCommand("start", "Mulai bot dan tampilkan menu utama"),
-                    BotCommand("status", "Lihat status bot dan pasar"),
-                    BotCommand("positions", "Lihat posisi trading aktif"),
-                    BotCommand("balance", "Lihat saldo paper tersedia"),
-                    BotCommand("history", "Lihat riwayat paper trading"),
-                    BotCommand("market", "Pilih pair crypto saat bot dijeda"),
-                    BotCommand("strategy", "Pilih strategy saat bot dijeda"),
-                    BotCommand("interval", "Pilih candle interval saat bot dijeda"),
-                    BotCommand("stream", "Kelola market ticker stream"),
-                    BotCommand("pause", "Jeda siklus trading baru"),
-                    BotCommand("resume", "Lanjutkan siklus trading"),
-                    BotCommand("risklimits", "Lihat limit entry runtime"),
-                    BotCommand("setrisklimits", "Ubah limit runtime saat dijeda"),
-                    BotCommand("settings", "Lihat pengaturan bot"),
-                    BotCommand("exchange", "Lihat exchange aktif"),
-                    BotCommand("stop", "Lihat status penghentian bot"),
-                ]
-            )
+            await app.bot.set_my_commands(get_bot_commands())
             if updater is not None:
                 await updater.start_polling()
         except BaseException:

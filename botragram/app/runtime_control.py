@@ -53,6 +53,11 @@ class TradingRuntimeControl:
         init=False,
         repr=False,
     )
+    _operator_exit_in_progress: bool = field(
+        default=False,
+        init=False,
+        repr=False,
+    )
     _stream_event_count: int = field(default=0, init=False, repr=False)
     _stream_last_price: Decimal | None = field(default=None, init=False, repr=False)
     _stream_last_event_monotonic: float | None = field(
@@ -184,6 +189,11 @@ class TradingRuntimeControl:
         """Return whether a durable runtime limit update owns configuration."""
         return self._risk_limit_change_in_progress
 
+    @property
+    def operator_exit_in_progress(self) -> bool:
+        """Return whether an operator exit owns the fund-mutation boundary."""
+        return self._operator_exit_in_progress
+
     def pause(self) -> bool:
         """Pause future cycles and return whether state changed."""
         if self.is_paused:
@@ -195,6 +205,7 @@ class TradingRuntimeControl:
     def resume(self) -> bool:
         """Resume future cycles and return whether state changed."""
         self._require_no_risk_limit_change()
+        self._require_no_operator_exit()
         if not self.is_paused:
             return False
 
@@ -234,6 +245,7 @@ class TradingRuntimeControl:
         recovered-position management authorization.
         """
         self._require_no_risk_limit_change()
+        self._require_no_operator_exit()
         if not self.is_paused:
             return False
 
@@ -251,6 +263,7 @@ class TradingRuntimeControl:
             raise RuntimeError("Wait for the active trading cycle to finish")
         if self._risk_limit_change_in_progress:
             raise RuntimeError("A runtime risk-limit change is already in progress")
+        self._require_no_operator_exit()
         self._risk_limit_change_in_progress = True
 
     def end_risk_limit_change(self) -> None:
@@ -273,9 +286,32 @@ class TradingRuntimeControl:
         self._exchange_confirmed = True
         return changed
 
-    def require_configuration_change_allowed(self) -> None:
+    def require_configuration_change_allowed(
+        self,
+        *,
+        allow_operator_exit: bool = False,
+    ) -> None:
         """Raise when runtime state cannot safely change connector settings."""
-        self._require_paused_configuration()
+        self._require_paused_configuration(
+            allow_operator_exit=allow_operator_exit,
+        )
+
+    def begin_operator_exit(self) -> None:
+        """Reserve the paused runtime against cycles, resume, and configuration."""
+        if not self.is_paused:
+            raise RuntimeError("Pause trading before an operator exit")
+        if self._cycle_in_progress:
+            raise RuntimeError("Wait for the active trading cycle to finish")
+        self._require_no_risk_limit_change()
+        if self._operator_exit_in_progress:
+            raise RuntimeError("An operator exit is already in progress")
+        self._operator_exit_in_progress = True
+
+    def end_operator_exit(self) -> None:
+        """Release one completed or cancelled operator-exit reservation."""
+        if not self._operator_exit_in_progress:
+            raise RuntimeError("No operator exit is in progress")
+        self._operator_exit_in_progress = False
 
     def confirm_market_type(self, market_type: MarketType) -> bool:
         """Confirm the product family loaded by the active connector."""
@@ -456,6 +492,7 @@ class TradingRuntimeControl:
         if self._cycle_in_progress:
             raise RuntimeError("A trading cycle is already in progress")
         self._require_no_risk_limit_change()
+        self._require_no_operator_exit()
         self._cycle_in_progress = True
 
     def end_cycle(self) -> None:
@@ -485,7 +522,11 @@ class TradingRuntimeControl:
 
         return not stop_event.is_set()
 
-    def _require_paused_configuration(self) -> None:
+    def _require_paused_configuration(
+        self,
+        *,
+        allow_operator_exit: bool = False,
+    ) -> None:
         """Reject runtime configuration changes during active trading."""
         if not self.is_paused:
             raise RuntimeError("Pause trading before changing runtime settings")
@@ -494,6 +535,8 @@ class TradingRuntimeControl:
             raise RuntimeError("Wait for the active trading cycle to finish")
 
         self._require_no_risk_limit_change()
+        if not allow_operator_exit:
+            self._require_no_operator_exit()
 
         if self.stream_enabled:
             raise RuntimeError(
@@ -504,6 +547,11 @@ class TradingRuntimeControl:
         """Reject activation or other configuration while a limit write is pending."""
         if self._risk_limit_change_in_progress:
             raise RuntimeError("Runtime risk-limit change is still in progress")
+
+    def _require_no_operator_exit(self) -> None:
+        """Reject activation or reconfiguration during operator exit ownership."""
+        if self._operator_exit_in_progress:
+            raise RuntimeError("Operator exit recovery is still in progress")
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:

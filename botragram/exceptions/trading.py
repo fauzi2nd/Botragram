@@ -16,12 +16,14 @@ __all__ = [
     "TradingError",
     "TradingConfigurationError",
     "TradingExecutionError",
+    "ExecutionPolicySwitchBlockedError",
     "LiveEntryExistingPositionError",
     "LiveEntryPortfolioCapacityError",
     "LiveEntryPreflightError",
     "LiveEntryRiskLimitError",
     "LiveEntrySymbolReadinessError",
     "LiveSubmissionBlockedError",
+    "OperatorExitConfirmationUnavailableError",
     "VenueRuleValidationError",
     "TradingPositionError",
     "TradingRiskError",
@@ -39,6 +41,35 @@ class TradingConfigurationError(TradingError):
 
 class TradingExecutionError(TradingError):
     """Raised when a trading operation cannot be executed."""
+
+
+class ExecutionPolicySwitchBlockedError(TradingConfigurationError, RuntimeError):
+    """Raised for an expected operator-correctable policy transition blocker."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        active_position_count: int = 0,
+    ) -> None:
+        """Initialize one typed transition rejection.
+
+        Args:
+            message: Human-readable reason the transition remains blocked.
+            active_position_count: Authoritative positions preventing the switch.
+
+        Raises:
+            ValueError: If the position count is negative.
+        """
+        if active_position_count < 0:
+            raise ValueError("Active position count must not be negative")
+        super().__init__(message)
+        self._active_position_count = active_position_count
+
+    @property
+    def active_position_count(self) -> int:
+        """Return the authoritative count that enables guarded flatten UX."""
+        return self._active_position_count
 
 
 class LiveEntryExistingPositionError(TradingExecutionError, RuntimeError):
@@ -63,6 +94,10 @@ class LiveEntrySymbolReadinessError(LiveEntryPreflightError):
 
 class LiveSubmissionBlockedError(TradingExecutionError, RuntimeError):
     """Raised when an incomplete LIVE entry blocks another entry attempt."""
+
+
+class OperatorExitConfirmationUnavailableError(TradingExecutionError, RuntimeError):
+    """Raised when a process-local operator confirmation is no longer present."""
 
 
 class VenueRuleValidationError(TradingExecutionError, ValueError):

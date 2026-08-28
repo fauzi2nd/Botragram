@@ -41,7 +41,7 @@ from botragram.exchanges.binance.rest import (
     BinanceRestResponseError,
 )
 from botragram.exchanges.factory import ExchangeFactory
-from botragram.models import MarketUniverseEntry, Order
+from botragram.models import MarketUniverseEntry, Order, Position
 
 _NOW = datetime(2026, 8, 7, tzinfo=UTC)
 _EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
@@ -1040,6 +1040,56 @@ async def test_futures_immediate_rejection_keeps_predecessor() -> None:
     assert tuple(order.client_order_id for order in client.open_protections) == (
         predecessor_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_futures_exact_close_uses_snapshot_without_position_lookup() -> None:
+    """Do not insert a second position GET between durable intent and POST."""
+    rest = RecordingBinanceRestClient()
+    rest.response = {
+        "orderId": 43,
+        "clientOrderId": "bop-0123456789abcdef0123456789abcdef",
+        "symbol": "BTCUSDT",
+        "side": "BUY",
+        "type": "MARKET",
+        "status": "FILLED",
+        "origQty": "0.02",
+        "executedQty": "0.02",
+        "price": "0",
+        "stopPrice": "0",
+        "updateTime": 1_700_000_000_000,
+        "time": 1_700_000_000_000,
+    }
+    client = _create_client(rest)
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("0.02"),
+        entry_price=Decimal("50000"),
+        current_price=Decimal("49000"),
+        unrealized_pnl=Decimal("20"),
+        leverage=2,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+
+    order = await client.close_position_exact(
+        position=position,
+        client_order_id="bop-0123456789abcdef0123456789abcdef",
+    )
+
+    assert order.client_order_id == "bop-0123456789abcdef0123456789abcdef"
+    assert len(rest.requests) == 1
+    method, request_path, params, authenticated = rest.requests[0]
+    assert method == "POST"
+    assert request_path == "/fapi/v1/order"
+    assert authenticated
+    assert params is not None
+    assert params["symbol"] == "BTCUSDT"
+    assert params["side"] == "BUY"
+    assert params["quantity"] == "0.02"
+    assert params["reduceOnly"] == "true"
+    assert params["newClientOrderId"] == "bop-0123456789abcdef0123456789abcdef"
 
 
 @pytest.mark.asyncio

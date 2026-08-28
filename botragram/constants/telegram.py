@@ -45,6 +45,7 @@ __all__ = [
     "MENU_TEST",
     "MENU_STOP",
     "MENU_TRADING",
+    "OPERATOR_EXIT_STALE_CONFIRMATION_MESSAGE",
     "TELEGRAM_MARKET_SYMBOLS",
     "TELEGRAM_INTERVALS",
 ]
@@ -55,6 +56,11 @@ __all__ = [
 
 DEFAULT_PARSE_MODE: str = "HTML"
 DEFAULT_MENU_COLUMNS: int = 2
+OPERATOR_EXIT_STALE_CONFIRMATION_MESSAGE: str = (
+    "This operator-exit confirmation belongs to an expired or rebuilt session. "
+    "Reopen Trading Mode or Positions and request a fresh confirmation. "
+    "No action was taken."
+)
 
 # =============================================================================
 # Commands

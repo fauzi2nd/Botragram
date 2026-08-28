@@ -455,6 +455,50 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ON runtime_risk_limit_events (updated_at);
         """,
     ),
+    _Migration(
+        version=17,
+        script="""
+        CREATE TABLE IF NOT EXISTS operator_exit_operations (
+            operation_id TEXT PRIMARY KEY,
+            operation_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            requested_by TEXT NOT NULL,
+            symbol TEXT,
+            target_execution_policy TEXT,
+            failure_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_operator_exit_operations_status
+        ON operator_exit_operations (status, created_at);
+
+        CREATE TABLE IF NOT EXISTS operator_exit_attempts (
+            client_order_id TEXT PRIMARY KEY,
+            operation_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            position_side TEXT NOT NULL,
+            quantity TEXT NOT NULL,
+            status TEXT NOT NULL,
+            exchange_order_id TEXT,
+            failure_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (operation_id)
+                REFERENCES operator_exit_operations (operation_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_operator_exit_attempts_status
+        ON operator_exit_attempts (status, created_at);
+        """,
+    ),
+    _Migration(
+        version=18,
+        script="""
+        ALTER TABLE operator_exit_operations
+        ADD COLUMN authorized_symbols TEXT NOT NULL DEFAULT '';
+        """,
+    ),
 )
 
 

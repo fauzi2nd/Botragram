@@ -319,6 +319,21 @@ class BaseExchangeClient(ABC):
     ) -> Order:
         """Close the active position with an optional durable client identity."""
 
+    async def close_position_exact(
+        self,
+        *,
+        position: Position,
+        client_order_id: str,
+    ) -> Order:
+        """Close from one already-authoritative durable position snapshot.
+
+        Connectors that cannot guarantee the exact single-mutation boundary fail
+        closed. Product-specific clients may override this for durable operator
+        workflows that must not perform a second position lookup before POST.
+        """
+        del position, client_order_id
+        raise NotImplementedError("Exact position-snapshot closing is not supported")
+
     @abstractmethod
     async def close_all_positions(self) -> Sequence[Order]:
         """Close all active trading positions."""

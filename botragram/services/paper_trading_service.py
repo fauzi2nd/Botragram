@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from decimal import Decimal
 from typing import Final, Protocol
 from uuid import NAMESPACE_URL, uuid5
@@ -187,6 +188,68 @@ class PaperTradingService:
                 initial_balance=self.initial_balance,
                 order_type=OrderType.MARKET,
                 price=ticker.last_price,
+            )
+
+    async def close_position_for_operator(
+        self,
+        *,
+        symbol: str,
+        current_price: Decimal,
+        closed_at: datetime,
+    ) -> TradingResult | None:
+        """Close one authoritative PAPER position through normal accounting.
+
+        Args:
+            symbol: Exact persisted position symbol.
+            current_price: Current market reference used for simulated slippage.
+            closed_at: Time of the operator-authorized PAPER fill.
+
+        Returns:
+            The normal PAPER trading result, or None when already flat.
+        """
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            raise ValueError("Operator PAPER exit symbol must not be empty")
+        if current_price <= _DECIMAL_ZERO:
+            raise ValueError("Operator PAPER exit price must be greater than zero")
+        if closed_at.tzinfo is None or closed_at.utcoffset() is None:
+            raise ValueError("Operator PAPER exit time must be timezone-aware")
+
+        async with self._execution_lock:
+            position = await self.position_repository.get_by_symbol(
+                symbol=normalized_symbol,
+            )
+            if position is None:
+                return None
+            signal = Signal(
+                symbol=normalized_symbol,
+                signal_type=SignalType.HOLD,
+                price=current_price,
+                confidence=_DECIMAL_ZERO,
+                strategy_name=(
+                    position.strategy_type.value
+                    if position.strategy_type is not None
+                    else "operator_exit"
+                ),
+                generated_at=closed_at,
+                reason="Operator Exit",
+            )
+            marked_position = replace(
+                position,
+                current_price=current_price,
+                unrealized_pnl=self.pnl_engine.calculate_unrealized(
+                    position=position,
+                    current_price=current_price,
+                ),
+                updated_at=closed_at,
+            )
+            return await self._close_position(
+                signal=signal,
+                position=marked_position,
+                close_reason="Operator Exit",
+                initial_balance=self.initial_balance,
+                order_type=OrderType.MARKET,
+                price=current_price,
             )
 
     async def _execute_unlocked(

@@ -19,3 +19,4 @@ class ClosedPositionReason(BaseEnum):
     MANUAL_CLOSE = "manual_close"
     EMERGENCY_CLOSE = "emergency_close"
     RECOVERY_CLOSE = "recovery_close"
+    OPERATOR_EXIT = "operator_exit"

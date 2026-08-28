@@ -75,6 +75,7 @@ from botragram.telegram.keyboards import (
     get_main_menu_keyboard,
     get_market_keyboard,
     get_market_search_keyboard,
+    get_operator_exit_positions_keyboard,
     get_strategy_keyboard,
     get_stream_keyboard,
     get_trading_menu_keyboard,
@@ -520,7 +521,16 @@ async def positions_command(
                 return
 
         msg = get_positions_message(positions)
-        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+        exit_markup = (
+            get_operator_exit_positions_keyboard(positions=positions)
+            if ctx.operator_exit_service is not None and positions
+            else None
+        )
+        await update.message.reply_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=exit_markup,
+        )
 
 
 async def settings_command(

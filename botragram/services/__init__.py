@@ -66,6 +66,7 @@ from botragram.services.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
 from botragram.services.market_service import MarketService
+from botragram.services.operator_exit_service import OperatorExitService
 from botragram.services.opportunity_discovery_service import (
     OpportunityDiscoveryService,
 )
@@ -119,6 +120,7 @@ __all__ = [
     "HumanConfirmedPaperExecutionService",
     "MarketService",
     "NotificationPublisher",
+    "OperatorExitService",
     "OpportunityDiscoveryService",
     "OrderService",
     "PaperPortfolioSnapshot",

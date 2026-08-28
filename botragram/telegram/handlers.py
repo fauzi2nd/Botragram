@@ -39,6 +39,14 @@ from botragram.telegram.commands import (
     stream_command,
     trading_mode_command,
 )
+from botragram.telegram.operator_exit_commands import (
+    cancel_exit_command,
+    close_all_and_switch_command,
+    close_all_command,
+    close_position_command,
+    confirm_exit_command,
+    exit_status_command,
+)
 from botragram.telegram.risk_limit_commands import (
     risk_limits_command,
     set_risk_limits_command,
@@ -64,6 +72,12 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler("mode", trading_mode_command))
     app.add_handler(CommandHandler("risklimits", risk_limits_command))
     app.add_handler(CommandHandler("setrisklimits", set_risk_limits_command))
+    app.add_handler(CommandHandler("exitstatus", exit_status_command))
+    app.add_handler(CommandHandler("closeposition", close_position_command))
+    app.add_handler(CommandHandler("closeall", close_all_command))
+    app.add_handler(CommandHandler("closeandswitch", close_all_and_switch_command))
+    app.add_handler(CommandHandler("confirmexit", confirm_exit_command))
+    app.add_handler(CommandHandler("cancelexit", cancel_exit_command))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(
         MessageHandler(

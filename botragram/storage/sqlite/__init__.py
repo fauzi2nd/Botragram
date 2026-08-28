@@ -33,6 +33,9 @@ from botragram.storage.sqlite.live_equity_high_water_repository import (
     SQLiteLiveEquityHighWaterRepository,
 )
 from botragram.storage.sqlite.migrations import SQLiteMigrationManager
+from botragram.storage.sqlite.operator_exit_repository import (
+    SQLiteOperatorExitRepository,
+)
 from botragram.storage.sqlite.order_repository import (
     SQLiteOrderRepository,
 )
@@ -60,6 +63,7 @@ __all__ = [
     "SQLiteMigrationManager",
     "SQLiteLiveEquityHighWaterRepository",
     "SQLiteOrderRepository",
+    "SQLiteOperatorExitRepository",
     "SQLiteTestnetLegacyLiveLedgerMigration",
     "SQLitePositionRepository",
     "SQLiteSignalRepository",
