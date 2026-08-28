@@ -1,4 +1,4 @@
-name: Validate Operator Exit Recovery Hardening
+name: Validate Hardened Operator Exit Against Main
 
 on:
   push:
@@ -7,22 +7,17 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: operator-exit-recovery-hardening
+  group: hardened-operator-exit-current-main
   cancel-in-progress: true
 
 jobs:
-  apply:
+  validate:
     runs-on: self-hosted
     timeout-minutes: 30
     steps:
-      - name: Check out helper branch
-        uses: actions/checkout@v5
-        with:
-          path: helper
-
       - name: Check out operator-exit branch
         uses: actions/checkout@v5
         with:
@@ -30,24 +25,20 @@ jobs:
           path: target-${{ github.run_id }}
           fetch-depth: 0
 
+      - name: Merge current main in validation workspace only
+        working-directory: target-${{ github.run_id }}
+        run: |
+          git fetch origin main
+          git -c user.name="Botragram Validation" -c user.email="validation@local.invalid" merge --no-commit --no-ff origin/main
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
-      - name: Apply recovery hardening patch
-        run: python helper/.dev/apply_operator_exit_recovery_hardening.py "target-${{ github.run_id }}"
-
       - name: Install project and quality dependencies
         working-directory: target-${{ github.run_id }}
         run: python -m pip install -e ".[dev]"
-
-      - name: Normalize generated changes
-        working-directory: target-${{ github.run_id }}
-        run: |
-          python -m ruff format .
-          python -m ruff check --fix .
-          python -m ruff format .
 
       - name: Compile sources
         working-directory: target-${{ github.run_id }}
@@ -78,16 +69,6 @@ jobs:
         working-directory: target-${{ github.run_id }}
         run: python -m pytest
 
-      - name: Check diff integrity
+      - name: Check feature diff integrity
         working-directory: target-${{ github.run_id }}
-        run: git diff --check
-
-      - name: Commit and push recovery hardening
-        working-directory: target-${{ github.run_id }}
-        run: |
-          git config user.name "Fauzi Pranata"
-          git config user.email "spacetone2nd@gmail.com"
-          git add botragram/exchanges/base/client.py botragram/exchanges/binance/futures_client.py botragram/enums/operator_exit_attempt_status.py botragram/services/operator_exit_service.py botragram/storage/memory/operator_exit_repository.py botragram/storage/sqlite/operator_exit_repository.py tests/test_binance_futures.py tests/test_operator_exit_service.py
-          git diff --cached --check
-          git commit -m "fix: harden operator exit recovery"
-          git push origin HEAD:feature/operator-exit-control-plane
+        run: git diff --check origin/main...HEAD
