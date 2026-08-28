@@ -44,9 +44,12 @@ jobs:
         working-directory: target
         run: python -m pip install -e ".[dev]"
 
-      - name: Format generated changes
+      - name: Normalize generated changes
         working-directory: target
-        run: python -m ruff format .
+        run: |
+          python -m ruff format .
+          python -m ruff check --fix .
+          python -m ruff format .
 
       - name: Compile sources
         working-directory: target
