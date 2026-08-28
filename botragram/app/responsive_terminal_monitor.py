@@ -10,6 +10,7 @@ Python:
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 from rich import box
@@ -26,6 +27,30 @@ __all__ = ["TerminalMonitor"]
 
 _COMPACT_WIDTH: Final[int] = 90
 _MEDIUM_WIDTH: Final[int] = 140
+_CANDIDATE_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Global discovery candidate processed: symbol=(?P<symbol>\S+) "
+    r"side=(?P<side>\S+) confidence=(?P<confidence>\S+) "
+    r"outcome=(?P<outcome>\S+)"
+)
+_CYCLE_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Global discovery cycle completed: outcome=(?P<outcome>\S+) "
+    r"scanned=(?P<scanned>\d+) actionable=(?P<actionable>\d+) "
+    r"rank_start=(?P<rank_start>\d+) rank_end=(?P<rank_end>\d+) "
+    r"universe_size=(?P<universe_size>\d+) duration_ms=(?P<duration_ms>\d+)"
+)
+_NO_ENTRY_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Trading cycle completed without execution: symbol=(?P<symbol>\S+) "
+    r"reason=(?P<reason>\S+)"
+)
+_PREFLIGHT_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Global discovery preflight started: interval=(?P<interval>\S+) "
+    r"universe_limit=(?P<universe>\d+) batch_size=(?P<batch>\d+) "
+    r"top_n=(?P<top_n>\d+)"
+)
+_HEARTBEAT_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Runtime heartbeat: state=(?P<state>\S+) symbol=(?P<symbol>\S+) "
+    r"strategy=(?P<strategy>\S+) stream=(?P<stream>\S+)"
+)
 
 
 class TerminalMonitor(BaseTerminalMonitor):
@@ -235,7 +260,7 @@ class TerminalMonitor(BaseTerminalMonitor):
         table.add_row("Protection Step", str(step))
 
     def _build_compact_log_panel(self) -> Panel:
-        """Use a two-column folded log table on narrow terminals."""
+        """Use concise operator-facing events on narrow terminals."""
         table = Table(
             box=box.SIMPLE_HEAD,
             expand=True,
@@ -247,7 +272,7 @@ class TerminalMonitor(BaseTerminalMonitor):
         entries = self.log_handler.get_entries()[-10:]
 
         if not entries:
-            table.add_row("-", "INFO dashboard | Waiting for application logs...")
+            table.add_row("-", "INFO | Waiting for application logs...")
         else:
             for entry in entries:
                 level = Text(
@@ -256,10 +281,8 @@ class TerminalMonitor(BaseTerminalMonitor):
                 )
                 details = Text.assemble(
                     level,
-                    " ",
-                    entry.logger_name.removeprefix("botragram."),
                     " | ",
-                    entry.message,
+                    self._format_compact_event(entry.message),
                 )
                 table.add_row(
                     entry.observed_at.strftime("%H:%M:%S.%f")[:-3],
@@ -268,9 +291,81 @@ class TerminalMonitor(BaseTerminalMonitor):
 
         return Panel(
             table,
-            title="[bold]Runtime Events | Log Messages[/bold]",
+            title="[bold]Runtime Events[/bold]",
             border_style="blue",
         )
+
+    @classmethod
+    def _format_compact_event(cls, message: str) -> str:
+        """Translate internal log syntax into concise operator-facing text."""
+        candidate = _CANDIDATE_EVENT_PATTERN.fullmatch(message)
+        if candidate is not None:
+            confidence = Decimal(candidate["confidence"]) * Decimal("100")
+            return (
+                f"Candidate {candidate['symbol']} {candidate['side'].upper()} | "
+                f"score {confidence:.4f}% | "
+                f"{cls._format_candidate_result(candidate['outcome'])}"
+            )
+
+        cycle = _CYCLE_EVENT_PATTERN.fullmatch(message)
+        if cycle is not None:
+            seconds = int(cycle["duration_ms"]) / 1_000
+            return (
+                f"Discovery complete | scanned {cycle['scanned']} | "
+                f"actionable {cycle['actionable']} | "
+                f"rank {cycle['rank_start']}-{cycle['rank_end']}/"
+                f"{cycle['universe_size']} | {seconds:.2f}s"
+            )
+
+        no_entry = _NO_ENTRY_EVENT_PATTERN.fullmatch(message)
+        if no_entry is not None:
+            return (
+                f"No entry {no_entry['symbol']} | "
+                f"{cls._format_candidate_result(no_entry['reason'])}"
+            )
+
+        preflight = _PREFLIGHT_EVENT_PATTERN.fullmatch(message)
+        if preflight is not None:
+            return (
+                f"Discovery scan | {preflight['interval']} | "
+                f"universe {preflight['universe']} | batch {preflight['batch']} | "
+                f"top {preflight['top_n']}"
+            )
+
+        heartbeat = _HEARTBEAT_EVENT_PATTERN.fullmatch(message)
+        if heartbeat is not None:
+            strategy = heartbeat["strategy"].replace("_", " ").upper()
+            return (
+                f"Runtime {heartbeat['state']} | {heartbeat['symbol']} | "
+                f"{strategy} | stream {heartbeat['stream']}"
+            )
+
+        return message.replace("_", " ")
+
+    @staticmethod
+    def _format_candidate_result(outcome: str | None) -> str:
+        """Present discovery outcomes as short operator-facing labels."""
+        labels = {
+            "authorization_rejected": "AUTH BLOCK",
+            "blocked_by_capacity": "CAPACITY",
+            "entry_blocked": "BLOCKED",
+            "exchange_rejected": "EXCHANGE REJECT",
+            "executed_and_protected": "LIVE",
+            "execution_unsafe": "UNSAFE",
+            "existing_position": "POSITION EXISTS",
+            "market_reference_rejected": "QUOTE REJECT",
+            "no_signal": "NO SIGNAL",
+            "risk_rejected": "RISK REJECT",
+            "skipped_capacity": "CAPACITY",
+            "stale_signal": "STALE SIGNAL",
+            "submission_blocked": "SUBMISSION BLOCK",
+            "symbol_readiness_rejected": "SYMBOL REJECT",
+            "venue_rule_rejected": "VENUE REJECT",
+        }
+        if outcome is None:
+            return "PENDING"
+        normalized = outcome.strip().lower()
+        return labels.get(normalized, normalized.upper().replace("_", " "))
 
     @staticmethod
     def _compact_positions_height(status: TerminalStatus) -> int:
