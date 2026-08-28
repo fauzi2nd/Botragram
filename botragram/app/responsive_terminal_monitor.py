@@ -105,26 +105,26 @@ class TerminalMonitor(BaseTerminalMonitor):
             if not status.positions:
                 table.add_row("Positions", "NONE")
             else:
-                for position in status.positions:
+                for paper_position in status.positions:
                     self._add_compact_position_rows(
                         table=table,
-                        symbol=position.symbol,
-                        side=position.side.value.upper(),
-                        leverage=position.leverage,
-                        quantity=self._format_compact_decimal(position.quantity),
-                        entry=self._format_compact_decimal(position.entry_price),
-                        mark=self._format_compact_decimal(position.current_price),
-                        pnl=self.format_position_pnl(position.unrealized_pnl),
-                        stop_loss=self._format_compact_price(position.stop_loss),
-                        take_profit=self._format_compact_price(position.take_profit),
-                        step=position.protection_step,
+                        symbol=paper_position.symbol,
+                        side=paper_position.side.value.upper(),
+                        leverage=paper_position.leverage,
+                        quantity=self._format_compact_decimal(paper_position.quantity),
+                        entry=self._format_compact_decimal(paper_position.entry_price),
+                        mark=self._format_compact_decimal(paper_position.current_price),
+                        pnl=self.format_position_pnl(paper_position.unrealized_pnl),
+                        stop_loss=self._format_compact_price(paper_position.stop_loss),
+                        take_profit=self._format_compact_price(paper_position.take_profit),
+                        step=paper_position.protection_step,
                         health="PAPER",
                     )
         elif not health_snapshot.contexts:
             table.add_row("Positions", "NONE")
         else:
             for context in health_snapshot.contexts:
-                position = next(
+                managed_position = next(
                     (
                         item
                         for item in status.positions
@@ -132,28 +132,28 @@ class TerminalMonitor(BaseTerminalMonitor):
                     ),
                     None,
                 )
-                if position is None:
+                if managed_position is None:
                     table.add_row(context.symbol, "POSITION MISSING")
                     continue
                 mark = (
                     self._get_matching_stream_price(
-                        position=position,
+                        position=managed_position,
                         stream_states=health_snapshot.stream_states,
                     )
-                    or position.current_price
+                    or managed_position.current_price
                 )
                 self._add_compact_position_rows(
                     table=table,
                     symbol=context.symbol,
-                    side=position.side.value.upper(),
-                    leverage=position.leverage,
-                    quantity=self._format_compact_decimal(position.quantity),
-                    entry=self._format_compact_decimal(position.entry_price),
+                    side=managed_position.side.value.upper(),
+                    leverage=managed_position.leverage,
+                    quantity=self._format_compact_decimal(managed_position.quantity),
+                    entry=self._format_compact_decimal(managed_position.entry_price),
                     mark=self._format_compact_decimal(mark),
-                    pnl=self.format_position_pnl(position.unrealized_pnl),
-                    stop_loss=self._format_compact_price(position.stop_loss),
-                    take_profit=self._format_compact_price(position.take_profit),
-                    step=position.protection_step,
+                    pnl=self.format_position_pnl(managed_position.unrealized_pnl),
+                    stop_loss=self._format_compact_price(managed_position.stop_loss),
+                    take_profit=self._format_compact_price(managed_position.take_profit),
+                    step=managed_position.protection_step,
                     health=self._get_managed_position_health(
                         context=context,
                         health_snapshot=health_snapshot,
