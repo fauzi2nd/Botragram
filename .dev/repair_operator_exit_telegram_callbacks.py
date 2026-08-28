@@ -15,6 +15,36 @@ def main() -> None:
     path = root / "botragram/telegram/callbacks.py"
     text = path.read_text(encoding="utf-8")
 
+    model_import = "from botragram.models import LiveRuntimeHealthSnapshot\n"
+    if model_import not in text:
+        raise SystemExit("Telegram callback model import was not found")
+    text = text.replace(
+        model_import,
+        "from botragram.models import LiveRuntimeHealthSnapshot, Position\n",
+        1,
+    )
+
+    operator_symbol = (
+        "        symbol = data.removeprefix(_OPERATOR_CLOSE_CALLBACK_PREFIX)"
+        ".strip().upper()\n"
+    )
+    if operator_symbol not in text:
+        raise SystemExit("Operator close callback symbol assignment was not found")
+    text = text.replace(
+        operator_symbol,
+        "        operator_symbol = data.removeprefix("
+        "_OPERATOR_CLOSE_CALLBACK_PREFIX).strip().upper()\n",
+        1,
+    )
+    operator_symbol_argument = "                symbol=symbol,\n"
+    if operator_symbol_argument not in text:
+        raise SystemExit("Operator close callback symbol argument was not found")
+    text = text.replace(
+        operator_symbol_argument,
+        "                symbol=operator_symbol,\n",
+        1,
+    )
+
     anchor = """        try:
             changed = await switcher.prepare_execution_policy(
                 execution_policy=target,
@@ -43,18 +73,18 @@ def main() -> None:
                 "Telegram execution-policy switch validation failed"
             )
             operator_service = bot_context.operator_exit_service
-            positions = ()
+            operator_positions: tuple[Position, ...] = ()
             if operator_service is not None:
                 try:
-                    positions = tuple(await operator_service.get_positions())
+                    operator_positions = tuple(await operator_service.get_positions())
                 except Exception:
                     _LOGGER.exception(
                         "Telegram operator-exit position lookup failed"
                     )
-            if positions:
+            if operator_positions:
                 await query.edit_message_text(
                     f"⚠️ <b>{escape(str(error))}</b>\\n\\n"
-                    f"{len(positions)} active position(s) block this switch. "
+                    f"{len(operator_positions)} active position(s) block this switch. "
                     "Botragram can flatten them through the guarded "
                     "operator-exit workflow and switch only after zero "
                     "exposure is verified.",
