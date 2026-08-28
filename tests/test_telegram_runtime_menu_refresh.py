@@ -96,7 +96,10 @@ async def test_pause_command_refreshes_menu_to_resume_without_start(
 
     monkeypatch.setattr(refresh_module, "pause_bot_command", pause_runtime)
 
-    await refresh_module.pause_bot_command_with_menu_refresh(update, context)  # type: ignore[arg-type]
+    await refresh_module.pause_bot_command_with_menu_refresh(  # type: ignore[arg-type]
+        update,
+        context,
+    )
 
     assert runtime_control.is_paused
     labels = _labels(update.message.reply_markups[-1])
@@ -119,7 +122,10 @@ async def test_resume_command_refreshes_menu_to_pause_without_start(
 
     monkeypatch.setattr(refresh_module, "start_bot_command", resume_runtime)
 
-    await refresh_module.start_bot_command_with_menu_refresh(update, context)  # type: ignore[arg-type]
+    await refresh_module.start_bot_command_with_menu_refresh(  # type: ignore[arg-type]
+        update,
+        context,
+    )
 
     assert not runtime_control.is_paused
     labels = _labels(update.message.reply_markups[-1])
