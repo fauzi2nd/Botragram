@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import cast
 
 import pytest
-from telegram import ReplyKeyboardMarkup
+from telegram import ReplyKeyboardMarkup, Update
+from telegram.ext import ContextTypes
 
 import botragram.telegram.runtime_menu_refresh as refresh_module
 from botragram.app import TradingRuntimeControl
@@ -80,6 +82,16 @@ def _context(runtime_control: TradingRuntimeControl) -> _FakeContext:
     )
 
 
+def _typed_update(update: _FakeUpdate) -> Update:
+    """Cast the structural test double at the Telegram handler boundary."""
+    return cast(Update, update)
+
+
+def _typed_context(context: _FakeContext) -> ContextTypes.DEFAULT_TYPE:
+    """Cast the structural test double at the Telegram handler boundary."""
+    return cast(ContextTypes.DEFAULT_TYPE, context)
+
+
 @pytest.mark.asyncio
 async def test_pause_command_refreshes_menu_to_resume_without_start(
     monkeypatch: pytest.MonkeyPatch,
@@ -96,9 +108,9 @@ async def test_pause_command_refreshes_menu_to_resume_without_start(
 
     monkeypatch.setattr(refresh_module, "pause_bot_command", pause_runtime)
 
-    await refresh_module.pause_bot_command_with_menu_refresh(  # type: ignore[arg-type]
-        update,
-        context,
+    await refresh_module.pause_bot_command_with_menu_refresh(
+        _typed_update(update),
+        _typed_context(context),
     )
 
     assert runtime_control.is_paused
@@ -122,9 +134,9 @@ async def test_resume_command_refreshes_menu_to_pause_without_start(
 
     monkeypatch.setattr(refresh_module, "start_bot_command", resume_runtime)
 
-    await refresh_module.start_bot_command_with_menu_refresh(  # type: ignore[arg-type]
-        update,
-        context,
+    await refresh_module.start_bot_command_with_menu_refresh(
+        _typed_update(update),
+        _typed_context(context),
     )
 
     assert not runtime_control.is_paused
@@ -152,9 +164,9 @@ async def test_pause_menu_button_refreshes_persistent_keyboard(
 
     monkeypatch.setattr(refresh_module, "menu_message_handler", route_pause)
 
-    await refresh_module.menu_message_handler_with_runtime_refresh(  # type: ignore[arg-type]
-        update,
-        context,
+    await refresh_module.menu_message_handler_with_runtime_refresh(
+        _typed_update(update),
+        _typed_context(context),
     )
 
     labels = _labels(update.message.reply_markups[-1])
