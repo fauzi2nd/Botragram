@@ -96,21 +96,23 @@ def _render(*, width: int) -> str:
     return output.getvalue()
 
 
-def test_compact_terminal_prioritizes_mobile_readability() -> None:
-    """Stack safety, discovery, positions, and folded logs on portrait widths."""
+def test_compact_terminal_keeps_readable_performance_summary() -> None:
+    """Stack safety, discovery, performance, positions, and logs on portrait widths."""
     rendered = _render(width=72)
 
     assert "Runtime & Safety" in rendered
     assert "Global Discovery" in rendered
+    assert "Trading Performance" in rendered
+    assert "Trades / W-L" in rendered
+    assert "Win Rate / PnL" in rendered
     assert "Managed LIVE Positions" in rendered
     assert "Runtime Events | Log Messages" in rendered
-    assert "Trading Performance" not in rendered
     assert "Positions" in rendered
     assert "NONE" in rendered
 
 
 def test_medium_terminal_uses_two_column_summary() -> None:
-    """Keep performance visible once enough horizontal space is available."""
+    """Keep full performance visible once enough horizontal space is available."""
     rendered = _render(width=110)
 
     assert "Runtime & Safety" in rendered
