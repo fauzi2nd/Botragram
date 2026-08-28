@@ -17,6 +17,7 @@ _INCOMPLETE_OPERATION_STATUSES = frozenset(
         OperatorExitStatus.FLATTENING,
         OperatorExitStatus.RECOVERY_REQUIRED,
         OperatorExitStatus.RECONCILING,
+        OperatorExitStatus.SWITCH_PENDING,
     }
 )
 

@@ -18,5 +18,6 @@ class OperatorExitStatus(BaseEnum):
     FLATTENING = "flattening"
     RECOVERY_REQUIRED = "recovery_required"
     RECONCILING = "reconciling"
+    SWITCH_PENDING = "switch_pending"
     COMPLETE = "complete"
     FAILED = "failed"

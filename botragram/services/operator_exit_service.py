@@ -225,14 +225,16 @@ class OperatorExitService:
                     self.lifecycle_coordinator,
                 )
             ):
-                raise ValueError("LIVE Futures operator-exit dependencies are incomplete")
+                raise ValueError(
+                    "LIVE Futures operator-exit dependencies are incomplete"
+                )
         if self.trade_mode is TradeMode.PAPER and (
             self.paper_trading_service is None or self.market_price_provider is None
         ):
             raise ValueError("PAPER operator-exit dependencies are incomplete")
 
     async def initialize(self) -> None:
-        """Install the runtime gate before Telegram can observe incomplete work."""
+        """Install the runtime gate before adapters can observe incomplete work."""
         operations = tuple(
             await self.operator_exit_repository.get_incomplete_operations()
         )
@@ -250,6 +252,15 @@ class OperatorExitService:
             return
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+    async def has_incomplete_operation(self) -> bool:
+        """Return whether durable operator work still owns the mutation boundary."""
+        operations = tuple(
+            await self.operator_exit_repository.get_incomplete_operations()
+        )
+        if len(operations) > 1:
+            raise RuntimeError("Multiple incomplete operator exits require recovery")
+        return bool(operations)
 
     async def get_positions(self) -> tuple[Position, ...]:
         """Return the mode-appropriate authoritative position snapshot."""
@@ -301,18 +312,28 @@ class OperatorExitService:
         *,
         symbol: str,
         requested_by: str,
+        auto_pause: bool = False,
     ) -> OperatorExitConfirmation:
         """Reserve a no-mutation confirmation for one current position."""
         self._require_supported_mode()
         normalized_symbol = self._normalize_symbol(symbol)
         requester = self._normalize_requester(requested_by)
+        if auto_pause:
+            self.runtime_control.pause()
         self.runtime_control.begin_operator_exit()
         try:
             positions = await self.get_positions()
-            if not any(
-                position.symbol.upper() == normalized_symbol for position in positions
-            ):
+            target = next(
+                (
+                    position
+                    for position in positions
+                    if position.symbol.upper() == normalized_symbol
+                ),
+                None,
+            )
+            if target is None:
                 raise RuntimeError("The requested position is already flat")
+            await self._preflight_positions(positions=positions)
             return self._set_confirmation(
                 operation_type=OperatorExitType.CLOSE_POSITION,
                 symbols=(normalized_symbol,),
@@ -343,6 +364,7 @@ class OperatorExitService:
             )
             if not positions:
                 raise RuntimeError("The authoritative portfolio is already flat")
+            await self._preflight_positions(positions=positions)
             operation_type = (
                 OperatorExitType.FLATTEN_AND_SWITCH
                 if target_execution_policy is not None
@@ -366,11 +388,10 @@ class OperatorExitService:
         requested_by: str,
     ) -> None:
         """Cancel a process-local challenge without any financial mutation."""
-        pending = self._require_pending(
+        self._require_pending(
             confirmation_id=confirmation_id,
             requested_by=requested_by,
         )
-        del pending
         self._pending_confirmation = None
         self._release_runtime_gate()
 
@@ -418,8 +439,11 @@ class OperatorExitService:
             )
             raise
         except _ExitRejected as error:
-            await self._mark_failed(operation=operation, reason=str(error))
-            self._release_runtime_gate()
+            if not await self._handle_proven_rejection(
+                operation=operation,
+                reason=str(error),
+            ):
+                self._start_background_recovery()
         except Exception as error:
             await self._mark_recovery_required(
                 operation=operation,
@@ -449,43 +473,71 @@ class OperatorExitService:
             except asyncio.CancelledError:
                 raise
             except _ExitRejected as error:
-                await self._mark_failed(operation=operation, reason=str(error))
-                self._release_runtime_gate()
-                return
+                if await self._handle_proven_rejection(
+                    operation=operation,
+                    reason=str(error),
+                ):
+                    return
+                recovery_attempt += 1
             except Exception as error:
                 recovery_attempt += 1
                 await self._mark_recovery_required(
                     operation=operation,
                     reason=str(error),
                 )
-                delay = backoff.get_delay(attempt=recovery_attempt)
-                _LOGGER.warning(
-                    "Operator exit remains fail-closed; recovery will retry: "
-                    "operation_id=%s attempt=%d next_retry_seconds=%.3f reason=%s",
-                    operation.operation_id,
-                    recovery_attempt,
-                    delay,
-                    error,
-                )
-                await asyncio.sleep(delay)
+            else:
+                recovery_attempt = 0
                 continue
-            recovery_attempt = 0
+
+            delay = backoff.get_delay(attempt=recovery_attempt)
+            latest = await self.operator_exit_repository.get_operation(
+                operation_id=operation.operation_id
+            )
+            reason = (
+                latest.failure_reason
+                if latest is not None and latest.failure_reason is not None
+                else "operator exit recovery remains unresolved"
+            )
+            _LOGGER.warning(
+                "Operator exit remains fail-closed; recovery will retry: "
+                "operation_id=%s attempt=%d next_retry_seconds=%.3f reason=%s",
+                operation.operation_id,
+                recovery_attempt,
+                delay,
+                reason,
+            )
+            await asyncio.sleep(delay)
 
     async def _run_operation(self, *, operation: OperatorExitOperation) -> None:
         """Advance one confirmed operation under the process-local serializer."""
         async with self._operation_lock:
-            refreshed = replace(
-                operation,
+            latest = await self.operator_exit_repository.get_operation(
+                operation_id=operation.operation_id
+            )
+            current = latest if latest is not None else operation
+            if current.status is OperatorExitStatus.SWITCH_PENDING:
+                await self._complete_operation(operation=current)
+                return
+
+            flattening = replace(
+                current,
+                status=OperatorExitStatus.FLATTENING,
+                failure_reason=None,
+                updated_at=datetime.now(UTC),
+            )
+            await self.operator_exit_repository.save_operation(operation=flattening)
+            if self.trade_mode is TradeMode.PAPER:
+                await self._run_paper_operation(operation=flattening)
+            else:
+                await self._run_live_operation(operation=flattening)
+            reconciling = replace(
+                flattening,
                 status=OperatorExitStatus.RECONCILING,
                 failure_reason=None,
                 updated_at=datetime.now(UTC),
             )
-            await self.operator_exit_repository.save_operation(operation=refreshed)
-            if self.trade_mode is TradeMode.PAPER:
-                await self._run_paper_operation(operation=refreshed)
-            else:
-                await self._run_live_operation(operation=refreshed)
-            await self._complete_operation(operation=refreshed)
+            await self.operator_exit_repository.save_operation(operation=reconciling)
+            await self._complete_operation(operation=reconciling)
 
     async def _run_paper_operation(self, *, operation: OperatorExitOperation) -> None:
         """Close PAPER positions sequentially through normal fill accounting."""
@@ -530,7 +582,9 @@ class OperatorExitService:
             await self.operator_exit_repository.get_incomplete_attempts()
         )
         if len(attempts) > 1:
-            raise _RecoveryPending("Multiple LIVE operator-exit attempts are incomplete")
+            raise _RecoveryPending(
+                "Multiple LIVE operator-exit attempts are incomplete"
+            )
         if attempts:
             await self._recover_live_attempt(attempt=attempts[0])
             await self._reconcile_live_runtime()
@@ -640,42 +694,17 @@ class OperatorExitService:
                     "Close POST did not return a proven outcome"
                 ) from error
             self._validate_exit_order(order=order, attempt=attempt)
-            await self.operator_exit_repository.save_attempt(
-                attempt=replace(
-                    attempt,
-                    status=OperatorExitAttemptStatus.ACKNOWLEDGED,
-                    exchange_order_id=order.order_id,
-                    updated_at=datetime.now(UTC),
-                )
-            )
-        await self._recover_live_attempt(
-            attempt=replace(
-                attempt,
-                status=OperatorExitAttemptStatus.ACKNOWLEDGED,
-                exchange_order_id=order.order_id,
-            )
-        )
-
-    async def _recover_live_attempt(self, *, attempt: OperatorExitAttempt) -> None:
-        """Use exact GET and repeated zero exposure before lifecycle staging."""
-        coordinator = self._require(
-            self.lifecycle_coordinator,
-            "LIVE lifecycle coordinator",
-        )
-        async with coordinator.hold(symbol=attempt.symbol):
-            exchange = self._require(self.live_exchange, "LIVE operator exchange")
-            try:
-                order = await exchange.get_order_by_client_order_id(
-                    symbol=attempt.symbol,
-                    client_order_id=attempt.client_order_id,
-                )
-            except (ExchangeOrderNotFoundError, ExchangeOrderOutcomeUnknownError) as error:
-                raise _RecoveryPending(
-                    "Exact operator close identity is not yet authoritative"
-                ) from error
-            self._validate_exit_order(order=order, attempt=attempt)
             if order.status in _TERMINAL_REJECTED_ORDER_STATUSES:
                 if order.executed_quantity != Decimal("0"):
+                    await self.operator_exit_repository.save_attempt(
+                        attempt=replace(
+                            attempt,
+                            status=OperatorExitAttemptStatus.RECOVERY_REQUIRED,
+                            exchange_order_id=order.order_id,
+                            failure_reason="Terminal close has partial execution",
+                            updated_at=datetime.now(UTC),
+                        )
+                    )
                     raise _RecoveryPending(
                         "Terminal operator close has partial execution"
                     )
@@ -684,7 +713,81 @@ class OperatorExitService:
                         attempt,
                         status=OperatorExitAttemptStatus.REJECTED,
                         exchange_order_id=order.order_id,
-                        failure_reason="Exact close order is terminal without execution",
+                        failure_reason=(
+                            "Exact close order is terminal without execution"
+                        ),
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+                raise _ExitRejected(
+                    "Exact operator close was terminal without execution"
+                )
+            acknowledged = replace(
+                attempt,
+                status=OperatorExitAttemptStatus.ACKNOWLEDGED,
+                exchange_order_id=order.order_id,
+                updated_at=datetime.now(UTC),
+            )
+            await self.operator_exit_repository.save_attempt(attempt=acknowledged)
+        await self._recover_live_attempt(attempt=acknowledged)
+
+    async def _recover_live_attempt(self, *, attempt: OperatorExitAttempt) -> None:
+        """Use exact GET and repeated zero exposure before lifecycle staging."""
+        coordinator = self._require(
+            self.lifecycle_coordinator,
+            "LIVE lifecycle coordinator",
+        )
+        async with coordinator.hold(symbol=attempt.symbol):
+            reconciling = replace(
+                attempt,
+                status=OperatorExitAttemptStatus.RECONCILING,
+                updated_at=datetime.now(UTC),
+            )
+            await self.operator_exit_repository.save_attempt(attempt=reconciling)
+            exchange = self._require(self.live_exchange, "LIVE operator exchange")
+            try:
+                order = await exchange.get_order_by_client_order_id(
+                    symbol=attempt.symbol,
+                    client_order_id=attempt.client_order_id,
+                )
+            except (
+                ExchangeOrderNotFoundError,
+                ExchangeOrderOutcomeUnknownError,
+            ) as error:
+                await self.operator_exit_repository.save_attempt(
+                    attempt=replace(
+                        reconciling,
+                        status=OperatorExitAttemptStatus.RECOVERY_REQUIRED,
+                        failure_reason="Exact close identity is not authoritative",
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+                raise _RecoveryPending(
+                    "Exact operator close identity is not yet authoritative"
+                ) from error
+            self._validate_exit_order(order=order, attempt=attempt)
+            if order.status in _TERMINAL_REJECTED_ORDER_STATUSES:
+                if order.executed_quantity != Decimal("0"):
+                    await self.operator_exit_repository.save_attempt(
+                        attempt=replace(
+                            reconciling,
+                            status=OperatorExitAttemptStatus.RECOVERY_REQUIRED,
+                            exchange_order_id=order.order_id,
+                            failure_reason="Terminal close has partial execution",
+                            updated_at=datetime.now(UTC),
+                        )
+                    )
+                    raise _RecoveryPending(
+                        "Terminal operator close has partial execution"
+                    )
+                await self.operator_exit_repository.save_attempt(
+                    attempt=replace(
+                        reconciling,
+                        status=OperatorExitAttemptStatus.REJECTED,
+                        exchange_order_id=order.order_id,
+                        failure_reason=(
+                            "Exact close order is terminal without execution"
+                        ),
                         updated_at=datetime.now(UTC),
                     )
                 )
@@ -692,8 +795,28 @@ class OperatorExitService:
                     "Exact operator close was terminal without execution"
                 )
             if order.status is not OrderStatus.FILLED:
+                await self.operator_exit_repository.save_attempt(
+                    attempt=replace(
+                        reconciling,
+                        status=OperatorExitAttemptStatus.RECOVERY_REQUIRED,
+                        exchange_order_id=order.order_id,
+                        failure_reason="Exact close order is not FILLED",
+                        updated_at=datetime.now(UTC),
+                    )
+                )
                 raise _RecoveryPending("Exact operator close is not FILLED")
             if not await self._prove_flat(symbol=attempt.symbol):
+                await self.operator_exit_repository.save_attempt(
+                    attempt=replace(
+                        reconciling,
+                        status=OperatorExitAttemptStatus.RECOVERY_REQUIRED,
+                        exchange_order_id=order.order_id,
+                        failure_reason=(
+                            "FILLED close has not produced stable zero exposure"
+                        ),
+                        updated_at=datetime.now(UTC),
+                    )
+                )
                 raise _RecoveryPending(
                     "FILLED operator close has not produced stable zero exposure"
                 )
@@ -725,7 +848,7 @@ class OperatorExitService:
                 await order_repository.save(order=order)
             await self.operator_exit_repository.save_attempt(
                 attempt=replace(
-                    attempt,
+                    reconciling,
                     status=OperatorExitAttemptStatus.COMPLETED,
                     exchange_order_id=order.order_id,
                     failure_reason=None,
@@ -747,7 +870,7 @@ class OperatorExitService:
             raise _RecoveryPending("LIVE protection state is not READY")
 
     async def _complete_operation(self, *, operation: OperatorExitOperation) -> None:
-        """Freshly verify safety, then optionally commit the existing soft restart."""
+        """Freshly verify safety, then durably hand off an optional soft restart."""
         positions = await self.get_positions()
         targets = self._operation_targets(operation=operation, positions=positions)
         if targets:
@@ -756,23 +879,34 @@ class OperatorExitService:
         target_policy = operation.target_execution_policy
         switcher = self.execution_policy_switcher
         if target_policy is not None:
-            if self.trade_mode is TradeMode.PAPER:
-                await self.market_stream_owner.stop_all()
             if switcher is None:
                 raise _RecoveryPending("Execution-policy switch service is unavailable")
+            switch_pending = replace(
+                operation,
+                status=OperatorExitStatus.SWITCH_PENDING,
+                failure_reason=None,
+                updated_at=datetime.now(UTC),
+            )
+            await self.operator_exit_repository.save_operation(
+                operation=switch_pending
+            )
+            if self.trade_mode is TradeMode.PAPER:
+                await self.market_stream_owner.stop_all()
             changed = await switcher.prepare_execution_policy(
                 execution_policy=target_policy,
                 allow_operator_exit=True,
             )
-            completed = replace(
-                operation,
-                status=OperatorExitStatus.COMPLETE,
-                failure_reason=None,
-                updated_at=datetime.now(UTC),
-            )
-            await self.operator_exit_repository.save_operation(operation=completed)
             if changed:
                 switcher.commit_execution_policy(execution_policy=target_policy)
+            await self.operator_exit_repository.save_operation(
+                operation=replace(
+                    switch_pending,
+                    status=OperatorExitStatus.COMPLETE,
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            if not changed:
+                self._release_runtime_gate()
         else:
             await self.operator_exit_repository.save_operation(
                 operation=replace(
@@ -782,13 +916,45 @@ class OperatorExitService:
                     updated_at=datetime.now(UTC),
                 )
             )
-        self._release_runtime_gate()
+            self._release_runtime_gate()
         _LOGGER.info(
             "Operator exit completed: operation_id=%s type=%s target_policy=%s",
             operation.operation_id,
             operation.operation_type.value,
             target_policy.value if target_policy is not None else "none",
         )
+
+    async def _preflight_positions(self, *, positions: Sequence[Position]) -> None:
+        """Reject LIVE operator mutations until the whole portfolio is managed."""
+        if self.trade_mode is not TradeMode.LIVE:
+            return
+        self._require_live_futures()
+        if not self.runtime_control.is_position_protection_ready:
+            raise RuntimeError(
+                "LIVE operator exit requires READY protection/recovery state"
+            )
+        repository = self._require(
+            self.submission_attempt_repository,
+            "submission attempt repository",
+        )
+        if await repository.get_incomplete():
+            raise RuntimeError(
+                "Incomplete LIVE entry recovery blocks operator exit confirmation"
+            )
+        if await self.operator_exit_repository.get_incomplete_attempts():
+            raise RuntimeError(
+                "Incomplete LIVE operator-exit recovery blocks new confirmation"
+            )
+        context_symbols = {
+            context.symbol.upper() for context in self.runtime_control.runtime_contexts
+        }
+        position_symbols = {position.symbol.upper() for position in positions}
+        if position_symbols != context_symbols:
+            raise RuntimeError(
+                "LIVE operator exit requires exact runtime ownership for all positions"
+            )
+        for position in positions:
+            await self._require_managed_live_position(position=position)
 
     async def _require_managed_live_position(self, *, position: Position) -> None:
         """Require exact durable entry ownership before any operator close POST."""
@@ -833,6 +999,28 @@ class OperatorExitService:
                 return False
             if attempt_index + 1 < _FLAT_PROOF_ATTEMPTS:
                 await asyncio.sleep(_FLAT_PROOF_DELAY_SECONDS)
+        return True
+
+    async def _handle_proven_rejection(
+        self,
+        *,
+        operation: OperatorExitOperation,
+        reason: str,
+    ) -> bool:
+        """Restore canonical protection before releasing a proven rejected close."""
+        if self.trade_mode is TradeMode.LIVE:
+            try:
+                await self._reconcile_live_runtime()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                await self._mark_recovery_required(
+                    operation=operation,
+                    reason=f"{reason}; protection recovery failed: {error}",
+                )
+                return False
+        await self._mark_failed(operation=operation, reason=reason)
+        self._release_runtime_gate()
         return True
 
     def _set_confirmation(
@@ -909,9 +1097,13 @@ class OperatorExitService:
         reason: str,
     ) -> None:
         """Persist a fail-closed recovery reason without releasing the gate."""
+        latest = await self.operator_exit_repository.get_operation(
+            operation_id=operation.operation_id
+        )
+        base = latest if latest is not None else operation
         await self.operator_exit_repository.save_operation(
             operation=replace(
-                operation,
+                base,
                 status=OperatorExitStatus.RECOVERY_REQUIRED,
                 failure_reason=reason,
                 updated_at=datetime.now(UTC),
@@ -927,9 +1119,13 @@ class OperatorExitService:
         reason: str,
     ) -> None:
         """Persist a proven non-executed terminal failure."""
+        latest = await self.operator_exit_repository.get_operation(
+            operation_id=operation.operation_id
+        )
+        base = latest if latest is not None else operation
         await self.operator_exit_repository.save_operation(
             operation=replace(
-                operation,
+                base,
                 status=OperatorExitStatus.FAILED,
                 failure_reason=reason,
                 updated_at=datetime.now(UTC),

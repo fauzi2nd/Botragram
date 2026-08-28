@@ -34,6 +34,12 @@ _ATTEMPT_UPSERT = f"""INSERT INTO operator_exit_attempts
 ON CONFLICT(client_order_id) DO UPDATE SET status=excluded.status,
 exchange_order_id=excluded.exchange_order_id,
 failure_reason=excluded.failure_reason, updated_at=excluded.updated_at;"""
+_INCOMPLETE_OPERATION_STATUSES = (
+    OperatorExitStatus.FLATTENING,
+    OperatorExitStatus.RECOVERY_REQUIRED,
+    OperatorExitStatus.RECONCILING,
+    OperatorExitStatus.SWITCH_PENDING,
+)
 
 
 class SQLiteOperatorExitRepository(OperatorExitRepository):
@@ -52,13 +58,11 @@ class SQLiteOperatorExitRepository(OperatorExitRepository):
 ({_OPERATION_COLUMNS})
 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
 WHERE NOT EXISTS (
-    SELECT 1 FROM operator_exit_operations WHERE status IN (?, ?, ?)
+    SELECT 1 FROM operator_exit_operations WHERE status IN (?, ?, ?, ?)
 );""",
             parameters=(
                 *self._operation_params(operation),
-                OperatorExitStatus.FLATTENING.value,
-                OperatorExitStatus.RECOVERY_REQUIRED.value,
-                OperatorExitStatus.RECONCILING.value,
+                *(status.value for status in _INCOMPLETE_OPERATION_STATUSES),
             ),
         )
         if affected_rows not in {0, 1}:
@@ -88,12 +92,10 @@ WHERE NOT EXISTS (
         rows = await self._database.fetch_all(
             statement=(
                 f"SELECT {_OPERATION_COLUMNS} FROM operator_exit_operations "
-                "WHERE status IN (?, ?, ?) ORDER BY created_at ASC;"
+                "WHERE status IN (?, ?, ?, ?) ORDER BY created_at ASC;"
             ),
-            parameters=(
-                OperatorExitStatus.FLATTENING.value,
-                OperatorExitStatus.RECOVERY_REQUIRED.value,
-                OperatorExitStatus.RECONCILING.value,
+            parameters=tuple(
+                status.value for status in _INCOMPLETE_OPERATION_STATUSES
             ),
         )
         return tuple(self._operation_from_row(row) for row in rows)
