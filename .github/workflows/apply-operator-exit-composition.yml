@@ -1,4 +1,4 @@
-name: Apply Operator Exit Telegram UX
+name: Validate Telegram Command Registry Cleanup
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: operator-exit-telegram-ux
+  group: telegram-command-registry-cleanup
   cancel-in-progress: true
 
 jobs:
@@ -35,12 +35,8 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Apply reviewed Telegram UX patch
-        run: |
-          python helper/.dev/fix_operator_exit_telegram_ux_runner.py
-          python helper/.dev/apply_operator_exit_telegram_ux.py target
-          python helper/.dev/repair_operator_exit_telegram_callbacks.py target
-          python helper/.dev/repair_operator_exit_telegram_tests.py target
+      - name: Apply command registry cleanup
+        run: python helper/.dev/apply_telegram_command_registry_cleanup.py target
 
       - name: Install project and quality dependencies
         working-directory: target
@@ -86,12 +82,12 @@ jobs:
         working-directory: target
         run: git diff --check
 
-      - name: Commit and push Telegram UX
+      - name: Commit and push cleanup
         working-directory: target
         run: |
           git config user.name "Fauzi Pranata"
           git config user.email "spacetone2nd@gmail.com"
           git add -A
           git diff --cached --check
-          git commit -m "feat: add operator exit Telegram controls"
+          git commit -m "fix: deduplicate Telegram command registry"
           git push origin HEAD:feature/operator-exit-control-plane
