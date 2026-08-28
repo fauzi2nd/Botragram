@@ -17,6 +17,8 @@ jobs:
   quality:
     name: Supplemental Python 3.14
     runs-on: self-hosted
+    env:
+      TAR_PATH: 'C:\Windows\System32\tar.exe'
     continue-on-error: true
     timeout-minutes: 30
 
