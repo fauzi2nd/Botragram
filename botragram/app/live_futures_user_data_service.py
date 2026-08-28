@@ -222,7 +222,9 @@ class LiveFuturesUserDataService:
                         await self._synchronize_after_connection()
                         reconnect_attempt = 0
                         continue
-                    await self.cache.apply(event=event)
+                    unseeded_symbols = await self.cache.apply(event=event)
+                    if unseeded_symbols:
+                        await self._reseed_unseeded_positions(symbols=unseeded_symbols)
                     if isinstance(event, FuturesUserDataAccountUpdate):
                         await self._observe_current_equity()
                 if self._closed:
@@ -298,6 +300,23 @@ class LiveFuturesUserDataService:
             positions=positions,
             clear_recent_orders=clear_recent_orders,
         )
+
+    async def _reseed_unseeded_positions(self, *, symbols: frozenset[str]) -> None:
+        """Resolve streamed new exposure only through an authoritative REST read."""
+        self._status = LiveFuturesUserDataStatus.RESYNCING
+        await self._refresh_snapshot(clear_recent_orders=False)
+        snapshot = await self.cache.get_snapshot()
+        authoritative_symbols = {
+            position.symbol.upper() for position in snapshot.positions
+        }
+        missing_symbols = tuple(sorted(symbols - authoritative_symbols))
+        if missing_symbols:
+            await self.cache.mark_resyncing()
+            raise RuntimeError(
+                "Binance Futures REST snapshot did not confirm streamed position(s): "
+                + ", ".join(missing_symbols)
+            )
+        self._status = LiveFuturesUserDataStatus.READY
 
     def _get_reconnect_delay(self, *, attempt: int) -> float:
         """Return one capped reconnect delay while retaining zero-delay tests."""
