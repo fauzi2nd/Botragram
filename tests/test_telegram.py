@@ -43,6 +43,7 @@ from botragram.enums import (
     SignalType,
 )
 from botragram.models import ExecutionAuthorization, Order, Position, Signal, Trade
+from botragram.telegram.bot import get_bot_commands
 from botragram.telegram.context import BotContext
 from botragram.telegram.keyboards import (
     get_activity_menu_keyboard,
@@ -78,6 +79,25 @@ from botragram.telegram.messages import (
 # Constants
 # =============================================================================
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+# =============================================================================
+# Command Registry Tests
+# =============================================================================
+def test_public_bot_command_registry_is_unique_and_complete() -> None:
+    """Expose every operator command exactly once to Telegram clients."""
+    commands = get_bot_commands()
+    names = tuple(command.command for command in commands)
+
+    assert len(names) == len(set(names))
+    assert {
+        "exitstatus",
+        "closeposition",
+        "closeall",
+        "closeandswitch",
+        "confirmexit",
+        "cancelexit",
+    } <= set(names)
 
 
 # =============================================================================
