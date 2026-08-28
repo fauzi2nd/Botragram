@@ -11,15 +11,14 @@ if old not in text:
 text = text.replace(old, new, 1)
 
 callback_replace = "    replace_once(root, path, old_error, new_error)\n"
-callback_replace_fixed = (
-    "    old_error = \\\"\\n\\\".join(\n"
-    "        f\\\"        {line}\\\" if line else line for line in old_error.splitlines()\n"
-    "    )\n"
-    "    new_error = \\\"\\n\\\".join(\n"
-    "        f\\\"        {line}\\\" if line else line for line in new_error.splitlines()\n"
-    "    )\n"
-    "    replace_once(root, path, old_error, new_error)\n"
-)
+callback_replace_fixed = '''    old_error = "\\n".join(
+        f"        {line}" if line else line for line in old_error.splitlines()
+    )
+    new_error = "\\n".join(
+        f"        {line}" if line else line for line in new_error.splitlines()
+    )
+    replace_once(root, path, old_error, new_error)
+'''
 if callback_replace not in text:
     raise SystemExit("Telegram UX callback replacement hook was not found")
 text = text.replace(callback_replace, callback_replace_fixed, 1)
