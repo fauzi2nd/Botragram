@@ -93,15 +93,15 @@ class TerminalMonitor(BaseTerminalMonitor):
         return layout
 
     def _render_compact_dashboard(self, status: TerminalStatus) -> Layout:
-        """Prioritize safety while retaining compact performance telemetry."""
+        """Prioritize safety, positions, and readable logs on portrait terminals."""
         managed_height = self._compact_positions_height(status)
         discovery_height = 14 if status.global_discovery is not None else 5
         layout = Layout(name="root")
         layout.split_column(
             Layout(
-                self._build_status_panel(status),
+                self._build_compact_status_panel(status),
                 name="status",
-                size=15,
+                size=14,
             ),
             Layout(
                 self._build_discovery_panel(status),
@@ -119,12 +119,60 @@ class TerminalMonitor(BaseTerminalMonitor):
                 size=managed_height,
             ),
             Layout(
-                self._build_compact_log_panel(),
+                self._build_compact_log_panel(status),
                 name="logs",
                 minimum_size=8,
             ),
         )
         return layout
+
+    def _build_compact_status_panel(self, status: TerminalStatus) -> Panel:
+        """Render safety state without duplicating discovery strategy metadata."""
+        table = Table.grid(expand=True, padding=(0, 1))
+        table.add_column(style="bright_cyan", no_wrap=True)
+        table.add_column(style="white")
+        health = status.live_runtime_health
+
+        table.add_row(
+            "Global Runner",
+            "PAUSED" if self.runtime_control.is_paused else "RUNNING",
+        )
+        if health is not None:
+            table.add_row("Position Management", health.status.value.upper())
+            if health.reason is not None:
+                table.add_row("Management Reason", health.reason.value.upper())
+            table.add_row("Portfolio", self._format_portfolio_capacity(status))
+            if status.position_count != len(health.contexts):
+                table.add_row("UNMANAGED EXPOSURE", "DETECTED")
+            table.add_row(
+                "Authorization Coverage",
+                "EXACT" if health.authorization_exact else "UNAVAILABLE",
+            )
+            self._add_balance_and_unrealized_rows(table=table, status=status)
+            table.add_row(
+                "Protection Gate",
+                "READY"
+                if self.runtime_control.is_position_protection_ready
+                else "CLOSED",
+            )
+            recovery = status.autonomous_live_recovery
+            if recovery is not None:
+                table.add_row("Autonomous Recovery", recovery.status.value.upper())
+                if recovery.reason is not None:
+                    table.add_row("Recovery Reason", recovery.reason.value.upper())
+            self._add_autonomous_entry_row(table=table, status=status)
+        else:
+            table.add_row("Mode", self.trade_mode.value.upper())
+            table.add_row("Portfolio", self._format_portfolio_capacity(status))
+            self._add_balance_and_unrealized_rows(table=table, status=status)
+            missing = ", ".join(status.missing_startup_requirements) or "READY"
+            table.add_row("Startup Gate", missing)
+
+        return Panel(
+            table,
+            title="[bold]Runtime & Safety[/bold]",
+            border_style="cyan",
+        )
 
     def _build_compact_performance_panel(self, status: TerminalStatus) -> Panel:
         """Render the highest-value performance metrics in two portrait rows."""
@@ -162,7 +210,7 @@ class TerminalMonitor(BaseTerminalMonitor):
         )
 
     def _build_compact_positions_panel(self, status: TerminalStatus) -> Panel:
-        """Render managed positions as vertical key/value blocks on small screens."""
+        """Render up to five managed positions as dense portrait-friendly blocks."""
         table = Table.grid(expand=True, padding=(0, 1))
         table.add_column(style="bright_magenta", no_wrap=True)
         table.add_column(style="white")
@@ -253,15 +301,16 @@ class TerminalMonitor(BaseTerminalMonitor):
         step: int,
         health: str,
     ) -> None:
-        """Append one mobile-readable managed-position block."""
-        table.add_row(symbol, f"{side} | {leverage}x | {health}")
+        """Append one complete managed position in three portrait rows."""
+        table.add_row(symbol, f"{side} | {leverage}x | {health} | STEP {step}")
         table.add_row("Qty / PnL", f"{quantity} / {pnl}")
-        table.add_row("Entry / Mark", f"{entry} / {mark}")
-        table.add_row("SL / TP", f"{stop_loss} / {take_profit}")
-        table.add_row("Protection Step", str(step))
+        table.add_row(
+            "Entry / Mark / SL / TP",
+            f"{entry} / {mark} / {stop_loss} / {take_profit}",
+        )
 
-    def _build_compact_log_panel(self) -> Panel:
-        """Use concise operator-facing events on narrow terminals."""
+    def _build_compact_log_panel(self, status: TerminalStatus) -> Panel:
+        """Use concise operator-facing events with a height-aware history limit."""
         table = Table(
             box=box.SIMPLE_HEAD,
             expand=True,
@@ -270,7 +319,7 @@ class TerminalMonitor(BaseTerminalMonitor):
         )
         table.add_column("Time", width=12, no_wrap=True, style="bright_cyan")
         table.add_column("Event", ratio=1, overflow="fold")
-        entries = self.log_handler.get_entries()[-10:]
+        entries = self.log_handler.get_entries()[-self._compact_log_limit(status) :]
 
         if not entries:
             table.add_row("-", "INFO | Waiting for application logs...")
@@ -370,10 +419,24 @@ class TerminalMonitor(BaseTerminalMonitor):
 
     @staticmethod
     def _compact_positions_height(status: TerminalStatus) -> int:
-        """Reserve vertical rows for mobile position blocks without wide columns."""
+        """Reserve only three data rows per compact managed position."""
         context_count = (
             len(status.live_runtime_health.contexts)
             if status.live_runtime_health is not None
             else len(status.positions)
         )
-        return max(5, context_count * 5 + 3)
+        return max(5, context_count * 3 + 3)
+
+    def _compact_log_limit(self, status: TerminalStatus) -> int:
+        """Reduce log history as managed-position occupancy consumes screen height."""
+        context_count = (
+            len(status.live_runtime_health.contexts)
+            if status.live_runtime_health is not None
+            else len(status.positions)
+        )
+        terminal_height = self.console.size.height
+        if context_count >= 4 or terminal_height < 50:
+            return 4
+        if context_count >= 2 or terminal_height < 60:
+            return 6
+        return 10
