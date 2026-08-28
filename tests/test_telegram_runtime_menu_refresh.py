@@ -27,6 +27,7 @@ class _FakeMessage:
     """Capture replies and persistent-keyboard updates."""
 
     text: str = ""
+    replies: list[str] = field(default_factory=list[str])
     reply_markups: list[object | None] = field(default_factory=list[object | None])
 
     async def reply_text(
@@ -37,7 +38,8 @@ class _FakeMessage:
         reply_markup: object | None = None,
     ) -> None:
         """Capture one response without depending on Telegram network I/O."""
-        del text, parse_mode
+        del parse_mode
+        self.replies.append(text)
         self.reply_markups.append(reply_markup)
 
 
@@ -58,9 +60,10 @@ class _FakeUpdate:
 
 @dataclass(slots=True)
 class _FakeContext:
-    """Provide Telegram bot_data for runtime menu derivation."""
+    """Provide Telegram bot_data and chat_data for runtime menu derivation."""
 
     bot_data: dict[str, object]
+    chat_data: dict[str, object] = field(default_factory=dict[str, object])
 
 
 def _labels(markup: object | None) -> set[str]:
@@ -93,20 +96,12 @@ def _typed_context(context: _FakeContext) -> ContextTypes.DEFAULT_TYPE:
 
 
 @pytest.mark.asyncio
-async def test_pause_command_refreshes_menu_to_resume_without_start(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Publish Resume immediately after an acknowledged runtime pause."""
+async def test_pause_command_refreshes_menu_in_single_response() -> None:
+    """Publish Resume on the pause acknowledgement without a second message."""
     runtime_control = TradingRuntimeControl()
     assert runtime_control.resume_global_cycle()
     update = _FakeUpdate(message=_FakeMessage(), effective_chat=_FakeChat(_CHAT_ID))
     context = _context(runtime_control)
-
-    async def pause_runtime(update: object, context: object) -> None:
-        del update, context
-        assert runtime_control.pause()
-
-    monkeypatch.setattr(refresh_module, "pause_bot_command", pause_runtime)
 
     await refresh_module.pause_bot_command_with_menu_refresh(
         _typed_update(update),
@@ -114,25 +109,27 @@ async def test_pause_command_refreshes_menu_to_resume_without_start(
     )
 
     assert runtime_control.is_paused
-    labels = _labels(update.message.reply_markups[-1])
+    assert len(update.message.replies) == 1
+    assert "Trading berhasil dijeda" in update.message.replies[0]
+    labels = _labels(update.message.reply_markups[0])
     assert MENU_RESUME in labels
     assert MENU_PAUSE not in labels
 
 
 @pytest.mark.asyncio
-async def test_resume_command_refreshes_menu_to_pause_without_start(
+async def test_resume_command_refreshes_menu_in_single_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Publish Pause immediately after an acknowledged runtime resume."""
+    """Publish Pause on the resume acknowledgement without a second message."""
     runtime_control = TradingRuntimeControl()
     update = _FakeUpdate(message=_FakeMessage(), effective_chat=_FakeChat(_CHAT_ID))
     context = _context(runtime_control)
 
-    async def resume_runtime(update: object, context: object) -> None:
-        del update, context
-        assert runtime_control.resume_global_cycle()
+    async def resume_runtime(bot_context: BotContext) -> bool:
+        del bot_context
+        return runtime_control.resume_global_cycle()
 
-    monkeypatch.setattr(refresh_module, "start_bot_command", resume_runtime)
+    monkeypatch.setattr(refresh_module, "_resume_autonomous_live", resume_runtime)
 
     await refresh_module.start_bot_command_with_menu_refresh(
         _typed_update(update),
@@ -140,16 +137,16 @@ async def test_resume_command_refreshes_menu_to_pause_without_start(
     )
 
     assert not runtime_control.is_paused
-    labels = _labels(update.message.reply_markups[-1])
+    assert len(update.message.replies) == 1
+    assert "Trading berhasil dilanjutkan" in update.message.replies[0]
+    labels = _labels(update.message.reply_markups[0])
     assert MENU_PAUSE in labels
     assert MENU_RESUME not in labels
 
 
 @pytest.mark.asyncio
-async def test_pause_menu_button_refreshes_persistent_keyboard(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Refresh a reply-keyboard Pause action without requiring slash commands."""
+async def test_pause_menu_button_refreshes_persistent_keyboard_once() -> None:
+    """Refresh a reply-keyboard Pause action without duplicate bot messages."""
     runtime_control = TradingRuntimeControl()
     assert runtime_control.resume_global_cycle()
     update = _FakeUpdate(
@@ -158,17 +155,12 @@ async def test_pause_menu_button_refreshes_persistent_keyboard(
     )
     context = _context(runtime_control)
 
-    async def route_pause(update: object, context: object) -> None:
-        del update, context
-        assert runtime_control.pause()
-
-    monkeypatch.setattr(refresh_module, "menu_message_handler", route_pause)
-
     await refresh_module.menu_message_handler_with_runtime_refresh(
         _typed_update(update),
         _typed_context(context),
     )
 
-    labels = _labels(update.message.reply_markups[-1])
+    assert len(update.message.replies) == 1
+    labels = _labels(update.message.reply_markups[0])
     assert MENU_RESUME in labels
     assert MENU_PAUSE not in labels
