@@ -14,6 +14,7 @@ from botragram.app.runtime_control import MarketStreamTelemetry
 from botragram.app.terminal_monitor import TerminalStatus
 from botragram.engine import PnLEngine
 from botragram.enums import TradeMode
+from botragram.models import Position
 from botragram.services.paper_trading_service import PaperPortfolioSnapshot
 
 
@@ -22,6 +23,7 @@ class _PaperBalanceProvider:
     """Provide an unused deterministic PAPER balance."""
 
     async def get_portfolio_snapshot(self) -> PaperPortfolioSnapshot:
+        """Return a deterministic PAPER balance snapshot."""
         return PaperPortfolioSnapshot(
             available_balance=Decimal("100"),
             realized_pnl=Decimal("0"),
@@ -33,6 +35,7 @@ class _LiveBalanceProvider:
     """Provide an unused deterministic LIVE balance."""
 
     async def get_free_balance(self, *, asset: str) -> Decimal:
+        """Return a deterministic LIVE free balance."""
         assert asset == "USDT"
         return Decimal("100")
 
@@ -41,7 +44,8 @@ class _LiveBalanceProvider:
 class _PositionProvider:
     """Provide an empty portfolio."""
 
-    async def get_open_positions(self) -> tuple[()]:
+    async def get_open_positions(self) -> tuple[Position, ...]:
+        """Return no open positions."""
         return ()
 
 
