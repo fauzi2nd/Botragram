@@ -27,12 +27,9 @@ from botragram.telegram.commands import (
     history_command,
     interval_command,
     market_command,
-    menu_message_handler,
     orders_command,
-    pause_bot_command,
     positions_command,
     settings_command,
-    start_bot_command,
     start_command,
     status_command,
     strategy_command,
@@ -51,6 +48,11 @@ from botragram.telegram.risk_limit_commands import (
     risk_limits_command,
     set_risk_limits_command,
 )
+from botragram.telegram.runtime_menu_refresh import (
+    menu_message_handler_with_runtime_refresh,
+    pause_bot_command_with_menu_refresh,
+    start_bot_command_with_menu_refresh,
+)
 
 
 def register_handlers(app: Any) -> None:
@@ -65,8 +67,8 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler("interval", interval_command))
     app.add_handler(CommandHandler("stream", stream_command))
     app.add_handler(CommandHandler("orders", orders_command))
-    app.add_handler(CommandHandler("pause", pause_bot_command))
-    app.add_handler(CommandHandler("resume", start_bot_command))
+    app.add_handler(CommandHandler("pause", pause_bot_command_with_menu_refresh))
+    app.add_handler(CommandHandler("resume", start_bot_command_with_menu_refresh))
     app.add_handler(CommandHandler(CMD_SETTINGS, settings_command))
     app.add_handler(CommandHandler("exchange", exchange_command))
     app.add_handler(CommandHandler("mode", trading_mode_command))
@@ -82,6 +84,6 @@ def register_handlers(app: Any) -> None:
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            menu_message_handler,
+            menu_message_handler_with_runtime_refresh,
         )
     )
