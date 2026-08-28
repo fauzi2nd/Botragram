@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: operator-exit-composition
+  cancel-in-progress: true
+
 jobs:
   apply:
     runs-on: self-hosted
@@ -16,5 +20,72 @@ jobs:
     steps:
       - name: Check out helper branch
         uses: actions/checkout@v5
-      - name: Verify helper workflow
-        run: python --version
+        with:
+          path: helper
+
+      - name: Check out feature branch
+        uses: actions/checkout@v5
+        with:
+          ref: feature/operator-exit-control-plane
+          path: target
+          fetch-depth: 0
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Apply reviewed composition patch
+        run: |
+          python helper/.dev/apply_operator_exit_composition.py target
+          python helper/.dev/fix_operator_exit_generated_tests.py target
+
+      - name: Install project and quality dependencies
+        working-directory: target
+        run: python -m pip install -e ".[dev]"
+
+      - name: Format generated changes
+        working-directory: target
+        run: python -m ruff format .
+
+      - name: Compile sources
+        working-directory: target
+        run: python -m compileall -q botragram tests main.py
+
+      - name: Import application entry point
+        working-directory: target
+        run: python -c "import main; print('import main: PASS')"
+
+      - name: Check formatting
+        working-directory: target
+        run: python -m ruff format --check .
+
+      - name: Lint
+        working-directory: target
+        run: python -m ruff check .
+
+      - name: Type-check with Pyright
+        working-directory: target
+        run: python -m pyright
+
+      - name: Type-check with MyPy
+        working-directory: target
+        run: python -m mypy botragram
+
+      - name: Run tests
+        working-directory: target
+        run: python -m pytest
+
+      - name: Check diff integrity
+        working-directory: target
+        run: git diff --check
+
+      - name: Commit and push feature composition
+        working-directory: target
+        run: |
+          git config user.name "Fauzi Pranata"
+          git config user.email "spacetone2nd@gmail.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat: wire operator exit recovery control plane"
+          git push origin HEAD:feature/operator-exit-control-plane
