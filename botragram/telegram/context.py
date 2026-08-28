@@ -292,6 +292,10 @@ class BotOperatorExitProvider(Protocol):
         """Return truthful durable operator-exit state."""
         ...
 
+    async def get_positions(self) -> tuple[Position, ...]:
+        """Return mode-appropriate authoritative positions."""
+        ...
+
     async def request_close_position(
         self,
         *,

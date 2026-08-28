@@ -11,6 +11,9 @@ from botragram.enums import ExecutionPolicy
 from botragram.models import OperatorExitConfirmation, OperatorExitSnapshot
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
+from botragram.telegram.keyboards import (
+    get_operator_exit_confirmation_keyboard,
+)
 
 __all__ = [
     "cancel_exit_command",
@@ -19,6 +22,9 @@ __all__ = [
     "close_position_command",
     "confirm_exit_command",
     "exit_status_command",
+    "format_operator_exit_confirmation",
+    "format_operator_exit_snapshot",
+    "get_operator_exit_requester",
 ]
 
 _CLOSE_POSITION_USAGE: Final[str] = "/closeposition <symbol>"
@@ -32,12 +38,15 @@ def _get_context(context: ContextTypes.DEFAULT_TYPE) -> BotContext:
     return value if isinstance(value, BotContext) else BotContext()
 
 
-def _get_requester(update: Update) -> str | None:
+def get_operator_exit_requester(update: Update) -> str | None:
+    """Return the chat-bound operator identity used by confirmations."""
     chat = update.effective_chat
     return f"telegram:{chat.id}" if chat is not None else None
 
 
-def _format_confirmation(challenge: OperatorExitConfirmation) -> str:
+def format_operator_exit_confirmation(
+    challenge: OperatorExitConfirmation,
+) -> str:
     symbols = ", ".join(challenge.symbols)
     target = (
         challenge.target_execution_policy.value
@@ -53,14 +62,19 @@ def _format_confirmation(challenge: OperatorExitConfirmation) -> str:
         f"target_execution_policy={target}\n"
         f"expires_at={challenge.expires_at.isoformat()}\n"
         "No close order has been sent yet.\n"
-        "Confirm exactly with:\n"
-        f"/confirmexit {challenge.confirmation_id} {challenge.required_token}\n"
-        "Cancel with:\n"
-        f"/cancelexit {challenge.confirmation_id}"
+        + (
+            "MAINNET requires typed confirmation exactly with:\n"
+            if challenge.requires_typed_confirmation
+            else "Confirm with the button below or exactly with:\n"
+        )
+        + f"/confirmexit {challenge.confirmation_id} "
+        f"{challenge.required_token}\n"
+        + "Cancel with:\n"
+        + f"/cancelexit {challenge.confirmation_id}"
     )
 
 
-def _format_snapshot(snapshot: OperatorExitSnapshot) -> str:
+def format_operator_exit_snapshot(snapshot: OperatorExitSnapshot) -> str:
     positions = ", ".join(position.symbol for position in snapshot.positions) or "none"
     closing = ", ".join(snapshot.closing_symbols) or "none"
     target = (
@@ -101,7 +115,7 @@ async def exit_status_command(
     except RuntimeError as error:
         await message.reply_text(f"Operator exit status unavailable: {error}")
         return
-    await message.reply_text(_format_snapshot(snapshot))
+    await message.reply_text(format_operator_exit_snapshot(snapshot))
 
 
 async def close_position_command(
@@ -113,7 +127,7 @@ async def close_position_command(
         return
     message = update.effective_message
     service = _get_context(context).operator_exit_service
-    requester = _get_requester(update)
+    requester = get_operator_exit_requester(update)
     if message is None:
         return
     if service is None or requester is None:
@@ -127,12 +141,17 @@ async def close_position_command(
         challenge = await service.request_close_position(
             symbol=args[0],
             requested_by=requester,
-            auto_pause=True,
+            auto_pause=False,
         )
     except (RuntimeError, ValueError) as error:
         await message.reply_text(f"Close-position request rejected: {error}")
         return
-    await message.reply_text(_format_confirmation(challenge))
+    await message.reply_text(
+        format_operator_exit_confirmation(challenge),
+        reply_markup=get_operator_exit_confirmation_keyboard(
+            confirmation=challenge,
+        ),
+    )
 
 
 async def close_all_command(
@@ -144,7 +163,7 @@ async def close_all_command(
         return
     message = update.effective_message
     service = _get_context(context).operator_exit_service
-    requester = _get_requester(update)
+    requester = get_operator_exit_requester(update)
     if message is None:
         return
     if service is None or requester is None:
@@ -156,12 +175,17 @@ async def close_all_command(
     try:
         challenge = await service.request_close_all(
             requested_by=requester,
-            auto_pause=True,
+            auto_pause=False,
         )
     except (RuntimeError, ValueError) as error:
         await message.reply_text(f"Close-all request rejected: {error}")
         return
-    await message.reply_text(_format_confirmation(challenge))
+    await message.reply_text(
+        format_operator_exit_confirmation(challenge),
+        reply_markup=get_operator_exit_confirmation_keyboard(
+            confirmation=challenge,
+        ),
+    )
 
 
 async def close_all_and_switch_command(
@@ -175,7 +199,7 @@ async def close_all_and_switch_command(
     bot_context = _get_context(context)
     service = bot_context.operator_exit_service
     switcher = bot_context.market_type_switcher
-    requester = _get_requester(update)
+    requester = get_operator_exit_requester(update)
     if message is None:
         return
     if service is None or switcher is None or requester is None:
@@ -208,7 +232,12 @@ async def close_all_and_switch_command(
     except (RuntimeError, ValueError) as error:
         await message.reply_text(f"Flatten-and-switch request rejected: {error}")
         return
-    await message.reply_text(_format_confirmation(challenge))
+    await message.reply_text(
+        format_operator_exit_confirmation(challenge),
+        reply_markup=get_operator_exit_confirmation_keyboard(
+            confirmation=challenge,
+        ),
+    )
 
 
 async def confirm_exit_command(
@@ -220,7 +249,7 @@ async def confirm_exit_command(
         return
     message = update.effective_message
     service = _get_context(context).operator_exit_service
-    requester = _get_requester(update)
+    requester = get_operator_exit_requester(update)
     if message is None:
         return
     if service is None or requester is None:
@@ -241,7 +270,7 @@ async def confirm_exit_command(
     except (RuntimeError, ValueError) as error:
         await message.reply_text(f"Operator exit confirmation rejected: {error}")
         return
-    await message.reply_text(_format_snapshot(snapshot))
+    await message.reply_text(format_operator_exit_snapshot(snapshot))
 
 
 async def cancel_exit_command(
@@ -253,7 +282,7 @@ async def cancel_exit_command(
         return
     message = update.effective_message
     service = _get_context(context).operator_exit_service
-    requester = _get_requester(update)
+    requester = get_operator_exit_requester(update)
     if message is None:
         return
     if service is None or requester is None:

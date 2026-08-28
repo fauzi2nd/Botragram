@@ -39,7 +39,7 @@ from botragram.enums import (
     MarketType,
     StrategyType,
 )
-from botragram.models import LiveRuntimeHealthSnapshot
+from botragram.models import LiveRuntimeHealthSnapshot, Position
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import (
     BOT_CONTEXT_KEY,
@@ -54,6 +54,8 @@ from botragram.telegram.keyboards import (
     get_interval_keyboard,
     get_market_keyboard,
     get_market_search_keyboard,
+    get_operator_exit_confirmation_keyboard,
+    get_operator_flatten_switch_keyboard,
     get_strategy_keyboard,
     get_stream_keyboard,
 )
@@ -68,6 +70,11 @@ from botragram.telegram.messages import (
     get_status_message,
     get_strategy_message,
     get_stream_message,
+)
+from botragram.telegram.operator_exit_commands import (
+    format_operator_exit_confirmation,
+    format_operator_exit_snapshot,
+    get_operator_exit_requester,
 )
 
 __all__ = [
@@ -97,6 +104,11 @@ _OPPORTUNITY_REJECT_CALLBACK_PREFIX: Final[str] = "cb_opportunity_reject_"
 _POLICY_SELECT_CALLBACK_PREFIX: Final[str] = "cb_policy_select_"
 _POLICY_CONFIRM_CALLBACK_PREFIX: Final[str] = "cb_policy_confirm_"
 _POLICY_CANCEL_CALLBACK: Final[str] = "cb_policy_cancel"
+_OPERATOR_CLOSE_CALLBACK_PREFIX: Final[str] = "cb_operator_exit_close_"
+_OPERATOR_CLOSE_ALL_CALLBACK: Final[str] = "cb_operator_exit_close_all"
+_OPERATOR_CONFIRM_CALLBACK_PREFIX: Final[str] = "cb_operator_exit_confirm_"
+_OPERATOR_CANCEL_CALLBACK_PREFIX: Final[str] = "cb_operator_exit_cancel_"
+_OPERATOR_FLATTEN_SWITCH_PREFIX: Final[str] = "cb_operator_exit_flatten_switch_"
 
 
 # =============================================================================
@@ -326,6 +338,141 @@ async def handle_callback_query(
     ):
         return
 
+    service = bot_context.operator_exit_service
+    requester = get_operator_exit_requester(update)
+
+    if data == _OPERATOR_CLOSE_ALL_CALLBACK:
+        if service is None or requester is None:
+            await query.edit_message_text("Operator exit controls are unavailable.")
+            return
+        try:
+            challenge = await service.request_close_all(
+                requested_by=requester,
+                auto_pause=False,
+            )
+        except (RuntimeError, ValueError) as error:
+            await query.edit_message_text(
+                f"⚠️ <b>{escape(str(error))}</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+        await query.edit_message_text(
+            format_operator_exit_confirmation(challenge),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_operator_exit_confirmation_keyboard(
+                confirmation=challenge,
+            ),
+        )
+        return
+
+    if data.startswith(_OPERATOR_CLOSE_CALLBACK_PREFIX):
+        if service is None or requester is None:
+            await query.edit_message_text("Operator exit controls are unavailable.")
+            return
+        operator_symbol = (
+            data.removeprefix(_OPERATOR_CLOSE_CALLBACK_PREFIX).strip().upper()
+        )
+        try:
+            challenge = await service.request_close_position(
+                symbol=operator_symbol,
+                requested_by=requester,
+                auto_pause=False,
+            )
+        except (RuntimeError, ValueError) as error:
+            await query.edit_message_text(
+                f"⚠️ <b>{escape(str(error))}</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+        await query.edit_message_text(
+            format_operator_exit_confirmation(challenge),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_operator_exit_confirmation_keyboard(
+                confirmation=challenge,
+            ),
+        )
+        return
+
+    if data.startswith(_OPERATOR_CONFIRM_CALLBACK_PREFIX):
+        if service is None or requester is None:
+            await query.edit_message_text("Operator exit controls are unavailable.")
+            return
+        confirmation_id = (
+            data.removeprefix(_OPERATOR_CONFIRM_CALLBACK_PREFIX).strip().lower()
+        )
+        try:
+            snapshot = await service.confirm(
+                confirmation_id=confirmation_id,
+                requested_by=requester,
+                token="CONFIRM",
+            )
+        except (RuntimeError, ValueError) as error:
+            await query.edit_message_text(
+                f"⚠️ <b>{escape(str(error))}</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+        await query.edit_message_text(
+            format_operator_exit_snapshot(snapshot),
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
+        return
+
+    if data.startswith(_OPERATOR_CANCEL_CALLBACK_PREFIX):
+        if service is None or requester is None:
+            await query.edit_message_text("Operator exit controls are unavailable.")
+            return
+        confirmation_id = (
+            data.removeprefix(_OPERATOR_CANCEL_CALLBACK_PREFIX).strip().lower()
+        )
+        try:
+            await service.cancel_confirmation(
+                confirmation_id=confirmation_id,
+                requested_by=requester,
+            )
+        except (RuntimeError, ValueError) as error:
+            await query.edit_message_text(
+                f"⚠️ <b>{escape(str(error))}</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+        await query.edit_message_text(
+            "Operator exit confirmation cancelled. No close order sent."
+        )
+        return
+
+    if data.startswith(_OPERATOR_FLATTEN_SWITCH_PREFIX):
+        if service is None or requester is None:
+            await query.edit_message_text("Operator exit controls are unavailable.")
+            return
+        target = _parse_execution_policy_callback(
+            callback_data=data,
+            prefix=_OPERATOR_FLATTEN_SWITCH_PREFIX,
+        )
+        if target is None:
+            await query.edit_message_text("Invalid execution-policy target.")
+            return
+        try:
+            challenge = await service.request_close_all(
+                requested_by=requester,
+                target_execution_policy=target,
+                auto_pause=True,
+            )
+        except (RuntimeError, ValueError) as error:
+            await query.edit_message_text(
+                f"⚠️ <b>{escape(str(error))}</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+        await query.edit_message_text(
+            format_operator_exit_confirmation(challenge),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_operator_exit_confirmation_keyboard(
+                confirmation=challenge,
+            ),
+        )
+        return
+
     if data.startswith(_POLICY_SELECT_CALLBACK_PREFIX):
         target = _parse_execution_policy_callback(
             callback_data=data,
@@ -384,6 +531,26 @@ async def handle_callback_query(
             )
         except Exception as error:
             _LOGGER.exception("Telegram execution-policy switch validation failed")
+            operator_service = bot_context.operator_exit_service
+            operator_positions: tuple[Position, ...] = ()
+            if operator_service is not None:
+                try:
+                    operator_positions = tuple(await operator_service.get_positions())
+                except Exception:
+                    _LOGGER.exception("Telegram operator-exit position lookup failed")
+            if operator_positions:
+                await query.edit_message_text(
+                    f"⚠️ <b>{escape(str(error))}</b>\n\n"
+                    f"{len(operator_positions)} active position(s) block this switch. "
+                    "Botragram can flatten them through the guarded "
+                    "operator-exit workflow and switch only after zero "
+                    "exposure is verified.",
+                    parse_mode=DEFAULT_PARSE_MODE,
+                    reply_markup=get_operator_flatten_switch_keyboard(
+                        execution_policy=target,
+                    ),
+                )
+                return
             await query.edit_message_text(
                 f"⚠️ <b>{escape(str(error))}</b>",
                 parse_mode=DEFAULT_PARSE_MODE,

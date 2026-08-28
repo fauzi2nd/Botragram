@@ -60,6 +60,7 @@ from botragram.constants.telegram import (
     TELEGRAM_MARKET_SYMBOLS,
 )
 from botragram.enums import ExecutionPolicy, MarketType
+from botragram.models import OperatorExitConfirmation, Position
 
 __all__ = [
     "get_activity_menu_keyboard",
@@ -72,6 +73,9 @@ __all__ = [
     "get_main_menu_keyboard",
     "get_market_keyboard",
     "get_market_search_keyboard",
+    "get_operator_exit_confirmation_keyboard",
+    "get_operator_exit_positions_keyboard",
+    "get_operator_flatten_switch_keyboard",
     "get_strategy_keyboard",
     "get_stream_keyboard",
     "get_execution_authorization_keyboard",
@@ -115,6 +119,84 @@ def get_main_menu_keyboard(
             [MENU_STATUS, MENU_POSITIONS],
             [MENU_ACTIVITY, runtime_action],
             [MENU_TRADING_MODE],
+        ]
+    )
+
+
+def get_operator_exit_positions_keyboard(
+    *,
+    positions: Sequence[Position],
+) -> InlineKeyboardMarkup:
+    """Return explicit per-position and whole-portfolio exit controls."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                f"⚠️ Close {position.symbol.upper()}",
+                callback_data=(
+                    f"cb_operator_exit_close_{position.symbol.strip().lower()}"
+                ),
+            )
+        ]
+        for position in positions
+    ]
+    if positions:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "⚠️ Close All Positions",
+                    callback_data="cb_operator_exit_close_all",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(rows)
+
+
+def get_operator_exit_confirmation_keyboard(
+    *,
+    confirmation: OperatorExitConfirmation,
+) -> InlineKeyboardMarkup:
+    """Return safe confirmation controls without weakening MAINNET typing."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if not confirmation.requires_typed_confirmation:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm Exit",
+                    callback_data=(
+                        f"cb_operator_exit_confirm_{confirmation.confirmation_id}"
+                    ),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "Cancel",
+                callback_data=(
+                    f"cb_operator_exit_cancel_{confirmation.confirmation_id}"
+                ),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(rows)
+
+
+def get_operator_flatten_switch_keyboard(
+    *,
+    execution_policy: ExecutionPolicy,
+) -> InlineKeyboardMarkup:
+    """Offer an explicit financial transition when positions block switching."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "⚠️ Close All & Switch",
+                    callback_data=(
+                        f"cb_operator_exit_flatten_switch_{execution_policy.value}"
+                    ),
+                )
+            ],
+            [InlineKeyboardButton("Cancel", callback_data="cb_policy_cancel")],
         ]
     )
 
