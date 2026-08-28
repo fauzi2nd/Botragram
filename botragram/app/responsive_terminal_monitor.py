@@ -116,7 +116,9 @@ class TerminalMonitor(BaseTerminalMonitor):
                         mark=self._format_compact_decimal(paper_position.current_price),
                         pnl=self.format_position_pnl(paper_position.unrealized_pnl),
                         stop_loss=self._format_compact_price(paper_position.stop_loss),
-                        take_profit=self._format_compact_price(paper_position.take_profit),
+                        take_profit=self._format_compact_price(
+                            paper_position.take_profit
+                        ),
                         step=paper_position.protection_step,
                         health="PAPER",
                     )
@@ -152,7 +154,9 @@ class TerminalMonitor(BaseTerminalMonitor):
                     mark=self._format_compact_decimal(mark),
                     pnl=self.format_position_pnl(managed_position.unrealized_pnl),
                     stop_loss=self._format_compact_price(managed_position.stop_loss),
-                    take_profit=self._format_compact_price(managed_position.take_profit),
+                    take_profit=self._format_compact_price(
+                        managed_position.take_profit
+                    ),
                     step=managed_position.protection_step,
                     health=self._get_managed_position_health(
                         context=context,
