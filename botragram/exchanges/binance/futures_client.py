@@ -1141,6 +1141,18 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             client_order_id=client_order_id,
         )
 
+    async def close_position_exact(
+        self,
+        *,
+        position: Position,
+        client_order_id: str,
+    ) -> Order:
+        """Submit one reduce-only close from an authoritative snapshot."""
+        return await self._close_position(
+            position,
+            client_order_id=self._normalize_client_order_id(client_order_id),
+        )
+
     async def close_all_positions(self) -> Sequence[Order]:
         """Close all active one-way Futures positions."""
         positions = await self.get_positions()

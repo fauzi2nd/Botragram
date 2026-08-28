@@ -86,13 +86,13 @@ class _LivePositionAuthority(Protocol):
 class _LiveOperatorExitExchange(Protocol):
     """Expose only exact LIVE close and GET reconciliation operations."""
 
-    async def close_position(
+    async def close_position_exact(
         self,
         *,
-        symbol: str,
-        client_order_id: str | None = None,
+        position: Position,
+        client_order_id: str,
     ) -> Order:
-        """Submit one reduce-only close with a durable client identity."""
+        """Submit one reduce-only close from the durable position snapshot."""
         ...
 
     async def get_order_by_client_order_id(
@@ -474,11 +474,13 @@ class OperatorExitService:
             ):
                 self._start_background_recovery()
         except Exception as error:
-            await self._mark_recovery_required(
-                operation=operation,
-                reason=str(error),
-            )
-            self._start_background_recovery()
+            try:
+                await self._mark_recovery_required(
+                    operation=operation,
+                    reason=str(error),
+                )
+            finally:
+                self._start_background_recovery()
         return await self.get_snapshot()
 
     async def recover_until_safe(self) -> None:
@@ -676,8 +678,8 @@ class OperatorExitService:
             self.runtime_control.set_position_protection_ready(False)
             exchange = self._require(self.live_exchange, "LIVE operator exchange")
             try:
-                order = await exchange.close_position(
-                    symbol=attempt.symbol,
+                order = await exchange.close_position_exact(
+                    position=authoritative,
                     client_order_id=attempt.client_order_id,
                 )
             except ExchangeOrderRejectedError as error:
