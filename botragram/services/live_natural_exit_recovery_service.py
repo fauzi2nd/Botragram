@@ -332,7 +332,7 @@ class LiveNaturalExitRecoveryService:
                         entry_client_order_id=lifecycle_id,
                     )
             _LOGGER.info(
-                "Natural LIVE exit reconciled: symbol=%s entry_client_order_id=%s",
+                "LIVE exit lifecycle reconciled: symbol=%s entry_client_order_id=%s",
                 position.symbol,
                 position.entry_client_order_id,
             )

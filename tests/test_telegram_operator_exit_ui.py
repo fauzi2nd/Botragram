@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -20,6 +21,10 @@ from botragram.enums import (
     OperatorExitType,
     PositionSide,
     TradeMode,
+)
+from botragram.exceptions import (
+    ExecutionPolicySwitchBlockedError,
+    OperatorExitConfirmationUnavailableError,
 )
 from botragram.models import (
     OperatorExitConfirmation,
@@ -116,6 +121,7 @@ class _Context:
 @dataclass(slots=True)
 class _OperatorService:
     typed: bool = False
+    confirmation_unavailable: bool = False
     request_calls: list[str] = field(default_factory=list[str])
     confirm_calls: list[str] = field(default_factory=list[str])
     cancel_calls: list[str] = field(default_factory=list[str])
@@ -191,6 +197,10 @@ class _OperatorService:
         requested_by: str,
         token: str | None = None,
     ) -> OperatorExitSnapshot:
+        if self.confirmation_unavailable:
+            raise OperatorExitConfirmationUnavailableError(
+                "Operator-exit confirmation is unavailable"
+            )
         self.confirm_calls.append(f"{confirmation_id}:{requested_by}:{token}")
         return OperatorExitSnapshot(
             status=OperatorExitStatus.COMPLETE,
@@ -211,6 +221,9 @@ class _OperatorService:
 @dataclass(slots=True)
 class _Switcher:
     execution_policy: ExecutionPolicy = ExecutionPolicy.AUTONOMOUS_LIVE
+    unexpected_failure: bool = False
+    prepare_calls: int = 0
+    commit_calls: int = 0
 
     @property
     def current_execution_policy(self) -> ExecutionPolicy:
@@ -235,13 +248,20 @@ class _Switcher:
         execution_policy: ExecutionPolicy,
     ) -> bool:
         del execution_policy
-        raise RuntimeError("Close every active position before switching trading mode")
+        self.prepare_calls += 1
+        if self.unexpected_failure:
+            raise OSError("configured unexpected switch failure")
+        raise ExecutionPolicySwitchBlockedError(
+            "Close every active position before switching trading mode",
+            active_position_count=1,
+        )
 
     def commit_execution_policy(
         self,
         *,
         execution_policy: ExecutionPolicy,
     ) -> None:
+        self.commit_calls += 1
         self.execution_policy = execution_policy
 
 
@@ -329,9 +349,18 @@ async def test_testnet_inline_confirm_uses_chat_bound_confirmation() -> None:
     assert service.confirm_calls == [f"{_CONFIRMATION_ID}:telegram:{_CHAT_ID}:CONFIRM"]
     assert "status=complete" in query.replies[-1]
 
+    service.confirmation_unavailable = True
+    await handle_callback_query(update, _context(service=service))
+
+    assert "Reopen Trading Mode or Positions" in query.replies[-1]
+    assert "No action was taken" in query.replies[-1]
+    assert service.confirm_calls == [f"{_CONFIRMATION_ID}:telegram:{_CHAT_ID}:CONFIRM"]
+
 
 @pytest.mark.asyncio
-async def test_mode_switch_with_position_offers_guarded_flatten_transition() -> None:
+async def test_mode_switch_with_position_offers_guarded_flatten_transition(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     service = _OperatorService()
     switcher = _Switcher()
     query = _Query(data="cb_policy_confirm_single_symbol")
@@ -344,6 +373,7 @@ async def test_mode_switch_with_position_offers_guarded_flatten_transition() -> 
         ),
     )
 
+    caplog.set_level(logging.ERROR, logger="botragram.telegram.callbacks")
     await handle_callback_query(
         update,
         _context(service=service, switcher=switcher),
@@ -359,6 +389,9 @@ async def test_mode_switch_with_position_offers_guarded_flatten_transition() -> 
     }
     assert "cb_operator_exit_flatten_switch_single_symbol" in callbacks
     assert not service.request_calls
+    assert switcher.prepare_calls == 1
+    assert switcher.commit_calls == 0
+    assert not caplog.records
 
     query.data = "cb_operator_exit_flatten_switch_single_symbol"
     await handle_callback_query(
@@ -376,3 +409,18 @@ async def test_mode_switch_with_position_offers_guarded_flatten_transition() -> 
         if isinstance(button.callback_data, str)
     }
     assert f"cb_operator_exit_confirm_{_CONFIRMATION_ID}" in (confirmation_callbacks)
+
+    caplog.clear()
+    switcher.unexpected_failure = True
+    query.data = "cb_policy_confirm_single_symbol"
+    await handle_callback_query(update, _context(service=service, switcher=switcher))
+
+    assert "failed unexpectedly" in query.replies[-1]
+    assert query.reply_markups[-1] is None
+    assert service.request_calls == [f"all:telegram:{_CHAT_ID}:single_symbol:True"]
+    assert switcher.prepare_calls == 2
+    assert switcher.commit_calls == 0
+    assert any(
+        record.message == "Telegram execution-policy switch validation failed"
+        for record in caplog.records
+    )

@@ -31,7 +31,10 @@ from telegram.ext import ContextTypes
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.constants.telegram import DEFAULT_PARSE_MODE
+from botragram.constants.telegram import (
+    DEFAULT_PARSE_MODE,
+    OPERATOR_EXIT_STALE_CONFIRMATION_MESSAGE,
+)
 from botragram.enums import (
     ExchangeType,
     ExecutionPolicy,
@@ -39,7 +42,11 @@ from botragram.enums import (
     MarketType,
     StrategyType,
 )
-from botragram.models import LiveRuntimeHealthSnapshot, Position
+from botragram.exceptions import (
+    ExecutionPolicySwitchBlockedError,
+    OperatorExitConfirmationUnavailableError,
+)
+from botragram.models import LiveRuntimeHealthSnapshot
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import (
     BOT_CONTEXT_KEY,
@@ -406,6 +413,12 @@ async def handle_callback_query(
                 requested_by=requester,
                 token="CONFIRM",
             )
+        except OperatorExitConfirmationUnavailableError:
+            await query.edit_message_text(
+                OPERATOR_EXIT_STALE_CONFIRMATION_MESSAGE,
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
         except (RuntimeError, ValueError) as error:
             await query.edit_message_text(
                 f"⚠️ <b>{escape(str(error))}</b>",
@@ -430,6 +443,12 @@ async def handle_callback_query(
                 confirmation_id=confirmation_id,
                 requested_by=requester,
             )
+        except OperatorExitConfirmationUnavailableError:
+            await query.edit_message_text(
+                OPERATOR_EXIT_STALE_CONFIRMATION_MESSAGE,
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
         except (RuntimeError, ValueError) as error:
             await query.edit_message_text(
                 f"⚠️ <b>{escape(str(error))}</b>",
@@ -529,19 +548,20 @@ async def handle_callback_query(
             changed = await switcher.prepare_execution_policy(
                 execution_policy=target,
             )
-        except Exception as error:
-            _LOGGER.exception("Telegram execution-policy switch validation failed")
-            operator_service = bot_context.operator_exit_service
-            operator_positions: tuple[Position, ...] = ()
-            if operator_service is not None:
-                try:
-                    operator_positions = tuple(await operator_service.get_positions())
-                except Exception:
-                    _LOGGER.exception("Telegram operator-exit position lookup failed")
-            if operator_positions:
+        except ExecutionPolicySwitchBlockedError as error:
+            _LOGGER.info(
+                "Telegram execution-policy switch blocked: target=%s reason=%s",
+                target.value,
+                error,
+            )
+            if (
+                error.active_position_count > 0
+                and bot_context.operator_exit_service is not None
+            ):
                 await query.edit_message_text(
                     f"⚠️ <b>{escape(str(error))}</b>\n\n"
-                    f"{len(operator_positions)} active position(s) block this switch. "
+                    f"{error.active_position_count} active position(s) block this "
+                    "switch. "
                     "Botragram can flatten them through the guarded "
                     "operator-exit workflow and switch only after zero "
                     "exposure is verified.",
@@ -554,10 +574,13 @@ async def handle_callback_query(
             await query.edit_message_text(
                 f"⚠️ <b>{escape(str(error))}</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=get_execution_policy_keyboard(
-                    current_policy=bot_context.execution_policy,
-                    available_policies=switcher.available_execution_policies(),
-                ),
+            )
+            return
+        except Exception:
+            _LOGGER.exception("Telegram execution-policy switch validation failed")
+            await query.edit_message_text(
+                "Trading-mode switch failed unexpectedly. No restart was "
+                "scheduled. Reopen Trading Mode and try again.",
             )
             return
         if not changed:

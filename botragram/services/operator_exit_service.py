@@ -32,6 +32,7 @@ from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderRejectedError,
+    OperatorExitConfirmationUnavailableError,
 )
 from botragram.models import (
     OperatorExitAttempt,
@@ -1124,7 +1125,9 @@ class OperatorExitService:
         """Return one unexpired challenge bound to the exact requester."""
         pending = self._pending_confirmation
         if pending is None:
-            raise RuntimeError("Operator-exit confirmation is unavailable")
+            raise OperatorExitConfirmationUnavailableError(
+                "Operator-exit confirmation is unavailable"
+            )
         if pending.challenge.expires_at <= datetime.now(UTC):
             self._pending_confirmation = None
             self._release_runtime_gate()

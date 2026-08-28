@@ -11,6 +11,7 @@ from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.app.settings_manager import SettingsManager
 from botragram.config import Settings
 from botragram.enums import ExecutionPolicy, MarketType, TradeMode
+from botragram.exceptions import ExecutionPolicySwitchBlockedError
 from botragram.models import Position
 
 __all__ = [
@@ -283,35 +284,48 @@ class MarketTypeSwitchService:
             return False
 
         candidate = self._settings_for_policy(policy=execution_policy)
-        SettingsManager.validate(settings=candidate)
-        self.runtime_control.require_configuration_change_allowed(
-            allow_operator_exit=allow_operator_exit,
-        )
+        try:
+            SettingsManager.validate(settings=candidate)
+        except ValueError as error:
+            raise ExecutionPolicySwitchBlockedError(
+                "Target trading mode is outside the boot capability envelope"
+            ) from error
+        try:
+            self.runtime_control.require_configuration_change_allowed(
+                allow_operator_exit=allow_operator_exit,
+            )
+        except RuntimeError as error:
+            raise ExecutionPolicySwitchBlockedError(str(error)) from error
 
-        if await self._get_positions():
-            raise RuntimeError(
-                "Close every active position before switching trading mode"
+        positions = await self._get_positions()
+        if positions:
+            raise ExecutionPolicySwitchBlockedError(
+                "Close every active position before switching trading mode",
+                active_position_count=len(positions),
             )
 
         if self.trade_mode is TradeMode.LIVE:
             if self.runtime_control.runtime_contexts:
-                raise RuntimeError(
+                raise ExecutionPolicySwitchBlockedError(
                     "LIVE runtime contexts must be fully reconciled before "
                     "switching mode"
                 )
             if not self.runtime_control.is_position_protection_ready:
-                raise RuntimeError(
+                raise ExecutionPolicySwitchBlockedError(
                     "LIVE recovery/protection must be READY before switching mode"
                 )
             repository = self.submission_attempt_repository
             if repository is None:
                 raise RuntimeError("LIVE submission recovery state is unavailable")
             if await repository.get_incomplete():
-                raise RuntimeError(
+                raise ExecutionPolicySwitchBlockedError(
                     "Incomplete LIVE submission recovery blocks trading-mode switch"
                 )
 
-        self.restart_coordinator.stage(execution_policy=execution_policy)
+        try:
+            self.restart_coordinator.stage(execution_policy=execution_policy)
+        except RuntimeError as error:
+            raise ExecutionPolicySwitchBlockedError(str(error)) from error
         return True
 
     def commit_execution_policy(

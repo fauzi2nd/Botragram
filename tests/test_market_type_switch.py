@@ -27,6 +27,7 @@ from botragram.enums import (
     PositionSide,
     TradeMode,
 )
+from botragram.exceptions import ExecutionPolicySwitchBlockedError
 from botragram.models import Position
 
 _NOW = datetime(2026, 8, 7, tzinfo=UTC)
@@ -254,7 +255,10 @@ async def _run_live_execution_policy_recovery_guard_test() -> None:
     )
 
     assert ExecutionPolicy.AUTONOMOUS_LIVE in service.available_execution_policies()
-    with pytest.raises(RuntimeError, match="Incomplete LIVE submission"):
+    with pytest.raises(
+        ExecutionPolicySwitchBlockedError,
+        match="Incomplete LIVE submission",
+    ):
         await service.prepare_execution_policy(
             execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE
         )
@@ -290,3 +294,27 @@ async def _run_live_position_guard_test() -> None:
         await service.prepare(market_type=MarketType.SPOT)
 
     assert live_positions.synchronized
+
+
+@pytest.mark.asyncio
+async def test_execution_policy_position_block_is_typed_and_stages_no_restart() -> None:
+    """Expose guarded flatten eligibility without staging a rejected transition."""
+    coordinator = RuntimeRestartCoordinator()
+    service = MarketTypeSwitchService(
+        trade_mode=TradeMode.PAPER,
+        runtime_control=TradingRuntimeControl(),
+        position_repository=FakeStoredPositions(positions=(_position(),)),
+        position_service=FakeLivePositions(),
+        restart_coordinator=coordinator,
+        settings=Settings(telegram=TelegramSettings(enabled=False)),
+    )
+
+    with pytest.raises(ExecutionPolicySwitchBlockedError) as captured:
+        await service.prepare_execution_policy(
+            execution_policy=ExecutionPolicy.AUTONOMOUS_PAPER,
+        )
+
+    assert captured.value.active_position_count == 1
+    assert "Close every active position" in str(captured.value)
+    assert not coordinator.has_committed_restart
+    assert coordinator.consume() is None

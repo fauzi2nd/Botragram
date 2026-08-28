@@ -18,6 +18,7 @@ from botragram.enums import (
     PositionSide,
     TradeMode,
 )
+from botragram.exceptions import OperatorExitConfirmationUnavailableError
 from botragram.models import OperatorExitOperation, Position, Ticker, TradingResult
 from botragram.services.operator_exit_service import OperatorExitService
 from botragram.storage.memory import (
@@ -356,4 +357,30 @@ async def test_confirmation_requires_exact_explicit_token() -> None:
         confirmation_id=confirmation.confirmation_id,
         requested_by="telegram:7",
     )
+    assert not runtime_control.operator_exit_in_progress
+
+
+@pytest.mark.asyncio
+async def test_rebuilt_session_rejects_stale_confirmation_without_mutation() -> None:
+    """Treat a callback from the prior in-process session as expired UI state."""
+    repository = MemoryPositionRepository()
+    operator_repository = MemoryOperatorExitRepository()
+    runtime_control = TradingRuntimeControl()
+    service = _paper_service(
+        repository=repository,
+        operator_repository=operator_repository,
+        runtime_control=runtime_control,
+        paper_exit=_PaperExit(repository=repository),
+        stream_owner=_StreamOwner(),
+        switcher=_PolicySwitcher(),
+    )
+
+    with pytest.raises(OperatorExitConfirmationUnavailableError):
+        await service.confirm(
+            confirmation_id="prior-session-confirmation",
+            requested_by="telegram:7",
+            token="CONFIRM",
+        )
+
+    assert await operator_repository.get_latest_operation() is None
     assert not runtime_control.operator_exit_in_progress

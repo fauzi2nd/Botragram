@@ -7,7 +7,9 @@ from typing import Final
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from botragram.constants.telegram import OPERATOR_EXIT_STALE_CONFIRMATION_MESSAGE
 from botragram.enums import ExecutionPolicy
+from botragram.exceptions import OperatorExitConfirmationUnavailableError
 from botragram.models import OperatorExitConfirmation, OperatorExitSnapshot
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
@@ -267,6 +269,9 @@ async def confirm_exit_command(
             requested_by=requester,
             token=token,
         )
+    except OperatorExitConfirmationUnavailableError:
+        await message.reply_text(OPERATOR_EXIT_STALE_CONFIRMATION_MESSAGE)
+        return
     except (RuntimeError, ValueError) as error:
         await message.reply_text(f"Operator exit confirmation rejected: {error}")
         return
@@ -297,6 +302,9 @@ async def cancel_exit_command(
             confirmation_id=args[0],
             requested_by=requester,
         )
+    except OperatorExitConfirmationUnavailableError:
+        await message.reply_text(OPERATOR_EXIT_STALE_CONFIRMATION_MESSAGE)
+        return
     except (RuntimeError, ValueError) as error:
         await message.reply_text(f"Operator exit cancellation rejected: {error}")
         return

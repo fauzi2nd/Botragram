@@ -35,7 +35,7 @@ from botragram.enums import ExecutionPolicy, MarketType, TradeMode
 from botragram.utils.logger import configure_logging, shutdown_logging
 from botragram.utils.retry import CappedExponentialBackoff
 
-__all__ = ["main"]
+__all__ = ["main", "run"]
 
 _LOGGER: Final[logging.Logger] = logging.getLogger("botragram.main")
 
@@ -334,5 +334,13 @@ async def main() -> None:
         shutdown_logging()
 
 
+def run() -> None:
+    """Run Botragram and treat Ctrl+C as an intentional process shutdown."""
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        return
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    run()
