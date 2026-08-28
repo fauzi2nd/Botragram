@@ -20,7 +20,6 @@ from rich.text import Text
 
 from botragram.app.terminal_monitor import TerminalMonitor as BaseTerminalMonitor
 from botragram.app.terminal_monitor import TerminalStatus
-from botragram.enums import LiveMarketStreamLifecycleStatus
 
 __all__ = ["TerminalMonitor"]
 
