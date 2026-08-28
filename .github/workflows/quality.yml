@@ -50,4 +50,8 @@ jobs:
         run: python -m mypy botragram
 
       - name: Run tests
-        run: python -m pytest
+        # Pytest gives its base temp a private ACL on Windows. Keep it outside
+        # the checkout so the next self-hosted job can clean the workspace.
+        run: >-
+          python -m pytest --basetemp
+          "${env:RUNNER_TEMP}\botragram-pytest-${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}"
