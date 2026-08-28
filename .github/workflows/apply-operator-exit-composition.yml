@@ -1,4 +1,4 @@
-name: Apply Operator Exit Composition
+name: Apply Operator Exit Telegram UX
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: operator-exit-composition
+  group: operator-exit-telegram-ux
   cancel-in-progress: true
 
 jobs:
@@ -35,10 +35,8 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Apply reviewed composition patch
-        run: |
-          python helper/.dev/apply_operator_exit_composition.py target
-          python helper/.dev/fix_operator_exit_generated_tests.py target
+      - name: Apply reviewed Telegram UX patch
+        run: python helper/.dev/apply_operator_exit_telegram_ux.py target
 
       - name: Install project and quality dependencies
         working-directory: target
@@ -84,12 +82,12 @@ jobs:
         working-directory: target
         run: git diff --check
 
-      - name: Commit and push feature composition
+      - name: Commit and push Telegram UX
         working-directory: target
         run: |
           git config user.name "Fauzi Pranata"
           git config user.email "spacetone2nd@gmail.com"
           git add -A
           git diff --cached --check
-          git commit -m "feat: wire operator exit recovery control plane"
+          git commit -m "feat: add operator exit Telegram controls"
           git push origin HEAD:feature/operator-exit-control-plane
