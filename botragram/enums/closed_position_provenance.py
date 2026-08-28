@@ -14,4 +14,5 @@ class ClosedPositionProvenance(BaseEnum):
     """Identify the exchange evidence used to prove one lifecycle closure."""
 
     PROTECTION_ORDER = "protection_order"
+    MANUAL_ORDER = "manual_order"
     RECOVERY_EMERGENCY_ORDER = "recovery_emergency_order"

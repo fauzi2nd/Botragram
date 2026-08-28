@@ -23,7 +23,7 @@ from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
 )
-from botragram.models import Order, Position
+from botragram.models import Order, Position, Trade
 from botragram.repositories import (
     PositionRepository,
     SubmissionAttemptRepository,
@@ -43,6 +43,7 @@ __all__ = [
 _RECONCILIATION_ATTEMPTS: Final[int] = 3
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.5
 _PORTFOLIO_STABILITY_ATTEMPTS: Final[int] = 3
+_MANUAL_CLOSE_TRADE_LIMIT: Final[int] = 1000
 _TERMINAL_PROTECTION_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
     {
         OrderStatus.FILLED,
@@ -90,6 +91,24 @@ class LiveNaturalExitExchange(Protocol):
         client_id: str,
     ) -> Order:
         """Return one conditional protection order by durable identity."""
+        ...
+
+    async def get_trades(
+        self,
+        *,
+        symbol: str | None,
+        limit: int,
+    ) -> Sequence[Trade]:
+        """Return bounded authoritative account fills."""
+        ...
+
+    async def get_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> Order:
+        """Return one standard order by exact exchange identity."""
         ...
 
     async def cancel_protection_order(
@@ -325,16 +344,34 @@ class LiveNaturalExitRecoveryService:
             entry_client_order_id=entry_identity,
         ):
             return entry_identity
-        if not filled_exit_orders:
-            filled_exit_orders = (
-                await self._recover_filled_stepped_stop_from_history(
-                    position=position,
-                ),
-            )
-        if len(filled_exit_orders) != 1:
+        if len(filled_exit_orders) > 1:
             raise RuntimeError(
                 "Natural exit requires exactly one authoritative FILLED exit"
             )
+        provenance = ClosedPositionProvenance.PROTECTION_ORDER
+        close_reason: ClosedPositionReason
+        if filled_exit_orders:
+            exit_order = filled_exit_orders[0]
+            close_reason = self._close_reason(
+                position=position,
+                exit_order=exit_order,
+            )
+        else:
+            recovered_exit = await self._recover_filled_stepped_stop_from_history(
+                position=position,
+            )
+            if recovered_exit is None:
+                exit_order = await self._recover_filled_manual_close_from_history(
+                    position=position,
+                )
+                close_reason = ClosedPositionReason.MANUAL_CLOSE
+                provenance = ClosedPositionProvenance.MANUAL_ORDER
+            else:
+                exit_order = recovered_exit
+                close_reason = self._close_reason(
+                    position=position,
+                    exit_order=exit_order,
+                )
         attempt = await self.submission_attempt_repository.get_by_client_order_id(
             client_order_id=entry_identity,
         )
@@ -346,16 +383,12 @@ class LiveNaturalExitRecoveryService:
             raise RuntimeError(
                 "Natural exit cannot delete an unstaged lifecycle identity"
             )
-        exit_order = filled_exit_orders[0]
         await service.stage(
             position=position,
             attempt=attempt,
             exit_order=exit_order,
-            close_reason=self._close_reason(
-                position=position,
-                exit_order=exit_order,
-            ),
-            provenance=ClosedPositionProvenance.PROTECTION_ORDER,
+            close_reason=close_reason,
+            provenance=provenance,
         )
         return entry_identity
 
@@ -363,7 +396,7 @@ class LiveNaturalExitRecoveryService:
         self,
         *,
         position: Position,
-    ) -> Order:
+    ) -> Order | None:
         """Recover one lost durable stepped-STOP identity through bounded GETs."""
         history = tuple(
             await self.exchange_client.get_protection_order_history(
@@ -397,10 +430,12 @@ class LiveNaturalExitRecoveryService:
                 stop_price=order.stop_price,
             )
         )
-        if len(candidates) != 1:
+        if len(candidates) > 1:
             raise RuntimeError(
                 "Natural exit requires exactly one authoritative FILLED exit"
             )
+        if not candidates:
+            return None
         recovered = candidates[0]
         _LOGGER.warning(
             "Natural LIVE exit recovered a lost stepped STOP identity from "
@@ -412,6 +447,90 @@ class LiveNaturalExitRecoveryService:
             recovered.execution_order_id,
         )
         return recovered
+
+    async def _recover_filled_manual_close_from_history(
+        self,
+        *,
+        position: Position,
+    ) -> Order:
+        """Recover one full manual close from bounded authoritative account fills."""
+        closing_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+        )
+        trades = tuple(
+            await self.exchange_client.get_trades(
+                symbol=position.symbol,
+                limit=_MANUAL_CLOSE_TRADE_LIMIT,
+            )
+        )
+        quantities_by_order: dict[str, Decimal] = {}
+        for trade in trades:
+            if (
+                trade.symbol.upper() != position.symbol.upper()
+                or trade.side is not closing_side
+                or trade.executed_at < position.opened_at
+            ):
+                continue
+            quantities_by_order[trade.order_id] = (
+                quantities_by_order.get(trade.order_id, Decimal("0")) + trade.quantity
+            )
+        candidate_ids = tuple(
+            sorted(
+                order_id
+                for order_id, quantity in quantities_by_order.items()
+                if quantity == position.quantity
+            )
+        )
+        if len(candidate_ids) != 1:
+            raise RuntimeError(
+                "Natural exit requires exactly one authoritative full manual-close "
+                "order"
+            )
+        order_id = candidate_ids[0]
+        recovered = await self.exchange_client.get_order(
+            symbol=position.symbol,
+            order_id=order_id,
+        )
+        self._validate_manual_close_order(
+            order=recovered,
+            order_id=order_id,
+            position=position,
+        )
+        _LOGGER.warning(
+            "Natural LIVE exit recovered a manual close from authoritative "
+            "account history: symbol=%s exit_client_id=%s order_id=%s",
+            position.symbol,
+            recovered.client_order_id,
+            recovered.order_id,
+        )
+        return recovered
+
+    @staticmethod
+    def _validate_manual_close_order(
+        *,
+        order: Order,
+        order_id: str,
+        position: Position,
+    ) -> None:
+        """Require one exact filled standard order for the full stored exposure."""
+        closing_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+        )
+        if (
+            order.order_id != order_id
+            or order.symbol.upper() != position.symbol.upper()
+            or order.created_at < position.opened_at
+            or order.side is not closing_side
+            or order.order_type not in {OrderType.MARKET, OrderType.LIMIT}
+            or order.status is not OrderStatus.FILLED
+            or order.quantity != position.quantity
+            or order.executed_quantity != position.quantity
+            or order.client_order_id is None
+            or not order.client_order_id.strip()
+        ):
+            raise RuntimeError(
+                "Manual LIVE close order does not match the durable position"
+            )
 
     async def _complete_closed_lifecycle_best_effort(
         self,

@@ -9,6 +9,7 @@ from decimal import Decimal
 import pytest
 
 from botragram.enums import (
+    ClosedPositionProvenance,
     ClosedPositionReason,
     Interval,
     OrderSide,
@@ -56,6 +57,8 @@ class FakeNaturalExitExchange:
         protections: tuple[Order, ...] = (),
         exact_only_protections: tuple[Order, ...] = (),
         protection_history: tuple[Order, ...] = (),
+        trades: tuple[Trade, ...] = (),
+        standard_orders: tuple[Order, ...] = (),
         ambiguous_after_remove: bool = False,
         keep_after_cancel: bool = False,
     ) -> None:
@@ -63,10 +66,14 @@ class FakeNaturalExitExchange:
         self.protections = list(protections)
         self.exact_only_protections = list(exact_only_protections)
         self.protection_history = protection_history
+        self.trades = trades
+        self.standard_orders = standard_orders
         self.ambiguous_after_remove = ambiguous_after_remove
         self.keep_after_cancel = keep_after_cancel
         self.cancel_calls: list[tuple[str, str]] = []
         self.history_calls: list[tuple[str, datetime]] = []
+        self.trade_calls: list[tuple[str | None, int]] = []
+        self.order_calls: list[tuple[str, str]] = []
 
     async def get_positions(
         self,
@@ -112,6 +119,44 @@ class FakeNaturalExitExchange:
         self.history_calls.append((symbol.upper(), start_time))
         return tuple(
             order for order in self.protection_history if order.symbol == symbol.upper()
+        )
+
+    async def get_trades(
+        self,
+        *,
+        symbol: str | None,
+        limit: int,
+    ) -> tuple[Trade, ...]:
+        self.trade_calls.append((symbol.upper() if symbol is not None else None, limit))
+        matching = tuple(
+            trade
+            for trade in self.trades
+            if symbol is None or trade.symbol == symbol.upper()
+        )
+        return matching[-limit:]
+
+    async def get_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> Order:
+        self.order_calls.append((symbol.upper(), order_id))
+        for order in self.standard_orders:
+            if order.symbol == symbol.upper() and order.order_id == order_id:
+                return order
+        raise ExchangeOrderNotFoundError("configured standard order not found")
+
+    async def get_trades_for_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> tuple[Trade, ...]:
+        return tuple(
+            trade
+            for trade in self.trades
+            if trade.symbol == symbol.upper() and trade.order_id == order_id
         )
 
     async def cancel_protection_order(
@@ -1084,21 +1129,136 @@ def _fill(
     order_id: str,
     side: OrderSide,
     realized_pnl: str,
+    quantity: str = "885",
 ) -> Trade:
     """Build one exact Futures fill for lifecycle enrichment."""
+    fill_price = Decimal("0.011")
+    fill_quantity = Decimal(quantity)
     return Trade(
         trade_id=trade_id,
         order_id=order_id,
         symbol=_SYMBOL,
         side=side,
-        price=Decimal("0.011"),
-        quantity=Decimal("885"),
-        quote_quantity=Decimal("9.735"),
+        price=fill_price,
+        quantity=fill_quantity,
+        quote_quantity=fill_price * fill_quantity,
         fee=Decimal("0.1"),
         fee_asset="USDT",
         realized_pnl=Decimal(realized_pnl),
         executed_at=_NOW,
     )
+
+
+@pytest.mark.asyncio
+async def test_manual_close_recovers_one_full_order_with_multiple_fills() -> None:
+    """Resolve one web close from exact account fills and standard-order state."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    manual_order = Order(
+        order_id="manual-exit",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        price=None,
+        stop_price=None,
+        created_at=_NOW,
+        updated_at=_NOW,
+        client_order_id="web-manual-close",
+    )
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+            ),
+            _fill(
+                trade_id="manual-fill-1",
+                order_id=manual_order.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity="400",
+            ),
+            _fill(
+                trade_id="manual-fill-2",
+                order_id=manual_order.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity="485",
+            ),
+        ),
+        standard_orders=(manual_order,),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert exchange.trade_calls == [(_SYMBOL, 1000)]
+    assert exchange.order_calls == [(_SYMBOL, manual_order.order_id)]
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
+    assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+
+
+@pytest.mark.asyncio
+async def test_fragmented_manual_close_preserves_position_identity() -> None:
+    """Keep lifecycle ownership when multiple partial orders closed the exposure."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _fill(
+                trade_id="manual-fill-1",
+                order_id="manual-exit-1",
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity="400",
+            ),
+            _fill(
+                trade_id="manual-fill-2",
+                order_id="manual-exit-2",
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity="485",
+            ),
+        ),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=MemoryClosedPositionLifecycleRepository(),
+            trade_history=exchange,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="full manual-close order"):
+        await service.reconcile()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) == position
+    assert exchange.order_calls == []
 
 
 @pytest.mark.parametrize(
