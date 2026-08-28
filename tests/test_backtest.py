@@ -186,6 +186,59 @@ async def _run_ambiguous_candle_backtest() -> BacktestResult:
     return await engine.run(request=_create_request(), candles=candles)
 
 
+def test_backtest_arms_stepped_stop_for_the_next_candle_only() -> None:
+    """Use favorable excursion without inventing same-candle high/low ordering."""
+    result = asyncio.run(_run_stepped_protection_backtest())
+
+    assert result.candle_count == 3
+    assert result.metrics.total_trades == 1
+    assert result.metrics.winning_trades == 1
+    assert result.trades[0].reason == "Paper stop-loss triggered"
+    assert result.trades[0].exit_price > result.trades[0].entry_price
+    assert any("next-candle activation" in warning for warning in result.warnings)
+
+
+async def _run_stepped_protection_backtest() -> BacktestResult:
+    """Cross the first step, then hit the tightened stop on the next candle."""
+    engine = BacktestEngine(
+        strategy=BuyThenHoldStrategy(),
+        risk_settings=RiskSettings(leverage=10),
+    )
+    candles = (
+        _create_candle(
+            minute=0,
+            open_price="100",
+            high_price="100.2",
+            low_price="99.9",
+            close_price="100",
+        ),
+        _create_candle(
+            minute=1,
+            open_price="100.2",
+            high_price="100.7",
+            low_price="99.8",
+            close_price="100.4",
+        ),
+        _create_candle(
+            minute=2,
+            open_price="100.4",
+            high_price="100.5",
+            low_price="100.2",
+            close_price="100.3",
+        ),
+    )
+    request = BacktestRequest(
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+        market_type=MarketType.FUTURES,
+        start_time=_START_TIME,
+        end_time=_START_TIME + timedelta(minutes=3),
+        initial_balance=Decimal("100"),
+    )
+    return await engine.run(request=request, candles=candles)
+
+
 # =============================================================================
 # CLI Tests
 # =============================================================================
