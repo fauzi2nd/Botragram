@@ -15,8 +15,8 @@ concurrency:
 
 jobs:
   quality:
-    name: Supplemental Python 3.14
-    runs-on: self-hosted
+    name: Supplemental Python 3.14 (Self-hosted ARM64)
+    runs-on: [self-hosted, Linux, ARM64]
     continue-on-error: true
     timeout-minutes: 30
 
