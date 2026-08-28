@@ -81,4 +81,3 @@ class OperatorExitSnapshot:
     closing_symbols: tuple[str, ...] = ()
     target_execution_policy: ExecutionPolicy | None = None
     failure_reason: str | None = None
-

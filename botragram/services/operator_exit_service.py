@@ -294,9 +294,7 @@ class OperatorExitService:
                 exchange_environment=self.exchange_environment,
                 positions=positions,
             )
-        attempts = tuple(
-            await self.operator_exit_repository.get_incomplete_attempts()
-        )
+        attempts = tuple(await self.operator_exit_repository.get_incomplete_attempts())
         return OperatorExitSnapshot(
             status=operation.status,
             trade_mode=self.trade_mode,
@@ -578,9 +576,7 @@ class OperatorExitService:
                 "Incomplete LIVE entry recovery blocks operator exit"
             )
 
-        attempts = tuple(
-            await self.operator_exit_repository.get_incomplete_attempts()
-        )
+        attempts = tuple(await self.operator_exit_repository.get_incomplete_attempts())
         if len(attempts) > 1:
             raise _RecoveryPending(
                 "Multiple LIVE operator-exit attempts are incomplete"
@@ -634,9 +630,7 @@ class OperatorExitService:
                 created_at=now,
                 updated_at=now,
             )
-            if not await self.operator_exit_repository.reserve_attempt(
-                attempt=attempt
-            ):
+            if not await self.operator_exit_repository.reserve_attempt(attempt=attempt):
                 raise _RecoveryPending(
                     "Another LIVE operator-exit attempt requires recovery"
                 )
@@ -887,9 +881,7 @@ class OperatorExitService:
                 failure_reason=None,
                 updated_at=datetime.now(UTC),
             )
-            await self.operator_exit_repository.save_operation(
-                operation=switch_pending
-            )
+            await self.operator_exit_repository.save_operation(operation=switch_pending)
             if self.trade_mode is TradeMode.PAPER:
                 await self.market_stream_owner.stop_all()
             changed = await switcher.prepare_execution_policy(

@@ -94,9 +94,7 @@ WHERE NOT EXISTS (
                 f"SELECT {_OPERATION_COLUMNS} FROM operator_exit_operations "
                 "WHERE status IN (?, ?, ?, ?) ORDER BY created_at ASC;"
             ),
-            parameters=tuple(
-                status.value for status in _INCOMPLETE_OPERATION_STATUSES
-            ),
+            parameters=tuple(status.value for status in _INCOMPLETE_OPERATION_STATUSES),
         )
         return tuple(self._operation_from_row(row) for row in rows)
 
@@ -244,7 +242,5 @@ WHERE NOT EXISTS (
     def _datetime(*, row: Row, column: str) -> datetime:
         value = datetime.fromisoformat(str(row[column]))
         if value.tzinfo is None or value.utcoffset() is None:
-            raise RuntimeError(
-                f"SQLite operator-exit {column} must be timezone-aware"
-            )
+            raise RuntimeError(f"SQLite operator-exit {column} must be timezone-aware")
         return value

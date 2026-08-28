@@ -16,4 +16,3 @@ class OperatorExitType(BaseEnum):
     CLOSE_POSITION = "close_position"
     CLOSE_ALL = "close_all"
     FLATTEN_AND_SWITCH = "flatten_and_switch"
-
