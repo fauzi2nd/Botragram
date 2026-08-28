@@ -24,12 +24,16 @@ from botragram.telegram.context import (
     BotContext,
 )
 from botragram.telegram.handlers import register_handlers
-from botragram.telegram.keyboards import get_execution_authorization_keyboard
+from botragram.telegram.keyboards import (
+    get_execution_authorization_keyboard,
+    get_main_menu_keyboard,
+)
 from botragram.telegram.messages import get_execution_authorization_message
 
 __all__ = ["TelegramBot"]
 
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+_TRADING_MODE_SWITCHED_MESSAGE: Final[str] = "Trading Mode Switched"
 
 
 class TelegramBot:
@@ -114,6 +118,40 @@ class TelegramBot:
         self._context = context
         if self._app is not None:
             self._app.bot_data[BOT_CONTEXT_KEY] = context
+
+    async def publish_home_menu_refresh(self) -> None:
+        """Publish the persistent home menu for the current initialized context."""
+        if (
+            not self._settings.enabled
+            or not self._settings.bot_token
+            or not self._settings.allowed_chat_ids
+        ):
+            return
+        app = self._app
+        if app is None:
+            _LOGGER.warning(
+                "Telegram home-menu refresh skipped because the bot is not started"
+            )
+            return
+
+        runtime_control = self._context.runtime_control
+        reply_markup = get_main_menu_keyboard(
+            execution_policy=self._context.execution_policy,
+            is_paused=(runtime_control is None or runtime_control.is_paused),
+        )
+        for chat_id in self._settings.allowed_chat_ids:
+            try:
+                await app.bot.send_message(
+                    chat_id=chat_id,
+                    text=_TRADING_MODE_SWITCHED_MESSAGE,
+                    parse_mode=self._settings.parse_mode,
+                    reply_markup=reply_markup,
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Telegram home-menu refresh delivery failed: chat_id=%d",
+                    chat_id,
+                )
 
     async def publish(self, *, notification: Notification) -> None:
         if (

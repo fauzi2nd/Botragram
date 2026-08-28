@@ -26,6 +26,7 @@ from botragram.app import (
     SettingsManager,
     TerminalMonitor,
     TradingRunner,
+    prepare_restarted_runtime_session,
     run_until_restart,
 )
 from botragram.app.connectivity import is_transient_connectivity_error
@@ -81,7 +82,7 @@ async def _run_trading(
     dependency_provider: DependencyProvider,
     settings: Settings,
     restart_coordinator: RuntimeRestartCoordinator,
-    start_paused: bool = False,
+    restart_target: MarketType | ExecutionPolicy | None = None,
 ) -> None:
     """Build and run trading orchestration after resources are initialized."""
     global_discovery_telemetry = (
@@ -153,8 +154,11 @@ async def _run_trading(
             )
         else:
             await dependency_provider.runtime_recovery_service.recover()
-        if start_paused:
-            dependency_provider.runtime_control.pause()
+        await prepare_restarted_runtime_session(
+            restart_target=restart_target,
+            runtime_control=dependency_provider.runtime_control,
+            home_menu_publisher=dependency_provider.telegram_bot,
+        )
         runtime_contexts = dependency_provider.runtime_control.runtime_contexts
         strategy_types = (
             tuple(context.strategy_type for context in runtime_contexts)
@@ -236,7 +240,7 @@ async def main() -> None:
         lock_path=settings.app.database_path.with_suffix(".lock"),
     )
     market_type_confirmed = False
-    start_paused_after_restart = False
+    session_restart_target: MarketType | ExecutionPolicy | None = None
     configure_logging(settings=settings.logging)
 
     try:
@@ -269,7 +273,7 @@ async def main() -> None:
                     dependency_provider=dependency_provider,
                     settings=settings,
                     restart_coordinator=restart_coordinator,
-                    start_paused=start_paused_after_restart,
+                    restart_target=session_restart_target,
                 ),
             )
             await application.run()
@@ -288,7 +292,7 @@ async def main() -> None:
                 )
                 settings_manager.validate(settings=settings)
                 market_type_confirmed = True
-                start_paused_after_restart = False
+                session_restart_target = requested_restart
                 _LOGGER.info(
                     "Application restarting with Binance market type: %s",
                     requested_restart.value,
@@ -304,7 +308,7 @@ async def main() -> None:
                 ),
             )
             settings_manager.validate(settings=settings)
-            start_paused_after_restart = True
+            session_restart_target = requested_restart
             _LOGGER.info(
                 "Application restarting with execution policy: %s; "
                 "next_session_paused=true",

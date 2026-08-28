@@ -27,6 +27,7 @@ from botragram.app.lifecycle import ApplicationLifecycle
 from botragram.app.market_type_switch import (
     MarketTypeSwitchService,
     RuntimeRestartCoordinator,
+    prepare_restarted_runtime_session,
     run_until_restart,
 )
 from botragram.app.runtime_control import MarketStreamTelemetry, TradingRuntimeControl
@@ -71,6 +72,7 @@ __all__ = [
     "TradingCycleExecutor",
     "TradingRunner",
     "TradingRuntimeControl",
+    "prepare_restarted_runtime_session",
     "run_until_restart",
     "shutdown_application",
     "startup_application",

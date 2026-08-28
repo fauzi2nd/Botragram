@@ -17,6 +17,7 @@ __all__ = [
     "MarketTypeSwitchService",
     "RuntimeRestartCoordinator",
     "RuntimeRestartTarget",
+    "prepare_restarted_runtime_session",
     "run_until_restart",
 ]
 
@@ -56,6 +57,14 @@ class _StoppableRunner(Protocol):
 
     def stop(self) -> None:
         """Request graceful loop termination."""
+        ...
+
+
+class _PersistentHomeMenuPublisher(Protocol):
+    """Publish the persistent Telegram menu for the initialized session."""
+
+    async def publish_home_menu_refresh(self) -> None:
+        """Publish the current mode-aware persistent home menu."""
         ...
 
 
@@ -170,6 +179,26 @@ async def run_until_restart(
             restart_task,
             return_exceptions=True,
         )
+
+
+async def prepare_restarted_runtime_session(
+    *,
+    restart_target: RuntimeRestartTarget | None,
+    runtime_control: TradingRuntimeControl,
+    home_menu_publisher: _PersistentHomeMenuPublisher,
+) -> None:
+    """Apply post-initialization behavior for one completed soft restart.
+
+    Args:
+        restart_target: Target that created the initialized runtime session.
+        runtime_control: Pause authority owned by the new runtime session.
+        home_menu_publisher: Adapter for refreshing the persistent operator menu.
+    """
+    if not isinstance(restart_target, ExecutionPolicy):
+        return
+
+    runtime_control.pause()
+    await home_menu_publisher.publish_home_menu_refresh()
 
 
 @dataclass(slots=True, kw_only=True)
