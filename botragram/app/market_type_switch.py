@@ -268,6 +268,7 @@ class MarketTypeSwitchService:
         self,
         *,
         execution_policy: ExecutionPolicy,
+        allow_operator_exit: bool = False,
     ) -> bool:
         """Validate and stage a safe execution-policy session replacement."""
         if self.settings is None:
@@ -278,7 +279,9 @@ class MarketTypeSwitchService:
 
         candidate = self._settings_for_policy(policy=execution_policy)
         SettingsManager.validate(settings=candidate)
-        self.runtime_control.require_configuration_change_allowed()
+        self.runtime_control.require_configuration_change_allowed(
+            allow_operator_exit=allow_operator_exit,
+        )
 
         if await self._get_positions():
             raise RuntimeError(

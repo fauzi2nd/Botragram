@@ -28,6 +28,9 @@ from botragram.storage.memory.execution_authorization_repository import (
 from botragram.storage.memory.order_repository import (
     MemoryOrderRepository,
 )
+from botragram.storage.memory.operator_exit_repository import (
+    MemoryOperatorExitRepository,
+)
 from botragram.storage.memory.position_repository import (
     MemoryPositionRepository,
 )
@@ -46,6 +49,7 @@ __all__ = [
     "MemoryCandleRepository",
     "MemoryExecutionAuthorizationRepository",
     "MemoryOrderRepository",
+    "MemoryOperatorExitRepository",
     "MemoryPositionRepository",
     "MemorySignalRepository",
     "MemorySubmissionAttemptRepository",

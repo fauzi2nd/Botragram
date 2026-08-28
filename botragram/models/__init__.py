@@ -72,6 +72,12 @@ from botragram.models.live_runtime_position_context import LiveRuntimePositionCo
 from botragram.models.market_universe_entry import MarketUniverseEntry
 from botragram.models.notification import Notification
 from botragram.models.order import Order
+from botragram.models.operator_exit import (
+    OperatorExitAttempt,
+    OperatorExitConfirmation,
+    OperatorExitOperation,
+    OperatorExitSnapshot,
+)
 from botragram.models.position import Position
 from botragram.models.risk import (
     PositionSize,
@@ -127,6 +133,10 @@ __all__ = [
     "MarketUniverseEntry",
     "Notification",
     "Order",
+    "OperatorExitAttempt",
+    "OperatorExitConfirmation",
+    "OperatorExitOperation",
+    "OperatorExitSnapshot",
     "Position",
     "PositionSize",
     "RiskMetrics",

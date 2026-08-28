@@ -63,6 +63,9 @@ from botragram.enums.notification_type import NotificationType
 from botragram.enums.order_side import OrderSide
 from botragram.enums.order_status import OrderStatus
 from botragram.enums.order_type import OrderType
+from botragram.enums.operator_exit_attempt_status import OperatorExitAttemptStatus
+from botragram.enums.operator_exit_status import OperatorExitStatus
+from botragram.enums.operator_exit_type import OperatorExitType
 from botragram.enums.position_side import PositionSide
 from botragram.enums.position_status import PositionStatus
 from botragram.enums.signal_type import SignalType
@@ -118,6 +121,9 @@ __all__ = [
     "OrderType",
     "OrderSide",
     "OrderStatus",
+    "OperatorExitAttemptStatus",
+    "OperatorExitStatus",
+    "OperatorExitType",
     "TimeInForce",
     "PositionSide",
     "PositionStatus",
