@@ -68,11 +68,21 @@ class _StreamOwner:
 
 @dataclass(slots=True)
 class _PolicySwitcher:
-    changed: bool = True
+    current_policy: ExecutionPolicy = ExecutionPolicy.SINGLE_SYMBOL
     prepare_calls: int = 0
     commit_calls: int = 0
     prepared_policy: ExecutionPolicy | None = None
     committed_policy: ExecutionPolicy | None = None
+
+    @property
+    def current_execution_policy(self) -> ExecutionPolicy:
+        return self.current_policy
+
+    def available_execution_policies(self) -> tuple[ExecutionPolicy, ...]:
+        return (
+            ExecutionPolicy.SINGLE_SYMBOL,
+            ExecutionPolicy.AUTONOMOUS_PAPER,
+        )
 
     async def prepare_execution_policy(
         self,
@@ -83,7 +93,7 @@ class _PolicySwitcher:
         assert allow_operator_exit
         self.prepare_calls += 1
         self.prepared_policy = execution_policy
-        return self.changed
+        return execution_policy is not self.current_policy
 
     def commit_execution_policy(
         self,
@@ -132,7 +142,7 @@ def _paper_service(
 
 
 @pytest.mark.asyncio
-async def test_flatten_and_switch_is_durable_before_restart_commit() -> None:
+async def test_flatten_and_switch_stays_pending_until_target_session() -> None:
     repository = MemoryPositionRepository()
     await repository.save(position=_position(symbol="BTCUSDT"))
     await repository.save(position=_position(symbol="ETHUSDT"))
@@ -160,7 +170,7 @@ async def test_flatten_and_switch_is_durable_before_restart_commit() -> None:
         token="CONFIRM",
     )
 
-    assert snapshot.status is OperatorExitStatus.COMPLETE
+    assert snapshot.status is OperatorExitStatus.SWITCH_PENDING
     assert paper_exit.close_calls == 2
     assert await repository.get_open_positions() == ()
     assert stream_owner.stop_calls == 1
@@ -170,7 +180,46 @@ async def test_flatten_and_switch_is_durable_before_restart_commit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_switch_pending_restart_recovery_commits_without_closing_again() -> None:
+async def test_switch_pending_target_session_completes_without_closing_again() -> None:
+    repository = MemoryPositionRepository()
+    operator_repository = MemoryOperatorExitRepository()
+    operation = OperatorExitOperation(
+        operation_id="operation-1",
+        operation_type=OperatorExitType.FLATTEN_AND_SWITCH,
+        status=OperatorExitStatus.SWITCH_PENDING,
+        requested_by="telegram:7",
+        target_execution_policy=ExecutionPolicy.AUTONOMOUS_PAPER,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    await operator_repository.save_operation(operation=operation)
+    runtime_control = TradingRuntimeControl()
+    paper_exit = _PaperExit(repository=repository)
+    stream_owner = _StreamOwner()
+    switcher = _PolicySwitcher(current_policy=ExecutionPolicy.AUTONOMOUS_PAPER)
+    service = _paper_service(
+        repository=repository,
+        operator_repository=operator_repository,
+        runtime_control=runtime_control,
+        paper_exit=paper_exit,
+        stream_owner=stream_owner,
+        switcher=switcher,
+    )
+    await service.initialize()
+
+    await service.recover_until_safe()
+
+    stored = await operator_repository.get_operation(operation_id="operation-1")
+    assert stored is not None
+    assert stored.status is OperatorExitStatus.COMPLETE
+    assert paper_exit.close_calls == 0
+    assert switcher.prepare_calls == 1
+    assert switcher.commit_calls == 0
+    assert not runtime_control.operator_exit_in_progress
+
+
+@pytest.mark.asyncio
+async def test_switch_pending_old_session_hands_off_once_and_returns() -> None:
     repository = MemoryPositionRepository()
     operator_repository = MemoryOperatorExitRepository()
     operation = OperatorExitOperation(
@@ -201,8 +250,7 @@ async def test_switch_pending_restart_recovery_commits_without_closing_again() -
 
     stored = await operator_repository.get_operation(operation_id="operation-1")
     assert stored is not None
-    assert stored.status is OperatorExitStatus.COMPLETE
-    assert paper_exit.close_calls == 0
+    assert stored.status is OperatorExitStatus.SWITCH_PENDING
     assert switcher.prepare_calls == 1
     assert switcher.commit_calls == 1
     assert runtime_control.operator_exit_in_progress
@@ -235,3 +283,36 @@ async def test_switch_pending_operation_blocks_new_reservation() -> None:
     )
 
     assert not reserved
+
+
+@pytest.mark.asyncio
+async def test_confirmation_requires_exact_explicit_token() -> None:
+    repository = MemoryPositionRepository()
+    await repository.save(position=_position(symbol="BTCUSDT"))
+    operator_repository = MemoryOperatorExitRepository()
+    runtime_control = TradingRuntimeControl()
+    paper_exit = _PaperExit(repository=repository)
+    service = _paper_service(
+        repository=repository,
+        operator_repository=operator_repository,
+        runtime_control=runtime_control,
+        paper_exit=paper_exit,
+        stream_owner=_StreamOwner(),
+        switcher=_PolicySwitcher(),
+    )
+    confirmation = await service.request_close_all(requested_by="telegram:7")
+
+    with pytest.raises(RuntimeError, match="confirmation token is invalid"):
+        await service.confirm(
+            confirmation_id=confirmation.confirmation_id,
+            requested_by="telegram:7",
+            token="WRONG",
+        )
+
+    assert paper_exit.close_calls == 0
+    assert await repository.get_open_positions()
+    await service.cancel_confirmation(
+        confirmation_id=confirmation.confirmation_id,
+        requested_by="telegram:7",
+    )
+    assert not runtime_control.operator_exit_in_progress

@@ -28,6 +28,8 @@ from botragram.models import (
     ExecutionAuthorizationOutcome,
     LiveRuntimeHealthSnapshot,
     LiveRuntimePositionContext,
+    OperatorExitConfirmation,
+    OperatorExitSnapshot,
     Order,
     Position,
     RuntimeRiskLimits,
@@ -41,6 +43,7 @@ __all__ = [
     "BotContext",
     "BotExecutionAuthorizationProvider",
     "BotMarketTypeSwitcher",
+    "BotOperatorExitProvider",
     "BotQueryProvider",
     "BotRuntimeControl",
     "BotRuntimeRiskLimitProvider",
@@ -282,6 +285,53 @@ class BotExecutionAuthorizationProvider(Protocol):
         ...
 
 
+class BotOperatorExitProvider(Protocol):
+    """Expose the bounded operator-exit application service to Telegram."""
+
+    async def get_snapshot(self) -> OperatorExitSnapshot:
+        """Return truthful durable operator-exit state."""
+        ...
+
+    async def request_close_position(
+        self,
+        *,
+        symbol: str,
+        requested_by: str,
+        auto_pause: bool = False,
+    ) -> OperatorExitConfirmation:
+        """Create one close-position confirmation without fund mutation."""
+        ...
+
+    async def request_close_all(
+        self,
+        *,
+        requested_by: str,
+        target_execution_policy: ExecutionPolicy | None = None,
+        auto_pause: bool = False,
+    ) -> OperatorExitConfirmation:
+        """Create one flatten or flatten-and-switch confirmation."""
+        ...
+
+    async def confirm(
+        self,
+        *,
+        confirmation_id: str,
+        requested_by: str,
+        token: str | None = None,
+    ) -> OperatorExitSnapshot:
+        """Confirm one exact pending operator action."""
+        ...
+
+    async def cancel_confirmation(
+        self,
+        *,
+        confirmation_id: str,
+        requested_by: str,
+    ) -> None:
+        """Cancel one exact pending operator action without fund mutation."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True)
 class BotContext:
     """Store the application state displayed by Telegram handlers."""
@@ -300,6 +350,7 @@ class BotContext:
     market_type_switcher: BotMarketTypeSwitcher | None = None
     execution_authorization_service: BotExecutionAuthorizationProvider | None = None
     runtime_risk_limit_service: BotRuntimeRiskLimitProvider | None = None
+    operator_exit_service: BotOperatorExitProvider | None = None
 
     @property
     def is_discovery_workflow(self) -> bool:

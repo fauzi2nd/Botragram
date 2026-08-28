@@ -138,6 +138,13 @@ class _MarketStreamOwner(Protocol):
 class _ExecutionPolicySwitcher(Protocol):
     """Validate and commit the existing guarded in-process soft restart."""
 
+    @property
+    def current_execution_policy(self) -> ExecutionPolicy:
+        """Return the policy owned by the current runtime session."""
+
+    def available_execution_policies(self) -> tuple[ExecutionPolicy, ...]:
+        """Return policies inside the immutable boot capability envelope."""
+
     async def prepare_execution_policy(
         self,
         *,
@@ -353,6 +360,17 @@ class OperatorExitService:
         """Reserve an explicit flatten or flatten-and-switch confirmation."""
         self._require_supported_mode()
         requester = self._normalize_requester(requested_by)
+        if target_execution_policy is not None:
+            switcher = self._require(
+                self.execution_policy_switcher,
+                "execution-policy switch service",
+            )
+            if target_execution_policy is switcher.current_execution_policy:
+                raise RuntimeError("Target execution policy is already active")
+            if target_execution_policy not in switcher.available_execution_policies():
+                raise RuntimeError(
+                    "Target execution policy is outside the boot capability envelope"
+                )
         if auto_pause:
             self.runtime_control.pause()
         self.runtime_control.begin_operator_exit()
@@ -406,10 +424,9 @@ class OperatorExitService:
             requested_by=requested_by,
         )
         challenge = pending.challenge
-        if challenge.requires_typed_confirmation:
-            supplied = "" if token is None else token.strip().upper()
-            if supplied != challenge.required_token:
-                raise RuntimeError("The explicit MAINNET confirmation token is invalid")
+        supplied = "" if token is None else token.strip().upper()
+        if supplied != challenge.required_token:
+            raise RuntimeError("The explicit operator-exit confirmation token is invalid")
 
         now = datetime.now(UTC)
         operation = OperatorExitOperation(
@@ -484,6 +501,11 @@ class OperatorExitService:
                     reason=str(error),
                 )
             else:
+                latest = await self.operator_exit_repository.get_operation(
+                    operation_id=operation.operation_id
+                )
+                if latest is not None and latest.status is OperatorExitStatus.SWITCH_PENDING:
+                    return
                 recovery_attempt = 0
                 continue
 
@@ -890,6 +912,13 @@ class OperatorExitService:
             )
             if changed:
                 switcher.commit_execution_policy(execution_policy=target_policy)
+                _LOGGER.info(
+                    "Operator exit handed off durable switch: operation_id=%s "
+                    "target_policy=%s",
+                    operation.operation_id,
+                    target_policy.value,
+                )
+                return
             await self.operator_exit_repository.save_operation(
                 operation=replace(
                     switch_pending,
@@ -897,8 +926,7 @@ class OperatorExitService:
                     updated_at=datetime.now(UTC),
                 )
             )
-            if not changed:
-                self._release_runtime_gate()
+            self._release_runtime_gate()
         else:
             await self.operator_exit_repository.save_operation(
                 operation=replace(
