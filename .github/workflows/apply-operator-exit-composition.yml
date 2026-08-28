@@ -23,10 +23,10 @@ jobs:
         with:
           path: helper
 
-      - name: Check out feature branch
+      - name: Check out leverage fix branch
         uses: actions/checkout@v5
         with:
-          ref: feature/operator-exit-control-plane
+          ref: fix/authoritative-live-position-leverage
           path: target-${{ github.run_id }}
           fetch-depth: 0
 
@@ -82,7 +82,7 @@ jobs:
         working-directory: target-${{ github.run_id }}
         run: git diff --check
 
-      - name: Commit and push leverage cache fix
+      - name: Commit and push leverage fix
         working-directory: target-${{ github.run_id }}
         run: |
           git config user.name "Fauzi Pranata"
@@ -90,4 +90,4 @@ jobs:
           git add botragram/services/live_futures_user_data_cache.py botragram/app/live_futures_user_data_service.py tests/test_live_futures_user_data_service.py
           git diff --cached --check
           git commit -m "fix: preserve authoritative live position leverage"
-          git push origin HEAD:feature/operator-exit-control-plane
+          git push origin HEAD:fix/authoritative-live-position-leverage
