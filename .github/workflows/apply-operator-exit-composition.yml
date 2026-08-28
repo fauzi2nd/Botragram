@@ -40,6 +40,7 @@ jobs:
           python helper/.dev/fix_operator_exit_telegram_ux_runner.py
           python helper/.dev/apply_operator_exit_telegram_ux.py target
           python helper/.dev/repair_operator_exit_telegram_callbacks.py target
+          python helper/.dev/repair_operator_exit_telegram_tests.py target
 
       - name: Install project and quality dependencies
         working-directory: target
