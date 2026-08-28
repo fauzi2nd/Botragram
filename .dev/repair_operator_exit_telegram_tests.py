@@ -64,6 +64,14 @@ def main() -> None:
         "        del market_type\n",
     )
 
+    query_provider_class = re.compile(
+        r"(?ms)^@dataclass\(slots=True\)\n"
+        r"class _QueryProvider:\n"
+        r"    async def get_positions\(self\) -> tuple\[Position, \.\.\.\]:\n"
+        r"        return \(_position\(\),\)\n\n\n"
+    )
+    text = sub_exact(text, query_provider_class, "")
+
     query_provider_pattern = re.compile(
         r"(?m)^(?P<indent>[ \t]*)query_provider=cast\(object, _QueryProvider\(\)\),\n"
     )
