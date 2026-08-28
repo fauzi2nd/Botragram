@@ -36,6 +36,7 @@ class OperatorExitOperation:
     created_at: datetime
     updated_at: datetime
     symbol: str | None = None
+    authorized_symbols: tuple[str, ...] = ()
     target_execution_policy: ExecutionPolicy | None = None
     failure_reason: str | None = None
 

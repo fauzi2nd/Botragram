@@ -22,11 +22,12 @@ __all__ = ["SQLiteOperatorExitRepository"]
 
 
 _OPERATION_COLUMNS = """operation_id, operation_type, status, requested_by,
-symbol, target_execution_policy, failure_reason, created_at, updated_at"""
+symbol, authorized_symbols, target_execution_policy, failure_reason, created_at,
+updated_at"""
 _ATTEMPT_COLUMNS = """client_order_id, operation_id, symbol, position_side,
 quantity, status, exchange_order_id, failure_reason, created_at, updated_at"""
 _OPERATION_UPSERT = f"""INSERT INTO operator_exit_operations
-({_OPERATION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+({_OPERATION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(operation_id) DO UPDATE SET status=excluded.status,
 failure_reason=excluded.failure_reason, updated_at=excluded.updated_at;"""
 _ATTEMPT_UPSERT = f"""INSERT INTO operator_exit_attempts
@@ -56,7 +57,7 @@ class SQLiteOperatorExitRepository(OperatorExitRepository):
         affected_rows = await self._database.execute(
             statement=f"""INSERT INTO operator_exit_operations
 ({_OPERATION_COLUMNS})
-SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 WHERE NOT EXISTS (
     SELECT 1 FROM operator_exit_operations WHERE status IN (?, ?, ?, ?)
 );""",
@@ -169,6 +170,7 @@ WHERE NOT EXISTS (
             operation.status.value,
             operation.requested_by,
             operation.symbol,
+            "|".join(operation.authorized_symbols),
             (
                 operation.target_execution_policy.value
                 if operation.target_execution_policy is not None
@@ -203,6 +205,9 @@ WHERE NOT EXISTS (
             status=OperatorExitStatus(str(row["status"])),
             requested_by=str(row["requested_by"]),
             symbol=str(row["symbol"]) if row["symbol"] is not None else None,
+            authorized_symbols=tuple(
+                symbol for symbol in str(row["authorized_symbols"]).split("|") if symbol
+            ),
             target_execution_policy=(
                 ExecutionPolicy(str(target)) if target is not None else None
             ),

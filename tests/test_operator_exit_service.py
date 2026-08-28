@@ -286,6 +286,47 @@ async def test_switch_pending_operation_blocks_new_reservation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_close_all_rejects_exposure_added_after_confirmation() -> None:
+    """Never close a symbol that was outside the explicit confirmation scope."""
+    repository = MemoryPositionRepository()
+    await repository.save(position=_position(symbol="BTCUSDT"))
+    operator_repository = MemoryOperatorExitRepository()
+    runtime_control = TradingRuntimeControl()
+    paper_exit = _PaperExit(repository=repository)
+    service = _paper_service(
+        repository=repository,
+        operator_repository=operator_repository,
+        runtime_control=runtime_control,
+        paper_exit=paper_exit,
+        stream_owner=_StreamOwner(),
+        switcher=_PolicySwitcher(),
+    )
+    confirmation = await service.request_close_all(requested_by="telegram:7")
+    assert confirmation.symbols == ("BTCUSDT",)
+
+    await repository.save(position=_position(symbol="ETHUSDT"))
+    snapshot = await service.confirm(
+        confirmation_id=confirmation.confirmation_id,
+        requested_by="telegram:7",
+        token="CONFIRM",
+    )
+    await service.close()
+
+    stored = await operator_repository.get_operation(
+        operation_id=confirmation.confirmation_id
+    )
+    assert stored is not None
+    assert stored.authorized_symbols == ("BTCUSDT",)
+    assert stored.status is OperatorExitStatus.RECOVERY_REQUIRED
+    assert snapshot.status is OperatorExitStatus.RECOVERY_REQUIRED
+    assert paper_exit.close_calls == 0
+    assert tuple(
+        sorted(position.symbol for position in await repository.get_open_positions())
+    ) == ("BTCUSDT", "ETHUSDT")
+    assert runtime_control.operator_exit_in_progress
+
+
+@pytest.mark.asyncio
 async def test_confirmation_requires_exact_explicit_token() -> None:
     repository = MemoryPositionRepository()
     await repository.save(position=_position(symbol="BTCUSDT"))

@@ -38,7 +38,7 @@ async def test_migration_17_adds_operator_exit_tables(tmp_path: Path) -> None:
         )
         assert before == ()
 
-        assert await manager.initialize() == 17
+        assert await manager.initialize(target_version=17) == 17
         after = await database.fetch_all(
             statement=(
                 "SELECT name FROM sqlite_master "
@@ -50,6 +50,12 @@ async def test_migration_17_adds_operator_exit_tables(tmp_path: Path) -> None:
             "operator_exit_attempts",
             "operator_exit_operations",
         )
+
+        assert await manager.initialize() == 18
+        columns = await database.fetch_all(
+            statement="PRAGMA table_info(operator_exit_operations);"
+        )
+        assert "authorized_symbols" in {str(row["name"]) for row in columns}
     finally:
         await database.close()
 
@@ -66,6 +72,7 @@ async def test_sqlite_switch_pending_remains_incomplete(tmp_path: Path) -> None:
             operation_type=OperatorExitType.FLATTEN_AND_SWITCH,
             status=OperatorExitStatus.SWITCH_PENDING,
             requested_by="telegram:7",
+            authorized_symbols=("BTCUSDT", "ETHUSDT"),
             target_execution_policy=ExecutionPolicy.AUTONOMOUS_PAPER,
             created_at=_NOW,
             updated_at=_NOW,

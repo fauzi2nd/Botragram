@@ -492,6 +492,13 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ON operator_exit_attempts (status, created_at);
         """,
     ),
+    _Migration(
+        version=18,
+        script="""
+        ALTER TABLE operator_exit_operations
+        ADD COLUMN authorized_symbols TEXT NOT NULL DEFAULT '';
+        """,
+    ),
 )
 
 

@@ -449,6 +449,7 @@ class OperatorExitService:
             status=OperatorExitStatus.FLATTENING,
             requested_by=pending.requested_by,
             symbol=pending.symbol,
+            authorized_symbols=challenge.symbols,
             target_execution_policy=challenge.target_execution_policy,
             created_at=now,
             updated_at=now,
@@ -592,6 +593,10 @@ class OperatorExitService:
             positions = tuple(
                 sorted(await self.get_positions(), key=lambda item: item.symbol.upper())
             )
+            self._require_confirmed_portfolio_scope(
+                operation=operation,
+                positions=positions,
+            )
             targets = self._operation_targets(operation=operation, positions=positions)
             if not targets:
                 return
@@ -629,6 +634,10 @@ class OperatorExitService:
         while True:
             positions = tuple(
                 sorted(await self.get_positions(), key=lambda item: item.symbol.upper())
+            )
+            self._require_confirmed_portfolio_scope(
+                operation=operation,
+                positions=positions,
             )
             targets = self._operation_targets(operation=operation, positions=positions)
             if not targets:
@@ -907,6 +916,10 @@ class OperatorExitService:
     async def _complete_operation(self, *, operation: OperatorExitOperation) -> None:
         """Freshly verify safety, then durably hand off an optional soft restart."""
         positions = await self.get_positions()
+        self._require_confirmed_portfolio_scope(
+            operation=operation,
+            positions=positions,
+        )
         targets = self._operation_targets(operation=operation, positions=positions)
         if targets:
             raise _RecoveryPending("Authoritative target exposure remains open")
@@ -1190,20 +1203,67 @@ class OperatorExitService:
         except Exception:
             _LOGGER.exception("Operator-exit background recovery stopped unexpectedly")
 
-    @staticmethod
+    @classmethod
     def _operation_targets(
+        cls,
         *,
         operation: OperatorExitOperation,
         positions: Sequence[Position],
     ) -> tuple[Position, ...]:
-        """Return the authoritative positions covered by one confirmed operation."""
-        if operation.operation_type is OperatorExitType.CLOSE_POSITION:
-            return tuple(
-                position
-                for position in positions
-                if position.symbol.upper() == operation.symbol
+        """Return only positions inside the exact durable confirmation scope."""
+        if not positions:
+            return ()
+        authorized = cls._get_authorized_symbols(operation=operation)
+        return tuple(
+            position for position in positions if position.symbol.upper() in authorized
+        )
+
+    @classmethod
+    def _require_confirmed_portfolio_scope(
+        cls,
+        *,
+        operation: OperatorExitOperation,
+        positions: Sequence[Position],
+    ) -> None:
+        """Block broad exits when exposure appears outside confirmed scope."""
+        if not positions or operation.operation_type is OperatorExitType.CLOSE_POSITION:
+            return
+        authorized = cls._get_authorized_symbols(operation=operation)
+        unconfirmed = tuple(
+            sorted(
+                {position.symbol.upper() for position in positions}.difference(
+                    authorized
+                )
             )
-        return tuple(positions)
+        )
+        if unconfirmed:
+            raise _RecoveryPending(
+                "Authoritative exposure appeared outside the confirmed "
+                f"operator-exit scope: {', '.join(unconfirmed)}"
+            )
+
+    @staticmethod
+    def _get_authorized_symbols(
+        *,
+        operation: OperatorExitOperation,
+    ) -> frozenset[str]:
+        """Return durable scope, with a safe legacy fallback for one symbol."""
+        authorized = frozenset(
+            symbol.strip().upper()
+            for symbol in operation.authorized_symbols
+            if symbol.strip()
+        )
+        if authorized:
+            return authorized
+        if (
+            operation.operation_type is OperatorExitType.CLOSE_POSITION
+            and operation.symbol is not None
+            and operation.symbol.strip()
+        ):
+            return frozenset({operation.symbol.strip().upper()})
+        raise _RecoveryPending(
+            "Durable operator-exit confirmation scope is unavailable"
+        )
 
     @staticmethod
     def _validate_exit_order(
