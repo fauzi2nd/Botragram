@@ -46,7 +46,7 @@ def _position() -> Position:
         entry_price=Decimal("100"),
         current_price=Decimal("101"),
         unrealized_pnl=Decimal("1"),
-        leverage=1,
+        leverage=7,
         opened_at=_NOW,
         updated_at=_NOW,
         interval=Interval.M1,
@@ -184,6 +184,7 @@ async def test_user_data_stream_cache_uses_startup_snapshot_then_events() -> Non
     assert snapshot.last_snapshot_at is not None
     assert snapshot.last_event_at == _NOW
     assert snapshot.positions[0].quantity == Decimal("2")
+    assert snapshot.positions[0].leverage == 7
     assert snapshot.position_updates[0].quantity == Decimal("2")
     assert snapshot.recent_orders == (_order(),)
     assert snapshot.recent_algo_updates[0].client_algo_id == "bsl-123"
@@ -209,6 +210,115 @@ async def test_user_data_stream_cache_uses_startup_snapshot_then_events() -> Non
     await service.close()
 
     assert stream.closed
+
+
+@dataclass(slots=True)
+class EmergingPositionSnapshotProvider:
+    """Expose a new REST position only after the stream observes exposure."""
+
+    account_calls: int = 0
+    position_calls: int = 0
+
+    async def get_account(self) -> Account:
+        self.account_calls += 1
+        return Account(
+            balances=(Balance(asset="USDT", free=Decimal("100"), locked=Decimal("0")),)
+        )
+
+    async def get_positions(self, *, symbol: str | None = None) -> Sequence[Position]:
+        assert symbol is None
+        self.position_calls += 1
+        if self.position_calls == 1:
+            return ()
+        return (
+            Position(
+                symbol="BTCUSDT",
+                side=PositionSide.LONG,
+                quantity=Decimal("2"),
+                entry_price=Decimal("100"),
+                current_price=Decimal("101"),
+                unrealized_pnl=Decimal("4"),
+                leverage=7,
+                opened_at=_NOW,
+                updated_at=_NOW,
+                interval=Interval.M1,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_new_streamed_position_reseeds_authoritative_rest_leverage() -> None:
+    account_update = FuturesUserDataAccountUpdate(
+        observed_at=_NOW,
+        balances=(Balance(asset="USDT", free=Decimal("125"), locked=Decimal("0")),),
+        positions=(
+            FuturesUserDataPositionUpdate(
+                symbol="BTCUSDT",
+                quantity=Decimal("2"),
+                entry_price=Decimal("100"),
+                unrealized_pnl=Decimal("4"),
+            ),
+        ),
+    )
+    stream = FakeEventStream(
+        events=(
+            FuturesUserDataStreamConnected(observed_at=_NOW),
+            account_update,
+        )
+    )
+    snapshots = EmergingPositionSnapshotProvider()
+    service = LiveFuturesUserDataService(
+        snapshot_provider=snapshots,
+        event_stream=stream,
+    )
+
+    await service.start()
+    await stream.delivered.wait()
+
+    snapshot = await service.get_snapshot()
+    assert snapshots.account_calls == 2
+    assert snapshots.position_calls == 2
+    assert service.status is LiveFuturesUserDataStatus.READY
+    assert snapshot.status is LiveFuturesUserDataStatus.READY
+    assert snapshot.positions[0].quantity == Decimal("2")
+    assert snapshot.positions[0].leverage == 7
+
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_unseeded_stream_position_never_fabricates_leverage() -> None:
+    cache = LiveFuturesUserDataCache()
+    await cache.initialize(
+        account=Account(
+            balances=(Balance(asset="USDT", free=Decimal("100"), locked=Decimal("0")),)
+        ),
+        positions=(),
+        clear_recent_orders=True,
+    )
+
+    unseeded_symbols = await cache.apply(
+        event=FuturesUserDataAccountUpdate(
+            observed_at=_NOW,
+            balances=(),
+            positions=(
+                FuturesUserDataPositionUpdate(
+                    symbol="BTCUSDT",
+                    quantity=Decimal("1"),
+                    entry_price=Decimal("100"),
+                    unrealized_pnl=Decimal("1"),
+                ),
+            ),
+        )
+    )
+
+    snapshot = await cache.get_snapshot()
+    assert unseeded_symbols == frozenset({"BTCUSDT"})
+    assert snapshot.status is LiveFuturesUserDataStatus.RESYNCING
+    assert snapshot.positions == ()
+    assert snapshot.position_updates[0].symbol == "BTCUSDT"
+    with pytest.raises(RuntimeError, match="cache is not ready"):
+        await cache.get_equity(asset="USDT")
 
 
 @pytest.mark.asyncio
