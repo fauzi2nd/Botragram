@@ -1,7 +1,9 @@
-"""Refresh Telegram runtime controls after pause or resume actions."""
+"""Refresh Telegram runtime controls in the pause/resume action response."""
 
 from __future__ import annotations
 
+import logging
+from html import escape
 from typing import Final
 
 from telegram import Update
@@ -15,75 +17,115 @@ from botragram.constants.telegram import (
 )
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.commands import (
+    _get_context,
+    _get_context_main_menu_keyboard,
+    _get_startup_configuration_message,
+    _reply_data_unavailable,
+    _resume_autonomous_live,
     menu_message_handler,
-    pause_bot_command,
-    start_bot_command,
 )
-from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
-from botragram.telegram.keyboards import get_main_menu_keyboard
+from botragram.telegram.context import MARKET_SEARCH_PENDING_KEY
+from botragram.telegram.messages import get_resume_message, get_runtime_pause_message
 
-_REFRESH_MESSAGE: Final[str] = "🔄 <b>Menu runtime diperbarui.</b>"
-_RUNTIME_MENU_ACTIONS: Final[frozenset[str]] = frozenset(
-    {MENU_START, MENU_RESUME, MENU_PAUSE}
-)
-
-
-def _get_bot_context(context: ContextTypes.DEFAULT_TYPE) -> BotContext | None:
-    """Return the active Telegram context when composition has installed it."""
-    candidate = context.bot_data.get(BOT_CONTEXT_KEY)
-    return candidate if isinstance(candidate, BotContext) else None
-
-
-async def _refresh_runtime_menu(
-    *,
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    """Publish a keyboard derived from the authoritative current runtime state."""
-    if update.message is None:
-        return
-    if not is_authorized_update(update=update, context=context):
-        return
-
-    bot_context = _get_bot_context(context)
-    if bot_context is None:
-        return
-
-    control = bot_context.runtime_control
-    await update.message.reply_text(
-        _REFRESH_MESSAGE,
-        parse_mode=DEFAULT_PARSE_MODE,
-        reply_markup=get_main_menu_keyboard(
-            execution_policy=bot_context.execution_policy,
-            is_paused=control.is_paused if control is not None else True,
-        ),
-    )
+logger: Final[logging.Logger] = logging.getLogger(__name__)
 
 
 async def start_bot_command_with_menu_refresh(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Resume trading and immediately publish the refreshed persistent menu."""
-    await start_bot_command(update, context)
-    await _refresh_runtime_menu(update=update, context=context)
+    """Resume trading and attach the refreshed menu to the same response."""
+    if update.message is None:
+        return
+    if not is_authorized_update(update=update, context=context):
+        return
+
+    bot_context = _get_context(context)
+    control = bot_context.runtime_control
+    if control is None:
+        await _reply_data_unavailable(update)
+        return
+
+    try:
+        changed = (
+            await _resume_autonomous_live(bot_context)
+            if bot_context.is_autonomous_live
+            else control.resume()
+        )
+        message = get_resume_message(changed=changed)
+    except RuntimeError as error:
+        if bot_context.is_autonomous_live:
+            message = (
+                "⚠️ <b>Autonomous LIVE belum dapat dilanjutkan.</b>\n"
+                f"<code>{escape(str(error))}</code>"
+            )
+        else:
+            checklist = _get_startup_configuration_message(bot_context)
+            message = f"⚠️ <b>Trading belum dapat dimulai.</b>\n\n{checklist}"
+    except Exception:
+        logger.exception("Autonomous LIVE resume verification failed")
+        message = (
+            "⚠️ <b>Autonomous LIVE belum dapat dilanjutkan.</b> "
+            "Runtime state tidak tersedia."
+        )
+
+    await update.message.reply_text(
+        message,
+        parse_mode=DEFAULT_PARSE_MODE,
+        reply_markup=_get_context_main_menu_keyboard(bot_context),
+    )
 
 
 async def pause_bot_command_with_menu_refresh(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Pause trading and immediately publish the refreshed persistent menu."""
-    await pause_bot_command(update, context)
-    await _refresh_runtime_menu(update=update, context=context)
+    """Pause trading and attach the refreshed menu to the same response."""
+    if update.message is None:
+        return
+    if not is_authorized_update(update=update, context=context):
+        return
+
+    bot_context = _get_context(context)
+    control = bot_context.runtime_control
+    if control is None:
+        await _reply_data_unavailable(update)
+        return
+
+    message = get_runtime_pause_message(changed=control.pause())
+    await update.message.reply_text(
+        message,
+        parse_mode=DEFAULT_PARSE_MODE,
+        reply_markup=_get_context_main_menu_keyboard(bot_context),
+    )
 
 
 async def menu_message_handler_with_runtime_refresh(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Delegate normal menu routing and refresh only runtime state transitions."""
-    action = update.message.text if update.message is not None else None
-    await menu_message_handler(update, context)
-    if action in _RUNTIME_MENU_ACTIONS:
-        await _refresh_runtime_menu(update=update, context=context)
+    """Route runtime buttons through single-response menu-refresh handlers."""
+    if update.message is None:
+        return
+
+    action = update.message.text or ""
+    if action not in {MENU_START, MENU_RESUME, MENU_PAUSE}:
+        await menu_message_handler(update, context)
+        return
+
+    if not is_authorized_update(update=update, context=context):
+        return
+
+    bot_context = _get_context(context)
+    if action == MENU_START and bot_context.is_discovery_workflow:
+        await menu_message_handler(update, context)
+        return
+
+    if context.chat_data is not None:
+        context.chat_data.pop(MARKET_SEARCH_PENDING_KEY, None)
+
+    if action == MENU_PAUSE:
+        await pause_bot_command_with_menu_refresh(update, context)
+        return
+
+    await start_bot_command_with_menu_refresh(update, context)
