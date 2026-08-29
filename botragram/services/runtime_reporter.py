@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from html import escape
-from typing import Final, Protocol
+from typing import Final, Protocol, runtime_checkable
 
 from botragram.enums import NotificationType, TradeMode
-from botragram.models import Notification, TradingResult
+from botragram.models import Account, Notification, TradingResult
 from botragram.repositories import PositionRepository
 from botragram.services.health_service import HealthService
 from botragram.services.paper_trading_service import NotificationPublisher
@@ -21,6 +21,7 @@ __all__ = ["RuntimeReporter"]
 
 
 _DEFAULT_REPORT_EVERY_CYCLES: Final[int] = 4
+_DEFAULT_QUOTE_ASSET: Final[str] = "USDT"
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
@@ -29,6 +30,15 @@ class PortfolioBalanceProvider(Protocol):
 
     async def get_available_balance(self) -> Decimal:
         """Return available balance."""
+        ...
+
+
+@runtime_checkable
+class ExchangeAccountSnapshotProvider(Protocol):
+    """Read one normalized exchange account snapshot for startup reporting."""
+
+    async def get_account(self) -> Account:
+        """Return current exchange account information."""
         ...
 
 
@@ -42,6 +52,7 @@ class RuntimeReporter:
     notification_publisher: NotificationPublisher
     trade_mode: TradeMode
     symbol: str
+    quote_asset: str = _DEFAULT_QUOTE_ASSET
     report_every_cycles: int = _DEFAULT_REPORT_EVERY_CYCLES
     _completed_cycles: int = field(default=0, init=False)
 
@@ -49,6 +60,10 @@ class RuntimeReporter:
         """Validate reporting configuration."""
         if self.report_every_cycles <= 0:
             raise ValueError("Runtime report cycle interval must be greater than zero")
+
+        self.quote_asset = self.quote_asset.strip().upper()
+        if not self.quote_asset:
+            raise ValueError("Runtime report quote asset must not be empty")
 
     async def on_started(self) -> None:
         """Publish startup dependency health and portfolio state."""
@@ -63,12 +78,12 @@ class RuntimeReporter:
         except Exception:
             _LOGGER.exception("Startup position health snapshot failed")
 
-        if self.trade_mode is TradeMode.PAPER:
-            try:
-                balance = await self.paper_trading_service.get_available_balance()
-                balance_text = format_currency(balance, symbol="USDT")
-            except Exception:
-                _LOGGER.exception("Startup balance health snapshot failed")
+        try:
+            balance = await self._get_startup_available_balance()
+            if balance is not None:
+                balance_text = format_currency(balance, symbol=self.quote_asset)
+        except Exception:
+            _LOGGER.exception("Startup balance health snapshot failed")
 
         message = (
             "<b>Botragram Startup</b>\n\n"
@@ -85,6 +100,30 @@ class RuntimeReporter:
             message=message,
             level=NotificationType.SYSTEM,
         )
+
+    async def _get_startup_available_balance(self) -> Decimal | None:
+        """Return one startup balance from the mode-authoritative provider."""
+        if self.trade_mode is TradeMode.PAPER:
+            return await self.paper_trading_service.get_available_balance()
+
+        exchange = self.health_service.exchange
+        if not isinstance(exchange, ExchangeAccountSnapshotProvider):
+            return None
+
+        account = await exchange.get_account()
+        matching_balances = tuple(
+            balance
+            for balance in account.balances
+            if balance.asset.upper() == self.quote_asset
+        )
+        if len(matching_balances) > 1:
+            raise RuntimeError(
+                "Exchange returned multiple startup balances for asset "
+                f"{self.quote_asset!r}"
+            )
+        if not matching_balances:
+            return Decimal("0")
+        return matching_balances[0].free
 
     async def on_cycle_completed(self, *, result: TradingResult) -> None:
         """Publish portfolio summary at the configured cycle cadence."""
