@@ -52,3 +52,60 @@ def test_humanizes_submitted_live_order() -> None:
     )
     assert "executed_and_protected" not in rendered
     assert "risk_amount=" not in rendered
+
+
+def test_humanizes_generic_runtime_recovery_telemetry() -> None:
+    """Remove raw structured fields from recovery diagnostics across services."""
+    rendered = TerminalMonitor._format_compact_event(
+        "LIVE portfolio recovery is unsafe: "
+        "reason=orphan_protection symbol=NILUSDT"
+    )
+
+    assert rendered == (
+        "LIVE portfolio recovery is unsafe | "
+        "reason ORPHAN PROTECTION | symbol NILUSDT"
+    )
+    assert "reason=" not in rendered
+    assert "symbol=" not in rendered
+    assert "orphan_protection" not in rendered
+
+
+def test_humanizes_generic_outage_heartbeat_telemetry() -> None:
+    """Present fail-closed outage state without implementation field names."""
+    rendered = TerminalMonitor._format_compact_event(
+        "Runtime heartbeat: state=PAUSED reason=binance_connectivity_unavailable "
+        "outage_seconds=12.5 next_retry_seconds=1.000 positions_known=5 "
+        "positions_state=known_non_authoritative entry_enabled=false"
+    )
+
+    assert rendered == (
+        "Runtime heartbeat | state PAUSED | reason BINANCE CONNECTIVITY UNAVAILABLE | "
+        "outage 12.5 | next retry 1.000 | positions known 5 | "
+        "positions state KNOWN NON AUTHORITATIVE | entry OFF"
+    )
+    assert "=" not in rendered
+    assert "_" not in rendered
+
+
+def test_humanizes_generic_entry_synchronization_telemetry() -> None:
+    """Keep useful entry facts while removing raw field syntax."""
+    rendered = TerminalMonitor._format_compact_event(
+        "Live Futures entry position synchronized: symbol=ACEUSDT quantity=52 "
+        "entry_price=0.1896"
+    )
+
+    assert rendered == (
+        "Live Futures entry position synchronized | symbol ACEUSDT | "
+        "qty 52 | entry 0.1896"
+    )
+    assert "quantity=" not in rendered
+    assert "entry_price=" not in rendered
+
+
+def test_generic_humanizer_preserves_unstructured_message() -> None:
+    """Do not reinterpret arbitrary prose that only happens to contain equals."""
+    message = "Exchange response detail x=y remains diagnostic prose"
+
+    rendered = TerminalMonitor._format_compact_event(message)
+
+    assert rendered == message
