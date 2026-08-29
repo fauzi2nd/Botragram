@@ -38,13 +38,13 @@ async def risk_limits_command(
 
     limits = service.get_snapshot()
     await message.reply_text(
-        "Runtime risk limits\n"
-        f"max_open_positions={limits.max_open_positions} "
-        f"(ceiling={service.max_open_positions_ceiling})\n"
-        f"max_position_size_usdt={limits.max_position_size_usdt} "
-        f"(ceiling={service.max_position_size_usdt_ceiling})\n"
-        f"updated_by={limits.updated_by}\n"
-        f"updated_at={limits.updated_at.isoformat()}"
+        "Runtime Risk Limits\n"
+        f"Open positions: {limits.max_open_positions} "
+        f"(maximum {service.max_open_positions_ceiling})\n"
+        f"Position size: {limits.max_position_size_usdt} USDT "
+        f"(maximum {service.max_position_size_usdt_ceiling} USDT)\n"
+        f"Source: {limits.updated_by}\n"
+        f"Updated: {limits.updated_at.isoformat()}"
     )
 
 
@@ -69,14 +69,19 @@ async def set_risk_limits_command(
         return
     args = context.args or []
     if len(args) != 2:
-        await message.reply_text(f"Usage: {_USAGE}")
+        await message.reply_text(
+            "Usage: /setrisklimits <open positions> <position size USDT>"
+        )
         return
 
     try:
         max_open_positions = int(args[0])
         max_position_size_usdt = Decimal(args[1])
     except ValueError, InvalidOperation:
-        await message.reply_text(f"Invalid values. Usage: {_USAGE}")
+        await message.reply_text(
+            "Invalid values. Usage: /setrisklimits "
+            "<open positions> <position size USDT>"
+        )
         return
 
     user = update.effective_user
@@ -93,8 +98,8 @@ async def set_risk_limits_command(
         return
 
     await message.reply_text(
-        "Runtime risk limits updated durably.\n"
-        f"max_open_positions={limits.max_open_positions}\n"
-        f"max_position_size_usdt={limits.max_position_size_usdt}\n"
+        "Runtime risk limits updated.\n"
+        f"Open positions: {limits.max_open_positions}\n"
+        f"Position size: {limits.max_position_size_usdt} USDT\n"
         "Resume trading when ready."
     )
