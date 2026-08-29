@@ -92,7 +92,7 @@ def _status(*, positions: tuple[Position, ...] = ()) -> TerminalStatus:
     )
 
 
-def _position(index: int) -> Position:
+def _position(index: int, *, leverage: int = 1) -> Position:
     """Build one deterministic protected position for portrait rendering."""
     now = datetime(2026, 1, 1, tzinfo=UTC)
     return Position(
@@ -102,7 +102,7 @@ def _position(index: int) -> Position:
         entry_price=Decimal("100"),
         current_price=Decimal("101"),
         unrealized_pnl=Decimal("1.25"),
-        leverage=1,
+        leverage=leverage,
         opened_at=now,
         updated_at=now,
         stop_loss=Decimal("98"),
@@ -228,6 +228,18 @@ def test_compact_terminal_keeps_five_positions_with_dense_rows() -> None:
     assert "Protection Step" not in rendered
     assert "Strategy Type" not in rendered
     assert "Runtime Events" in rendered
+
+
+def test_compact_terminal_marks_nonpositive_leverage_unavailable() -> None:
+    """Do not present an unknown or invalid leverage value as zero leverage."""
+    rendered = _render(
+        width=72,
+        status=_status(positions=(_position(1, leverage=0),)),
+    )
+
+    assert "PAIR1USDT" in rendered
+    assert "LONG | N/A | PAPER | STEP 1" in rendered
+    assert "0x" not in rendered
 
 
 def test_medium_terminal_uses_two_column_summary() -> None:
