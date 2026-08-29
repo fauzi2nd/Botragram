@@ -22,8 +22,10 @@ from botragram.exchanges.base import (
     BaseRestClient,
     BaseStreamClient,
 )
+from botragram.exchanges.binance.authoritative_futures_client import (
+    BinanceFuturesExchangeClient,
+)
 from botragram.exchanges.binance.client import BinanceExchangeClient
-from botragram.exchanges.binance.futures_client import BinanceFuturesExchangeClient
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.exchanges.binance.stream import BinanceStreamClient
