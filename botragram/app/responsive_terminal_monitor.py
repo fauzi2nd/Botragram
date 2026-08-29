@@ -213,7 +213,7 @@ class TerminalMonitor(BaseTerminalMonitor):
         )
 
     def _build_compact_positions_panel(self, status: TerminalStatus) -> Panel:
-        """Render up to five managed positions as dense portrait-friendly blocks."""
+        """Render up to five managed positions as portrait-friendly blocks."""
         table = Table.grid(expand=True, padding=(0, 1))
         table.add_column(style="bright_magenta", no_wrap=True)
         table.add_column(style="white")
@@ -304,14 +304,12 @@ class TerminalMonitor(BaseTerminalMonitor):
         step: int,
         health: str,
     ) -> None:
-        """Append one complete managed position in three portrait rows."""
+        """Append one complete managed position in four portrait rows."""
         leverage_label = f"{leverage}x" if leverage > 0 else "N/A"
         table.add_row(symbol, f"{side} | {leverage_label} | {health} | STEP {step}")
         table.add_row("Qty / PnL", f"{quantity} / {pnl}")
-        table.add_row(
-            "Entry / Mark / SL / TP",
-            f"{entry} / {mark} / {stop_loss} / {take_profit}",
-        )
+        table.add_row("Entry / Mark", f"{entry} / {mark}")
+        table.add_row("SL / TP", f"{stop_loss} / {take_profit}")
 
     def _build_compact_log_panel(self, status: TerminalStatus) -> Panel:
         """Use concise operator-facing events with a height-aware history limit."""
@@ -462,13 +460,13 @@ class TerminalMonitor(BaseTerminalMonitor):
 
     @staticmethod
     def _compact_positions_height(status: TerminalStatus) -> int:
-        """Reserve only three data rows per compact managed position."""
+        """Reserve four data rows per compact managed position."""
         context_count = (
             len(status.live_runtime_health.contexts)
             if status.live_runtime_health is not None
             else len(status.positions)
         )
-        return 3 if context_count == 0 else context_count * 3 + 2
+        return 3 if context_count == 0 else context_count * 4 + 2
 
     def _compact_log_limit(self, status: TerminalStatus) -> int:
         """Reduce log history as managed-position occupancy consumes screen height."""
