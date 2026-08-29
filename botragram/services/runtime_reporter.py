@@ -117,11 +117,22 @@ class RuntimeReporter:
         maximum_failures: int,
     ) -> None:
         """Publish a sanitized runtime failure alert."""
+        failure_counter = (
+            f"<b>Consecutive Cycle Failures:</b> "
+            f"{consecutive_failures}/{maximum_failures}\n"
+        )
+        recovery_note = (
+            "<b>24/7 Recovery:</b> separate autonomous safety recovery applies "
+            "when eligible.\n"
+            if self.trade_mode is TradeMode.LIVE
+            else ""
+        )
         message = (
             "<b>Trading Cycle Failed</b>\n\n"
             f"<b>Error Type:</b> {type(error).__name__}\n"
-            f"<b>Attempt:</b> {consecutive_failures}/{maximum_failures}\n"
-            "Detail sensitif hanya dicatat di log lokal."
+            f"{failure_counter}"
+            f"{recovery_note}"
+            "Sensitive detail is recorded only in the local log."
         )
         await self._publish(
             title="Trading cycle failure",
