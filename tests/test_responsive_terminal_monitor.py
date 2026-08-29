@@ -146,6 +146,18 @@ def test_compact_terminal_keeps_readable_performance_summary() -> None:
     assert "NONE" in rendered
 
 
+def test_compact_terminal_collapses_minimal_panels_to_content() -> None:
+    """Give unused portrait height back to runtime events during startup."""
+    monitor = _monitor(width=72, height=60)
+    layout = monitor.render_dashboard(_status())
+
+    assert layout["status"].size == 8
+    assert layout["discovery"].size == 3
+    assert layout["performance"].size == 4
+    assert layout["managed_positions"].size == 3
+    assert layout["logs"].minimum_size == 8
+
+
 def test_compact_terminal_humanizes_discovery_rejection_events() -> None:
     """Hide internal snake-case diagnostics from the portrait operator view."""
     monitor = _monitor(width=72)
@@ -168,6 +180,31 @@ def test_compact_terminal_humanizes_discovery_rejection_events() -> None:
     assert "Candidate MAGICUSDT SELL" in rendered
     assert "QUOTE REJECT" in rendered
     assert "market_reference_rejected" not in rendered
+    assert "trading_runner" not in rendered
+
+
+def test_compact_terminal_humanizes_runner_start_event() -> None:
+    """Present startup telemetry without raw snake-case key/value syntax."""
+    monitor = _monitor(width=72)
+    record = logging.LogRecord(
+        name="botragram.app.trading_runner",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg=(
+            "Trading runner started: context_count=1 mode=paper candle_limit=100 "
+            "cycle_interval_override=None"
+        ),
+        args=(),
+        exc_info=None,
+    )
+    monitor.log_handler.emit(record)
+
+    rendered = _render(width=72, monitor=monitor)
+
+    assert "Runtime started | PAPER | 1 context | candle limit 100" in rendered
+    assert "context_count" not in rendered
+    assert "cycle_interval_override" not in rendered
     assert "trading_runner" not in rendered
 
 
