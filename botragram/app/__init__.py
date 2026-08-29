@@ -30,7 +30,7 @@ from botragram.app.market_type_switch import (
     prepare_restarted_runtime_session,
     run_until_restart,
 )
-from botragram.app.responsive_terminal_monitor import TerminalMonitor
+from botragram.app.operator_terminal_monitor import TerminalMonitor
 from botragram.app.runtime_control import MarketStreamTelemetry, TradingRuntimeControl
 from botragram.app.runtime_instance_lock import RuntimeInstanceLock
 from botragram.app.settings_manager import SettingsManager
