@@ -36,7 +36,7 @@ class _LiveBalanceProvider:
     """Provide an unused deterministic LIVE balance."""
 
     async def get_free_balance(self, *, asset: str) -> Decimal:
-        """Return a deterministic LIVE free balance."""
+        """Return a deterministic LIVE free balance snapshot."""
         assert asset == "USDT"
         return Decimal("100")
 
@@ -210,8 +210,8 @@ def test_compact_terminal_humanizes_runner_start_event() -> None:
     assert "trading_runner" not in rendered
 
 
-def test_compact_terminal_keeps_five_positions_with_dense_rows() -> None:
-    """Fit five position summaries without the previous five-row expansion."""
+def test_compact_terminal_keeps_five_positions_with_readable_price_rows() -> None:
+    """Fit five position summaries while keeping each price pair independently readable."""
     positions = tuple(_position(index) for index in range(1, 6))
     monitor = _monitor(width=72, height=60)
 
@@ -224,7 +224,11 @@ def test_compact_terminal_keeps_five_positions_with_dense_rows() -> None:
     for index in range(1, 6):
         assert f"PAIR{index}USDT" in rendered
         assert f"STEP {index}" in rendered
-    assert "Entry / Mark / SL / TP" in rendered
+    assert "Entry / Mark" in rendered
+    assert "SL / TP" in rendered
+    assert "100 / 101" in rendered
+    assert "98 / 104" in rendered
+    assert "Entry / Mark / SL / TP" not in rendered
     assert "Protection Step" not in rendered
     assert "Strategy Type" not in rendered
     assert "Runtime Events" in rendered
