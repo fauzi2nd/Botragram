@@ -16,8 +16,10 @@ from __future__ import annotations
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.exchanges.binance.authoritative_futures_client import (
+    BinanceFuturesExchangeClient,
+)
 from botragram.exchanges.binance.client import BinanceExchangeClient
-from botragram.exchanges.binance.futures_client import BinanceFuturesExchangeClient
 from botragram.exchanges.binance.futures_user_data_stream import (
     BinanceFuturesUserDataStream,
 )
