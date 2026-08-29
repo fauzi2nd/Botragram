@@ -456,7 +456,7 @@ class TerminalMonitor(BaseTerminalMonitor):
 
     @staticmethod
     def _compact_discovery_height(status: TerminalStatus) -> int:
-        """Collapse unconfigured discovery while preserving full configured telemetry."""
+        """Collapse unconfigured discovery while preserving telemetry."""
         return 14 if status.global_discovery is not None else 3
 
     @staticmethod
