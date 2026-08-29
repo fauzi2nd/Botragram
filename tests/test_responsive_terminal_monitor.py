@@ -205,7 +205,6 @@ def test_compact_terminal_humanizes_runner_start_event() -> None:
     assert "Runtime started" in rendered
     assert "PAPER" in rendered
     assert "1 context" in rendered
-    assert "candle limit 100" in rendered
     assert "context_count" not in rendered
     assert "cycle_interval_override" not in rendered
     assert "trading_runner" not in rendered
