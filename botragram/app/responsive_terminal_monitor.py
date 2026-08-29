@@ -52,6 +52,11 @@ _HEARTBEAT_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"Runtime heartbeat: state=(?P<state>\S+) symbol=(?P<symbol>\S+) "
     r"strategy=(?P<strategy>\S+) stream=(?P<stream>\S+)"
 )
+_RUNNER_STARTED_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Trading runner started: context_count=(?P<context_count>\d+) "
+    r"mode=(?P<mode>\S+) candle_limit=(?P<candle_limit>\d+) "
+    r"cycle_interval_override=(?P<cycle_interval_override>\S+)"
+)
 
 
 class TerminalMonitor(BaseTerminalMonitor):
@@ -94,29 +99,27 @@ class TerminalMonitor(BaseTerminalMonitor):
 
     def _render_compact_dashboard(self, status: TerminalStatus) -> Layout:
         """Prioritize safety, positions, and readable logs on portrait terminals."""
-        managed_height = self._compact_positions_height(status)
-        discovery_height = 14 if status.global_discovery is not None else 5
         layout = Layout(name="root")
         layout.split_column(
             Layout(
                 self._build_compact_status_panel(status),
                 name="status",
-                size=14,
+                size=self._compact_status_height(status),
             ),
             Layout(
                 self._build_discovery_panel(status),
                 name="discovery",
-                size=discovery_height,
+                size=self._compact_discovery_height(status),
             ),
             Layout(
                 self._build_compact_performance_panel(status),
                 name="performance",
-                size=5,
+                size=4,
             ),
             Layout(
                 self._build_compact_positions_panel(status),
                 name="managed_positions",
-                size=managed_height,
+                size=self._compact_positions_height(status),
             ),
             Layout(
                 self._build_compact_log_panel(status),
@@ -390,6 +393,20 @@ class TerminalMonitor(BaseTerminalMonitor):
                 f"{strategy} | stream {heartbeat['stream']}"
             )
 
+        runner_started = _RUNNER_STARTED_EVENT_PATTERN.fullmatch(message)
+        if runner_started is not None:
+            context_count = int(runner_started["context_count"])
+            context_label = "context" if context_count == 1 else "contexts"
+            rendered = (
+                f"Runtime started | {runner_started['mode'].upper()} | "
+                f"{context_count} {context_label} | "
+                f"candle limit {runner_started['candle_limit']}"
+            )
+            interval_override = runner_started["cycle_interval_override"]
+            if interval_override.lower() != "none":
+                rendered += f" | cycle {interval_override}s"
+            return rendered
+
         return message.replace("_", " ")
 
     @staticmethod
@@ -418,6 +435,31 @@ class TerminalMonitor(BaseTerminalMonitor):
         return labels.get(normalized, normalized.upper().replace("_", " "))
 
     @staticmethod
+    def _compact_status_height(status: TerminalStatus) -> int:
+        """Fit compact status to actual safety content instead of fixed whitespace."""
+        health = status.live_runtime_health
+        if health is None:
+            startup_wrap_allowance = 1 if status.missing_startup_requirements else 0
+            return 8 + startup_wrap_allowance
+
+        row_count = 8
+        if health.reason is not None:
+            row_count += 1
+        if status.position_count != len(health.contexts):
+            row_count += 1
+        recovery = status.autonomous_live_recovery
+        if recovery is not None:
+            row_count += 1
+            if recovery.reason is not None:
+                row_count += 1
+        return row_count + 2
+
+    @staticmethod
+    def _compact_discovery_height(status: TerminalStatus) -> int:
+        """Collapse unconfigured discovery while preserving full configured telemetry."""
+        return 14 if status.global_discovery is not None else 3
+
+    @staticmethod
     def _compact_positions_height(status: TerminalStatus) -> int:
         """Reserve only three data rows per compact managed position."""
         context_count = (
@@ -425,7 +467,7 @@ class TerminalMonitor(BaseTerminalMonitor):
             if status.live_runtime_health is not None
             else len(status.positions)
         )
-        return max(5, context_count * 3 + 3)
+        return 3 if context_count == 0 else context_count * 3 + 2
 
     def _compact_log_limit(self, status: TerminalStatus) -> int:
         """Reduce log history as managed-position occupancy consumes screen height."""
