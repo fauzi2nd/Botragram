@@ -11,6 +11,7 @@ Python:
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from decimal import Decimal
 from typing import Final
 
@@ -22,7 +23,7 @@ from rich.text import Text
 
 from botragram.app.terminal_monitor import TerminalMonitor as BaseTerminalMonitor
 from botragram.app.terminal_monitor import TerminalStatus
-from botragram.enums import TradeMode
+from botragram.enums import LiveFuturesUserDataStatus, TradeMode
 
 __all__ = ["TerminalMonitor"]
 
@@ -61,6 +62,23 @@ _RUNNER_STARTED_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
 
 class TerminalMonitor(BaseTerminalMonitor):
     """Render the existing monitor data with width-aware Rich layouts."""
+
+    async def collect_status(self) -> TerminalStatus:
+        """Prefer authoritative private Futures PnL when that cache is ready."""
+        status = await super().collect_status()
+        user_data = status.live_futures_user_data
+        if (
+            self.trade_mode is not TradeMode.LIVE
+            or user_data is None
+            or user_data.status is not LiveFuturesUserDataStatus.READY
+        ):
+            return status
+
+        authoritative_unrealized_pnl = sum(
+            (update.unrealized_pnl for update in user_data.position_updates),
+            start=Decimal("0"),
+        )
+        return replace(status, unrealized_pnl=authoritative_unrealized_pnl)
 
     def render_dashboard(self, status: TerminalStatus) -> Layout:
         """Choose a readable layout from the active terminal width."""
