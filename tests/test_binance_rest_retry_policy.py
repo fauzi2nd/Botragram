@@ -425,7 +425,7 @@ async def test_futures_entry_post_timeout_is_single_attempt() -> None:
         assert request.method == "POST"
         assert request.path == "/fapi/v1/order"
         attempts += 1
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.5)
         return web.json_response({})
 
     base_url, runner = await _start_server(handler)
@@ -433,7 +433,7 @@ async def test_futures_entry_post_timeout_is_single_attempt() -> None:
         base_url=base_url,
         api_key="key",
         api_secret="secret",
-        request_timeout_seconds=0.01,
+        request_timeout_seconds=0.1,
         max_retries=3,
         retry_delay_seconds=0,
     )
@@ -495,7 +495,7 @@ async def test_futures_protection_post_timeout_is_single_attempt() -> None:
         assert request.method == "POST"
         assert request.path == "/fapi/v1/algoOrder"
         attempts += 1
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.5)
         return web.json_response({})
 
     base_url, runner = await _start_server(handler)
@@ -503,7 +503,7 @@ async def test_futures_protection_post_timeout_is_single_attempt() -> None:
         base_url=base_url,
         api_key="key",
         api_secret="secret",
-        request_timeout_seconds=0.01,
+        request_timeout_seconds=0.1,
         max_retries=3,
         retry_delay_seconds=0,
     )
