@@ -305,7 +305,8 @@ class TerminalMonitor(BaseTerminalMonitor):
         health: str,
     ) -> None:
         """Append one complete managed position in three portrait rows."""
-        table.add_row(symbol, f"{side} | {leverage}x | {health} | STEP {step}")
+        leverage_label = f"{leverage}x" if leverage > 0 else "N/A"
+        table.add_row(symbol, f"{side} | {leverage_label} | {health} | STEP {step}")
         table.add_row("Qty / PnL", f"{quantity} / {pnl}")
         table.add_row(
             "Entry / Mark / SL / TP",
