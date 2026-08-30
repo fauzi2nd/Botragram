@@ -8,30 +8,14 @@ Python:
     3.14+
 """
 
-# =============================================================================
-# Future
-# =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Standard Library Imports
-# =============================================================================
 from collections.abc import Sequence
 from typing import Final
 from uuid import UUID
 
-# =============================================================================
-# Third Party
-# =============================================================================
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-)
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
-# =============================================================================
-# Local Imports
-# =============================================================================
 from botragram.constants.telegram import (
     MENU_ACTIVITY,
     MENU_BALANCE,
@@ -82,13 +66,9 @@ __all__ = [
     "get_trading_menu_keyboard",
 ]
 
-
 _MARKET_PAGE_SIZE: Final[int] = 10
 
 
-# =============================================================================
-# Keyboard Helpers
-# =============================================================================
 def get_main_menu_keyboard(
     *,
     execution_policy: ExecutionPolicy = ExecutionPolicy.SINGLE_SYMBOL,
@@ -109,16 +89,17 @@ def get_main_menu_keyboard(
         return _get_reply_keyboard(
             [
                 [MENU_STATUS, MENU_POSITIONS],
-                [MENU_RISK_LIMITS, MENU_ACTIVITY],
-                [runtime_action, MENU_TRADING_MODE],
+                [MENU_STRATEGY, MENU_RISK_LIMITS],
+                [MENU_ACTIVITY, MENU_TRADING_MODE],
+                [runtime_action],
             ]
         )
 
     return _get_reply_keyboard(
         [
             [MENU_STATUS, MENU_POSITIONS],
-            [MENU_ACTIVITY, runtime_action],
-            [MENU_TRADING_MODE],
+            [MENU_STRATEGY, MENU_ACTIVITY],
+            [runtime_action, MENU_TRADING_MODE],
         ]
     )
 
@@ -313,17 +294,7 @@ def get_exchange_keyboard(
     exchange_confirmed: bool = False,
     market_type_confirmed: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Get exchange selection inline keyboard.
-
-    Args:
-        active_exchange: Currently active exchange name (uppercase).
-        market_type: Currently active exchange product family.
-        exchange_confirmed: Whether Telegram confirmed the exchange.
-        market_type_confirmed: Whether Telegram confirmed the product family.
-
-    Returns:
-        InlineKeyboardMarkup instance.
-    """
+    """Get exchange selection inline keyboard."""
 
     def _label(name: str, emoji: str) -> str:
         check = "✅ " if exchange_confirmed and active_exchange.upper() == name else ""
@@ -345,18 +316,13 @@ def get_exchange_keyboard(
             )
         ],
         [
-            InlineKeyboardButton(
-                f"{spot_check}Spot",
-                callback_data="cb_product_spot",
-            ),
+            InlineKeyboardButton(f"{spot_check}Spot", callback_data="cb_product_spot"),
             InlineKeyboardButton(
                 f"{futures_check}Futures",
                 callback_data="cb_product_futures",
             ),
         ],
-        [
-            InlineKeyboardButton("◀️ Back", callback_data="cb_back_main"),
-        ],
+        [InlineKeyboardButton("◀️ Back", callback_data="cb_back_main")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -389,23 +355,18 @@ def get_market_keyboard(
 ) -> InlineKeyboardMarkup:
     """Return one page of exchange-supported market symbols."""
     normalized_symbols = tuple(sorted({symbol.strip().upper() for symbol in symbols}))
-
     if not normalized_symbols:
         raise ValueError("Market keyboard requires at least one symbol")
-
     normalized_active = active_symbol.strip().upper()
     maximum_page = (len(normalized_symbols) - 1) // _MARKET_PAGE_SIZE
-
     if page is None:
         try:
             active_index = normalized_symbols.index(normalized_active)
         except ValueError:
             active_index = 0
-
         selected_page = active_index // _MARKET_PAGE_SIZE
     else:
         selected_page = min(max(page, 0), maximum_page)
-
     start = selected_page * _MARKET_PAGE_SIZE
     page_symbols = normalized_symbols[start : start + _MARKET_PAGE_SIZE]
     buttons = [
@@ -417,7 +378,6 @@ def get_market_keyboard(
     ]
     rows = [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
     navigation: list[InlineKeyboardButton] = []
-
     if selected_page > 0:
         navigation.append(
             InlineKeyboardButton(
@@ -425,14 +385,12 @@ def get_market_keyboard(
                 callback_data=f"cb_market_page_{selected_page - 1}",
             )
         )
-
     navigation.append(
         InlineKeyboardButton(
             f"{selected_page + 1}/{maximum_page + 1}",
             callback_data="cb_market_noop",
         )
     )
-
     if selected_page < maximum_page:
         navigation.append(
             InlineKeyboardButton(
@@ -440,7 +398,6 @@ def get_market_keyboard(
                 callback_data=f"cb_market_page_{selected_page + 1}",
             )
         )
-
     rows.append(navigation)
     rows.append([InlineKeyboardButton("🔎 Search", callback_data="cb_market_search")])
     rows.append([InlineKeyboardButton("◀️ Back", callback_data="cb_back_main")])
@@ -544,13 +501,10 @@ def get_execution_authorization_keyboard(
 def _normalize_authorization_identifier(authorization_id: str) -> str:
     """Validate the fixed-width opaque identifier used in callback data."""
     normalized_identifier = authorization_id.strip().lower()
-
     try:
         parsed_identifier = UUID(hex=normalized_identifier)
     except ValueError as error:
         raise ValueError("Execution authorization identifier must be a UUID") from error
-
     if parsed_identifier.hex != normalized_identifier:
         raise ValueError("Execution authorization identifier must be canonical")
-
     return normalized_identifier
