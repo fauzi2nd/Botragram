@@ -55,6 +55,10 @@ from botragram.telegram.runtime_menu_refresh import (
     pause_bot_command_with_menu_refresh,
     start_bot_command_with_menu_refresh,
 )
+from botragram.telegram.strategy_flatten_switch import (
+    strategy_flatten_confirm_callback,
+    strategy_flatten_request_callback,
+)
 from botragram.telegram.strategy_switch import (
     strategy_switch_callback,
     strategy_switch_command,
@@ -86,6 +90,18 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler("closeandswitch", close_all_and_switch_command))
     app.add_handler(CommandHandler("confirmexit", confirm_exit_command))
     app.add_handler(CommandHandler("cancelexit", cancel_exit_command))
+    app.add_handler(
+        CallbackQueryHandler(
+            strategy_flatten_confirm_callback,
+            pattern=r"^cb_strategy_exit_confirm_",
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            strategy_flatten_request_callback,
+            pattern=r"^cb_strategy_flatten_",
+        )
+    )
     app.add_handler(
         CallbackQueryHandler(
             operator_exit_confirm_callback_with_progress,
