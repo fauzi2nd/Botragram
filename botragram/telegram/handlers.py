@@ -32,7 +32,6 @@ from botragram.telegram.commands import (
     settings_command,
     start_command,
     status_command,
-    strategy_command,
     stream_command,
     trading_mode_command,
 )
@@ -53,6 +52,10 @@ from botragram.telegram.runtime_menu_refresh import (
     pause_bot_command_with_menu_refresh,
     start_bot_command_with_menu_refresh,
 )
+from botragram.telegram.strategy_switch import (
+    strategy_switch_callback,
+    strategy_switch_command,
+)
 
 
 def register_handlers(app: Any) -> None:
@@ -63,7 +66,7 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler("balance", balance_command))
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("market", market_command))
-    app.add_handler(CommandHandler("strategy", strategy_command))
+    app.add_handler(CommandHandler("strategy", strategy_switch_command))
     app.add_handler(CommandHandler("interval", interval_command))
     app.add_handler(CommandHandler("stream", stream_command))
     app.add_handler(CommandHandler("orders", orders_command))
@@ -80,6 +83,12 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler("closeandswitch", close_all_and_switch_command))
     app.add_handler(CommandHandler("confirmexit", confirm_exit_command))
     app.add_handler(CommandHandler("cancelexit", cancel_exit_command))
+    app.add_handler(
+        CallbackQueryHandler(
+            strategy_switch_callback,
+            pattern=r"^cb_strategy_",
+        )
+    )
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(
         MessageHandler(
