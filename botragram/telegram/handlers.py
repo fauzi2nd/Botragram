@@ -43,6 +43,9 @@ from botragram.telegram.operator_exit_commands import (
     confirm_exit_command,
     exit_status_command,
 )
+from botragram.telegram.operator_exit_progress import (
+    operator_exit_confirm_callback_with_progress,
+)
 from botragram.telegram.risk_limit_commands import (
     risk_limits_command,
     set_risk_limits_command,
@@ -83,6 +86,12 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler("closeandswitch", close_all_and_switch_command))
     app.add_handler(CommandHandler("confirmexit", confirm_exit_command))
     app.add_handler(CommandHandler("cancelexit", cancel_exit_command))
+    app.add_handler(
+        CallbackQueryHandler(
+            operator_exit_confirm_callback_with_progress,
+            pattern=r"^cb_operator_exit_confirm_",
+        )
+    )
     app.add_handler(
         CallbackQueryHandler(
             strategy_switch_callback,
