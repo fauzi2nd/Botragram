@@ -14,6 +14,7 @@ from botragram.constants.telegram import (
     MENU_PAUSE,
     MENU_RESUME,
     MENU_START,
+    MENU_STRATEGY,
 )
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.commands import menu_message_handler
@@ -28,6 +29,7 @@ from botragram.telegram.messages import (
     get_runtime_pause_message,
     get_startup_configuration_message,
 )
+from botragram.telegram.strategy_switch import strategy_switch_command
 
 logger: Final[logging.Logger] = logging.getLogger(__name__)
 _DATA_UNAVAILABLE_MESSAGE: Final[str] = (
@@ -185,6 +187,9 @@ async def menu_message_handler_with_runtime_refresh(
         return
 
     action = update.message.text or ""
+    if action == MENU_STRATEGY:
+        await strategy_switch_command(update, context)
+        return
     if action not in {MENU_START, MENU_RESUME, MENU_PAUSE}:
         await menu_message_handler(update, context)
         return
