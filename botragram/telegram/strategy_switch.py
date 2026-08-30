@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from botragram.constants.telegram import DEFAULT_PARSE_MODE
@@ -66,6 +66,26 @@ def _current_strategy(bot_context: BotContext) -> StrategyType:
         return StrategyType.EMA_CROSS
 
 
+def _flatten_for_strategy_keyboard(*, current: StrategyType) -> InlineKeyboardMarkup:
+    """Offer explicit flattening without pretending the strategy target is durable."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "⚠️ Close All Positions",
+                    callback_data="cb_operator_exit_close_all",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "◀️ Back to Strategy",
+                    callback_data=f"cb_strategy_{current.value}",
+                )
+            ],
+        ]
+    )
+
+
 async def strategy_switch_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -123,9 +143,23 @@ async def strategy_switch_callback(
     try:
         changed = await switcher.prepare_strategy(strategy_type=target)
     except ExecutionPolicySwitchBlockedError as error:
+        if error.active_position_count > 0:
+            await query.edit_message_text(
+                "⚠️ <b>Portfolio harus flat sebelum mengganti strategy.</b>\n\n"
+                f"Posisi aktif: <b>{error.active_position_count}</b>\n"
+                f"Target strategy: <code>{target.value}</code>\n\n"
+                "Gunakan tombol di bawah untuk memulai Close All yang terkonfirmasi. "
+                "Setelah portfolio benar-benar flat, pilih strategy target lagi. "
+                "Target tidak disimpan sementara selama financial mutation agar "
+                "tidak hilang diam-diam jika runtime restart.",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=_flatten_for_strategy_keyboard(current=current),
+            )
+            return
         await query.edit_message_text(
             f"⚠️ <b>{error}</b>\n\n"
-            "Jeda runtime dan pastikan portfolio flat sebelum mengganti strategy.",
+            "Jeda runtime dan pastikan recovery/protection siap sebelum mengganti "
+            "strategy.",
             parse_mode=DEFAULT_PARSE_MODE,
             reply_markup=get_strategy_keyboard(current.value, confirmed=True),
         )
