@@ -66,14 +66,18 @@ def _current_strategy(bot_context: BotContext) -> StrategyType:
         return StrategyType.EMA_CROSS
 
 
-def _flatten_for_strategy_keyboard(*, current: StrategyType) -> InlineKeyboardMarkup:
-    """Offer explicit flattening without pretending the strategy target is durable."""
+def _flatten_for_strategy_keyboard(
+    *,
+    current: StrategyType,
+    target: StrategyType,
+) -> InlineKeyboardMarkup:
+    """Offer an explicit flatten action bound to the requested strategy."""
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
-                    "⚠️ Close All Positions",
-                    callback_data="cb_operator_exit_close_all",
+                    "⚠️ Close All & Apply Strategy",
+                    callback_data=f"cb_strategy_flatten_{target.value}",
                 )
             ],
             [
@@ -148,12 +152,14 @@ async def strategy_switch_callback(
                 "⚠️ <b>Portfolio harus flat sebelum mengganti strategy.</b>\n\n"
                 f"Posisi aktif: <b>{error.active_position_count}</b>\n"
                 f"Target strategy: <code>{target.value}</code>\n\n"
-                "Gunakan tombol di bawah untuk memulai Close All yang terkonfirmasi. "
-                "Setelah portfolio benar-benar flat, pilih strategy target lagi. "
-                "Target tidak disimpan sementara selama financial mutation agar "
-                "tidak hilang diam-diam jika runtime restart.",
+                "Gunakan tombol di bawah untuk menutup portfolio secara eksplisit. "
+                "Target strategy akan dibawa sampai portfolio terbukti flat dan "
+                "kemudian diterapkan melalui soft restart.",
                 parse_mode=DEFAULT_PARSE_MODE,
-                reply_markup=_flatten_for_strategy_keyboard(current=current),
+                reply_markup=_flatten_for_strategy_keyboard(
+                    current=current,
+                    target=target,
+                ),
             )
             return
         await query.edit_message_text(
