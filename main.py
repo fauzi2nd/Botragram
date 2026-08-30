@@ -31,7 +31,7 @@ from botragram.app import (
 )
 from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.config import Settings
-from botragram.enums import ExecutionPolicy, MarketType, TradeMode
+from botragram.enums import ExecutionPolicy, MarketType, StrategyType, TradeMode
 from botragram.utils.logger import configure_logging, shutdown_logging
 from botragram.utils.retry import CappedExponentialBackoff
 
@@ -88,7 +88,7 @@ async def _run_trading(
     dependency_provider: DependencyProvider,
     settings: Settings,
     restart_coordinator: RuntimeRestartCoordinator,
-    restart_target: MarketType | ExecutionPolicy | None = None,
+    restart_target: MarketType | ExecutionPolicy | StrategyType | None = None,
 ) -> None:
     """Build and run trading orchestration after resources are initialized."""
     global_discovery_telemetry = (
@@ -154,7 +154,10 @@ async def _run_trading(
         name="botragram-terminal-monitor",
     )
     try:
-        activate_runtime = not isinstance(restart_target, ExecutionPolicy)
+        activate_runtime = not isinstance(
+            restart_target,
+            (ExecutionPolicy, StrategyType),
+        )
         if settings.app.effective_execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE:
             await _recover_autonomous_live_until_ready(
                 dependency_provider=dependency_provider,
@@ -255,7 +258,7 @@ async def main() -> None:
         lock_path=settings.app.database_path.with_suffix(".lock"),
     )
     market_type_confirmed = False
-    session_restart_target: MarketType | ExecutionPolicy | None = None
+    session_restart_target: MarketType | ExecutionPolicy | StrategyType | None = None
     configure_logging(settings=settings.logging)
 
     try:
@@ -310,6 +313,23 @@ async def main() -> None:
                 session_restart_target = requested_restart
                 _LOGGER.info(
                     "Application restarting with Binance market type: %s",
+                    requested_restart.value,
+                )
+                continue
+
+            if isinstance(requested_restart, StrategyType):
+                settings = replace(
+                    settings,
+                    strategy=replace(
+                        settings.strategy,
+                        strategy_type=requested_restart,
+                    ),
+                )
+                settings_manager.validate(settings=settings)
+                session_restart_target = requested_restart
+                _LOGGER.info(
+                    "Application restarting with strategy: %s; "
+                    "next_session_paused=true",
                     requested_restart.value,
                 )
                 continue
