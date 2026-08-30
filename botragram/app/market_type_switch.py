@@ -10,7 +10,7 @@ from typing import Protocol
 from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.app.settings_manager import SettingsManager
 from botragram.config import Settings
-from botragram.enums import ExecutionPolicy, MarketType, TradeMode
+from botragram.enums import ExecutionPolicy, MarketType, StrategyType, TradeMode
 from botragram.exceptions import ExecutionPolicySwitchBlockedError
 from botragram.models import Position
 
@@ -22,7 +22,7 @@ __all__ = [
     "run_until_restart",
 ]
 
-type RuntimeRestartTarget = MarketType | ExecutionPolicy
+type RuntimeRestartTarget = MarketType | ExecutionPolicy | StrategyType
 
 
 class _StoredPositionProvider(Protocol):
@@ -89,20 +89,23 @@ class RuntimeRestartCoordinator:
         *,
         market_type: MarketType | None,
         execution_policy: ExecutionPolicy | None,
+        strategy_type: StrategyType | None,
     ) -> RuntimeRestartTarget:
-        if (market_type is None) == (execution_policy is None):
+        targets = tuple(
+            target
+            for target in (market_type, execution_policy, strategy_type)
+            if target is not None
+        )
+        if len(targets) != 1:
             raise ValueError("Exactly one runtime restart target is required")
-        if market_type is not None:
-            return market_type
-        if execution_policy is None:
-            raise RuntimeError("Runtime restart target resolution failed")
-        return execution_policy
+        return targets[0]
 
     def stage(
         self,
         *,
         market_type: MarketType | None = None,
         execution_policy: ExecutionPolicy | None = None,
+        strategy_type: StrategyType | None = None,
     ) -> None:
         """Stage one validated target before Telegram acknowledges the request."""
         if self._requested_target is not None or self._restart_event.is_set():
@@ -110,6 +113,7 @@ class RuntimeRestartCoordinator:
         self._requested_target = self._resolve_target(
             market_type=market_type,
             execution_policy=execution_policy,
+            strategy_type=strategy_type,
         )
 
     def commit(
@@ -117,11 +121,13 @@ class RuntimeRestartCoordinator:
         *,
         market_type: MarketType | None = None,
         execution_policy: ExecutionPolicy | None = None,
+        strategy_type: StrategyType | None = None,
     ) -> None:
         """Commit the exact staged target and wake the application session."""
         target = self._resolve_target(
             market_type=market_type,
             execution_policy=execution_policy,
+            strategy_type=strategy_type,
         )
         if self._requested_target is not target:
             raise RuntimeError("Runtime restart request is not staged")
@@ -193,14 +199,8 @@ async def prepare_restarted_runtime_session(
     runtime_control: TradingRuntimeControl,
     home_menu_publisher: _PersistentHomeMenuPublisher,
 ) -> None:
-    """Apply post-initialization behavior for one completed soft restart.
-
-    Args:
-        restart_target: Target that created the initialized runtime session.
-        runtime_control: Pause authority owned by the new runtime session.
-        home_menu_publisher: Adapter for refreshing the persistent operator menu.
-    """
-    if not isinstance(restart_target, ExecutionPolicy):
+    """Apply post-initialization behavior for one completed soft restart."""
+    if not isinstance(restart_target, (ExecutionPolicy, StrategyType)):
         return
 
     runtime_control.pause()
@@ -209,7 +209,7 @@ async def prepare_restarted_runtime_session(
 
 @dataclass(slots=True, kw_only=True)
 class MarketTypeSwitchService:
-    """Validate safe connector and execution-policy session replacements."""
+    """Validate safe connector, workflow, and strategy session replacements."""
 
     trade_mode: TradeMode
     runtime_control: TradingRuntimeControl
@@ -290,37 +290,10 @@ class MarketTypeSwitchService:
             raise ExecutionPolicySwitchBlockedError(
                 "Target trading mode is outside the boot capability envelope"
             ) from error
-        try:
-            self.runtime_control.require_configuration_change_allowed(
-                allow_operator_exit=allow_operator_exit,
-            )
-        except RuntimeError as error:
-            raise ExecutionPolicySwitchBlockedError(str(error)) from error
-
-        positions = await self._get_positions()
-        if positions:
-            raise ExecutionPolicySwitchBlockedError(
-                "Close every active position before switching trading mode",
-                active_position_count=len(positions),
-            )
-
-        if self.trade_mode is TradeMode.LIVE:
-            if self.runtime_control.runtime_contexts:
-                raise ExecutionPolicySwitchBlockedError(
-                    "LIVE runtime contexts must be fully reconciled before "
-                    "switching mode"
-                )
-            if not self.runtime_control.is_position_protection_ready:
-                raise ExecutionPolicySwitchBlockedError(
-                    "LIVE recovery/protection must be READY before switching mode"
-                )
-            repository = self.submission_attempt_repository
-            if repository is None:
-                raise RuntimeError("LIVE submission recovery state is unavailable")
-            if await repository.get_incomplete():
-                raise ExecutionPolicySwitchBlockedError(
-                    "Incomplete LIVE submission recovery blocks trading-mode switch"
-                )
+        await self._require_safe_session_replacement(
+            blocked_message="Close every active position before switching trading mode",
+            allow_operator_exit=allow_operator_exit,
+        )
 
         try:
             self.restart_coordinator.stage(execution_policy=execution_policy)
@@ -335,6 +308,78 @@ class MarketTypeSwitchService:
     ) -> None:
         """Commit an already-validated execution-policy session replacement."""
         self.restart_coordinator.commit(execution_policy=execution_policy)
+
+    @property
+    def current_strategy_type(self) -> StrategyType:
+        """Return the immutable strategy owned by the current runtime session."""
+        settings = self.settings
+        if settings is None:
+            return self.runtime_control.strategy_type
+        return settings.strategy.strategy_type
+
+    async def prepare_strategy(self, *, strategy_type: StrategyType) -> bool:
+        """Validate and stage a strategy replacement for a fresh runtime session."""
+        if self.settings is None:
+            raise RuntimeError("Strategy switching is unavailable")
+        if strategy_type is self.current_strategy_type:
+            return False
+
+        candidate = replace(
+            self.settings,
+            strategy=replace(
+                self.settings.strategy,
+                strategy_type=strategy_type,
+            ),
+        )
+        SettingsManager.validate(settings=candidate)
+        await self._require_safe_session_replacement(
+            blocked_message="Close every active position before switching strategy",
+        )
+        self.restart_coordinator.stage(strategy_type=strategy_type)
+        return True
+
+    def commit_strategy(self, *, strategy_type: StrategyType) -> None:
+        """Commit an already-validated strategy session replacement."""
+        self.restart_coordinator.commit(strategy_type=strategy_type)
+
+    async def _require_safe_session_replacement(
+        self,
+        *,
+        blocked_message: str,
+        allow_operator_exit: bool = False,
+    ) -> None:
+        """Require a flat, paused, recovery-clean boundary before rebuilding."""
+        try:
+            self.runtime_control.require_configuration_change_allowed(
+                allow_operator_exit=allow_operator_exit,
+            )
+        except RuntimeError as error:
+            raise ExecutionPolicySwitchBlockedError(str(error)) from error
+
+        positions = await self._get_positions()
+        if positions:
+            raise ExecutionPolicySwitchBlockedError(
+                blocked_message,
+                active_position_count=len(positions),
+            )
+
+        if self.trade_mode is not TradeMode.LIVE:
+            return
+        if self.runtime_control.runtime_contexts:
+            raise ExecutionPolicySwitchBlockedError(
+                "LIVE runtime contexts must be fully reconciled before switching"
+            )
+        if not self.runtime_control.is_position_protection_ready:
+            raise ExecutionPolicySwitchBlockedError(
+                "LIVE recovery/protection must be READY before switching"
+            )
+        repository = self.submission_attempt_repository
+        if repository is None:
+            raise RuntimeError("LIVE submission recovery state is unavailable")
+        if await repository.get_incomplete():
+            raise ExecutionPolicySwitchBlockedError(
+                "Incomplete LIVE submission recovery blocks runtime switch"
+            )
 
     def _settings_for_policy(self, *, policy: ExecutionPolicy) -> Settings:
         """Build one immutable candidate without widening boot authorization."""
