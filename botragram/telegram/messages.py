@@ -38,6 +38,7 @@ from botragram.models import (
     LiveRuntimeHealthSnapshot,
     Order,
     Position,
+    RuntimeRiskLimits,
     Trade,
 )
 from botragram.utils.formatter import format_currency
@@ -63,6 +64,7 @@ __all__ = [
     "get_pause_message",
     "get_positions_message",
     "get_resume_message",
+    "get_risk_limits_message",
     "get_runtime_pause_message",
     "get_runtime_portfolio_message",
     "get_settings_message",
@@ -920,3 +922,31 @@ def get_test_message() -> str:
 def get_stop_message() -> str:
     """Return application stop confirmation."""
     return "❌ <b>Trading bot telah dihentikan.</b>"
+
+
+def get_risk_limits_message(
+    *,
+    limits: RuntimeRiskLimits,
+    max_open_positions_ceiling: int,
+    max_position_size_usdt_ceiling: Decimal,
+    is_paused: bool,
+) -> str:
+    """Return formatted autonomous LIVE risk limits status and controls."""
+    updated_str = limits.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+    pause_status = (
+        "🟢 <b>PAUSED (Bisa diubah)</b>"
+        if is_paused
+        else "🔴 <b>RUNNING (Jeda bot untuk mengubah)</b>"
+    )
+    return (
+        "⚙️ <b>Runtime Risk Limits</b>\n\n"
+        f"• <b>Status:</b> {pause_status}\n"
+        f"• <b>Max Open Positions:</b> <b>{limits.max_open_positions}</b> "
+        f"(Ceiling: {max_open_positions_ceiling})\n"
+        f"• <b>Max Position Size:</b> <b>{limits.max_position_size_usdt} USDT</b> "
+        f"(Ceiling: {max_position_size_usdt_ceiling} USDT)\n"
+        f"• <b>Source:</b> <code>{limits.updated_by}</code>\n"
+        f"• <b>Updated:</b> <code>{updated_str}</code>\n\n"
+        "<i>Gunakan tombol di bawah atau perintah: "
+        "<code>/setrisklimits &lt;pos&gt; &lt;size&gt;</code></i>"
+    )

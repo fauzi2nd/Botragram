@@ -11,6 +11,7 @@ Python:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from decimal import Decimal
 from typing import Final
 from uuid import UUID
 
@@ -61,6 +62,7 @@ __all__ = [
     "get_operator_exit_confirmation_keyboard",
     "get_operator_exit_positions_keyboard",
     "get_operator_flatten_switch_keyboard",
+    "get_risk_limits_keyboard",
     "get_status_dashboard_keyboard",
     "get_strategy_keyboard",
     "get_stream_keyboard",
@@ -113,6 +115,77 @@ def get_status_dashboard_keyboard(
         InlineKeyboardButton(MENU_ORDERS, callback_data="cb_orders"),
     ]
     return InlineKeyboardMarkup([row1, row2, row3, row4])
+
+
+def get_risk_limits_keyboard(
+    *,
+    current_positions: int,
+    current_size_usdt: Decimal,
+    max_open_positions_ceiling: int,
+    max_position_size_usdt_ceiling: Decimal,
+) -> InlineKeyboardMarkup:
+    """Return interactive buttons to adjust runtime risk limits."""
+    # Row 1: Fine-tune positions
+    row_pos: list[InlineKeyboardButton] = []
+    if current_positions > 1:
+        row_pos.append(
+            InlineKeyboardButton("➖ 1 Pos", callback_data="cb_risk_pos_dec")
+        )
+    if current_positions < max_open_positions_ceiling:
+        row_pos.append(
+            InlineKeyboardButton("➕ 1 Pos", callback_data="cb_risk_pos_inc")
+        )
+
+    # Row 2: Fine-tune size
+    row_size: list[InlineKeyboardButton] = []
+    if current_size_usdt > Decimal("5"):
+        row_size.append(
+            InlineKeyboardButton("➖ $5 Size", callback_data="cb_risk_size_dec")
+        )
+    if current_size_usdt < max_position_size_usdt_ceiling:
+        row_size.append(
+            InlineKeyboardButton("➕ $5 Size", callback_data="cb_risk_size_inc")
+        )
+
+    # Row 3: Preset Positions (e.g. 1, 3, 5, 8, 10 up to ceiling)
+    preset_pos = (1, 3, 5, 8, 10)
+    row_preset_pos = [
+        InlineKeyboardButton(
+            f"📍 {p} Pos" if p == current_positions else f"{p} Pos",
+            callback_data=f"cb_risk_set_pos_{p}",
+        )
+        for p in preset_pos
+        if p <= max_open_positions_ceiling
+    ]
+
+    # Row 4: Preset Sizes (e.g. 10, 20, 50, 100 up to ceiling)
+    preset_sizes = (10, 20, 50, 100)
+    row_preset_size = [
+        InlineKeyboardButton(
+            f"💵 ${s}" if Decimal(s) == current_size_usdt else f"${s}",
+            callback_data=f"cb_risk_set_size_{s}",
+        )
+        for s in preset_sizes
+        if Decimal(s) <= max_position_size_usdt_ceiling
+    ]
+
+    # Nav Row
+    row_nav = [
+        InlineKeyboardButton("🔄 Refresh", callback_data="cb_risk_limits"),
+        InlineKeyboardButton(f"◀️ {MENU_STATUS}", callback_data="cb_status"),
+    ]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    if row_pos:
+        rows.append(row_pos)
+    if row_size:
+        rows.append(row_size)
+    if row_preset_pos:
+        rows.append(row_preset_pos)
+    if row_preset_size:
+        rows.append(row_preset_size)
+    rows.append(row_nav)
+    return InlineKeyboardMarkup(rows)
 
 
 def get_main_menu_keyboard(

@@ -17,7 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import logging
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from html import escape
 from typing import Final
 from uuid import UUID
@@ -64,6 +64,7 @@ from botragram.telegram.keyboards import (
     get_market_search_keyboard,
     get_operator_exit_confirmation_keyboard,
     get_operator_flatten_switch_keyboard,
+    get_risk_limits_keyboard,
     get_status_dashboard_keyboard,
     get_strategy_keyboard,
     get_stream_keyboard,
@@ -77,6 +78,7 @@ from botragram.telegram.messages import (
     get_market_search_prompt_message,
     get_orders_message,
     get_positions_message,
+    get_risk_limits_message,
     get_settings_message,
     get_status_message,
     get_strategy_message,
@@ -877,7 +879,18 @@ async def handle_callback_query(
                 ]
             ),
         )
-    elif data == "cb_risk_limits":
+    elif (
+        data == "cb_risk_limits"
+        or data
+        in {
+            "cb_risk_pos_inc",
+            "cb_risk_pos_dec",
+            "cb_risk_size_inc",
+            "cb_risk_size_dec",
+        }
+        or data.startswith("cb_risk_set_pos_")
+        or data.startswith("cb_risk_set_size_")
+    ):
         risk_limit_service = bot_context.runtime_risk_limit_service
         if risk_limit_service is None:
             await query.edit_message_text(
@@ -895,36 +908,83 @@ async def handle_callback_query(
             )
             return
 
-        limits = risk_limit_service.get_snapshot()
-        updated_str = limits.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-        msg = (
-            "⚙️ <b>Runtime Risk Limits</b>\n\n"
-            f"• <b>Max Open Positions:</b> {limits.max_open_positions} "
-            f"(Ceiling: {risk_limit_service.max_open_positions_ceiling})\n"
-            f"• <b>Max Position Size:</b> {limits.max_position_size_usdt} USDT "
-            f"(Ceiling: {risk_limit_service.max_position_size_usdt_ceiling} USDT)\n"
-            f"• <b>Source:</b> <code>{limits.updated_by}</code>\n"
-            f"• <b>Updated:</b> <code>{updated_str}</code>\n\n"
-            "<i>Untuk mengubah limit: /setrisklimits &lt;positions&gt; &lt;usdt&gt; "
-            "(saat PAUSED)</i>"
+        current_limits = risk_limit_service.get_snapshot()
+        control = bot_context.runtime_control
+        is_paused = control.is_paused if control is not None else False
+
+        if data != "cb_risk_limits":
+            if not is_paused:
+                try:
+                    await query.answer(
+                        "⚠️ Pause trading terlebih dahulu sebelum mengubah risk limits!",
+                        show_alert=True,
+                    )
+                except Exception:
+                    pass
+            else:
+                new_pos = current_limits.max_open_positions
+                new_size = current_limits.max_position_size_usdt
+                ceil_pos = risk_limit_service.max_open_positions_ceiling
+                ceil_size = risk_limit_service.max_position_size_usdt_ceiling
+
+                if data == "cb_risk_pos_inc":
+                    new_pos = min(new_pos + 1, ceil_pos)
+                elif data == "cb_risk_pos_dec":
+                    new_pos = max(new_pos - 1, 1)
+                elif data == "cb_risk_size_inc":
+                    new_size = min(new_size + Decimal("5"), ceil_size)
+                elif data == "cb_risk_size_dec":
+                    new_size = max(new_size - Decimal("5"), Decimal("5"))
+                elif data.startswith("cb_risk_set_pos_"):
+                    try:
+                        val = int(data.removeprefix("cb_risk_set_pos_"))
+                        new_pos = min(max(val, 1), ceil_pos)
+                    except ValueError:
+                        pass
+                elif data.startswith("cb_risk_set_size_"):
+                    try:
+                        val_dec = Decimal(data.removeprefix("cb_risk_set_size_"))
+                        new_size = min(max(val_dec, Decimal("5")), ceil_size)
+                    except ValueError, InvalidOperation:
+                        pass
+
+                user = update.effective_user
+                actor_id = user.id if user is not None else 0
+                try:
+                    current_limits = await risk_limit_service.update(
+                        max_open_positions=new_pos,
+                        max_position_size_usdt=new_size,
+                        updated_by=f"telegram:{actor_id}",
+                    )
+                    try:
+                        await query.answer(
+                            f"✅ Limits: {new_pos} Pos | {new_size} USDT",
+                            show_alert=False,
+                        )
+                    except Exception:
+                        pass
+                except (RuntimeError, ValueError) as error:
+                    try:
+                        await query.answer(f"⚠️ {error}", show_alert=True)
+                    except Exception:
+                        pass
+
+        msg = get_risk_limits_message(
+            limits=current_limits,
+            max_open_positions_ceiling=risk_limit_service.max_open_positions_ceiling,
+            max_position_size_usdt_ceiling=risk_limit_service.max_position_size_usdt_ceiling,
+            is_paused=is_paused,
+        )
+        keyboard = get_risk_limits_keyboard(
+            current_positions=current_limits.max_open_positions,
+            current_size_usdt=current_limits.max_position_size_usdt,
+            max_open_positions_ceiling=risk_limit_service.max_open_positions_ceiling,
+            max_position_size_usdt_ceiling=risk_limit_service.max_position_size_usdt_ceiling,
         )
         await query.edit_message_text(
             msg,
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "🔄 Refresh", callback_data="cb_risk_limits"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            f"◀️ {MENU_STATUS}", callback_data="cb_status"
-                        )
-                    ],
-                ]
-            ),
+            reply_markup=keyboard,
         )
     elif data == "cb_config_menu":
         config_markup = InlineKeyboardMarkup(
