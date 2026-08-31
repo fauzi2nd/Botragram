@@ -25,7 +25,13 @@ from uuid import UUID
 # =============================================================================
 # Third-Party Imports
 # =============================================================================
-from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    Update,
+)
 from telegram.ext import ContextTypes
 
 # =============================================================================
@@ -60,6 +66,7 @@ from botragram.telegram.keyboards import (
     get_execution_policy_confirmation_keyboard,
     get_execution_policy_keyboard,
     get_interval_keyboard,
+    get_main_menu_keyboard,
     get_market_keyboard,
     get_market_search_keyboard,
     get_operator_exit_confirmation_keyboard,
@@ -78,7 +85,9 @@ from botragram.telegram.messages import (
     get_market_search_prompt_message,
     get_orders_message,
     get_positions_message,
+    get_resume_message,
     get_risk_limits_message,
+    get_runtime_pause_message,
     get_settings_message,
     get_status_message,
     get_strategy_message,
@@ -674,17 +683,41 @@ async def handle_callback_query(
         "cb_runtime_resume",
     }:
         if data == "cb_runtime_pause" and bot_context.runtime_control is not None:
-            bot_context.runtime_control.pause()
+            changed = bot_context.runtime_control.pause()
             try:
                 await query.answer("⏸️ Trading dijeda", show_alert=False)
             except Exception:
                 pass
+            if isinstance(query.message, Message):
+                try:
+                    await query.message.reply_text(
+                        get_runtime_pause_message(changed=changed),
+                        parse_mode=DEFAULT_PARSE_MODE,
+                        reply_markup=get_main_menu_keyboard(
+                            execution_policy=bot_context.execution_policy,
+                            is_paused=True,
+                        ),
+                    )
+                except Exception:
+                    pass
         elif data == "cb_runtime_resume" and bot_context.runtime_control is not None:
-            bot_context.runtime_control.resume()
+            changed = bot_context.runtime_control.resume()
             try:
                 await query.answer("▶️ Trading dilanjutkan", show_alert=False)
             except Exception:
                 pass
+            if isinstance(query.message, Message):
+                try:
+                    await query.message.reply_text(
+                        get_resume_message(changed=changed),
+                        parse_mode=DEFAULT_PARSE_MODE,
+                        reply_markup=get_main_menu_keyboard(
+                            execution_policy=bot_context.execution_policy,
+                            is_paused=False,
+                        ),
+                    )
+                except Exception:
+                    pass
         elif data == "cb_status_refresh":
             try:
                 await query.answer("🔄 Status diperbarui", show_alert=False)
