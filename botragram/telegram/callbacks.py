@@ -33,6 +33,7 @@ from telegram.ext import ContextTypes
 # =============================================================================
 from botragram.constants.telegram import (
     DEFAULT_PARSE_MODE,
+    MENU_STATUS,
     OPERATOR_EXIT_STALE_CONFIRMATION_MESSAGE,
 )
 from botragram.enums import (
@@ -519,7 +520,7 @@ async def handle_callback_query(
                 [
                     [
                         InlineKeyboardButton(
-                            "◀️ Kembali ke Dashboard", callback_data="cb_status"
+                            f"◀️ {MENU_STATUS}", callback_data="cb_status"
                         )
                     ],
                 ]
@@ -793,6 +794,7 @@ async def handle_callback_query(
         dashboard_keyboard = get_status_dashboard_keyboard(
             is_paused=is_paused,
             has_positions=bool(positions),
+            execution_policy=bot_context.execution_policy,
         )
         await query.edit_message_text(
             message,
@@ -810,7 +812,7 @@ async def handle_callback_query(
 
         pos_buttons: list[list[InlineKeyboardButton]] = [
             [InlineKeyboardButton("🔄 Refresh", callback_data="cb_positions")],
-            [InlineKeyboardButton("◀️ Kembali ke Dashboard", callback_data="cb_status")],
+            [InlineKeyboardButton(f"◀️ {MENU_STATUS}", callback_data="cb_status")],
         ]
         if positions:
             pos_buttons.insert(
@@ -845,7 +847,7 @@ async def handle_callback_query(
                     [InlineKeyboardButton("🔄 Refresh", callback_data="cb_history")],
                     [
                         InlineKeyboardButton(
-                            "◀️ Kembali ke Dashboard", callback_data="cb_status"
+                            f"◀️ {MENU_STATUS}", callback_data="cb_status"
                         )
                     ],
                 ]
@@ -869,7 +871,56 @@ async def handle_callback_query(
                     [InlineKeyboardButton("🔄 Refresh", callback_data="cb_orders")],
                     [
                         InlineKeyboardButton(
-                            "◀️ Kembali ke Dashboard", callback_data="cb_status"
+                            f"◀️ {MENU_STATUS}", callback_data="cb_status"
+                        )
+                    ],
+                ]
+            ),
+        )
+    elif data == "cb_risk_limits":
+        risk_limit_service = bot_context.runtime_risk_limit_service
+        if risk_limit_service is None:
+            await query.edit_message_text(
+                "ℹ️ <b>Runtime risk limits tidak tersedia pada mode ini.</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                f"◀️ {MENU_STATUS}", callback_data="cb_status"
+                            )
+                        ]
+                    ]
+                ),
+            )
+            return
+
+        limits = risk_limit_service.get_snapshot()
+        updated_str = limits.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        msg = (
+            "⚙️ <b>Runtime Risk Limits</b>\n\n"
+            f"• <b>Max Open Positions:</b> {limits.max_open_positions} "
+            f"(Ceiling: {risk_limit_service.max_open_positions_ceiling})\n"
+            f"• <b>Max Position Size:</b> {limits.max_position_size_usdt} USDT "
+            f"(Ceiling: {risk_limit_service.max_position_size_usdt_ceiling} USDT)\n"
+            f"• <b>Source:</b> <code>{limits.updated_by}</code>\n"
+            f"• <b>Updated:</b> <code>{updated_str}</code>\n\n"
+            "<i>Untuk mengubah limit: /setrisklimits &lt;positions&gt; &lt;usdt&gt; "
+            "(saat PAUSED)</i>"
+        )
+        await query.edit_message_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Refresh", callback_data="cb_risk_limits"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            f"◀️ {MENU_STATUS}", callback_data="cb_status"
                         )
                     ],
                 ]
@@ -886,11 +937,7 @@ async def handle_callback_query(
                     InlineKeyboardButton("🪙 Market", callback_data="cb_market"),
                     InlineKeyboardButton("🏢 Exchange", callback_data="cb_exchange"),
                 ],
-                [
-                    InlineKeyboardButton(
-                        "◀️ Kembali ke Dashboard", callback_data="cb_status"
-                    )
-                ],
+                [InlineKeyboardButton(f"◀️ {MENU_STATUS}", callback_data="cb_status")],
             ]
         )
         await query.edit_message_text(

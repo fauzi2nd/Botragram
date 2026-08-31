@@ -74,11 +74,12 @@ def get_status_dashboard_keyboard(
     *,
     is_paused: bool = False,
     has_positions: bool = False,
+    execution_policy: ExecutionPolicy = ExecutionPolicy.SINGLE_SYMBOL,
 ) -> InlineKeyboardMarkup:
-    """Return interactive quick-action controls for the status dashboard."""
+    """Return interactive quick-action controls synchronized with persistent menu."""
     row1 = [
         InlineKeyboardButton("🔄 Refresh", callback_data="cb_status_refresh"),
-        InlineKeyboardButton("📊 Posisi", callback_data="cb_positions"),
+        InlineKeyboardButton(MENU_POSITIONS, callback_data="cb_positions"),
     ]
     if has_positions:
         row1.append(
@@ -87,18 +88,31 @@ def get_status_dashboard_keyboard(
                 callback_data="cb_operator_exit_close_all",
             )
         )
-    pause_label = "▶️ Lanjut" if is_paused else "⏸️ Jeda"
+
+    pause_label = MENU_RESUME if is_paused else MENU_PAUSE
     pause_cb = "cb_runtime_resume" if is_paused else "cb_runtime_pause"
+
     row2 = [
         InlineKeyboardButton(pause_label, callback_data=pause_cb),
-        InlineKeyboardButton("🔀 Mode", callback_data="cb_policy_menu"),
+        InlineKeyboardButton(MENU_TRADING_MODE, callback_data="cb_policy_menu"),
     ]
-    row3 = [
-        InlineKeyboardButton("⚙️ Config", callback_data="cb_config_menu"),
-        InlineKeyboardButton("📜 Riwayat", callback_data="cb_history"),
-        InlineKeyboardButton("📈 Order", callback_data="cb_orders"),
+
+    if execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE:
+        row3 = [
+            InlineKeyboardButton(MENU_STRATEGY, callback_data="cb_strategy"),
+            InlineKeyboardButton(MENU_RISK_LIMITS, callback_data="cb_risk_limits"),
+        ]
+    else:
+        row3 = [
+            InlineKeyboardButton(MENU_STRATEGY, callback_data="cb_strategy"),
+            InlineKeyboardButton(MENU_INTERVAL, callback_data="cb_interval"),
+        ]
+
+    row4 = [
+        InlineKeyboardButton(MENU_HISTORY, callback_data="cb_history"),
+        InlineKeyboardButton(MENU_ORDERS, callback_data="cb_orders"),
     ]
-    return InlineKeyboardMarkup([row1, row2, row3])
+    return InlineKeyboardMarkup([row1, row2, row3, row4])
 
 
 def get_main_menu_keyboard(

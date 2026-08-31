@@ -502,6 +502,7 @@ async def status_command(
             reply_markup=get_status_dashboard_keyboard(
                 is_paused=is_paused,
                 has_positions=bool(positions),
+                execution_policy=ctx.execution_policy,
             ),
         )
 
