@@ -29,6 +29,7 @@ from botragram.enums import (
     LiveRuntimeHealthStatus,
     MarketType,
     SignalType,
+    StrategyType,
 )
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
@@ -717,12 +718,12 @@ def get_history_message(trades: Sequence[Trade] = ()) -> str:
 
 def get_strategy_message(
     strategy_name: str,
-    fast_period: int,
-    slow_period: int,
+    fast_period: int = 9,
+    slow_period: int = 21,
     *,
     confirmed: bool = False,
 ) -> str:
-    """Return current strategy details."""
+    """Return current strategy details formatted for Telegram."""
     if not confirmed:
         return (
             "🧠 <b>Strategy</b>\n\n"
@@ -730,12 +731,50 @@ def get_strategy_message(
             "Pilih strategy yang akan digunakan pada siklus trading."
         )
 
-    return (
-        "🧠 <b>Strategy</b>\n\n"
-        f"<b>Strategy:</b> {escape(strategy_name)}\n"
-        f"<b>Fast EMA period:</b> {fast_period}\n"
-        f"<b>Slow EMA period:</b> {slow_period}"
-    )
+    escaped_name = escape(strategy_name)
+    try:
+        strategy_type = StrategyType(strategy_name.casefold())
+    except ValueError:
+        strategy_type = None
+
+    lines = [
+        "🧠 <b>Strategy</b>\n",
+        f"<b>Strategy:</b> {escaped_name}",
+    ]
+
+    match strategy_type:
+        case StrategyType.EMA_CROSS:
+            lines.append(f"<b>Fast EMA period:</b> {fast_period}")
+            lines.append(f"<b>Slow EMA period:</b> {slow_period}")
+        case StrategyType.EMA_SCALPING:
+            lines.append(f"<b>Fast EMA period:</b> {fast_period}")
+            lines.append(f"<b>Slow EMA period:</b> {slow_period}")
+        case StrategyType.EMA_RSI:
+            lines.append(f"<b>Fast EMA period:</b> {fast_period}")
+            lines.append(f"<b>Slow EMA period:</b> {slow_period}")
+            lines.append("<b>RSI Period:</b> 14")
+        case StrategyType.MACD_SWING:
+            lines.append("<b>Fast period:</b> 12")
+            lines.append("<b>Slow period:</b> 26")
+            lines.append("<b>Signal period:</b> 9")
+        case StrategyType.SUPERTREND:
+            lines.append("<b>ATR period:</b> 10")
+            lines.append("<b>Multiplier:</b> 3.0")
+        case StrategyType.BOLLINGER_BREAKOUT:
+            lines.append("<b>Period:</b> 20")
+            lines.append("<b>StdDev:</b> 2.0")
+        case StrategyType.ADX_TREND:
+            lines.append("<b>ADX period:</b> 14")
+            lines.append("<b>ADX threshold:</b> 25.0")
+        case StrategyType.ICHIMOKU_CLOUD:
+            lines.append("<b>Conversion period:</b> 9")
+            lines.append("<b>Base period:</b> 26")
+            lines.append("<b>Span B period:</b> 52")
+        case _:
+            lines.append(f"<b>Fast EMA period:</b> {fast_period}")
+            lines.append(f"<b>Slow EMA period:</b> {slow_period}")
+
+    return "\n".join(lines)
 
 
 def get_interval_message(interval: str, *, confirmed: bool = False) -> str:

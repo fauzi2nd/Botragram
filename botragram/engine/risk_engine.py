@@ -28,6 +28,13 @@ class RiskEngine:
 
     settings: RiskSettings
 
+    def resolve_exit_rates(
+        self,
+        strategy_type: StrategyType | None = None,
+    ) -> tuple[Decimal, Decimal]:
+        """Return the effective (stop_loss_pct, take_profit_pct) for a strategy."""
+        return self._resolve_exit_rates(strategy_type=strategy_type)
+
     def calculate_protection_levels(
         self,
         *,
@@ -226,17 +233,20 @@ class RiskEngine:
         *,
         strategy_type: StrategyType | None,
     ) -> tuple[Decimal, Decimal]:
-        if strategy_type is StrategyType.EMA_SCALPING:
-            return (
-                self.settings.ema_scalping_stop_loss_pct,
-                self.settings.ema_scalping_take_profit_pct,
-            )
-        if strategy_type is StrategyType.EMA_CROSS:
-            return (
-                self.settings.ema_cross_stop_loss_pct,
-                self.settings.ema_cross_take_profit_pct,
-            )
-        return self.settings.stop_loss_pct, self.settings.take_profit_pct
+        """Resolve strategy-specific or fallback global exit percentages."""
+        match strategy_type:
+            case StrategyType.EMA_SCALPING:
+                return (
+                    self.settings.ema_scalping_stop_loss_pct,
+                    self.settings.ema_scalping_take_profit_pct,
+                )
+            case StrategyType.EMA_CROSS:
+                return (
+                    self.settings.ema_cross_stop_loss_pct,
+                    self.settings.ema_cross_take_profit_pct,
+                )
+            case _:
+                return self.settings.stop_loss_pct, self.settings.take_profit_pct
 
     @staticmethod
     def _resolve_strategy_type(strategy_name: str) -> StrategyType | None:
