@@ -16,7 +16,7 @@ concurrency:
 jobs:
   quality:
     name: Supplemental Python 3.14 (Self-hosted)
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-hosted, botragram-ci]
     continue-on-error: true
     timeout-minutes: 30
 
