@@ -25,7 +25,7 @@ from uuid import UUID
 # =============================================================================
 # Third-Party Imports
 # =============================================================================
-from telegram import CallbackQuery, InlineKeyboardMarkup, Update
+from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 # =============================================================================
@@ -46,7 +46,7 @@ from botragram.exceptions import (
     ExecutionPolicySwitchBlockedError,
     OperatorExitConfirmationUnavailableError,
 )
-from botragram.models import LiveRuntimeHealthSnapshot
+from botragram.models import LiveRuntimeHealthSnapshot, Order, Trade
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import (
     BOT_CONTEXT_KEY,
@@ -63,15 +63,18 @@ from botragram.telegram.keyboards import (
     get_market_search_keyboard,
     get_operator_exit_confirmation_keyboard,
     get_operator_flatten_switch_keyboard,
+    get_status_dashboard_keyboard,
     get_strategy_keyboard,
     get_stream_keyboard,
 )
 from botragram.telegram.messages import (
     get_exchange_message,
     get_execution_authorization_outcome_message,
+    get_history_message,
     get_interval_message,
     get_market_message,
     get_market_search_prompt_message,
+    get_orders_message,
     get_positions_message,
     get_settings_message,
     get_status_message,
@@ -492,6 +495,38 @@ async def handle_callback_query(
         )
         return
 
+    if data == "cb_policy_menu":
+        switcher = bot_context.market_type_switcher
+        available = (
+            switcher.available_execution_policies() if switcher is not None else ()
+        )
+        await query.edit_message_text(
+            "🔀 <b>Pilih Trading Mode / Execution Policy</b>\n\n"
+            f"Mode aktif: <code>{bot_context.execution_policy.value}</code>",
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_execution_policy_keyboard(
+                current_policy=bot_context.execution_policy,
+                available_policies=available,
+            ),
+        )
+        return
+
+    if data == _POLICY_CANCEL_CALLBACK:
+        await query.edit_message_text(
+            "ℹ️ <b>Pemilihan mode ditutup.</b>",
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "◀️ Kembali ke Dashboard", callback_data="cb_status"
+                        )
+                    ],
+                ]
+            ),
+        )
+        return
+
     if data.startswith(_POLICY_SELECT_CALLBACK_PREFIX):
         target = _parse_execution_policy_callback(
             callback_data=data,
@@ -628,10 +663,34 @@ async def handle_callback_query(
         )
         return
 
-    if data in {"cb_status", "cb_back_main"}:
+    if data in {
+        "cb_status",
+        "cb_back_main",
+        "cb_status_refresh",
+        "cb_runtime_pause",
+        "cb_runtime_resume",
+    }:
+        if data == "cb_runtime_pause" and bot_context.runtime_control is not None:
+            bot_context.runtime_control.pause()
+            try:
+                await query.answer("⏸️ Trading dijeda", show_alert=False)
+            except Exception:
+                pass
+        elif data == "cb_runtime_resume" and bot_context.runtime_control is not None:
+            bot_context.runtime_control.resume()
+            try:
+                await query.answer("▶️ Trading dilanjutkan", show_alert=False)
+            except Exception:
+                pass
+        elif data == "cb_status_refresh":
+            try:
+                await query.answer("🔄 Status diperbarui", show_alert=False)
+            except Exception:
+                pass
+
         last_price = bot_context.last_price
-        available_balance = None
-        live_runtime_health = None
+        available_balance: Decimal | None = None
+        live_runtime_health: LiveRuntimeHealthSnapshot | None = None
         autonomous_live_recovery = None
         positions = bot_context.positions
         provider = bot_context.query_provider
@@ -693,6 +752,12 @@ async def handle_callback_query(
             else ("exchange", "market type", "symbol", "interval", "strategy")
         )
 
+        is_paused = (
+            bot_context.runtime_control.is_paused
+            if bot_context.runtime_control is not None
+            else False
+        )
+
         message = get_status_message(
             is_running=bot_context.is_running,
             trade_mode=bot_context.trade_mode,
@@ -700,11 +765,7 @@ async def handle_callback_query(
             last_price=last_price,
             available_balance=available_balance,
             open_position_count=len(positions),
-            is_paused=(
-                bot_context.runtime_control.is_paused
-                if bot_context.runtime_control is not None
-                else False
-            ),
+            is_paused=is_paused,
             exchange_type=bot_context.exchange_type,
             market_type=bot_context.market_type,
             strategy_name=strategy_name,
@@ -729,7 +790,15 @@ async def handle_callback_query(
                 else None
             ),
         )
-        await query.edit_message_text(message, parse_mode=DEFAULT_PARSE_MODE)
+        dashboard_keyboard = get_status_dashboard_keyboard(
+            is_paused=is_paused,
+            has_positions=bool(positions),
+        )
+        await query.edit_message_text(
+            message,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=dashboard_keyboard,
+        )
     elif data == "cb_positions":
         positions = bot_context.positions
 
@@ -739,9 +808,96 @@ async def handle_callback_query(
             except Exception:
                 _LOGGER.exception("Telegram callback positions query failed")
 
+        pos_buttons: list[list[InlineKeyboardButton]] = [
+            [InlineKeyboardButton("🔄 Refresh", callback_data="cb_positions")],
+            [InlineKeyboardButton("◀️ Kembali ke Dashboard", callback_data="cb_status")],
+        ]
+        if positions:
+            pos_buttons.insert(
+                0,
+                [
+                    InlineKeyboardButton(
+                        "⚠️ Close All Positions",
+                        callback_data="cb_operator_exit_close_all",
+                    )
+                ],
+            )
         await query.edit_message_text(
             get_positions_message(positions),
             parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=InlineKeyboardMarkup(pos_buttons),
+        )
+    elif data == "cb_history":
+        trades: tuple[Trade, ...] = ()
+        if bot_context.query_provider is not None:
+            try:
+                trades = tuple(
+                    await bot_context.query_provider.get_latest_trades(limit=10)
+                )
+            except Exception:
+                _LOGGER.exception("Telegram callback history query failed")
+
+        await query.edit_message_text(
+            get_history_message(trades),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("🔄 Refresh", callback_data="cb_history")],
+                    [
+                        InlineKeyboardButton(
+                            "◀️ Kembali ke Dashboard", callback_data="cb_status"
+                        )
+                    ],
+                ]
+            ),
+        )
+    elif data == "cb_orders":
+        orders: tuple[Order, ...] = ()
+        if bot_context.query_provider is not None:
+            try:
+                orders = tuple(
+                    await bot_context.query_provider.get_latest_orders(limit=10)
+                )
+            except Exception:
+                _LOGGER.exception("Telegram callback orders query failed")
+
+        await query.edit_message_text(
+            get_orders_message(orders),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("🔄 Refresh", callback_data="cb_orders")],
+                    [
+                        InlineKeyboardButton(
+                            "◀️ Kembali ke Dashboard", callback_data="cb_status"
+                        )
+                    ],
+                ]
+            ),
+        )
+    elif data == "cb_config_menu":
+        config_markup = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("🎯 Strategi", callback_data="cb_strategy"),
+                    InlineKeyboardButton("⏱️ Interval", callback_data="cb_interval"),
+                ],
+                [
+                    InlineKeyboardButton("🪙 Market", callback_data="cb_market"),
+                    InlineKeyboardButton("🏢 Exchange", callback_data="cb_exchange"),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "◀️ Kembali ke Dashboard", callback_data="cb_status"
+                    )
+                ],
+            ]
+        )
+        await query.edit_message_text(
+            "⚙️ <b>Menu Konfigurasi Runtime</b>\n\n"
+            "Pilih parameter runtime yang ingin Anda tinjau atau sesuaikan:",
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=config_markup,
         )
     elif data == "cb_settings":
         await query.edit_message_text(
@@ -943,6 +1099,10 @@ async def handle_callback_query(
 
         bot_context.symbol = control.symbol
         status = "dipilih" if changed else "sudah aktif"
+        try:
+            await query.answer(f"Market {control.symbol} {status}", show_alert=False)
+        except Exception:
+            pass
         last_price = await _get_last_price(bot_context)
         await query.edit_message_text(
             get_market_message(
@@ -1010,6 +1170,13 @@ async def handle_callback_query(
 
         bot_context.strategy_name = control.strategy_type.value
         status = "dipilih" if changed else "sudah aktif"
+        try:
+            await query.answer(
+                f"Strategy {strategy_type.value} {status}",
+                show_alert=False,
+            )
+        except Exception:
+            pass
         await query.edit_message_text(
             get_strategy_message(
                 control.strategy_type.value,
@@ -1065,6 +1232,13 @@ async def handle_callback_query(
             return
 
         status = "dipilih" if changed else "sudah aktif"
+        try:
+            await query.answer(
+                f"Interval {interval.value} {status}",
+                show_alert=False,
+            )
+        except Exception:
+            pass
         await query.edit_message_text(
             get_interval_message(
                 control.interval.value,

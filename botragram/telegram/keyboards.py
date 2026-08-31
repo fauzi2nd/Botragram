@@ -51,6 +51,7 @@ __all__ = [
     "get_configuration_menu_keyboard",
     "get_dashboard_menu_keyboard",
     "get_exchange_keyboard",
+    "get_execution_authorization_keyboard",
     "get_execution_policy_confirmation_keyboard",
     "get_execution_policy_keyboard",
     "get_interval_keyboard",
@@ -60,13 +61,44 @@ __all__ = [
     "get_operator_exit_confirmation_keyboard",
     "get_operator_exit_positions_keyboard",
     "get_operator_flatten_switch_keyboard",
+    "get_status_dashboard_keyboard",
     "get_strategy_keyboard",
     "get_stream_keyboard",
-    "get_execution_authorization_keyboard",
     "get_trading_menu_keyboard",
 ]
 
 _MARKET_PAGE_SIZE: Final[int] = 10
+
+
+def get_status_dashboard_keyboard(
+    *,
+    is_paused: bool = False,
+    has_positions: bool = False,
+) -> InlineKeyboardMarkup:
+    """Return interactive quick-action controls for the status dashboard."""
+    row1 = [
+        InlineKeyboardButton("🔄 Refresh", callback_data="cb_status_refresh"),
+        InlineKeyboardButton("📊 Posisi", callback_data="cb_positions"),
+    ]
+    if has_positions:
+        row1.append(
+            InlineKeyboardButton(
+                "⚠️ Close All",
+                callback_data="cb_operator_exit_close_all",
+            )
+        )
+    pause_label = "▶️ Lanjut" if is_paused else "⏸️ Jeda"
+    pause_cb = "cb_runtime_resume" if is_paused else "cb_runtime_pause"
+    row2 = [
+        InlineKeyboardButton(pause_label, callback_data=pause_cb),
+        InlineKeyboardButton("🔀 Mode", callback_data="cb_policy_menu"),
+    ]
+    row3 = [
+        InlineKeyboardButton("⚙️ Config", callback_data="cb_config_menu"),
+        InlineKeyboardButton("📜 Riwayat", callback_data="cb_history"),
+        InlineKeyboardButton("📈 Order", callback_data="cb_orders"),
+    ]
+    return InlineKeyboardMarkup([row1, row2, row3])
 
 
 def get_main_menu_keyboard(

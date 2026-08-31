@@ -76,6 +76,7 @@ from botragram.telegram.keyboards import (
     get_market_keyboard,
     get_market_search_keyboard,
     get_operator_exit_positions_keyboard,
+    get_status_dashboard_keyboard,
     get_strategy_keyboard,
     get_stream_keyboard,
     get_trading_menu_keyboard,
@@ -492,7 +493,17 @@ async def status_command(
                 else None
             ),
         )
-        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+        is_paused = (
+            ctx.runtime_control.is_paused if ctx.runtime_control is not None else False
+        )
+        await update.message.reply_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_status_dashboard_keyboard(
+                is_paused=is_paused,
+                has_positions=bool(positions),
+            ),
+        )
 
 
 async def positions_command(
