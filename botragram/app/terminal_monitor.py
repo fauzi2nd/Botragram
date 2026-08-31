@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 import asyncio
 import logging
+import re
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -89,6 +90,36 @@ _STREAM_STALE_AFTER_MS: Final[int] = 3_000
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _APPLICATION_LOGGER_NAME: Final[str] = "botragram"
+
+_CANDIDATE_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Global discovery candidate processed: symbol=(?P<symbol>\S+) "
+    r"side=(?P<side>\S+) confidence=(?P<confidence>\S+) "
+    r"outcome=(?P<outcome>\S+)"
+)
+_CYCLE_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Global discovery cycle completed: outcome=(?P<outcome>\S+) "
+    r"scanned=(?P<scanned>\d+) actionable=(?P<actionable>\d+) "
+    r"rank_start=(?P<rank_start>\d+) rank_end=(?P<rank_end>\d+) "
+    r"universe_size=(?P<universe_size>\d+) duration_ms=(?P<duration_ms>\d+)"
+)
+_NO_ENTRY_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Trading cycle completed without execution: symbol=(?P<symbol>\S+) "
+    r"reason=(?P<reason>\S+)"
+)
+_PREFLIGHT_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Global discovery preflight started: interval=(?P<interval>\S+) "
+    r"universe_limit=(?P<universe>\d+) batch_size=(?P<batch>\d+) "
+    r"top_n=(?P<top_n>\d+)"
+)
+_HEARTBEAT_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Runtime heartbeat: state=(?P<state>\S+) symbol=(?P<symbol>\S+) "
+    r"strategy=(?P<strategy>\S+) stream=(?P<stream>\S+)"
+)
+_RUNNER_STARTED_EVENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"Trading runner started: context_count=(?P<context_count>\d+) "
+    r"mode=(?P<mode>\S+) candle_limit=(?P<candle_limit>\d+) "
+    r"cycle_interval_override=(?P<cycle_interval_override>\S+)"
+)
 
 
 # =============================================================================
@@ -1044,12 +1075,20 @@ class TerminalMonitor:
     def _format_candidate_result(outcome: str | None) -> str:
         """Present a discovery outcome without internal snake-case labels."""
         labels = {
+            "authorization_rejected": "AUTH BLOCK",
             "blocked_by_capacity": "CAPACITY",
             "entry_blocked": "BLOCKED",
+            "exchange_rejected": "EXCHANGE REJECT",
             "executed_and_protected": "LIVE",
+            "execution_unsafe": "UNSAFE",
+            "existing_position": "POSITION EXISTS",
+            "market_reference_rejected": "QUOTE REJECT",
             "no_signal": "NO SIGNAL",
             "risk_rejected": "RISK REJECT",
             "skipped_capacity": "CAPACITY",
+            "stale_signal": "STALE SIGNAL",
+            "submission_blocked": "SUBMISSION BLOCK",
+            "symbol_readiness_rejected": "SYMBOL REJECT",
             "venue_rule_rejected": "VENUE REJECT",
         }
         if outcome is None:
@@ -1318,7 +1357,7 @@ class TerminalMonitor:
                         style=self._get_log_level_style(entry.level_name),
                     ),
                     entry.logger_name.removeprefix("botragram."),
-                    entry.message,
+                    self._humanize_log_message(entry.message),
                 )
 
         return Panel(
@@ -1326,6 +1365,65 @@ class TerminalMonitor:
             title="[bold]Runtime Events | Log Messages[/bold]",
             border_style="blue",
         )
+
+    @classmethod
+    def _humanize_log_message(cls, message: str) -> str:
+        """Translate structured runtime log messages into readable operator text."""
+        candidate = _CANDIDATE_EVENT_PATTERN.fullmatch(message)
+        if candidate is not None:
+            confidence = Decimal(candidate["confidence"]) * Decimal("100")
+            outcome = cls._format_candidate_result(candidate["outcome"])
+            return (
+                f"Candidate {candidate['symbol']} {candidate['side'].upper()} | "
+                f"Score {confidence:.2f}% | {outcome}"
+            )
+
+        cycle = _CYCLE_EVENT_PATTERN.fullmatch(message)
+        if cycle is not None:
+            seconds = int(cycle["duration_ms"]) / 1_000
+            return (
+                f"Discovery complete | Scanned {cycle['scanned']} | "
+                f"Actionable {cycle['actionable']} | "
+                f"Rank {cycle['rank_start']}-{cycle['rank_end']}/"
+                f"{cycle['universe_size']} | {seconds:.2f}s"
+            )
+
+        no_entry = _NO_ENTRY_EVENT_PATTERN.fullmatch(message)
+        if no_entry is not None:
+            reason = cls._format_candidate_result(no_entry["reason"])
+            return f"No entry {no_entry['symbol']} | {reason}"
+
+        preflight = _PREFLIGHT_EVENT_PATTERN.fullmatch(message)
+        if preflight is not None:
+            return (
+                f"Discovery scan | {preflight['interval']} | "
+                f"Universe {preflight['universe']} | Batch {preflight['batch']} | "
+                f"Top {preflight['top_n']}"
+            )
+
+        heartbeat = _HEARTBEAT_EVENT_PATTERN.fullmatch(message)
+        if heartbeat is not None:
+            strategy = heartbeat["strategy"].replace("_", " ").upper()
+            return (
+                f"Runtime {heartbeat['state']} | {heartbeat['symbol']} | "
+                f"{strategy} | Stream {heartbeat['stream']}"
+            )
+
+        runner_started = _RUNNER_STARTED_EVENT_PATTERN.fullmatch(message)
+        if runner_started is not None:
+            context_count = int(runner_started["context_count"])
+            context_label = "context" if context_count == 1 else "contexts"
+            rendered = (
+                f"Runtime started | {runner_started['mode'].upper()} | "
+                f"{context_count} {context_label} | "
+                f"Candle limit {runner_started['candle_limit']}"
+            )
+            interval_override = runner_started["cycle_interval_override"]
+            if interval_override.lower() != "none":
+                rendered += f" | Cycle {interval_override}s"
+            return rendered
+
+        return message
 
     def _get_runtime_state(self, status: TerminalStatus) -> str:
         """Return the runtime state shown in the status panel."""
