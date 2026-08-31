@@ -427,31 +427,6 @@ class TerminalMonitor(BaseTerminalMonitor):
         return message.replace("_", " ")
 
     @staticmethod
-    def _format_candidate_result(outcome: str | None) -> str:
-        """Present discovery outcomes as short operator-facing labels."""
-        labels = {
-            "authorization_rejected": "AUTH BLOCK",
-            "blocked_by_capacity": "CAPACITY",
-            "entry_blocked": "BLOCKED",
-            "exchange_rejected": "EXCHANGE REJECT",
-            "executed_and_protected": "LIVE",
-            "execution_unsafe": "UNSAFE",
-            "existing_position": "POSITION EXISTS",
-            "market_reference_rejected": "QUOTE REJECT",
-            "no_signal": "NO SIGNAL",
-            "risk_rejected": "RISK REJECT",
-            "skipped_capacity": "CAPACITY",
-            "stale_signal": "STALE SIGNAL",
-            "submission_blocked": "SUBMISSION BLOCK",
-            "symbol_readiness_rejected": "SYMBOL REJECT",
-            "venue_rule_rejected": "VENUE REJECT",
-        }
-        if outcome is None:
-            return "PENDING"
-        normalized = outcome.strip().lower()
-        return labels.get(normalized, normalized.upper().replace("_", " "))
-
-    @staticmethod
     def _compact_status_height(status: TerminalStatus) -> int:
         """Fit compact status to actual safety content instead of fixed whitespace."""
         health = status.live_runtime_health
