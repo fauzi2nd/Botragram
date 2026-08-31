@@ -18,6 +18,11 @@ from __future__ import annotations
 # =============================================================================
 from decimal import Decimal
 
+__all__ = [
+    "format_currency",
+    "format_percentage",
+]
+
 
 # =============================================================================
 # Utility Functions
@@ -26,6 +31,8 @@ def format_currency(
     amount: Decimal,
     symbol: str = "USDT",
     decimals: int = 2,
+    *,
+    group_thousands: bool = False,
 ) -> str:
     """Format decimal amount as currency display string.
 
@@ -33,23 +40,28 @@ def format_currency(
         amount: Amount to format.
         symbol: Currency symbol or code.
         decimals: Decimal precision count.
+        group_thousands: Whether to include thousands separators.
 
     Returns:
         Formatted currency string.
     """
-    formatted_amount = f"{amount:.{decimals}f}"
+    separator = "," if group_thousands else ""
+    formatted_amount = f"{amount:{separator}.{decimals}f}"
     return f"{formatted_amount} {symbol}"
 
 
 def format_percentage(
     value: Decimal,
     decimals: int = 2,
+    *,
+    group_thousands: bool = False,
 ) -> str:
     """Format decimal value as percentage display string.
 
     Args:
         value: Percentage value (e.g. 0.052 for 5.2%).
         decimals: Decimal precision count.
+        group_thousands: Whether to include thousands separators.
 
     Returns:
         Formatted percentage string with sign.

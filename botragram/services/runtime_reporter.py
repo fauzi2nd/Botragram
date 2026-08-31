@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -10,8 +11,7 @@ from html import escape
 from typing import Final, Protocol, runtime_checkable
 
 from botragram.enums import NotificationType, TradeMode
-from botragram.models import Account, Notification, TradingResult
-from botragram.repositories import PositionRepository
+from botragram.models import Account, Notification, Position, TradingResult
 from botragram.services.health_service import HealthService
 from botragram.services.paper_trading_service import NotificationPublisher
 from botragram.telegram.messages import get_runtime_portfolio_message
@@ -33,6 +33,14 @@ class PortfolioBalanceProvider(Protocol):
         ...
 
 
+class _OpenPositionProvider(Protocol):
+    """Read stored open positions for runtime reporting."""
+
+    async def get_open_positions(self) -> Sequence[Position]:
+        """Return the current stored open positions."""
+        ...
+
+
 @runtime_checkable
 class ExchangeAccountSnapshotProvider(Protocol):
     """Read one normalized exchange account snapshot for startup reporting."""
@@ -48,7 +56,7 @@ class RuntimeReporter:
 
     health_service: HealthService
     paper_trading_service: PortfolioBalanceProvider
-    position_repository: PositionRepository
+    position_repository: _OpenPositionProvider
     notification_publisher: NotificationPublisher
     trade_mode: TradeMode
     symbol: str
@@ -81,7 +89,9 @@ class RuntimeReporter:
         try:
             balance = await self._get_startup_available_balance()
             if balance is not None:
-                balance_text = format_currency(balance, symbol=self.quote_asset)
+                balance_text = format_currency(
+                    balance, symbol=self.quote_asset, group_thousands=True
+                )
         except Exception:
             _LOGGER.exception("Startup balance health snapshot failed")
 

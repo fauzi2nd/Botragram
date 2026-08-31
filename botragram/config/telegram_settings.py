@@ -41,5 +41,5 @@ class TelegramSettings:
 
     bot_token: str = ""
     allowed_chat_ids: list[int] = field(default_factory=list[int])
-    enabled: bool = True
+    enabled: bool = False
     parse_mode: str = DEFAULT_PARSE_MODE

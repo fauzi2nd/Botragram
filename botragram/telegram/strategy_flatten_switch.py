@@ -227,7 +227,9 @@ async def strategy_flatten_confirm_callback(
 
     if snapshot.status is not OperatorExitStatus.COMPLETE or snapshot.positions:
         context.bot_data.pop(_target_key(confirmation_id), None)
-        remaining = ", ".join(position.symbol for position in snapshot.positions) or "none"
+        remaining = (
+            ", ".join(position.symbol for position in snapshot.positions) or "none"
+        )
         reason = snapshot.failure_reason or "authoritative recovery masih berjalan"
         await query.edit_message_text(
             "⚠️ <b>Strategy belum diterapkan.</b>\n\n"
@@ -254,7 +256,8 @@ async def strategy_flatten_confirm_callback(
     context.bot_data.pop(_target_key(confirmation_id), None)
     if not changed:
         await query.edit_message_text(
-            "✅ <b>Portfolio flat.</b>\n\nStrategy target sudah aktif. Bot tetap PAUSED.",
+            "✅ <b>Portfolio flat.</b>\n\nStrategy target sudah aktif. "
+            "Bot tetap PAUSED.",
             parse_mode=DEFAULT_PARSE_MODE,
         )
         return

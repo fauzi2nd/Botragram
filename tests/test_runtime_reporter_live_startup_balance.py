@@ -63,7 +63,7 @@ class FakePositionRepository:
 class RecordingPublisher:
     """Record notifications for assertions."""
 
-    notifications: list[Notification] = field(default_factory=list)
+    notifications: list[Notification] = field(default_factory=list[Notification])
 
     async def publish(self, *, notification: Notification) -> None:
         self.notifications.append(notification)

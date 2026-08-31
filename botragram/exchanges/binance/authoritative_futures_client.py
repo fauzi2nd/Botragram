@@ -70,11 +70,7 @@ class BinanceFuturesExchangeClient(BaseBinanceFuturesExchangeClient):
         requested_symbol: str | None,
     ) -> dict[str, int]:
         """Read current initial leverage from Binance's configuration endpoint."""
-        params = (
-            {"symbol": requested_symbol}
-            if requested_symbol is not None
-            else None
-        )
+        params = {"symbol": requested_symbol} if requested_symbol is not None else None
         payload = await self._rest.get(
             _SYMBOL_CONFIG_ENDPOINT,
             params=params,
@@ -98,9 +94,7 @@ class BinanceFuturesExchangeClient(BaseBinanceFuturesExchangeClient):
             ):
                 raise RuntimeError("Binance Futures symbol leverage is invalid")
             if normalized_symbol in leverage_by_symbol:
-                raise RuntimeError(
-                    "Binance Futures symbol configuration is ambiguous"
-                )
+                raise RuntimeError("Binance Futures symbol configuration is ambiguous")
             leverage_by_symbol[normalized_symbol] = leverage
 
         missing_symbols = symbols - leverage_by_symbol.keys()

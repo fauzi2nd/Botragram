@@ -211,7 +211,7 @@ def test_compact_terminal_humanizes_runner_start_event() -> None:
 
 
 def test_compact_terminal_keeps_five_positions_with_readable_price_rows() -> None:
-    """Fit five position summaries while keeping each price pair independently readable."""
+    """Fit five positions while keeping each price pair independently readable."""
     positions = tuple(_position(index) for index in range(1, 6))
     monitor = _monitor(width=72, height=60)
 
