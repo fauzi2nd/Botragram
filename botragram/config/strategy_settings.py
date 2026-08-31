@@ -80,3 +80,18 @@ class StrategySettings:
     scalping_fast_period: int = 5
     scalping_slow_period: int = 13
     scalping_minimum_body_ratio: Decimal = Decimal("0.25")
+
+    # =========================================================================
+    # Ichimoku Cloud
+    # =========================================================================
+    ichimoku_conversion_period: int = 9
+    ichimoku_base_period: int = 26
+    ichimoku_leading_span_period: int = 52
+
+    # =========================================================================
+    # ADX Trend
+    # =========================================================================
+    adx_period: int = 14
+    adx_fast_period: int = 9
+    adx_slow_period: int = 21
+    adx_threshold: Decimal = Decimal("25.0")

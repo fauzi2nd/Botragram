@@ -33,10 +33,12 @@ __all__ = ["StrategyType"]
 class StrategyType(BaseEnum):
     """Supported trading strategy types."""
 
+    ADX_TREND = "adx_trend"
     BOLLINGER_BREAKOUT = "bollinger_breakout"
     EMA_CROSS = "ema_cross"
     EMA_RSI = "ema_rsi"
     EMA_SCALPING = "ema_scalping"
+    ICHIMOKU_CLOUD = "ichimoku_cloud"
     MACD_SWING = "macd_swing"
     SUPERTREND = "supertrend"
     CUSTOM = "custom"

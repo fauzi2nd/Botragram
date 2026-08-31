@@ -32,8 +32,10 @@ from botragram.strategies.swing import (
     MACDSwingStrategy,
 )
 from botragram.strategies.trend import (
+    ADXTrendStrategy,
     EMACrossStrategy,
     EMARsiStrategy,
+    IchimokuCloudStrategy,
     SupertrendStrategy,
 )
 
@@ -110,6 +112,14 @@ class StrategyFactory:
             ValueError: If the configured strategy is unsupported.
         """
         match settings.strategy_type:
+            case StrategyType.ADX_TREND:
+                return ADXTrendStrategy(
+                    adx_period=settings.adx_period,
+                    fast_period=settings.adx_fast_period,
+                    slow_period=settings.adx_slow_period,
+                    adx_threshold=settings.adx_threshold,
+                )
+
             case StrategyType.BOLLINGER_BREAKOUT:
                 return BollingerBreakoutStrategy(
                     period=settings.bb_period,
@@ -135,6 +145,13 @@ class StrategyFactory:
                     fast_period=settings.scalping_fast_period,
                     slow_period=settings.scalping_slow_period,
                     minimum_body_ratio=settings.scalping_minimum_body_ratio,
+                )
+
+            case StrategyType.ICHIMOKU_CLOUD:
+                return IchimokuCloudStrategy(
+                    conversion_period=settings.ichimoku_conversion_period,
+                    base_period=settings.ichimoku_base_period,
+                    leading_span_period=settings.ichimoku_leading_span_period,
                 )
 
             case StrategyType.MACD_SWING:

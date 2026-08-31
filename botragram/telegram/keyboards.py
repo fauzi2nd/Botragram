@@ -448,6 +448,8 @@ def get_strategy_keyboard(
         ("MACD Swing", "macd_swing"),
         ("Supertrend", "supertrend"),
         ("Bollinger Breakout", "bollinger_breakout"),
+        ("ADX Trend", "adx_trend"),
+        ("Ichimoku Cloud", "ichimoku_cloud"),
     )
     normalized_active = active_strategy.lower()
     buttons = [

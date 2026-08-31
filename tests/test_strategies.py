@@ -37,8 +37,10 @@ from botragram.strategies.breakout import BollingerBreakoutStrategy
 from botragram.strategies.scalping import EMAScalpingStrategy
 from botragram.strategies.swing import MACDSwingStrategy
 from botragram.strategies.trend import (
+    ADXTrendStrategy,
     EMACrossStrategy,
     EMARsiStrategy,
+    IchimokuCloudStrategy,
     SupertrendStrategy,
 )
 
@@ -97,6 +99,13 @@ def _create_strategy_settings(
         macd_fast_period=2,
         macd_slow_period=3,
         macd_signal_period=2,
+        ichimoku_conversion_period=2,
+        ichimoku_base_period=3,
+        ichimoku_leading_span_period=4,
+        adx_period=2,
+        adx_fast_period=2,
+        adx_slow_period=3,
+        adx_threshold=Decimal("25.0"),
     )
 
 
@@ -106,10 +115,12 @@ def _create_strategy_settings(
 @pytest.mark.parametrize(
     ("strategy_type", "expected_type"),
     (
+        (StrategyType.ADX_TREND, ADXTrendStrategy),
         (StrategyType.BOLLINGER_BREAKOUT, BollingerBreakoutStrategy),
         (StrategyType.EMA_CROSS, EMACrossStrategy),
         (StrategyType.EMA_RSI, EMARsiStrategy),
         (StrategyType.EMA_SCALPING, EMAScalpingStrategy),
+        (StrategyType.ICHIMOKU_CLOUD, IchimokuCloudStrategy),
         (StrategyType.MACD_SWING, MACDSwingStrategy),
         (StrategyType.SUPERTREND, SupertrendStrategy),
     ),
@@ -182,6 +193,9 @@ def test_signal_engine_resolves_each_context_strategy_without_leakage() -> None:
 @pytest.mark.parametrize(
     "constructor",
     (
+        lambda: ADXTrendStrategy(fast_period=3, slow_period=3),
+        lambda: ADXTrendStrategy(adx_period=0),
+        lambda: ADXTrendStrategy(adx_threshold=Decimal("150")),
         lambda: EMACrossStrategy(fast_period=3, slow_period=3),
         lambda: EMARsiStrategy(
             fast_period=2,
@@ -191,6 +205,12 @@ def test_signal_engine_resolves_each_context_strategy_without_leakage() -> None:
         ),
         lambda: BollingerBreakoutStrategy(standard_deviation=Decimal("0")),
         lambda: EMAScalpingStrategy(minimum_body_ratio=Decimal("1.1")),
+        lambda: IchimokuCloudStrategy(
+            conversion_period=10,
+            base_period=5,
+            leading_span_period=20,
+        ),
+        lambda: IchimokuCloudStrategy(conversion_period=0),
         lambda: MACDSwingStrategy(fast_period=4, slow_period=3),
         lambda: SupertrendStrategy(period=0),
     ),
@@ -224,13 +244,104 @@ def test_ema_cross_generates_buy_signal_on_latest_bullish_crossover() -> None:
     assert Decimal("0") < signal.confidence <= Decimal("1")
 
 
+def test_ichimoku_cloud_generates_buy_signal_on_bullish_tk_cross_above_cloud() -> None:
+    """Verify Ichimoku strategy emits BUY when TK cross is above the cloud."""
+    strategy = IchimokuCloudStrategy(
+        conversion_period=2,
+        base_period=3,
+        leading_span_period=4,
+    )
+    # Stepwise upward movement creates bullish TK cross above Kumo cloud
+    candles = _create_candles((10, 10, 10, 10, 15, 20))
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.BUY
+    assert signal.symbol == "BTCUSDT"
+    assert signal.price == Decimal("20")
+    assert signal.strategy_name == StrategyType.ICHIMOKU_CLOUD.value
+    assert Decimal("0") < signal.confidence <= Decimal("1")
+
+
+def test_ichimoku_cloud_generates_sell_signal_on_bearish_tk_cross_below_cloud() -> None:
+    """Verify Ichimoku strategy emits SELL when TK cross is below the cloud."""
+    strategy = IchimokuCloudStrategy(
+        conversion_period=2,
+        base_period=3,
+        leading_span_period=4,
+    )
+    # Stepwise downward movement creates bearish TK cross below Kumo cloud
+    candles = _create_candles((20, 20, 20, 20, 15, 10))
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.SELL
+    assert signal.symbol == "BTCUSDT"
+    assert signal.price == Decimal("10")
+    assert signal.strategy_name == StrategyType.ICHIMOKU_CLOUD.value
+    assert Decimal("0") < signal.confidence <= Decimal("1")
+
+
+def test_adx_trend_holds_when_adx_is_below_threshold() -> None:
+    """Verify ADX trend strategy stays in HOLD during low-ADX choppy conditions."""
+    strategy = ADXTrendStrategy(
+        adx_period=2,
+        fast_period=2,
+        slow_period=3,
+        adx_threshold=Decimal("50.0"),
+    )
+    candles = _create_candles((10, 10, 10, 10, 10))
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.confidence == Decimal("0")
+    assert signal.reason is not None and "below trend threshold" in signal.reason
+
+
+def test_adx_trend_generates_buy_on_strong_uptrend() -> None:
+    """Verify ADX trend strategy emits BUY on strong trending prices."""
+    strategy = ADXTrendStrategy(
+        adx_period=2,
+        fast_period=2,
+        slow_period=3,
+        adx_threshold=Decimal("10.0"),
+    )
+    candles = _create_candles((10, 12, 14, 16, 20))
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.BUY
+    assert signal.strategy_name == StrategyType.ADX_TREND.value
+    assert Decimal("0") < signal.confidence <= Decimal("1")
+
+
+def test_adx_trend_generates_sell_on_strong_downtrend() -> None:
+    """Verify ADX trend strategy emits SELL on strong downtrend prices."""
+    strategy = ADXTrendStrategy(
+        adx_period=2,
+        fast_period=2,
+        slow_period=3,
+        adx_threshold=Decimal("10.0"),
+    )
+    candles = _create_candles((20, 16, 14, 12, 10))
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.SELL
+    assert signal.strategy_name == StrategyType.ADX_TREND.value
+    assert Decimal("0") < signal.confidence <= Decimal("1")
+
+
 @pytest.mark.parametrize(
     "strategy_type",
     (
+        StrategyType.ADX_TREND,
         StrategyType.BOLLINGER_BREAKOUT,
         StrategyType.EMA_CROSS,
         StrategyType.EMA_RSI,
         StrategyType.EMA_SCALPING,
+        StrategyType.ICHIMOKU_CLOUD,
         StrategyType.MACD_SWING,
         StrategyType.SUPERTREND,
     ),

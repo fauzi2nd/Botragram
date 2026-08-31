@@ -6,17 +6,21 @@ from botragram.strategies.swing import (
     MACDSwingStrategy,
 )
 from botragram.strategies.trend import (
+    ADXTrendStrategy,
     EMACrossStrategy,
     EMARsiStrategy,
+    IchimokuCloudStrategy,
     SupertrendStrategy,
 )
 
 __all__ = [
+    "ADXTrendStrategy",
     "BaseStrategy",
     "BollingerBreakoutStrategy",
     "EMACrossStrategy",
     "EMARsiStrategy",
     "EMAScalpingStrategy",
+    "IchimokuCloudStrategy",
     "MACDSwingStrategy",
     "StrategyFactory",
     "StrategyResolver",
