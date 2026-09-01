@@ -349,19 +349,19 @@ class MarketTypeSwitchService:
         allow_operator_exit: bool = False,
     ) -> None:
         """Require a flat, paused, recovery-clean boundary before rebuilding."""
-        try:
-            self.runtime_control.require_configuration_change_allowed(
-                allow_operator_exit=allow_operator_exit,
-            )
-        except RuntimeError as error:
-            raise ExecutionPolicySwitchBlockedError(str(error)) from error
-
         positions = await self._get_positions()
         if positions:
             raise ExecutionPolicySwitchBlockedError(
                 blocked_message,
                 active_position_count=len(positions),
             )
+
+        try:
+            self.runtime_control.require_configuration_change_allowed(
+                allow_operator_exit=allow_operator_exit,
+            )
+        except RuntimeError as error:
+            raise ExecutionPolicySwitchBlockedError(str(error)) from error
 
         if self.trade_mode is not TradeMode.LIVE:
             return

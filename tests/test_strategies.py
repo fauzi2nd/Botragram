@@ -34,7 +34,11 @@ from botragram.models import Candle
 from botragram.strategies import StrategyFactory
 from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
-from botragram.strategies.scalping import EMAScalpingStrategy
+from botragram.strategies.scalping import (
+    EMAScalpingStrategy,
+    RSIBBScalpingStrategy,
+    VWAPBreakoutStrategy,
+)
 from botragram.strategies.swing import MACDSwingStrategy
 from botragram.strategies.trend import (
     ADXTrendStrategy,
@@ -106,6 +110,9 @@ def _create_strategy_settings(
         adx_fast_period=2,
         adx_slow_period=3,
         adx_threshold=Decimal("25.0"),
+        atr_period=2,
+        vwap_volume_period=2,
+        vwap_volume_multiplier=Decimal("1.2"),
     )
 
 
@@ -122,7 +129,9 @@ def _create_strategy_settings(
         (StrategyType.EMA_SCALPING, EMAScalpingStrategy),
         (StrategyType.ICHIMOKU_CLOUD, IchimokuCloudStrategy),
         (StrategyType.MACD_SWING, MACDSwingStrategy),
+        (StrategyType.RSI_BB_SCALPING, RSIBBScalpingStrategy),
         (StrategyType.SUPERTREND, SupertrendStrategy),
+        (StrategyType.VWAP_BREAKOUT, VWAPBreakoutStrategy),
     ),
 )
 def test_strategy_factory_builds_each_supported_strategy(
@@ -333,6 +342,38 @@ def test_adx_trend_generates_sell_on_strong_downtrend() -> None:
     assert Decimal("0") < signal.confidence <= Decimal("1")
 
 
+def test_rsi_bb_scalping_generates_hold_on_flat_market() -> None:
+    """Verify RSI BB scalping strategy emits HOLD on flat prices."""
+    strategy = RSIBBScalpingStrategy(
+        bb_period=2,
+        rsi_period=2,
+        bb_standard_deviation=Decimal("2"),
+        rsi_oversold=Decimal("30"),
+        rsi_overbought=Decimal("70"),
+    )
+    candles = _create_candles((10, 10, 10, 10))
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.confidence == Decimal("0")
+
+
+def test_vwap_breakout_generates_hold_on_flat_market() -> None:
+    """Verify VWAP breakout strategy emits HOLD on flat prices."""
+    strategy = VWAPBreakoutStrategy(
+        atr_period=2,
+        volume_period=2,
+        volume_multiplier=Decimal("1.2"),
+    )
+    candles = _create_candles((10, 10, 10, 10))
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.confidence == Decimal("0")
+
+
 @pytest.mark.parametrize(
     "strategy_type",
     (
@@ -343,7 +384,9 @@ def test_adx_trend_generates_sell_on_strong_downtrend() -> None:
         StrategyType.EMA_SCALPING,
         StrategyType.ICHIMOKU_CLOUD,
         StrategyType.MACD_SWING,
+        StrategyType.RSI_BB_SCALPING,
         StrategyType.SUPERTREND,
+        StrategyType.VWAP_BREAKOUT,
     ),
 )
 def test_each_strategy_can_evaluate_its_documented_minimum_candles(

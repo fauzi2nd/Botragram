@@ -75,6 +75,7 @@ __all__ = [
     "get_stream_message",
     "get_startup_configuration_message",
     "get_test_message",
+    "get_tpsl_ratio_message",
     "get_welcome_message",
 ]
 
@@ -772,6 +773,13 @@ def get_strategy_message(
             lines.append("<b>Conversion period:</b> 9")
             lines.append("<b>Base period:</b> 26")
             lines.append("<b>Span B period:</b> 52")
+        case StrategyType.RSI_BB_SCALPING:
+            lines.append("<b>RSI period:</b> 14 (30/70)")
+            lines.append("<b>BB period:</b> 20 (StdDev: 2.0)")
+        case StrategyType.VWAP_BREAKOUT:
+            lines.append("<b>VWAP:</b> Volume Weighted Avg Price")
+            lines.append("<b>ATR period:</b> 14")
+            lines.append("<b>Volume multiplier:</b> 1.2x")
         case _:
             lines.append(f"<b>Fast EMA period:</b> {fast_period}")
             lines.append(f"<b>Slow EMA period:</b> {slow_period}")
@@ -949,4 +957,35 @@ def get_risk_limits_message(
         f"• <b>Updated:</b> <code>{updated_str}</code>\n\n"
         "<i>Gunakan tombol di bawah atau perintah: "
         "<code>/setrisklimits &lt;pos&gt; &lt;size&gt;</code></i>"
+    )
+
+
+def get_tpsl_ratio_message(
+    *,
+    stop_loss_pct: Decimal,
+    take_profit_pct: Decimal,
+    is_paused: bool,
+) -> str:
+    """Return formatted TP/SL ratio status and tuning controls."""
+    pause_status = (
+        "🟢 <b>PAUSED (Bisa diubah)</b>"
+        if is_paused
+        else "🔴 <b>RUNNING (Jeda bot untuk mengubah)</b>"
+    )
+    sl_pct_display = stop_loss_pct * Decimal("100")
+    tp_pct_display = take_profit_pct * Decimal("100")
+    rr_ratio = (
+        (tp_pct_display / sl_pct_display)
+        if sl_pct_display > Decimal("0")
+        else Decimal("0")
+    )
+
+    return (
+        "🎯 <b>Konfigurasi TP / SL & Risk:Reward Ratio</b>\n\n"
+        f"• <b>Status:</b> {pause_status}\n"
+        f"• <b>Stop Loss (SL):</b> <b>{sl_pct_display:.2f}%</b>\n"
+        f"• <b>Take Profit (TP):</b> <b>{tp_pct_display:.2f}%</b>\n"
+        f"• <b>Risk : Reward Ratio:</b> <b>1 : {rr_ratio:.2f}</b>\n\n"
+        "<i>Gunakan tombol di bawah untuk fine-tuning atau memilih preset RR "
+        "(saat PAUSED).</i>"
     )

@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from decimal import Decimal
 from time import monotonic
-from typing import Final, Protocol
+from typing import Final, Protocol, runtime_checkable
 
 # =============================================================================
 # Local Imports
@@ -38,6 +38,7 @@ from botragram.models import (
 __all__ = [
     "LiveMarketStreamService",
     "MarketTickListener",
+    "MarketTickerSeedProvider",
     "MarketTickerStreamProvider",
     "RuntimeStreamTelemetryRecorder",
 ]
@@ -52,6 +53,15 @@ _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 # =============================================================================
 # Protocols
 # =============================================================================
+@runtime_checkable
+class MarketTickerSeedProvider(Protocol):
+    """Provide on-demand latest ticker snapshots for initial stream readiness."""
+
+    async def get_ticker(self, *, symbol: str) -> Ticker:
+        """Return the latest ticker for a trading symbol."""
+        ...
+
+
 class MarketTickerStreamProvider(Protocol):
     """Provide ticker stream subscriptions through the market boundary."""
 
@@ -221,6 +231,21 @@ class LiveMarketStreamService:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
         except TimeoutError:
+            if isinstance(self.market_service, MarketTickerSeedProvider):
+                try:
+                    seed_ticker = await self.market_service.get_ticker(
+                        symbol=identity.symbol
+                    )
+                    if (
+                        seed_ticker.last_price > 0
+                        and not owned_stream.first_tick_event.is_set()
+                    ):
+                        owned_stream.last_price = seed_ticker.last_price
+                        owned_stream.last_event_monotonic = monotonic()
+                        owned_stream.first_tick_event.set()
+                        return True
+                except Exception:
+                    pass
             return owned_stream.first_tick_event.is_set()
         finally:
             if not first_tick_task.done():
@@ -294,6 +319,21 @@ class LiveMarketStreamService:
         owned_stream.lifecycle_status = LiveMarketStreamLifecycleStatus.RUNNING
 
         try:
+            if isinstance(self.market_service, MarketTickerSeedProvider):
+                try:
+                    seed_ticker = await self.market_service.get_ticker(
+                        symbol=identity.symbol
+                    )
+                    if (
+                        seed_ticker.last_price > 0
+                        and not owned_stream.first_tick_event.is_set()
+                    ):
+                        owned_stream.last_price = seed_ticker.last_price
+                        owned_stream.last_event_monotonic = monotonic()
+                        owned_stream.first_tick_event.set()
+                except Exception:
+                    pass
+
             async for ticker in self.market_service.stream_ticker(
                 symbol=identity.symbol
             ):

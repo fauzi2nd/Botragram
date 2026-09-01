@@ -40,5 +40,7 @@ class StrategyType(BaseEnum):
     EMA_SCALPING = "ema_scalping"
     ICHIMOKU_CLOUD = "ichimoku_cloud"
     MACD_SWING = "macd_swing"
+    RSI_BB_SCALPING = "rsi_bb_scalping"
     SUPERTREND = "supertrend"
+    VWAP_BREAKOUT = "vwap_breakout"
     CUSTOM = "custom"

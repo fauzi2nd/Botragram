@@ -75,6 +75,7 @@ from botragram.telegram.keyboards import (
     get_status_dashboard_keyboard,
     get_strategy_keyboard,
     get_stream_keyboard,
+    get_tpsl_ratio_keyboard,
 )
 from botragram.telegram.messages import (
     get_exchange_message,
@@ -92,6 +93,7 @@ from botragram.telegram.messages import (
     get_status_message,
     get_strategy_message,
     get_stream_message,
+    get_tpsl_ratio_message,
 )
 from botragram.telegram.operator_exit_commands import (
     format_operator_exit_confirmation,
@@ -193,6 +195,37 @@ async def _get_last_price(bot_context: BotContext) -> Decimal:
     return last_price
 
 
+async def _resume_autonomous_live(bot_context: BotContext) -> bool:
+    """Resume autonomous LIVE only from a reconciled fail-closed runtime state."""
+    control = bot_context.runtime_control
+    provider = bot_context.query_provider
+    if control is None or provider is None:
+        raise RuntimeError("Autonomous LIVE runtime observability is unavailable")
+
+    recovery = await provider.get_autonomous_live_recovery()
+    if recovery is None:
+        raise RuntimeError("Autonomous LIVE recovery state is unavailable")
+    if recovery.new_entry_blocked_by_recovery:
+        raise RuntimeError("Autonomous LIVE recovery is incomplete")
+
+    positions = tuple(await provider.get_positions())
+    runtime_contexts = control.runtime_contexts
+    managed_symbols = {runtime_context.symbol for runtime_context in runtime_contexts}
+    position_symbols = {position.symbol for position in positions}
+
+    if runtime_contexts:
+        if managed_symbols != position_symbols:
+            raise RuntimeError("LIVE portfolio requires reconciliation before resume")
+        return control.resume()
+
+    if positions:
+        raise RuntimeError("Unmanaged LIVE positions require recovery before resume")
+    if not recovery.autonomous_entry_authorized:
+        raise RuntimeError("Autonomous LIVE entry is not authorized")
+
+    return control.resume_global_cycle()
+
+
 def _is_confirmed(
     control: BotRuntimeControl | None,
     requirement: str,
@@ -264,13 +297,12 @@ def _parse_execution_policy_callback(
 def _is_single_symbol_configuration_callback(callback_data: str) -> bool:
     """Return whether an inline action belongs only to single-symbol setup."""
     return (
-        callback_data == "cb_exchange"
+        callback_data in {"cb_exchange", "cb_market", "cb_interval"}
         or callback_data in _EXCHANGE_CALLBACKS
         or callback_data.startswith(_PRODUCT_CALLBACK_PREFIX)
         or callback_data.startswith(_MARKET_CALLBACK_PREFIX)
         or callback_data.startswith(_MARKET_PAGE_CALLBACK_PREFIX)
         or callback_data.startswith(_INTERVAL_CALLBACK_PREFIX)
-        or callback_data.startswith(_STRATEGY_CALLBACK_PREFIX)
         or callback_data.startswith("cb_stream_")
     )
 
@@ -646,7 +678,7 @@ async def handle_callback_query(
         switcher.commit_execution_policy(execution_policy=target)
         return
 
-    if data == _POLICY_CANCEL_CALLBACK:
+    if data in {_POLICY_CANCEL_CALLBACK, "cb_policy_menu"}:
         switcher = bot_context.market_type_switcher
         available = (
             switcher.available_execution_policies()
@@ -701,23 +733,46 @@ async def handle_callback_query(
                 except Exception:
                     pass
         elif data == "cb_runtime_resume" and bot_context.runtime_control is not None:
-            changed = bot_context.runtime_control.resume()
             try:
-                await query.answer("▶️ Trading dilanjutkan", show_alert=False)
-            except Exception:
-                pass
-            if isinstance(query.message, Message):
+                changed = (
+                    await _resume_autonomous_live(bot_context)
+                    if bot_context.is_autonomous_live
+                    else bot_context.runtime_control.resume()
+                )
                 try:
-                    await query.message.reply_text(
-                        get_resume_message(changed=changed),
-                        parse_mode=DEFAULT_PARSE_MODE,
-                        reply_markup=get_main_menu_keyboard(
-                            execution_policy=bot_context.execution_policy,
-                            is_paused=False,
-                        ),
-                    )
+                    await query.answer("▶️ Trading dilanjutkan", show_alert=False)
                 except Exception:
                     pass
+                if isinstance(query.message, Message):
+                    try:
+                        await query.message.reply_text(
+                            get_resume_message(changed=changed),
+                            parse_mode=DEFAULT_PARSE_MODE,
+                            reply_markup=get_main_menu_keyboard(
+                                execution_policy=bot_context.execution_policy,
+                                is_paused=False,
+                            ),
+                        )
+                    except Exception:
+                        pass
+            except RuntimeError as error:
+                try:
+                    await query.answer(f"⚠️ {error}", show_alert=True)
+                except Exception:
+                    pass
+                if isinstance(query.message, Message):
+                    try:
+                        await query.message.reply_text(
+                            "⚠️ <b>Trading belum dapat dilanjutkan.</b>\n"
+                            f"<code>{escape(str(error))}</code>",
+                            parse_mode=DEFAULT_PARSE_MODE,
+                            reply_markup=get_main_menu_keyboard(
+                                execution_policy=bot_context.execution_policy,
+                                is_paused=True,
+                            ),
+                        )
+                    except Exception:
+                        pass
         elif data == "cb_status_refresh":
             try:
                 await query.answer("🔄 Status diperbarui", show_alert=False)
@@ -1019,6 +1074,65 @@ async def handle_callback_query(
             parse_mode=DEFAULT_PARSE_MODE,
             reply_markup=keyboard,
         )
+    elif data == "cb_tpsl_menu" or data.startswith("cb_tpsl_"):
+        control = bot_context.runtime_control
+        is_paused = control.is_paused if control is not None else False
+
+        if data != "cb_tpsl_menu":
+            if not is_paused:
+                try:
+                    await query.answer(
+                        "⚠️ Pause trading terlebih dahulu sebelum mengubah TP/SL!",
+                        show_alert=True,
+                    )
+                except Exception:
+                    pass
+            else:
+                sl = bot_context.stop_loss_pct
+                tp = bot_context.take_profit_pct
+
+                if data == "cb_tpsl_sl_inc":
+                    sl = min(sl + Decimal("0.001"), Decimal("0.10"))
+                elif data == "cb_tpsl_sl_dec":
+                    sl = max(sl - Decimal("0.001"), Decimal("0.001"))
+                elif data == "cb_tpsl_tp_inc":
+                    tp = min(tp + Decimal("0.002"), Decimal("0.20"))
+                elif data == "cb_tpsl_tp_dec":
+                    tp = max(tp - Decimal("0.002"), Decimal("0.002"))
+                elif data == "cb_tpsl_rr_1.5":
+                    tp = sl * Decimal("1.5")
+                elif data == "cb_tpsl_rr_2.0":
+                    tp = sl * Decimal("2.0")
+                elif data == "cb_tpsl_rr_3.0":
+                    tp = sl * Decimal("3.0")
+
+                bot_context.stop_loss_pct = sl
+                bot_context.take_profit_pct = tp
+
+                try:
+                    sl_pct = sl * Decimal("100")
+                    tp_pct = tp * Decimal("100")
+                    await query.answer(
+                        f"✅ SL: {sl_pct:.2f}% | TP: {tp_pct:.2f}%",
+                        show_alert=False,
+                    )
+                except Exception:
+                    pass
+
+        msg = get_tpsl_ratio_message(
+            stop_loss_pct=bot_context.stop_loss_pct,
+            take_profit_pct=bot_context.take_profit_pct,
+            is_paused=is_paused,
+        )
+        keyboard = get_tpsl_ratio_keyboard(
+            stop_loss_pct=bot_context.stop_loss_pct,
+            take_profit_pct=bot_context.take_profit_pct,
+        )
+        await query.edit_message_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=keyboard,
+        )
     elif data == "cb_config_menu":
         config_markup = InlineKeyboardMarkup(
             [
@@ -1056,6 +1170,71 @@ async def handle_callback_query(
         await query.edit_message_text(
             "ℹ️ <b>Kontrol runtime belum tersedia melalui Telegram.</b>",
             parse_mode=DEFAULT_PARSE_MODE,
+        )
+    elif data == "cb_strategy":
+        control = bot_context.runtime_control
+        strategy_val = (
+            control.strategy_type.value
+            if control is not None
+            else bot_context.strategy_name
+        )
+        confirmed = (
+            _is_confirmed(control, "strategy")
+            if not bot_context.is_autonomous_live
+            else True
+        )
+        await query.edit_message_text(
+            get_strategy_message(
+                strategy_val,
+                9,
+                21,
+                confirmed=confirmed,
+            ),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_strategy_keyboard(
+                strategy_val,
+                confirmed=confirmed,
+            ),
+        )
+    elif data == "cb_market":
+        control = bot_context.runtime_control
+        active_symbol = control.symbol if control is not None else bot_context.symbol
+        symbols = await _get_trading_symbols(bot_context)
+        if symbols is None:
+            symbols = (active_symbol,)
+        last_price = await _get_last_price(bot_context)
+        confirmed = _is_confirmed(control, "symbol")
+        await query.edit_message_text(
+            get_market_message(
+                active_symbol,
+                last_price,
+                confirmed=confirmed,
+            ),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_market_keyboard(
+                active_symbol,
+                symbols,
+                confirmed=confirmed,
+            ),
+        )
+    elif data == "cb_interval":
+        control = bot_context.runtime_control
+        interval_val = (
+            control.interval.value
+            if control is not None
+            else bot_context.configured_interval.value
+        )
+        confirmed = _is_confirmed(control, "interval")
+        await query.edit_message_text(
+            get_interval_message(
+                interval_val,
+                confirmed=confirmed,
+            ),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_interval_keyboard(
+                interval_val,
+                confirmed=confirmed,
+            ),
         )
     elif data == "cb_exchange":
         await query.edit_message_text(

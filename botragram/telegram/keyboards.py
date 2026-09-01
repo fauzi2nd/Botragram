@@ -66,6 +66,7 @@ __all__ = [
     "get_status_dashboard_keyboard",
     "get_strategy_keyboard",
     "get_stream_keyboard",
+    "get_tpsl_ratio_keyboard",
     "get_trading_menu_keyboard",
 ]
 
@@ -104,17 +105,51 @@ def get_status_dashboard_keyboard(
             InlineKeyboardButton(MENU_STRATEGY, callback_data="cb_strategy"),
             InlineKeyboardButton(MENU_RISK_LIMITS, callback_data="cb_risk_limits"),
         ]
+        row4 = [
+            InlineKeyboardButton(MENU_INTERVAL, callback_data="cb_interval"),
+            InlineKeyboardButton("🎯 TP / SL", callback_data="cb_tpsl_menu"),
+        ]
     else:
         row3 = [
             InlineKeyboardButton(MENU_STRATEGY, callback_data="cb_strategy"),
             InlineKeyboardButton(MENU_INTERVAL, callback_data="cb_interval"),
         ]
+        row4 = [
+            InlineKeyboardButton("🎯 TP / SL", callback_data="cb_tpsl_menu"),
+            InlineKeyboardButton(MENU_MARKET, callback_data="cb_market"),
+        ]
 
-    row4 = [
+    row5 = [
         InlineKeyboardButton(MENU_HISTORY, callback_data="cb_history"),
         InlineKeyboardButton(MENU_ORDERS, callback_data="cb_orders"),
     ]
-    return InlineKeyboardMarkup([row1, row2, row3, row4])
+    return InlineKeyboardMarkup([row1, row2, row3, row4, row5])
+
+
+def get_tpsl_ratio_keyboard(
+    *,
+    stop_loss_pct: Decimal,
+    take_profit_pct: Decimal,
+) -> InlineKeyboardMarkup:
+    """Return interactive buttons for tuning Stop Loss and Take Profit percentages."""
+    row_sl = [
+        InlineKeyboardButton("➖ 0.1% SL", callback_data="cb_tpsl_sl_dec"),
+        InlineKeyboardButton("➕ 0.1% SL", callback_data="cb_tpsl_sl_inc"),
+    ]
+    row_tp = [
+        InlineKeyboardButton("➖ 0.2% TP", callback_data="cb_tpsl_tp_dec"),
+        InlineKeyboardButton("➕ 0.2% TP", callback_data="cb_tpsl_tp_inc"),
+    ]
+    row_presets = [
+        InlineKeyboardButton("🎯 RR 1:1.5", callback_data="cb_tpsl_rr_1.5"),
+        InlineKeyboardButton("🎯 RR 1:2.0", callback_data="cb_tpsl_rr_2.0"),
+        InlineKeyboardButton("🎯 RR 1:3.0", callback_data="cb_tpsl_rr_3.0"),
+    ]
+    row_nav = [
+        InlineKeyboardButton("🔄 Refresh", callback_data="cb_tpsl_menu"),
+        InlineKeyboardButton(f"◀️ {MENU_STATUS}", callback_data="cb_status"),
+    ]
+    return InlineKeyboardMarkup([row_sl, row_tp, row_presets, row_nav])
 
 
 def get_risk_limits_keyboard(
@@ -363,11 +398,15 @@ def get_dashboard_menu_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def get_trading_menu_keyboard() -> ReplyKeyboardMarkup:
-    """Return the compact runtime-control submenu."""
+def get_trading_menu_keyboard(
+    *,
+    is_paused: bool = True,
+) -> ReplyKeyboardMarkup:
+    """Return the compact runtime-control submenu synchronized with pause state."""
+    runtime_action = MENU_START if is_paused else MENU_PAUSE
     return _get_reply_keyboard(
         [
-            [MENU_START, MENU_PAUSE],
+            [runtime_action],
             [MENU_STREAM],
             [MENU_HOME],
         ]
@@ -564,6 +603,8 @@ def get_strategy_keyboard(
         ("EMA Cross", "ema_cross"),
         ("EMA + RSI", "ema_rsi"),
         ("EMA Scalping", "ema_scalping"),
+        ("RSI + BB Scalping", "rsi_bb_scalping"),
+        ("VWAP Breakout", "vwap_breakout"),
         ("MACD Swing", "macd_swing"),
         ("Supertrend", "supertrend"),
         ("Bollinger Breakout", "bollinger_breakout"),

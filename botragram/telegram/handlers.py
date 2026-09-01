@@ -111,7 +111,7 @@ def register_handlers(app: Any) -> None:
     app.add_handler(
         CallbackQueryHandler(
             strategy_switch_callback,
-            pattern=r"^cb_strategy_",
+            pattern=r"^cb_strategy($|_)",
         )
     )
     app.add_handler(CallbackQueryHandler(handle_callback_query))

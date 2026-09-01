@@ -1221,7 +1221,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
                 ) from error
             if error.status == 400 and error.code is not None:
                 raise ExchangeOrderRejectedError(
-                    "Binance Futures explicitly rejected the order"
+                    f"Binance Futures explicitly rejected the order: {error}"
                 ) from error
             raise ExchangeOrderOutcomeUnknownError(
                 "Binance Futures order outcome is unknown"
@@ -1326,4 +1326,24 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
             params["newClientOrderId"] = self._normalize_client_order_id(
                 client_order_id
             )
-        return await self._post_order(params=params)
+        try:
+            return await self._post_order(params=params)
+        except ExchangeOrderRejectedError:
+            for client_algo_id in (
+                position.stop_loss_client_algo_id,
+                position.take_profit_client_algo_id,
+            ):
+                if client_algo_id is not None:
+                    try:
+                        await self.cancel_protection_order(
+                            symbol=position.symbol,
+                            client_id=client_algo_id,
+                        )
+                    except Exception:
+                        pass
+            try:
+                return await self._post_order(params=params)
+            except ExchangeOrderRejectedError:
+                params_fallback = dict(params)
+                params_fallback.pop("reduceOnly", None)
+                return await self._post_order(params=params_fallback)

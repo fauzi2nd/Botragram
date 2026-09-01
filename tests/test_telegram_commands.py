@@ -19,6 +19,7 @@ from botragram.constants.telegram import (
     MENU_DASHBOARD,
     MENU_HOME,
     MENU_MARKET_OVERVIEW,
+    MENU_STRATEGY,
 )
 from botragram.enums import (
     AuthorizationStatus,
@@ -69,6 +70,7 @@ from botragram.telegram.context import (
     BOT_CONTEXT_KEY,
     BotContext,
 )
+from botragram.telegram.strategy_switch import strategy_switch_callback
 
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _ALLOWED_CHAT_ID = 12345
@@ -138,6 +140,7 @@ class FakeCallbackQuery:
     data: str
     replies: list[str] = field(default_factory=list[str])
     answer_count: int = 0
+    reply_markups: list[object | None] = field(default_factory=list[object | None])
 
     async def answer(self) -> None:
         """Record one callback acknowledgement."""
@@ -151,8 +154,9 @@ class FakeCallbackQuery:
         reply_markup: object | None = None,
     ) -> None:
         """Capture one edited callback response."""
-        del parse_mode, reply_markup
+        del parse_mode
         self.replies.append(text)
+        self.reply_markups.append(reply_markup)
 
 
 @dataclass(slots=True)
@@ -1347,3 +1351,210 @@ async def _run_unauthorized_command_test() -> None:
         chat_id=99999,
         allowed_chat_ids={_ALLOWED_CHAT_ID},
     )
+
+
+def test_telegram_tpsl_ratio_tuning_callbacks() -> None:
+    """Tune TP and SL percentages while runtime trading is paused."""
+    asyncio.run(_run_tpsl_ratio_tuning_test())
+
+
+async def _run_tpsl_ratio_tuning_test() -> None:
+    """Verify TP/SL callbacks correctly tune percentages and RR presets."""
+    runtime_control = TradingRuntimeControl()
+    bot_context = BotContext(
+        runtime_control=runtime_control,
+        stop_loss_pct=Decimal("0.01"),
+        take_profit_pct=Decimal("0.02"),
+    )
+    query = FakeCallbackQuery(data="cb_tpsl_menu")
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=FakeMessage(),
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: bot_context,
+            }
+        ),
+    )
+
+    # Open TP/SL menu
+    await handle_callback_query(update, context)
+    assert "Konfigurasi TP / SL" in query.replies[-1]
+    assert "<b>Stop Loss (SL):</b> <b>1.00%</b>" in query.replies[-1]
+    assert "<b>Take Profit (TP):</b> <b>2.00%</b>" in query.replies[-1]
+    assert "<b>Risk : Reward Ratio:</b> <b>1 : 2.00</b>" in query.replies[-1]
+
+    # Increment SL
+    query.data = "cb_tpsl_sl_inc"
+    await handle_callback_query(update, context)
+    assert bot_context.stop_loss_pct == Decimal("0.011")
+
+    # Increment TP
+    query.data = "cb_tpsl_tp_inc"
+    await handle_callback_query(update, context)
+    assert bot_context.take_profit_pct == Decimal("0.022")
+
+    # Set RR 1:3.0
+    query.data = "cb_tpsl_rr_3.0"
+    await handle_callback_query(update, context)
+    assert bot_context.take_profit_pct == Decimal("0.033")
+
+
+def test_telegram_inline_menu_navigation() -> None:
+    """Verify inline buttons for strategy, market, interval, and policy menus."""
+    asyncio.run(_run_inline_menu_navigation_test())
+
+
+async def _run_inline_menu_navigation_test() -> None:
+    """Check inline navigation callbacks edit messages with correct keyboards."""
+    runtime_control = TradingRuntimeControl()
+    bot_context = BotContext(
+        runtime_control=runtime_control,
+        strategy_name="ema_cross",
+        symbol="BTCUSDT",
+        configured_interval=Interval.M15,
+    )
+    query = FakeCallbackQuery(data="cb_strategy")
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=FakeMessage(),
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: bot_context,
+            }
+        ),
+    )
+
+    # Strategy inline menu
+    query.data = "cb_strategy"
+    await handle_callback_query(update, context)
+    assert "Strategy" in query.replies[-1]
+    markup = query.reply_markups[-1]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    strategy_cbs = {
+        button.callback_data for row in markup.inline_keyboard for button in row
+    }
+    assert "cb_strategy_ema_scalping" in strategy_cbs
+    assert "cb_strategy_rsi_bb_scalping" in strategy_cbs
+
+    # Market inline menu
+    query.data = "cb_market"
+    await handle_callback_query(update, context)
+    assert "Market" in query.replies[-1]
+    markup = query.reply_markups[-1]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    market_cbs = {
+        button.callback_data for row in markup.inline_keyboard for button in row
+    }
+    assert "cb_market_btcusdt" in market_cbs
+
+    # Interval inline menu
+    query.data = "cb_interval"
+    await handle_callback_query(update, context)
+    assert "Interval" in query.replies[-1]
+    markup = query.reply_markups[-1]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    interval_cbs = {
+        button.callback_data for row in markup.inline_keyboard for button in row
+    }
+    assert "cb_interval_15m" in interval_cbs
+
+    # Policy inline menu
+    query.data = "cb_policy_menu"
+    await handle_callback_query(update, context)
+    assert "Trading Mode" in query.replies[-1]
+
+
+def test_autonomous_live_reply_menu_actions() -> None:
+    """Verify strategy and risk limit actions succeed from autonomous reply menu."""
+    asyncio.run(_run_autonomous_live_reply_menu_test())
+
+
+async def _run_autonomous_live_reply_menu_test() -> None:
+    """Check MENU_STRATEGY and MENU_RISK_LIMITS trigger correct handlers."""
+    bot_context = BotContext(
+        execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+        strategy_name="ema_cross",
+    )
+    message = FakeMessage()
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=message,
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+        ),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: bot_context,
+            }
+        ),
+    )
+
+    # MENU_STRATEGY should open strategy menu without discovery block
+    message.text = MENU_STRATEGY
+    await menu_message_handler(update, context)
+    assert "Strategy" in message.replies[-1]
+    assert "Discovery Workflow" not in message.replies[-1]
+
+
+def test_strategy_switch_callback_direct_tap() -> None:
+    """Verify tapping cb_strategy opens strategy selector."""
+    asyncio.run(_run_strategy_switch_callback_direct_tap_test())
+
+
+async def _run_strategy_switch_callback_direct_tap_test() -> None:
+    """Check cb_strategy callback edits message with strategy selection menu."""
+    bot_context = BotContext(
+        execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+        strategy_name="ichimoku_cloud",
+    )
+    query = FakeCallbackQuery(data="cb_strategy")
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=FakeMessage(),
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: bot_context,
+            }
+        ),
+    )
+
+    await strategy_switch_callback(update, context)
+    assert "Strategy" in query.replies[-1]
+    assert "ichimoku_cloud" in query.replies[-1]
+    markup = query.reply_markups[-1]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    callbacks = {
+        button.callback_data for row in markup.inline_keyboard for button in row
+    }
+    assert "cb_strategy_ema_scalping" in callbacks
+    assert "cb_strategy_rsi_bb_scalping" in callbacks
+    assert "cb_strategy_vwap_breakout" in callbacks

@@ -693,17 +693,20 @@ class OperatorExitService:
                     client_order_id=attempt.client_order_id,
                 )
             except ExchangeOrderRejectedError as error:
+                _LOGGER.warning(
+                    "Exchange explicitly rejected operator close: symbol=%s error=%s",
+                    authoritative.symbol,
+                    error,
+                )
                 await self.operator_exit_repository.save_attempt(
                     attempt=replace(
                         attempt,
                         status=OperatorExitAttemptStatus.REJECTED,
-                        failure_reason="Exchange explicitly rejected operator close",
+                        failure_reason=str(error),
                         updated_at=datetime.now(UTC),
                     )
                 )
-                raise _ExitRejected(
-                    "Exchange explicitly rejected the operator close"
-                ) from error
+                raise _ExitRejected(str(error)) from error
             except ExchangeOrderOutcomeUnknownError as error:
                 await self.operator_exit_repository.save_attempt(
                     attempt=replace(
@@ -795,10 +798,19 @@ class OperatorExitService:
                     symbol=attempt.symbol,
                     client_order_id=attempt.client_order_id,
                 )
-            except (
-                ExchangeOrderNotFoundError,
-                ExchangeOrderOutcomeUnknownError,
-            ) as error:
+            except ExchangeOrderNotFoundError as error:
+                await self.operator_exit_repository.save_attempt(
+                    attempt=replace(
+                        reconciling,
+                        status=OperatorExitAttemptStatus.REJECTED,
+                        failure_reason="Exact close order not found on exchange",
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+                raise _ExitRejected(
+                    "Exact operator close was not found on exchange"
+                ) from error
+            except ExchangeOrderOutcomeUnknownError as error:
                 await self.operator_exit_repository.save_attempt(
                     attempt=replace(
                         reconciling,

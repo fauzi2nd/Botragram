@@ -235,7 +235,11 @@ class RiskEngine:
     ) -> tuple[Decimal, Decimal]:
         """Resolve strategy-specific or fallback global exit percentages."""
         match strategy_type:
-            case StrategyType.EMA_SCALPING:
+            case (
+                StrategyType.EMA_SCALPING
+                | StrategyType.RSI_BB_SCALPING
+                | StrategyType.VWAP_BREAKOUT
+            ):
                 return (
                     self.settings.ema_scalping_stop_loss_pct,
                     self.settings.ema_scalping_take_profit_pct,

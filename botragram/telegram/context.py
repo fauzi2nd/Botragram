@@ -349,6 +349,8 @@ class BotContext:
     exchange_type: str = "BINANCE"
     last_price: Decimal = Decimal("0")
     positions: tuple[Position, ...] = ()
+    stop_loss_pct: Decimal = Decimal("0.01")
+    take_profit_pct: Decimal = Decimal("0.02")
     query_provider: BotQueryProvider | None = None
     runtime_control: BotRuntimeControl | None = None
     market_type_switcher: BotMarketTypeSwitcher | None = None

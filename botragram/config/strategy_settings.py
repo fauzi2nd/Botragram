@@ -95,3 +95,10 @@ class StrategySettings:
     adx_fast_period: int = 9
     adx_slow_period: int = 21
     adx_threshold: Decimal = Decimal("25.0")
+
+    # =========================================================================
+    # VWAP & Volatility Breakout
+    # =========================================================================
+    atr_period: int = 14
+    vwap_volume_period: int = 20
+    vwap_volume_multiplier: Decimal = Decimal("1.2")

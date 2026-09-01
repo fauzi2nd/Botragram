@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from html import escape
 from typing import Protocol, runtime_checkable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -20,6 +21,17 @@ __all__ = ["strategy_switch_callback", "strategy_switch_command"]
 _STRATEGY_CALLBACK_PREFIX = "cb_strategy_"
 _FAST_PERIOD = 9
 _SLOW_PERIOD = 21
+
+
+async def _has_open_positions(bot_context: BotContext) -> bool:
+    """Fail safely when runtime configuration may affect an open position."""
+    provider = bot_context.query_provider
+    if provider is None:
+        return True
+    try:
+        return bool(await provider.get_positions())
+    except Exception:
+        return True
 
 
 @runtime_checkable
@@ -122,7 +134,20 @@ async def strategy_switch_callback(
     query = update.callback_query
     if query is None or not is_authorized_update(update=update, context=context):
         return
-    await query.answer()
+    if (query.data or "") == "cb_strategy":
+        bot_context = _get_context(context)
+        strategy = _current_strategy(bot_context)
+        await query.edit_message_text(
+            get_strategy_message(
+                strategy.value,
+                _FAST_PERIOD,
+                _SLOW_PERIOD,
+                confirmed=True,
+            ),
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=get_strategy_keyboard(strategy.value, confirmed=True),
+        )
+        return
 
     raw_strategy = (query.data or "").removeprefix(_STRATEGY_CALLBACK_PREFIX)
     try:
@@ -137,6 +162,51 @@ async def strategy_switch_callback(
     bot_context = _get_context(context)
     switcher = _get_switcher(bot_context)
     if switcher is None:
+        control = bot_context.runtime_control
+        if control is not None:
+            if target is not control.strategy_type and await _has_open_positions(
+                bot_context
+            ):
+                await query.edit_message_text(
+                    "⚠️ <b>Tutup semua posisi sebelum mengganti strategy.</b>",
+                    parse_mode=DEFAULT_PARSE_MODE,
+                    reply_markup=get_strategy_keyboard(
+                        control.strategy_type.value,
+                        confirmed=True,
+                    ),
+                )
+                return
+            try:
+                changed = control.select_strategy(target)
+            except RuntimeError as error:
+                await query.edit_message_text(
+                    f"⚠️ <b>{escape(str(error))}</b>",
+                    parse_mode=DEFAULT_PARSE_MODE,
+                    reply_markup=get_strategy_keyboard(
+                        control.strategy_type.value,
+                        confirmed=True,
+                    ),
+                )
+                return
+
+            bot_context.strategy_name = control.strategy_type.value
+            status = "dipilih" if changed else "sudah aktif"
+            await query.edit_message_text(
+                get_strategy_message(
+                    control.strategy_type.value,
+                    _FAST_PERIOD,
+                    _SLOW_PERIOD,
+                    confirmed=True,
+                )
+                + f"\n\nStrategy {status} untuk siklus berikutnya.",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=get_strategy_keyboard(
+                    control.strategy_type.value,
+                    confirmed=True,
+                ),
+            )
+            return
+
         await query.edit_message_text(
             "⚠️ <b>Strategy switch tidak tersedia pada runtime ini.</b>",
             parse_mode=DEFAULT_PARSE_MODE,

@@ -27,7 +27,11 @@ from botragram.config.strategy_settings import StrategySettings
 from botragram.enums import StrategyType
 from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
-from botragram.strategies.scalping import EMAScalpingStrategy
+from botragram.strategies.scalping import (
+    EMAScalpingStrategy,
+    RSIBBScalpingStrategy,
+    VWAPBreakoutStrategy,
+)
 from botragram.strategies.swing import (
     MACDSwingStrategy,
 )
@@ -161,10 +165,26 @@ class StrategyFactory:
                     signal_period=settings.macd_signal_period,
                 )
 
+            case StrategyType.RSI_BB_SCALPING:
+                return RSIBBScalpingStrategy(
+                    bb_period=settings.bb_period,
+                    bb_standard_deviation=settings.bb_standard_deviation,
+                    rsi_period=settings.rsi_period,
+                    rsi_overbought=settings.rsi_overbought,
+                    rsi_oversold=settings.rsi_oversold,
+                )
+
             case StrategyType.SUPERTREND:
                 return SupertrendStrategy(
                     period=settings.supertrend_period,
                     multiplier=settings.supertrend_multiplier,
+                )
+
+            case StrategyType.VWAP_BREAKOUT:
+                return VWAPBreakoutStrategy(
+                    atr_period=settings.atr_period,
+                    volume_period=settings.vwap_volume_period,
+                    volume_multiplier=settings.vwap_volume_multiplier,
                 )
 
             case _:

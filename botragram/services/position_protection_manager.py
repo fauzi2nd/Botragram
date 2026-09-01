@@ -506,7 +506,7 @@ class PositionProtectionManager:
     ) -> None:
         """Defer a replacement while preserving the currently verified STOP."""
         self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Live stepped protection deferred because the replacement "
             "stop is not currently venue-valid: symbol=%s side=%s raw_stop=%s",
             position.symbol,

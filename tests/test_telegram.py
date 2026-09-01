@@ -29,6 +29,7 @@ from botragram.constants.telegram import (
     MENU_PAUSE,
     MENU_RESUME,
     MENU_RISK_LIMITS,
+    MENU_START,
     MENU_TRADING,
     MENU_TRADING_MODE,
 )
@@ -56,6 +57,7 @@ from botragram.telegram.keyboards import (
     get_main_menu_keyboard,
     get_market_keyboard,
     get_strategy_keyboard,
+    get_tpsl_ratio_keyboard,
     get_trading_menu_keyboard,
 )
 from botragram.telegram.messages import (
@@ -72,6 +74,7 @@ from botragram.telegram.messages import (
     get_status_message,
     get_strategy_message,
     get_stream_message,
+    get_tpsl_ratio_message,
     get_welcome_message,
 )
 
@@ -520,3 +523,69 @@ def test_market_keyboard_paginates_dynamic_exchange_symbols() -> None:
     assert "cb_market_page_2" in callbacks
     assert "cb_market_noop" in callbacks
     assert "cb_market_search" in callbacks
+
+
+def test_tpsl_ratio_keyboard_and_message() -> None:
+    """Format TP/SL ratio controls and verify callback buttons."""
+    message = get_tpsl_ratio_message(
+        stop_loss_pct=Decimal("0.01"),
+        take_profit_pct=Decimal("0.02"),
+        is_paused=True,
+    )
+    assert "Konfigurasi TP / SL" in message
+    assert "1.00%" in message
+    assert "2.00%" in message
+    assert "1 : 2.00" in message
+    assert "PAUSED" in message
+
+    keyboard = get_tpsl_ratio_keyboard(
+        stop_loss_pct=Decimal("0.01"),
+        take_profit_pct=Decimal("0.02"),
+    )
+    callbacks = {
+        button.callback_data for row in keyboard.inline_keyboard for button in row
+    }
+    assert {
+        "cb_tpsl_sl_dec",
+        "cb_tpsl_sl_inc",
+        "cb_tpsl_tp_dec",
+        "cb_tpsl_tp_inc",
+        "cb_tpsl_rr_1.5",
+        "cb_tpsl_rr_2.0",
+        "cb_tpsl_rr_3.0",
+        "cb_tpsl_menu",
+        "cb_status",
+    } <= callbacks
+
+
+def test_new_strategy_messages_and_keyboard() -> None:
+    """Verify RSI BB scalping and VWAP breakout in messages and keyboard."""
+    rsi_msg = get_strategy_message("rsi_bb_scalping", confirmed=True)
+    assert "RSI period" in rsi_msg
+    assert "BB period" in rsi_msg
+
+    vwap_msg = get_strategy_message("vwap_breakout", confirmed=True)
+    assert "VWAP" in vwap_msg
+    assert "ATR period" in vwap_msg
+
+    keyboard = get_strategy_keyboard("rsi_bb_scalping", confirmed=True)
+    callbacks = {
+        button.callback_data for row in keyboard.inline_keyboard for button in row
+    }
+    assert "cb_strategy_rsi_bb_scalping" in callbacks
+    assert "cb_strategy_vwap_breakout" in callbacks
+
+
+def test_trading_menu_keyboard_sync_with_pause_state() -> None:
+    """Verify trading submenu action synchronizes with runtime pause state."""
+    paused_keyboard = get_trading_menu_keyboard(is_paused=True)
+    paused_labels = {button.text for row in paused_keyboard.keyboard for button in row}
+    assert MENU_START in paused_labels
+    assert MENU_PAUSE not in paused_labels
+
+    running_keyboard = get_trading_menu_keyboard(is_paused=False)
+    running_labels = {
+        button.text for row in running_keyboard.keyboard for button in row
+    }
+    assert MENU_PAUSE in running_labels
+    assert MENU_START not in running_labels

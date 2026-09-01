@@ -768,28 +768,28 @@ async def strategy_command(
     if update.message:
         if not is_authorized_update(update=update, context=context):
             return
-        if await _reject_discovery_managed_configuration(
-            update=update,
-            context=context,
-        ):
-            return
 
         ctx = _get_context(context)
         fast_period = 9
         slow_period = 21
         strategy_name = _get_runtime_strategy(ctx)
+        confirmed = (
+            _is_runtime_confirmed(ctx, "strategy")
+            if not ctx.is_autonomous_live
+            else True
+        )
         msg = get_strategy_message(
             strategy_name,
             fast_period,
             slow_period,
-            confirmed=_is_runtime_confirmed(ctx, "strategy"),
+            confirmed=confirmed,
         )
         await update.message.reply_text(
             msg,
             parse_mode=DEFAULT_PARSE_MODE,
             reply_markup=get_strategy_keyboard(
                 strategy_name,
-                confirmed=_is_runtime_confirmed(ctx, "strategy"),
+                confirmed=confirmed,
             ),
         )
 
@@ -1020,7 +1020,6 @@ async def menu_message_handler(
         MENU_EXCHANGE,
         MENU_MARKET,
         MENU_MARKET_OVERVIEW,
-        MENU_STRATEGY,
         MENU_INTERVAL,
         MENU_STREAM,
         MENU_START,
@@ -1044,11 +1043,13 @@ async def menu_message_handler(
             keyboard=get_dashboard_menu_keyboard(),
         )
     elif action == MENU_TRADING:
+        control = bot_context.runtime_control
+        is_paused = control.is_paused if control is not None else True
         await _show_navigation(
             update=update,
             title="Trading Control",
             description="Kelola stream dan status trading dari satu tempat.",
-            keyboard=get_trading_menu_keyboard(),
+            keyboard=get_trading_menu_keyboard(is_paused=is_paused),
         )
     elif action == MENU_CONFIGURATION:
         await _show_navigation(
@@ -1106,8 +1107,10 @@ async def menu_message_handler(
     elif action == MENU_TEST:
         await test_command(update, context)
     elif action == MENU_STOP:
+        control = bot_context.runtime_control
+        is_paused = control.is_paused if control is not None else True
         await update.message.reply_text(
             "ℹ️ <b>Gunakan Pause Bot untuk menghentikan trading dengan aman.</b>",
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_trading_menu_keyboard(),
+            reply_markup=get_trading_menu_keyboard(is_paused=is_paused),
         )

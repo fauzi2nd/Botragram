@@ -41,11 +41,11 @@ botragram/
 |   |-- backtest_command.py  # Isolated backtest CLI composition dan report
 |   |-- connectivity.py      # Backward-compatible classifier re-export
 |   |-- application.py
-|   |-- dependency_provider.py
-|   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
+|   |-- dependency_provider.py # Composition root dan manual wiring container
 |   |-- environment_provider.py
 |   |-- global_discovery_telemetry.py # Read-only ranked discovery phase/outcome snapshot
 |   |-- lifecycle.py
+|   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
 |   |-- market_type_switch.py # Guarded MarketType/ExecutionPolicy in-process reconfiguration/soft restart
 |   |-- runtime_control.py
 |   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
@@ -100,6 +100,7 @@ botragram/
 |   |   |-- rest.py
 |   |   `-- stream.py
 |   |-- binance/
+|   |   |-- authoritative_futures_client.py # Deterministic authoritative Futures state client
 |   |   |-- client.py          # Binance Spot high-level client
 |   |   |-- futures_client.py # Binance USD(S)-M Futures client
 |   |   |-- futures_user_data_stream.py # Binance private account User Data Stream
@@ -120,47 +121,64 @@ botragram/
 |   |-- autonomous_live_entry_execution.py # Typed protected-entry execution result
 |   |-- autonomous_live_entry_intent.py # Transient authorized LIVE entry intent
 |   |-- autonomous_live_recovery_snapshot.py # Immutable durable recovery status
+|   |-- backtest.py            # Backtest request, trade, metrics, dan result
 |   |-- closed_position_lifecycle.py # One authoritative closed LIVE position lifecycle
-|   |-- operator_exit.py # Durable operator exit operation/attempt/confirmation snapshots
 |   |-- discovery_universe_batch.py # Immutable contiguous ranked discovery window
+|   |-- exchange_symbol_rules.py # Venue precision, lot size, min notional, price filter rules
+|   |-- executable_quote.py    # Proven fresh executable quote snapshot
+|   |-- execution_authorization.py # Human approval challenge/authorization
+|   |-- futures_user_data.py   # Cached private balance and position account facts
 |   |-- live_entry_risk_evaluation.py # Immutable fresh LIVE risk decision
-|   |-- runtime_risk_limits.py # Durable autonomous LIVE runtime entry limits
-|   `-- backtest.py            # Backtest request, trade, metrics, dan result
+|   |-- live_equity_high_water_mark.py # Durable high-water mark for live account drawdown
 |   |-- live_market_stream_identity.py # LIVE ticker subscription identity
 |   |-- live_market_stream_state.py # Immutable per-stream telemetry snapshot
+|   |-- live_portfolio_recovery.py # Portfolio-level recovery observation and facts
+|   |-- live_protection_monitor_state.py # Production protection health state
+|   |-- live_recovered_position_management_authorization.py # Authorized management token
 |   |-- live_runtime_health_snapshot.py # Read-only recovered LIVE health snapshot
-|   |-- live_runtime_position_context.py # One recovered LIVE runtime context
 |   |-- live_runtime_portfolio_context.py # Immutable recovered LIVE portfolio
-|   `-- market_universe_entry.py # Binance-independent ranked market fact
+|   |-- live_runtime_position_context.py # One recovered LIVE runtime context
+|   |-- market_universe_entry.py # Binance-independent ranked market fact
+|   |-- operator_exit.py       # Durable operator exit operation/attempt/confirmation snapshots
+|   `-- runtime_risk_limits.py # Durable autonomous LIVE runtime entry limits
 |-- repositories/              # Persistence interfaces, including lifecycle ledger
+|   |-- autonomous_live_opportunity_claim_repository.py # Atomic single-claim candidate gate
 |   |-- closed_position_lifecycle_repository.py # Durable entry-identity ledger contract
+|   |-- execution_authorization_repository.py # Human paper approval contract
+|   |-- live_equity_high_water_repository.py # Peak balance persistence contract
+|   |-- live_recovery_repository.py # Durable live recovery state contract
 |   |-- operator_exit_repository.py # Restart-safe operator exit ownership contract
-|   `-- runtime_risk_limit_repository.py # Durable current-limit + audit boundary
+|   |-- position_repository.py # Active position persistence contract
+|   |-- runtime_risk_limit_repository.py # Durable current-limit + audit boundary
+|   `-- submission_attempt_repository.py # Incomplete entry attempt contract
 |-- services/
 |   |-- account_service.py
 |   |-- autonomous_live_entry_execution_service.py # Fresh-risk protected network-scoped entry adapter
 |   |-- autonomous_live_entry_intent_service.py # Pure network-scoped intent authorization
 |   |-- autonomous_live_recovery_observability_service.py # Read-only recovery view
-|   |-- live_entry_risk_evaluation_service.py # Authoritative portfolio/balance decision
-|   |-- live_executable_quote_service.py # Shared fresh quote and signal provenance gate
 |   |-- autonomous_paper_execution_service.py # Ranked PAPER candidate execution
 |   |-- backtest_service.py   # Paginated historical candle orchestration
+|   |-- closed_position_lifecycle_service.py # Exact-order gross/fee/net enrichment
 |   |-- execution_authorization_service.py # PAPER human-approval boundary
 |   |-- health_service.py
 |   |-- human_confirmed_paper_execution_service.py # Discovery-to-approval orchestration
-|   |-- market_service.py
-|   |-- live_market_stream_service.py # Production 0/1/N LIVE stream ownership
+|   |-- live_account_drawdown_service.py # Account-level drawdown protection against peak equity
+|   |-- live_entry_risk_evaluation_service.py # Authoritative portfolio/balance decision
+|   |-- live_executable_quote_service.py # Shared fresh quote and signal provenance gate
 |   |-- live_futures_entry_service.py # Protected Futures MARKET entry workflow
 |   |-- live_futures_user_data_cache.py # Thread-safe cached private Futures account state
-|   |-- live_post_entry_recovery_service.py # ACKNOWLEDGED entry recovery core
-|   |-- live_position_protection_service.py # Shared LIVE SL/TP reconciliation
-|   |-- live_protection_monitoring_service.py # Production 0/1/N protection monitor owner
+|   |-- live_market_stream_service.py # Production 0/1/N LIVE stream ownership
+|   |-- live_natural_exit_recovery_service.py # Automatic detection and ledgering of natural SL/TP fills
 |   |-- live_portfolio_recovery_service.py # LIVE portfolio safety recovery
-|   |-- live_runtime_portfolio_reconciliation_service.py # Canonical 0/1/N LIVE management reconciliation
+|   |-- live_position_lifecycle_coordinator.py # Per-symbol mutex coordinator across entry/exit/protection
+|   |-- live_position_protection_service.py # Shared LIVE SL/TP reconciliation
+|   |-- live_post_entry_recovery_service.py # ACKNOWLEDGED entry recovery core
+|   |-- live_protection_monitoring_service.py # Production 0/1/N protection monitor owner
 |   |-- live_runtime_health_service.py # Derived recovered LIVE health aggregation
+|   |-- live_runtime_portfolio_reconciliation_service.py # Canonical 0/1/N LIVE management reconciliation
 |   |-- live_submission_recovery_service.py # GET-only incomplete entry recovery
-|   |-- closed_position_lifecycle_service.py # Exact-order gross/fee/net enrichment
 |   |-- live_trading_performance_service.py # One net outcome per completed lifecycle
+|   |-- market_service.py
 |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |-- operator_exit_service.py # Guarded PAPER/LIVE close + flatten-and-switch orchestration
 |   |-- order_service.py
@@ -171,15 +189,18 @@ botragram/
 |   |-- runtime_reporter.py
 |   |-- runtime_risk_limit_service.py # Durable runtime canary-limit authority
 |   |-- strategy_service.py
-|   |-- volume_ranked_discovery_universe_service.py # Full ranked snapshot, bounded rotation
-|   `-- trading_service.py
+|   |-- trading_service.py
+|   `-- volume_ranked_discovery_universe_service.py # Full ranked snapshot, bounded rotation
 |-- storage/
 |   |-- base/
 |   |-- memory/
 |   `-- sqlite/
-|       |-- database.py
+|       |-- autonomous_live_opportunity_claim_repository.py # Atomic claim persistence
 |       |-- closed_position_lifecycle_repository.py # SQLite lifecycle ledger
+|       |-- database.py
 |       |-- legacy_live_ledger_migration.py # One-time legacy TESTNET LIVE ledger import
+|       |-- live_equity_high_water_repository.py # SQLite high-water mark persistence
+|       |-- live_recovery_repository.py # SQLite live recovery persistence
 |       |-- migrations.py
 |       |-- operator_exit_repository.py # Durable operator exit operations and attempts
 |       |-- runtime_risk_limit_repository.py # Current singleton + append-only audit
@@ -202,8 +223,12 @@ botragram/
 |   |-- keyboards.py
 |   |-- messages.py
 |   |-- operator_exit_commands.py # Explicit chat-bound portfolio exit controls
+|   |-- operator_exit_progress.py # Real-time progress updates during operator exit
+|   |-- query_service.py
 |   |-- risk_limit_commands.py # Paused durable runtime-limit controls
-|   `-- query_service.py
+|   |-- runtime_menu_refresh.py # Mode-aware home menu synchronization
+|   |-- strategy_flatten_switch.py # Guarded flatten-and-strategy soft restart
+|   `-- strategy_switch.py     # Interactive strategy selection and routing
 `-- utils/
     |-- connectivity.py       # Shared transient dependency-failure classification
     |-- datetime.py
