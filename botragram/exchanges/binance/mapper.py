@@ -401,7 +401,10 @@ class BinanceExchangeMapper(BaseExchangeMapper):
             fee=self._to_decimal(payload.get("commission")),
             fee_asset=self._to_string(payload.get("commissionAsset")),
             executed_at=self._to_datetime(payload.get("time")),
-            realized_pnl=self._to_optional_decimal(payload.get("realizedPnl")),
+            realized_pnl=self._to_optional_decimal(
+                payload.get("realizedPnl"),
+                allow_zero=True,
+            ),
         )
 
     @staticmethod
@@ -543,6 +546,8 @@ class BinanceExchangeMapper(BaseExchangeMapper):
     @staticmethod
     def _to_optional_decimal(
         value: object,
+        *,
+        allow_zero: bool = False,
     ) -> Decimal | None:
         """Convert an optional payload value into Decimal."""
         if value is None or value == "":
@@ -550,7 +555,7 @@ class BinanceExchangeMapper(BaseExchangeMapper):
 
         result = Decimal(str(value))
 
-        if result == Decimal("0"):
+        if not allow_zero and result == Decimal("0"):
             return None
 
         return result
