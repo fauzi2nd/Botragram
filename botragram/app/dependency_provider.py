@@ -1059,6 +1059,7 @@ class DependencyProvider:
             ClosedPositionLifecycleService(
                 repository=self.closed_position_lifecycle_repository,
                 trade_history=exchange_client,
+                notification_publisher=self.telegram_bot,
                 pnl_asset=self._settings.market.quote_asset,
             )
             if isinstance(exchange_client, BinanceFuturesExchangeClient)

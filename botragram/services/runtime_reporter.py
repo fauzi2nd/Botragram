@@ -165,7 +165,10 @@ class RuntimeReporter:
         consecutive_failures: int,
         maximum_failures: int,
     ) -> None:
-        """Publish a sanitized runtime failure alert."""
+        """Publish a sanitized runtime failure alert at maximum threshold."""
+        if consecutive_failures < maximum_failures:
+            return
+
         failure_counter = (
             f"<b>Consecutive Cycle Failures:</b> "
             f"{consecutive_failures}/{maximum_failures}\n"

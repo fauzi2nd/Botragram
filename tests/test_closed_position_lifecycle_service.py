@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -21,6 +21,7 @@ from botragram.enums import (
 )
 from botragram.models import (
     ClosedPositionLifecycle,
+    Notification,
     Order,
     Position,
     SubmissionAttempt,
@@ -326,3 +327,69 @@ async def test_incompatible_fee_asset_keeps_lifecycle_pending() -> None:
     ).get_snapshot()
     assert snapshot.closed_trade_count == 0
     assert snapshot.realized_pnl == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_closed_lifecycle_service_publishes_completion_notification() -> None:
+    """Deliver a rich Trade Completed notification upon completion."""
+
+    @dataclass(slots=True, kw_only=True)
+    class _RecordingPublisher:
+        notifications: list[Notification] = field(
+            default_factory=list[Notification],
+        )
+
+        async def publish(self, *, notification: Notification) -> None:
+            self.notifications.append(notification)
+
+    publisher = _RecordingPublisher()
+    repository = MemoryClosedPositionLifecycleRepository()
+    history = ExactTradeHistory(
+        fills_by_order_id={
+            "entry-1": (
+                _fill(
+                    trade_id="entry",
+                    order_id="entry-1",
+                    side=OrderSide.BUY,
+                    fee="0.01",
+                    fee_asset="USDT",
+                    realized_pnl="0",
+                    seconds=1,
+                ),
+            ),
+            "exit-1": (
+                _fill(
+                    trade_id="exit",
+                    order_id="exit-1",
+                    side=OrderSide.SELL,
+                    fee="0.01",
+                    fee_asset="USDT",
+                    realized_pnl="2",
+                    seconds=2,
+                ),
+            ),
+        }
+    )
+    lifecycle_service = ClosedPositionLifecycleService(
+        repository=repository,
+        trade_history=history,
+        notification_publisher=publisher,
+        pnl_asset="USDT",
+    )
+    await lifecycle_service.stage(
+        position=_position(),
+        attempt=_attempt(),
+        exit_order=_exit_order(),
+        close_reason=ClosedPositionReason.TAKE_PROFIT,
+        provenance=ClosedPositionProvenance.PROTECTION_ORDER,
+    )
+
+    await lifecycle_service.complete(entry_client_order_id=_ENTRY_CLIENT_ID)
+
+    assert len(publisher.notifications) == 1
+    notification = publisher.notifications[0]
+    assert "Trade Completed (WIN)" in notification.message
+    assert "Symbol:</b> BTCUSDT" in notification.message
+    assert "Side:</b> LONG" in notification.message
+    assert "Close Reason:</b> TAKE_PROFIT" in notification.message
+    assert "Net Realized PnL:</b> <b>+1.98 USDT" in notification.message

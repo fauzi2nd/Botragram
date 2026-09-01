@@ -6,18 +6,21 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Final, Protocol
 
 from botragram.enums import (
     ClosedPositionProvenance,
     ClosedPositionReason,
+    NotificationType,
     OrderSide,
     OrderStatus,
     PositionSide,
 )
 from botragram.models import (
     ClosedPositionLifecycle,
+    Notification,
     Order,
     PendingClosedPositionLifecycle,
     Position,
@@ -25,8 +28,9 @@ from botragram.models import (
     Trade,
 )
 from botragram.repositories import ClosedPositionLifecycleRepository
+from botragram.telegram.messages import get_trade_completed_message
 
-__all__ = ["ClosedPositionLifecycleService"]
+__all__ = ["ClosedLifecycleNotificationPublisher", "ClosedPositionLifecycleService"]
 
 
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
@@ -46,12 +50,21 @@ class ExactOrderTradeHistory(Protocol):
         ...
 
 
+class ClosedLifecycleNotificationPublisher(Protocol):
+    """Publish trade completion notifications without affecting safety flows."""
+
+    async def publish(self, *, notification: Notification) -> None:
+        """Deliver one notification to listening channels."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class ClosedPositionLifecycleService:
     """Stage closure ownership and enrich it without affecting exchange cleanup."""
 
     repository: ClosedPositionLifecycleRepository
     trade_history: ExactOrderTradeHistory
+    notification_publisher: ClosedLifecycleNotificationPublisher | None = None
     pnl_asset: str = "USDT"
 
     def __post_init__(self) -> None:
@@ -172,16 +185,37 @@ class ClosedPositionLifecycleService:
             start=_DECIMAL_ZERO,
         )
         fee = sum((fill.fee for fill in all_fills), start=_DECIMAL_ZERO)
-        await self.repository.complete(
-            lifecycle=ClosedPositionLifecycle(
-                ownership=record,
-                gross_realized_pnl=gross_realized_pnl,
-                fee=fee,
-                fee_asset=fee_asset,
-                net_pnl=gross_realized_pnl - fee,
-                closed_at=max(fill.executed_at for fill in exit_fills),
-            )
+        completed = ClosedPositionLifecycle(
+            ownership=record,
+            gross_realized_pnl=gross_realized_pnl,
+            fee=fee,
+            fee_asset=fee_asset,
+            net_pnl=gross_realized_pnl - fee,
+            closed_at=max(fill.executed_at for fill in exit_fills),
         )
+        await self.repository.complete(lifecycle=completed)
+
+        publisher = self.notification_publisher
+        if publisher is not None:
+            try:
+                message = get_trade_completed_message(
+                    lifecycle=completed,
+                    entry_fills=entry_fills,
+                    exit_fills=exit_fills,
+                )
+                await publisher.publish(
+                    notification=Notification(
+                        title=f"Trade Completed: {record.symbol}",
+                        message=message,
+                        level=NotificationType.INFO,
+                        created_at=datetime.now(timezone.utc),
+                    )
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Failed to deliver trade completion notification for %s",
+                    record.symbol,
+                )
 
     async def complete_best_effort(self, *, entry_client_order_id: str) -> None:
         """Enrich performance without masking completed safety cleanup."""

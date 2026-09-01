@@ -149,9 +149,20 @@ async def _run_runtime_reporter_test() -> None:
     await reporter.on_started()
     await reporter.on_cycle_completed(result=result)
     await reporter.on_cycle_completed(result=result)
+    assert len(publisher.notifications) == 2
+
+    # Intermediate transient failure should be suppressed (no spam)
     await reporter.on_cycle_failed(
         error=RuntimeError("API_SECRET=must-not-leak"),
         consecutive_failures=1,
+        maximum_failures=3,
+    )
+    assert len(publisher.notifications) == 2
+
+    # Terminal failure at maximum threshold (3/3) must be published
+    await reporter.on_cycle_failed(
+        error=RuntimeError("API_SECRET=must-not-leak"),
+        consecutive_failures=3,
         maximum_failures=3,
     )
     await reporter.on_stopped()
@@ -162,6 +173,7 @@ async def _run_runtime_reporter_test() -> None:
     assert "HEALTHY" in messages
     assert "Completed Cycles:</b> 2" in messages
     assert "RuntimeError" in messages
+    assert "Consecutive Cycle Failures:</b> 3/3" in messages
     assert "must-not-leak" not in messages
     assert publisher.notifications[2].level is NotificationType.ERROR
 

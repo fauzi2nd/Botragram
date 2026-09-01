@@ -1456,12 +1456,11 @@ class TradingRunner:
                         consecutive_failures,
                         self.maximum_consecutive_failures,
                     )
-                    await self._notify_cycle_failed(
-                        error=error,
-                        consecutive_failures=consecutive_failures,
-                    )
-
                     if consecutive_failures >= self.maximum_consecutive_failures:
+                        await self._notify_cycle_failed(
+                            error=error,
+                            consecutive_failures=consecutive_failures,
+                        )
                         raise
 
                     await self._wait_for_delay(
@@ -1525,10 +1524,6 @@ class TradingRunner:
             "reason=%s error_type=%s entry_enabled=false",
             reason,
             type(error).__name__,
-        )
-        await self._notify_cycle_failed(
-            error=error,
-            consecutive_failures=1,
         )
 
         retry_attempt = 0
@@ -1771,10 +1766,6 @@ class TradingRunner:
             type(error).__name__,
             error,
         )
-        await self._notify_cycle_failed(
-            error=error,
-            consecutive_failures=1,
-        )
 
         if not recovery_allowed:
             _LOGGER.critical(
@@ -1782,9 +1773,17 @@ class TradingRunner:
                 "error_type=%s",
                 type(error).__name__,
             )
+            await self._notify_cycle_failed(
+                error=error,
+                consecutive_failures=self.maximum_consecutive_failures,
+            )
             return False, attempts_used
 
         if self.autonomous_live_recovery_provider is None:
+            await self._notify_cycle_failed(
+                error=error,
+                consecutive_failures=self.maximum_consecutive_failures,
+            )
             return False, attempts_used
 
         attempt = attempts_used

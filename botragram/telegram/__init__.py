@@ -25,6 +25,7 @@ from botragram.telegram.messages import (
     get_positions_message,
     get_settings_message,
     get_status_message,
+    get_trade_completed_message,
     get_welcome_message,
 )
 
@@ -36,6 +37,7 @@ __all__ = [
     "get_positions_message",
     "get_settings_message",
     "get_status_message",
+    "get_trade_completed_message",
     "get_welcome_message",
     "register_handlers",
 ]

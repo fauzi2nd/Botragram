@@ -37,6 +37,7 @@ from botragram.enums import (
 )
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
+    ClosedPositionLifecycle,
     ExecutionAuthorization,
     ExecutionAuthorizationOutcome,
     LiveRuntimeHealthSnapshot,
@@ -80,6 +81,7 @@ __all__ = [
     "get_startup_configuration_message",
     "get_test_message",
     "get_tpsl_ratio_message",
+    "get_trade_completed_message",
     "get_welcome_message",
 ]
 
@@ -616,6 +618,82 @@ def get_paper_exit_message(
         f"<b>Available Balance:</b> "
         f"{format_currency(available_balance, symbol='USDT')}\n"
         f"<b>Reason:</b> {escape(reason)}"
+    )
+
+
+def get_trade_completed_message(
+    *,
+    lifecycle: ClosedPositionLifecycle,
+    entry_fills: Sequence[Trade] | None = None,
+    exit_fills: Sequence[Trade] | None = None,
+) -> str:
+    """Return a detailed live trade completion summary formatted for Telegram."""
+    ownership = lifecycle.ownership
+    pnl = lifecycle.net_pnl
+    pnl_sign = "+" if pnl > Decimal("0") else ""
+    pnl_icon = "🟢" if pnl > Decimal("0") else ("🔴" if pnl < Decimal("0") else "⚪")
+    outcome = (
+        "WIN"
+        if pnl > Decimal("0")
+        else ("LOSS" if pnl < Decimal("0") else "BREAK-EVEN")
+    )
+
+    entry_price_str = "N/A"
+    exit_price_str = "N/A"
+    quantity_str = "N/A"
+
+    if entry_fills:
+        total_qty = sum((f.quantity for f in entry_fills), start=Decimal("0"))
+        if total_qty > Decimal("0"):
+            total_cost = sum(
+                (f.price * f.quantity for f in entry_fills),
+                start=Decimal("0"),
+            )
+            avg_entry = total_cost / total_qty
+            entry_price_str = format_currency(avg_entry, symbol="USDT")
+            quantity_str = (
+                f"{total_qty.normalize():f}"
+                if total_qty == total_qty.to_integral()
+                else f"{total_qty}"
+            )
+
+    if exit_fills:
+        total_qty = sum((f.quantity for f in exit_fills), start=Decimal("0"))
+        if total_qty > Decimal("0"):
+            total_revenue = sum(
+                (f.price * f.quantity for f in exit_fills),
+                start=Decimal("0"),
+            )
+            avg_exit = total_revenue / total_qty
+            exit_price_str = format_currency(avg_exit, symbol="USDT")
+
+    formatted_gross = format_currency(
+        lifecycle.gross_realized_pnl,
+        symbol=lifecycle.fee_asset,
+    )
+    formatted_fee = format_currency(
+        lifecycle.fee,
+        symbol=lifecycle.fee_asset,
+    )
+    formatted_net = format_currency(
+        lifecycle.net_pnl,
+        symbol=lifecycle.fee_asset,
+    )
+
+    formatted_closed_at = escape(lifecycle.closed_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
+
+    return (
+        f"{pnl_icon} <b>Trade Completed ({outcome})</b>\n\n"
+        f"<b>Symbol:</b> {escape(ownership.symbol)}\n"
+        f"<b>Side:</b> {escape(ownership.position_side.value.upper())}\n"
+        f"<b>Close Reason:</b> {escape(ownership.close_reason.value.upper())}\n"
+        f"<b>Quantity:</b> {escape(quantity_str)}\n"
+        f"<b>Entry Price:</b> {entry_price_str}\n"
+        f"<b>Exit Price:</b> {exit_price_str}\n"
+        f"<b>Gross PnL:</b> {formatted_gross}\n"
+        f"<b>Fee:</b> {formatted_fee}\n"
+        f"<b>Net Realized PnL:</b> <b>{pnl_sign}{formatted_net}</b>\n"
+        f"<b>Closed At:</b> {formatted_closed_at}"
     )
 
 
