@@ -131,6 +131,8 @@ from botragram.constants.strategy import (
     DEFAULT_COOLDOWN_CANDLES,
     DEFAULT_MAX_SIGNAL_AGE,
     DEFAULT_MIN_SIGNAL_STRENGTH,
+    get_strategy_default_exit_rates,
+    get_strategy_default_interval,
 )
 from botragram.constants.telegram import (
     CMD_POSITIONS,
@@ -279,6 +281,8 @@ __all__ = [
     "DEFAULT_COOLDOWN_CANDLES",
     "DEFAULT_MAX_SIGNAL_AGE",
     "DEFAULT_MIN_SIGNAL_STRENGTH",
+    "get_strategy_default_exit_rates",
+    "get_strategy_default_interval",
     # Telegram
     "CMD_POSITIONS",
     "CMD_SETTINGS",

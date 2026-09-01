@@ -31,6 +31,7 @@ from botragram.app import (
 )
 from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.config import Settings
+from botragram.constants import get_strategy_default_interval
 from botragram.enums import ExecutionPolicy, MarketType, StrategyType, TradeMode
 from botragram.utils.logger import configure_logging, shutdown_logging
 from botragram.utils.retry import CappedExponentialBackoff
@@ -318,8 +319,13 @@ async def main() -> None:
                 continue
 
             if isinstance(requested_restart, StrategyType):
+                default_interval = get_strategy_default_interval(requested_restart)
                 settings = replace(
                     settings,
+                    market=replace(
+                        settings.market,
+                        interval=default_interval,
+                    ),
                     strategy=replace(
                         settings.strategy,
                         strategy_type=requested_restart,
@@ -328,9 +334,10 @@ async def main() -> None:
                 settings_manager.validate(settings=settings)
                 session_restart_target = requested_restart
                 _LOGGER.info(
-                    "Application restarting with strategy: %s; "
+                    "Application restarting with strategy: %s (interval=%s); "
                     "next_session_paused=true",
                     requested_restart.value,
+                    default_interval.value,
                 )
                 continue
 

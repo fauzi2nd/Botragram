@@ -22,7 +22,8 @@ from decimal import Decimal
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import StrategyType
+from botragram.constants.strategy import get_strategy_default_interval
+from botragram.enums import Interval, StrategyType
 
 __all__ = [
     "StrategySettings",
@@ -41,6 +42,11 @@ class StrategySettings:
     """Settings controlling indicator periods and strategy behavior."""
 
     strategy_type: StrategyType = StrategyType.EMA_CROSS
+
+    @property
+    def default_interval(self) -> Interval:
+        """Return the default optimal candlestick interval for this strategy."""
+        return get_strategy_default_interval(self.strategy_type)
 
     # ============================================================================
     # EMA Cross

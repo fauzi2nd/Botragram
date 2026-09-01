@@ -244,7 +244,14 @@ class RiskEngine:
                     self.settings.ema_scalping_stop_loss_pct,
                     self.settings.ema_scalping_take_profit_pct,
                 )
-            case StrategyType.EMA_CROSS:
+            case (
+                StrategyType.EMA_CROSS
+                | StrategyType.EMA_RSI
+                | StrategyType.ICHIMOKU_CLOUD
+                | StrategyType.SUPERTREND
+                | StrategyType.ADX_TREND
+                | StrategyType.BOLLINGER_BREAKOUT
+            ):
                 return (
                     self.settings.ema_cross_stop_loss_pct,
                     self.settings.ema_cross_take_profit_pct,

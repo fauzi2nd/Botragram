@@ -24,6 +24,10 @@ from html import escape
 # Local Imports
 # =============================================================================
 from botragram.constants.app import APP_NAME, APP_VERSION
+from botragram.constants.strategy import (
+    get_strategy_default_exit_rates,
+    get_strategy_default_interval,
+)
 from botragram.enums import (
     AuthorizationStatus,
     LiveRuntimeHealthStatus,
@@ -783,6 +787,15 @@ def get_strategy_message(
         case _:
             lines.append(f"<b>Fast EMA period:</b> {fast_period}")
             lines.append(f"<b>Slow EMA period:</b> {slow_period}")
+
+    if strategy_type is not None:
+        opt_interval = get_strategy_default_interval(strategy_type)
+        sl_pct, tp_pct = get_strategy_default_exit_rates(strategy_type)
+        lines.append(f"<b>Auto Timeframe:</b> <code>{opt_interval.value}</code>")
+        lines.append(
+            f"<b>Target RRR:</b> <code>1:2</code> "
+            f"(SL {sl_pct * 100:.1f}% | TP {tp_pct * 100:.1f}%)"
+        )
 
     return "\n".join(lines)
 

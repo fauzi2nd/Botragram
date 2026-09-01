@@ -434,3 +434,60 @@ def test_strategy_rejects_non_chronological_candles() -> None:
 
     with pytest.raises(ValueError, match="ordered from oldest to newest"):
         strategy.generate_signal(candles=unordered)
+
+
+def test_strategy_default_intervals_and_exit_rates() -> None:
+    """Verify each strategy maps to its optimal timeframe and RRR."""
+    from botragram.constants.strategy import (
+        get_strategy_default_exit_rates,
+        get_strategy_default_interval,
+    )
+    from botragram.enums import Interval
+
+    scalping_types = (
+        StrategyType.EMA_SCALPING,
+        StrategyType.RSI_BB_SCALPING,
+        StrategyType.VWAP_BREAKOUT,
+    )
+    for st in scalping_types:
+        assert get_strategy_default_interval(st) is Interval.M5
+        sl, tp = get_strategy_default_exit_rates(st)
+        assert sl == Decimal("0.005")
+        assert tp == Decimal("0.01")
+        assert tp / sl >= Decimal("2")
+
+    trend_types = (
+        StrategyType.EMA_CROSS,
+        StrategyType.EMA_RSI,
+        StrategyType.ICHIMOKU_CLOUD,
+        StrategyType.SUPERTREND,
+        StrategyType.ADX_TREND,
+        StrategyType.BOLLINGER_BREAKOUT,
+    )
+    for st in trend_types:
+        assert get_strategy_default_interval(st) is Interval.M15
+        sl, tp = get_strategy_default_exit_rates(st)
+        assert sl == Decimal("0.015")
+        assert tp == Decimal("0.03")
+        assert tp / sl >= Decimal("2")
+
+    assert get_strategy_default_interval(StrategyType.MACD_SWING) is Interval.H1
+    sl_m, tp_m = get_strategy_default_exit_rates(StrategyType.MACD_SWING)
+    assert sl_m == Decimal("0.025")
+    assert tp_m == Decimal("0.05")
+    assert tp_m / sl_m >= Decimal("2")
+
+
+def test_strategy_settings_default_interval() -> None:
+    """Verify StrategySettings exposes default_interval."""
+    from botragram.config.strategy_settings import StrategySettings
+    from botragram.enums import Interval
+
+    settings_scalping = StrategySettings(strategy_type=StrategyType.RSI_BB_SCALPING)
+    assert settings_scalping.default_interval is Interval.M5
+
+    settings_trend = StrategySettings(strategy_type=StrategyType.ICHIMOKU_CLOUD)
+    assert settings_trend.default_interval is Interval.M15
+
+    settings_swing = StrategySettings(strategy_type=StrategyType.MACD_SWING)
+    assert settings_swing.default_interval is Interval.H1
