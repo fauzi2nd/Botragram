@@ -457,7 +457,6 @@ def test_strategy_default_intervals_and_exit_rates() -> None:
         assert tp / sl >= Decimal("2")
 
     trend_types = (
-        StrategyType.EMA_CROSS,
         StrategyType.EMA_RSI,
         StrategyType.ICHIMOKU_CLOUD,
         StrategyType.SUPERTREND,
@@ -470,6 +469,12 @@ def test_strategy_default_intervals_and_exit_rates() -> None:
         assert sl == Decimal("0.015")
         assert tp == Decimal("0.03")
         assert tp / sl >= Decimal("2")
+
+    assert get_strategy_default_interval(StrategyType.EMA_CROSS) is Interval.M15
+    sl_ema, tp_ema = get_strategy_default_exit_rates(StrategyType.EMA_CROSS)
+    assert sl_ema == Decimal("0.02")
+    assert tp_ema == Decimal("0.04")
+    assert tp_ema / sl_ema >= Decimal("2")
 
     assert get_strategy_default_interval(StrategyType.MACD_SWING) is Interval.H1
     sl_m, tp_m = get_strategy_default_exit_rates(StrategyType.MACD_SWING)

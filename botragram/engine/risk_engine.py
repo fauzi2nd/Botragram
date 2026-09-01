@@ -241,20 +241,29 @@ class RiskEngine:
                 | StrategyType.VWAP_BREAKOUT
             ):
                 return (
-                    self.settings.ema_scalping_stop_loss_pct,
-                    self.settings.ema_scalping_take_profit_pct,
+                    self.settings.scalping_stop_loss_pct,
+                    self.settings.scalping_take_profit_pct,
+                )
+            case StrategyType.EMA_CROSS:
+                return (
+                    self.settings.ema_cross_stop_loss_pct,
+                    self.settings.ema_cross_take_profit_pct,
                 )
             case (
-                StrategyType.EMA_CROSS
-                | StrategyType.EMA_RSI
+                StrategyType.EMA_RSI
                 | StrategyType.ICHIMOKU_CLOUD
                 | StrategyType.SUPERTREND
                 | StrategyType.ADX_TREND
                 | StrategyType.BOLLINGER_BREAKOUT
             ):
                 return (
-                    self.settings.ema_cross_stop_loss_pct,
-                    self.settings.ema_cross_take_profit_pct,
+                    self.settings.trend_stop_loss_pct,
+                    self.settings.trend_take_profit_pct,
+                )
+            case StrategyType.MACD_SWING:
+                return (
+                    self.settings.swing_stop_loss_pct,
+                    self.settings.swing_take_profit_pct,
                 )
             case _:
                 return self.settings.stop_loss_pct, self.settings.take_profit_pct

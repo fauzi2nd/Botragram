@@ -221,6 +221,38 @@ class SettingsManager:
         """Load validated strategy-specific risk settings."""
         environment = self._environment_provider
         return RiskSettings(
+            scalping_stop_loss_pct=self._parse_decimal(
+                raw_value=environment.get_scalping_stop_loss_pct(),
+                setting_name="SCALPING_STOP_LOSS_PCT",
+            ),
+            scalping_take_profit_pct=self._parse_decimal(
+                raw_value=environment.get_scalping_take_profit_pct(),
+                setting_name="SCALPING_TAKE_PROFIT_PCT",
+            ),
+            trend_stop_loss_pct=self._parse_decimal(
+                raw_value=environment.get_trend_stop_loss_pct(),
+                setting_name="TREND_STOP_LOSS_PCT",
+            ),
+            trend_take_profit_pct=self._parse_decimal(
+                raw_value=environment.get_trend_take_profit_pct(),
+                setting_name="TREND_TAKE_PROFIT_PCT",
+            ),
+            swing_stop_loss_pct=self._parse_decimal(
+                raw_value=environment.get_swing_stop_loss_pct(),
+                setting_name="SWING_STOP_LOSS_PCT",
+            ),
+            swing_take_profit_pct=self._parse_decimal(
+                raw_value=environment.get_swing_take_profit_pct(),
+                setting_name="SWING_TAKE_PROFIT_PCT",
+            ),
+            stop_loss_pct=self._parse_decimal(
+                raw_value=environment.get_stop_loss_pct(),
+                setting_name="STOP_LOSS_PCT",
+            ),
+            take_profit_pct=self._parse_decimal(
+                raw_value=environment.get_take_profit_pct(),
+                setting_name="TAKE_PROFIT_PCT",
+            ),
             ema_cross_stop_loss_pct=self._parse_decimal(
                 raw_value=environment.get_ema_cross_stop_loss_pct(),
                 setting_name="EMA_CROSS_STOP_LOSS_PCT",

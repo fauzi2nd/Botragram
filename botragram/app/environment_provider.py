@@ -74,12 +74,20 @@ from botragram.constants.env import (
     ENV_OPENAI_API_KEY,
     ENV_OPENROUTER_API_KEY,
     ENV_RISK_PER_TRADE_PCT,
+    ENV_SCALPING_STOP_LOSS_PCT,
+    ENV_SCALPING_TAKE_PROFIT_PCT,
+    ENV_STOP_LOSS_PCT,
     ENV_STRATEGY_TYPE,
+    ENV_SWING_STOP_LOSS_PCT,
+    ENV_SWING_TAKE_PROFIT_PCT,
+    ENV_TAKE_PROFIT_PCT,
     ENV_TELEGRAM_CHAT_ID,
     ENV_TELEGRAM_TOKEN,
     ENV_TELEGRAM_TOKEN_LEGACY,
     ENV_TRADE_MODE,
     ENV_TRADE_MODE_LEGACY,
+    ENV_TREND_STOP_LOSS_PCT,
+    ENV_TREND_TAKE_PROFIT_PCT,
 )
 from botragram.enums import EnvironmentProfile
 
@@ -443,6 +451,66 @@ class EnvironmentProvider:
         """Return the optional configured trading strategy type."""
         return self._get_var(ENV_STRATEGY_TYPE)
 
+    def get_scalping_stop_loss_pct(self) -> str:
+        """Return the scalping stop-loss ratio."""
+        return self._get_var(
+            ENV_SCALPING_STOP_LOSS_PCT,
+            ENV_EMA_SCALPING_STOP_LOSS_PCT,
+            default="0.005",
+        )
+
+    def get_scalping_take_profit_pct(self) -> str:
+        """Return the scalping take-profit ratio."""
+        return self._get_var(
+            ENV_SCALPING_TAKE_PROFIT_PCT,
+            ENV_EMA_SCALPING_TAKE_PROFIT_PCT,
+            default="0.01",
+        )
+
+    def get_trend_stop_loss_pct(self) -> str:
+        """Return the trend stop-loss ratio."""
+        return self._get_var(
+            ENV_TREND_STOP_LOSS_PCT,
+            ENV_EMA_CROSS_STOP_LOSS_PCT,
+            default="0.015",
+        )
+
+    def get_trend_take_profit_pct(self) -> str:
+        """Return the trend take-profit ratio."""
+        return self._get_var(
+            ENV_TREND_TAKE_PROFIT_PCT,
+            ENV_EMA_CROSS_TAKE_PROFIT_PCT,
+            default="0.03",
+        )
+
+    def get_swing_stop_loss_pct(self) -> str:
+        """Return the swing stop-loss ratio."""
+        return self._get_var(
+            ENV_SWING_STOP_LOSS_PCT,
+            default="0.025",
+        )
+
+    def get_swing_take_profit_pct(self) -> str:
+        """Return the swing take-profit ratio."""
+        return self._get_var(
+            ENV_SWING_TAKE_PROFIT_PCT,
+            default="0.05",
+        )
+
+    def get_stop_loss_pct(self) -> str:
+        """Return the global/fallback stop-loss ratio."""
+        return self._get_var(
+            ENV_STOP_LOSS_PCT,
+            default="0.02",
+        )
+
+    def get_take_profit_pct(self) -> str:
+        """Return the global/fallback take-profit ratio."""
+        return self._get_var(
+            ENV_TAKE_PROFIT_PCT,
+            default="0.04",
+        )
+
     def get_ema_cross_stop_loss_pct(self) -> str:
         """Return the EMA cross stop-loss ratio."""
         return self._get_var(
@@ -458,18 +526,12 @@ class EnvironmentProvider:
         )
 
     def get_ema_scalping_stop_loss_pct(self) -> str:
-        """Return the EMA scalping stop-loss ratio."""
-        return self._get_var(
-            ENV_EMA_SCALPING_STOP_LOSS_PCT,
-            default="0.005",
-        )
+        """Return the EMA scalping stop-loss ratio (legacy alias)."""
+        return self.get_scalping_stop_loss_pct()
 
     def get_ema_scalping_take_profit_pct(self) -> str:
-        """Return the EMA scalping take-profit ratio."""
-        return self._get_var(
-            ENV_EMA_SCALPING_TAKE_PROFIT_PCT,
-            default="0.01",
-        )
+        """Return the EMA scalping take-profit ratio (legacy alias)."""
+        return self.get_scalping_take_profit_pct()
 
     def get_max_open_positions(self) -> str:
         """Return the configured limit for concurrently open positions."""

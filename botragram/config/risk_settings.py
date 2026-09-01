@@ -46,15 +46,21 @@ class RiskSettings:
     max_executable_quote_age_ms: int = 1_000
     max_spread_bps: Decimal = Decimal("20")
 
-    # Exit
+    # Exit - Category Specific Defaults
+    scalping_stop_loss_pct: Decimal = Decimal("0.005")
+    scalping_take_profit_pct: Decimal = Decimal("0.01")
+    trend_stop_loss_pct: Decimal = Decimal("0.015")
+    trend_take_profit_pct: Decimal = Decimal("0.03")
+    swing_stop_loss_pct: Decimal = Decimal("0.025")
+    swing_take_profit_pct: Decimal = Decimal("0.05")
+
+    # Global / Fallback exits
     stop_loss_pct: Decimal = Decimal("0.02")
     take_profit_pct: Decimal = Decimal("0.04")
 
-    # EMA scalping exits
+    # Legacy alias exits (retained for backward compatibility)
     ema_scalping_stop_loss_pct: Decimal = Decimal("0.005")
     ema_scalping_take_profit_pct: Decimal = Decimal("0.01")
-
-    # EMA cross exits
     ema_cross_stop_loss_pct: Decimal = Decimal("0.02")
     ema_cross_take_profit_pct: Decimal = Decimal("0.04")
 
@@ -63,6 +69,12 @@ class RiskSettings:
         ratios = (
             ("risk_per_trade_pct", self.risk_per_trade_pct),
             ("max_drawdown_pct", self.max_drawdown_pct),
+            ("scalping_stop_loss_pct", self.scalping_stop_loss_pct),
+            ("scalping_take_profit_pct", self.scalping_take_profit_pct),
+            ("trend_stop_loss_pct", self.trend_stop_loss_pct),
+            ("trend_take_profit_pct", self.trend_take_profit_pct),
+            ("swing_stop_loss_pct", self.swing_stop_loss_pct),
+            ("swing_take_profit_pct", self.swing_take_profit_pct),
             ("stop_loss_pct", self.stop_loss_pct),
             ("take_profit_pct", self.take_profit_pct),
             ("ema_scalping_stop_loss_pct", self.ema_scalping_stop_loss_pct),
@@ -95,6 +107,15 @@ class RiskSettings:
 
         if self.take_profit_pct <= self.stop_loss_pct:
             raise ValueError("Global take-profit must exceed global stop-loss")
+
+        if self.scalping_take_profit_pct <= self.scalping_stop_loss_pct:
+            raise ValueError("Scalping take-profit must exceed scalping stop-loss")
+
+        if self.trend_take_profit_pct <= self.trend_stop_loss_pct:
+            raise ValueError("Trend take-profit must exceed trend stop-loss")
+
+        if self.swing_take_profit_pct <= self.swing_stop_loss_pct:
+            raise ValueError("Swing take-profit must exceed swing stop-loss")
 
         if self.ema_scalping_take_profit_pct <= self.ema_scalping_stop_loss_pct:
             raise ValueError(

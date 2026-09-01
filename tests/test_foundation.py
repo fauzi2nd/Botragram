@@ -92,6 +92,14 @@ _ENVIRONMENT_KEYS = (
     "EMA_CROSS_TAKE_PROFIT_PCT",
     "EMA_SCALPING_STOP_LOSS_PCT",
     "EMA_SCALPING_TAKE_PROFIT_PCT",
+    "SCALPING_STOP_LOSS_PCT",
+    "SCALPING_TAKE_PROFIT_PCT",
+    "TREND_STOP_LOSS_PCT",
+    "TREND_TAKE_PROFIT_PCT",
+    "SWING_STOP_LOSS_PCT",
+    "SWING_TAKE_PROFIT_PCT",
+    "STOP_LOSS_PCT",
+    "TAKE_PROFIT_PCT",
     "DISCOVERY_BATCH_SIZE",
     "DISCOVERY_CADENCE_SECONDS",
     "DISCOVERY_UNIVERSE_LIMIT",
@@ -634,6 +642,36 @@ def test_settings_manager_loads_ema_cross_risk_profile(
 
     assert settings.ema_cross_stop_loss_pct == Decimal("0.001")
     assert settings.ema_cross_take_profit_pct == Decimal("0.0015")
+
+
+def test_settings_manager_loads_category_risk_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Load category-based risk overrides for scalping, trend, and swing."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("SCALPING_STOP_LOSS_PCT", "0.003")
+    monkeypatch.setenv("SCALPING_TAKE_PROFIT_PCT", "0.008")
+    monkeypatch.setenv("TREND_STOP_LOSS_PCT", "0.012")
+    monkeypatch.setenv("TREND_TAKE_PROFIT_PCT", "0.025")
+    monkeypatch.setenv("SWING_STOP_LOSS_PCT", "0.03")
+    monkeypatch.setenv("SWING_TAKE_PROFIT_PCT", "0.06")
+    monkeypatch.setenv("STOP_LOSS_PCT", "0.015")
+    monkeypatch.setenv("TAKE_PROFIT_PCT", "0.035")
+
+    settings = SettingsManager(environment_provider=provider).load_risk_settings()
+
+    assert settings.scalping_stop_loss_pct == Decimal("0.003")
+    assert settings.scalping_take_profit_pct == Decimal("0.008")
+    assert settings.trend_stop_loss_pct == Decimal("0.012")
+    assert settings.trend_take_profit_pct == Decimal("0.025")
+    assert settings.swing_stop_loss_pct == Decimal("0.03")
+    assert settings.swing_take_profit_pct == Decimal("0.06")
+    assert settings.stop_loss_pct == Decimal("0.015")
+    assert settings.take_profit_pct == Decimal("0.035")
 
 
 def test_settings_manager_preserves_ema_cross_compatibility_defaults(

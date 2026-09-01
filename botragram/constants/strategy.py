@@ -82,9 +82,10 @@ def get_strategy_default_exit_rates(
             return (Decimal("0.005"), Decimal("0.01"))
         case StrategyType.MACD_SWING:
             return (Decimal("0.025"), Decimal("0.05"))
+        case StrategyType.EMA_CROSS:
+            return (Decimal("0.02"), Decimal("0.04"))
         case (
-            StrategyType.EMA_CROSS
-            | StrategyType.EMA_RSI
+            StrategyType.EMA_RSI
             | StrategyType.ICHIMOKU_CLOUD
             | StrategyType.SUPERTREND
             | StrategyType.ADX_TREND

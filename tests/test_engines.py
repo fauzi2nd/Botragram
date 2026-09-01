@@ -215,6 +215,55 @@ def test_risk_engine_preserves_global_exit_fallback(
     assert result.metrics.take_profit == Decimal("106")
 
 
+def test_risk_engine_exit_rates_per_strategy_category() -> None:
+    """Verify RiskEngine calculates calibrated SL/TP for each strategy category."""
+    custom_risk = RiskSettings(
+        scalping_stop_loss_pct=Decimal("0.006"),
+        scalping_take_profit_pct=Decimal("0.012"),
+        trend_stop_loss_pct=Decimal("0.018"),
+        trend_take_profit_pct=Decimal("0.036"),
+        swing_stop_loss_pct=Decimal("0.024"),
+        swing_take_profit_pct=Decimal("0.048"),
+    )
+    engine = RiskEngine(settings=custom_risk)
+
+    # Scalping
+    res_scalp = engine.evaluate(
+        signal=_create_signal(
+            strategy_name=StrategyType.RSI_BB_SCALPING.value,
+            price=Decimal("100"),
+        ),
+        account_balance=Decimal("1000"),
+        current_drawdown_pct=Decimal("0"),
+    )
+    assert res_scalp.metrics.stop_loss == Decimal("99.4")  # -0.6%
+    assert res_scalp.metrics.take_profit == Decimal("101.2")  # +1.2%
+
+    # Trend
+    res_trend = engine.evaluate(
+        signal=_create_signal(
+            strategy_name=StrategyType.ICHIMOKU_CLOUD.value,
+            price=Decimal("100"),
+        ),
+        account_balance=Decimal("1000"),
+        current_drawdown_pct=Decimal("0"),
+    )
+    assert res_trend.metrics.stop_loss == Decimal("98.2")  # -1.8%
+    assert res_trend.metrics.take_profit == Decimal("103.6")  # +3.6%
+
+    # Swing
+    res_swing = engine.evaluate(
+        signal=_create_signal(
+            strategy_name=StrategyType.MACD_SWING.value,
+            price=Decimal("100"),
+        ),
+        account_balance=Decimal("1000"),
+        current_drawdown_pct=Decimal("0"),
+    )
+    assert res_swing.metrics.stop_loss == Decimal("97.6")  # -2.4%
+    assert res_swing.metrics.take_profit == Decimal("104.8")  # +4.8%
+
+
 @pytest.mark.parametrize(
     ("signal_type", "drawdown", "reason"),
     (
