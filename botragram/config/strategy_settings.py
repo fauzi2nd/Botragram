@@ -123,15 +123,15 @@ class StrategySettings:
     # High Confluence Exhaustion
     # =========================================================================
     hce_bb_period: int = 20
-    hce_bb_std_dev: Decimal = Decimal("2.5")
+    hce_bb_std_dev: Decimal = Decimal("2.0")
     hce_rsi_period: int = 14
-    hce_rsi_oversold: Decimal = Decimal("20.0")
-    hce_rsi_overbought: Decimal = Decimal("80.0")
+    hce_rsi_oversold: Decimal = Decimal("28.0")
+    hce_rsi_overbought: Decimal = Decimal("72.0")
     hce_volume_period: int = 20
     hce_volume_multiplier: Decimal = Decimal("1.3")
     hce_adx_period: int = 14
-    hce_adx_max_threshold: Decimal = Decimal("35.0")
-    hce_trend_period: int = 200
+    hce_adx_max_threshold: Decimal = Decimal("42.0")
+    hce_trend_period: int = 50
     hce_swing_lookback: int = 10
 
     def __post_init__(self) -> None:

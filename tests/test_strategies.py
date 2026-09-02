@@ -532,8 +532,8 @@ def test_strategy_default_intervals_and_exit_rates() -> None:
     sl_hce, tp_hce = get_strategy_default_exit_rates(
         StrategyType.HIGH_CONFLUENCE_EXHAUSTION
     )
-    assert sl_hce == Decimal("0.012")
-    assert tp_hce == Decimal("0.010")
+    assert sl_hce == Decimal("0.010")
+    assert tp_hce == Decimal("0.015")
 
 
 def test_strategy_settings_default_interval() -> None:

@@ -77,7 +77,7 @@ def get_strategy_default_exit_rates(
     """Return the default (stop_loss_pct, take_profit_pct) for a strategy."""
     match strategy_type:
         case StrategyType.HIGH_CONFLUENCE_EXHAUSTION:
-            return (Decimal("0.012"), Decimal("0.010"))
+            return (Decimal("0.010"), Decimal("0.015"))
         case StrategyType.CHOCH_FVG:
             return (Decimal("0.01"), Decimal("0.025"))
         case (

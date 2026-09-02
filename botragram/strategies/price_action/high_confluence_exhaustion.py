@@ -45,16 +45,22 @@ __all__ = [
 # =============================================================================
 _DECIMAL_ZERO: Decimal = Decimal("0")
 _DECIMAL_ONE: Decimal = Decimal("1")
-_DECIMAL_BASE_CONFIDENCE: Decimal = Decimal("0.70")
-_DECIMAL_BONUS: Decimal = Decimal("0.10")
-_DECIMAL_MAX_CONFIDENCE: Decimal = Decimal("1.00")
+_DECIMAL_BASE_CONFIDENCE: Decimal = Decimal("0.65")
+_DECIMAL_MIN_CONFIDENCE: Decimal = Decimal("0.60")
+_DECIMAL_MAX_CONFIDENCE: Decimal = Decimal("0.95")
 _DECIMAL_PROXIMITY_THRESHOLD: Decimal = Decimal("0.01")
 _DECIMAL_NEUTRAL_ADX_CAP: Decimal = Decimal("25.0")
 _DECIMAL_MIN_WICK_RATIO: Decimal = Decimal("0.30")
 _DECIMAL_STRONG_WICK_RATIO: Decimal = Decimal("0.40")
+_DECIMAL_DEEP_WICK_RATIO: Decimal = Decimal("0.50")
+_DECIMAL_RSI_DEEP_LONG: Decimal = Decimal("20.0")
 _DECIMAL_RSI_EXTREME_LONG: Decimal = Decimal("15.0")
+_DECIMAL_RSI_DEEP_SHORT: Decimal = Decimal("80.0")
 _DECIMAL_RSI_EXTREME_SHORT: Decimal = Decimal("85.0")
-_DECIMAL_VOLUME_CLIMAX_MULT: Decimal = Decimal("1.80")
+_DECIMAL_VOLUME_HIGH_MULT: Decimal = Decimal("1.50")
+_DECIMAL_VOLUME_CLIMAX_MULT: Decimal = Decimal("2.00")
+_DECIMAL_STEP_BONUS: Decimal = Decimal("0.05")
+_DECIMAL_LARGE_BONUS: Decimal = Decimal("0.10")
 
 
 # =============================================================================
@@ -65,15 +71,15 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
     """High win-rate mean-reversion strategy seeking extreme exhaustion confluence."""
 
     bb_period: int = 20
-    bb_std_dev: Decimal = Decimal("2.5")
+    bb_std_dev: Decimal = Decimal("2.0")
     rsi_period: int = 14
-    rsi_oversold: Decimal = Decimal("20.0")
-    rsi_overbought: Decimal = Decimal("80.0")
+    rsi_oversold: Decimal = Decimal("28.0")
+    rsi_overbought: Decimal = Decimal("72.0")
     volume_period: int = 20
     volume_multiplier: Decimal = Decimal("1.3")
     adx_period: int = 14
-    adx_max_threshold: Decimal = Decimal("35.0")
-    trend_period: int = 200
+    adx_max_threshold: Decimal = Decimal("42.0")
+    trend_period: int = 50
     swing_lookback: int = 10
 
     def __post_init__(self) -> None:
@@ -220,6 +226,7 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
             or latest_adx < _DECIMAL_NEUTRAL_ADX_CAP
             or ((latest_ema - close_price) / close_price)
             <= _DECIMAL_PROXIMITY_THRESHOLD
+            or lower_wick_ratio >= _DECIMAL_STRONG_WICK_RATIO
         )
         touches_lower_bb = latest_candle.low_price <= latest_lower_bb
         is_rsi_oversold = latest_rsi <= self.rsi_oversold
@@ -266,6 +273,7 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
             close_price <= latest_ema
             or latest_adx < _DECIMAL_NEUTRAL_ADX_CAP
             or ((close_price - latest_ema) / latest_ema) <= _DECIMAL_PROXIMITY_THRESHOLD
+            or upper_wick_ratio >= _DECIMAL_STRONG_WICK_RATIO
         )
         touches_upper_bb = latest_candle.high_price >= latest_upper_bb
         is_rsi_overbought = latest_rsi >= self.rsi_overbought
@@ -328,21 +336,35 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
         has_sweep: bool,
         wick_ratio: Decimal,
     ) -> Decimal:
-        """Calculate confluence confidence score."""
+        """Calculate dynamic confluence confidence score (0.60 - 0.95)."""
         score = _DECIMAL_BASE_CONFIDENCE
 
-        # Extreme RSI Bonus (+0.10)
-        if is_long and rsi <= _DECIMAL_RSI_EXTREME_LONG:
-            score += _DECIMAL_BONUS
-        elif not is_long and rsi >= _DECIMAL_RSI_EXTREME_SHORT:
-            score += _DECIMAL_BONUS
+        # 1. Wick Depth Bonus (+0.05 or +0.10)
+        if wick_ratio >= _DECIMAL_DEEP_WICK_RATIO:
+            score += _DECIMAL_LARGE_BONUS
+        elif wick_ratio >= _DECIMAL_STRONG_WICK_RATIO:
+            score += _DECIMAL_STEP_BONUS
 
-        # Climax Volume Bonus (+0.10)
+        # 2. Volume Confirmation Bonus (+0.05 or +0.10)
         if volume >= (volume_sma * _DECIMAL_VOLUME_CLIMAX_MULT):
-            score += _DECIMAL_BONUS
+            score += _DECIMAL_LARGE_BONUS
+        elif volume >= (volume_sma * _DECIMAL_VOLUME_HIGH_MULT):
+            score += _DECIMAL_STEP_BONUS
 
-        # Dual Sweep + Strong Wick Bonus (+0.10)
-        if has_sweep and wick_ratio >= _DECIMAL_STRONG_WICK_RATIO:
-            score += _DECIMAL_BONUS
+        # 3. RSI Exhaustion Depth Bonus (+0.05 or +0.10)
+        if is_long:
+            if rsi <= _DECIMAL_RSI_EXTREME_LONG:
+                score += _DECIMAL_LARGE_BONUS
+            elif rsi <= _DECIMAL_RSI_DEEP_LONG:
+                score += _DECIMAL_STEP_BONUS
+        else:
+            if rsi >= _DECIMAL_RSI_EXTREME_SHORT:
+                score += _DECIMAL_LARGE_BONUS
+            elif rsi >= _DECIMAL_RSI_DEEP_SHORT:
+                score += _DECIMAL_STEP_BONUS
 
-        return min(_DECIMAL_MAX_CONFIDENCE, score)
+        # 4. Liquidity Sweep Bonus (+0.05)
+        if has_sweep:
+            score += _DECIMAL_STEP_BONUS
+
+        return min(_DECIMAL_MAX_CONFIDENCE, max(_DECIMAL_MIN_CONFIDENCE, score))

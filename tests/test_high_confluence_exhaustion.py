@@ -73,7 +73,7 @@ def test_high_confluence_exhaustion_initialization_and_validation() -> None:
     """Verify parameters and bounded validation."""
     strategy = HighConfluenceExhaustionStrategy()
     assert strategy.strategy_type is StrategyType.HIGH_CONFLUENCE_EXHAUSTION
-    assert strategy.minimum_candles >= 201
+    assert strategy.minimum_candles >= 51
 
     with pytest.raises(ValueError, match="Bollinger Bands period"):
         HighConfluenceExhaustionStrategy(bb_period=0)
@@ -296,3 +296,53 @@ def test_factory_creates_high_confluence_exhaustion_strategy() -> None:
     resolver = StrategyFactory.create_resolver(settings=settings)
     resolved = resolver.resolve(strategy_type=StrategyType.HIGH_CONFLUENCE_EXHAUSTION)
     assert isinstance(resolved, HighConfluenceExhaustionStrategy)
+
+
+def test_high_confluence_exhaustion_strong_wick_overrides_trend_filter() -> None:
+    """Verify strong rejection wick (>40%) allows mean-reversion counter-trend entry."""
+    strategy = HighConfluenceExhaustionStrategy(trend_period=50)
+
+    # Warmup with high price (120) so EMA is high (~110+)
+    closes = [Decimal("120.0") for _ in range(50)]
+    # Steep drop so current price is well below EMA50
+    closes += [
+        Decimal("110.0"),
+        Decimal("105.0"),
+        Decimal("100.0"),
+        Decimal("95.0"),
+        Decimal("90.0"),
+        Decimal("85.0"),
+        Decimal("80.0"),
+    ]
+    highs = [c + Decimal("1.0") for c in closes]
+    lows = [c - Decimal("1.0") for c in closes]
+    opens = [c for c in closes]
+
+    # Reversal candle with huge lower wick: total range = 15,
+    # lower wick = 8 (53% wick ratio)
+    lows[-1] = Decimal("68.0")
+    opens[-1] = Decimal("78.0")
+    closes[-1] = Decimal("82.0")
+    highs[-1] = Decimal("83.0")
+
+    candles: list[Candle] = []
+    for i in range(len(closes)):
+        t = _START_TIME + timedelta(minutes=5 * i)
+        vol = Decimal("40.0") if i == len(closes) - 1 else Decimal("10.0")
+        candles.append(
+            Candle(
+                symbol="BTCUSDT",
+                interval=Interval.M5,
+                open_time=t,
+                close_time=t + timedelta(minutes=5),
+                open_price=opens[i],
+                high_price=highs[i],
+                low_price=lows[i],
+                close_price=closes[i],
+                volume=vol,
+            )
+        )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.BUY
+    assert signal.confidence >= Decimal("0.65")
