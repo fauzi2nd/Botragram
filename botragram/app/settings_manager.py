@@ -30,6 +30,7 @@ from botragram.config.risk_settings import RiskSettings
 from botragram.config.settings import Settings
 from botragram.config.strategy_settings import StrategySettings
 from botragram.config.telegram_settings import TelegramSettings
+from botragram.constants.strategy import get_strategy_default_interval
 from botragram.enums import (
     ExchangeEnvironment,
     ExchangeType,
@@ -80,6 +81,7 @@ class SettingsManager:
         """
         app = self.load_app_settings()
         exchange = self.load_exchange_settings()
+        strategy = self.load_strategy_settings()
         settings = Settings(
             app=replace(
                 app,
@@ -89,9 +91,9 @@ class SettingsManager:
                 ),
             ),
             exchange=exchange,
-            market=self.load_market_settings(),
+            market=self.load_market_settings(strategy_type=strategy.strategy_type),
             risk=self.load_risk_settings(),
-            strategy=self.load_strategy_settings(),
+            strategy=strategy,
             telegram=self.load_telegram_settings(),
             logging=self.load_logging_settings(),
             ai=self.load_ai_settings(),
@@ -188,16 +190,24 @@ class SettingsManager:
             enabled=bool(token),
         )
 
-    def load_market_settings(self) -> MarketSettings:
-        """Load market settings while preserving the safe default interval."""
+    def load_market_settings(
+        self,
+        strategy_type: StrategyType | None = None,
+    ) -> MarketSettings:
+        """Load market settings while preserving the strategy's optimal interval."""
         environment = self._environment_provider
         raw_interval = environment.get_market_interval()
         raw_discovery_cadence = environment.get_discovery_cadence_seconds()
+        default_interval = (
+            get_strategy_default_interval(strategy_type)
+            if strategy_type is not None
+            else Interval.M15
+        )
         return MarketSettings(
             interval=(
                 self._parse_market_interval(raw_value=raw_interval)
                 if raw_interval
-                else Interval.M15
+                else default_interval
             ),
             discovery_universe_limit=self._parse_positive_int(
                 raw_value=environment.get_discovery_universe_limit(),

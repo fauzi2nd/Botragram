@@ -452,22 +452,22 @@ class DependencyProvider:
             await self._migrate_legacy_testnet_live_ledger(database=database)
             self._build_repositories(database=database)
             persisted_strategy = await self.runtime_settings_repository.get_strategy()
-            if (
-                persisted_strategy is not None
-                and persisted_strategy is not self._settings.strategy.strategy_type
-            ):
-                self._settings = replace(
-                    self._settings,
-                    strategy=replace(
-                        self._settings.strategy,
-                        strategy_type=persisted_strategy,
-                    ),
-                    market=replace(
-                        self._settings.market,
-                        interval=get_strategy_default_interval(persisted_strategy),
-                    ),
-                )
+            if persisted_strategy is not None:
+                if persisted_strategy is not self._settings.strategy.strategy_type:
+                    self._settings = replace(
+                        self._settings,
+                        strategy=replace(
+                            self._settings.strategy,
+                            strategy_type=persisted_strategy,
+                        ),
+                        market=replace(
+                            self._settings.market,
+                            interval=get_strategy_default_interval(persisted_strategy),
+                        ),
+                    )
                 self._runtime_control.strategy_type = persisted_strategy
+                self._runtime_control.interval = self._settings.market.interval
+            else:
                 self._runtime_control.interval = self._settings.market.interval
             await self._initialize_runtime_risk_limit_service()
             await self._build_exchange_dependencies()
