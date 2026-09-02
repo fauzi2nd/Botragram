@@ -606,6 +606,7 @@ def get_strategy_keyboard(
         ("RSI + BB Scalping", "rsi_bb_scalping"),
         ("VWAP Breakout", "vwap_breakout"),
         ("CHoCH + FVG", "choch_fvg"),
+        ("High Confluence", "high_confluence_exhaustion"),
         ("MACD Swing", "macd_swing"),
         ("Supertrend", "supertrend"),
         ("Bollinger Breakout", "bollinger_breakout"),

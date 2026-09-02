@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
 import re
+from decimal import Decimal
 from typing import Final
 
 from botragram.app.responsive_terminal_monitor import (

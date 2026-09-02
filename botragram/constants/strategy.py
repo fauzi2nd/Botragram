@@ -52,6 +52,7 @@ def get_strategy_default_interval(strategy_type: StrategyType) -> Interval:
         case (
             StrategyType.CHOCH_FVG
             | StrategyType.EMA_SCALPING
+            | StrategyType.HIGH_CONFLUENCE_EXHAUSTION
             | StrategyType.RSI_BB_SCALPING
             | StrategyType.VWAP_BREAKOUT
         ):
@@ -75,6 +76,8 @@ def get_strategy_default_exit_rates(
 ) -> tuple[Decimal, Decimal]:
     """Return the default (stop_loss_pct, take_profit_pct) for a strategy."""
     match strategy_type:
+        case StrategyType.HIGH_CONFLUENCE_EXHAUSTION:
+            return (Decimal("0.012"), Decimal("0.010"))
         case StrategyType.CHOCH_FVG:
             return (Decimal("0.01"), Decimal("0.025"))
         case (

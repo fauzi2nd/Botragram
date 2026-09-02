@@ -27,7 +27,10 @@ from botragram.config.strategy_settings import StrategySettings
 from botragram.enums import StrategyType
 from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
-from botragram.strategies.price_action import ChochFvgStrategy
+from botragram.strategies.price_action import (
+    ChochFvgStrategy,
+    HighConfluenceExhaustionStrategy,
+)
 from botragram.strategies.scalping import (
     EMAScalpingStrategy,
     RSIBBScalpingStrategy,
@@ -160,6 +163,21 @@ class StrategyFactory:
                     fast_period=settings.scalping_fast_period,
                     slow_period=settings.scalping_slow_period,
                     minimum_body_ratio=settings.scalping_minimum_body_ratio,
+                )
+
+            case StrategyType.HIGH_CONFLUENCE_EXHAUSTION:
+                return HighConfluenceExhaustionStrategy(
+                    bb_period=settings.hce_bb_period,
+                    bb_std_dev=settings.hce_bb_std_dev,
+                    rsi_period=settings.hce_rsi_period,
+                    rsi_oversold=settings.hce_rsi_oversold,
+                    rsi_overbought=settings.hce_rsi_overbought,
+                    volume_period=settings.hce_volume_period,
+                    volume_multiplier=settings.hce_volume_multiplier,
+                    adx_period=settings.hce_adx_period,
+                    adx_max_threshold=settings.hce_adx_max_threshold,
+                    trend_period=settings.hce_trend_period,
+                    swing_lookback=settings.hce_swing_lookback,
                 )
 
             case StrategyType.ICHIMOKU_CLOUD:

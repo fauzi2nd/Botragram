@@ -119,9 +119,43 @@ class StrategySettings:
     choch_min_body_ratio: Decimal = Decimal("0.50")
     choch_volume_multiplier: Decimal = Decimal("1.2")
 
+    # =========================================================================
+    # High Confluence Exhaustion
+    # =========================================================================
+    hce_bb_period: int = 20
+    hce_bb_std_dev: Decimal = Decimal("2.5")
+    hce_rsi_period: int = 14
+    hce_rsi_oversold: Decimal = Decimal("20.0")
+    hce_rsi_overbought: Decimal = Decimal("80.0")
+    hce_volume_period: int = 20
+    hce_volume_multiplier: Decimal = Decimal("1.3")
+    hce_adx_period: int = 14
+    hce_adx_max_threshold: Decimal = Decimal("35.0")
+    hce_trend_period: int = 200
+    hce_swing_lookback: int = 10
+
     def __post_init__(self) -> None:
         """Validate bounded strategy settings."""
         if not self.min_signal_confidence.is_finite():
             raise ValueError("Minimum signal confidence must be finite")
         if not Decimal("0.0") <= self.min_signal_confidence <= Decimal("1.0"):
             raise ValueError("Minimum signal confidence must be between 0.0 and 1.0")
+        if self.hce_bb_period <= 0:
+            raise ValueError("HCE Bollinger Bands period must be positive")
+        if self.hce_bb_std_dev <= Decimal("0"):
+            raise ValueError("HCE Bollinger Bands std dev must be positive")
+        if self.hce_rsi_period <= 0:
+            raise ValueError("HCE RSI period must be positive")
+        if (
+            not Decimal("0")
+            <= self.hce_rsi_oversold
+            < self.hce_rsi_overbought
+            <= Decimal("100")
+        ):
+            raise ValueError("HCE RSI thresholds must be bounded within [0, 100]")
+        if self.hce_volume_period <= 0 or self.hce_volume_multiplier <= Decimal("0"):
+            raise ValueError("HCE Volume parameters must be positive")
+        if self.hce_adx_period <= 0 or self.hce_adx_max_threshold <= Decimal("0"):
+            raise ValueError("HCE ADX parameters must be positive")
+        if self.hce_trend_period <= 0 or self.hce_swing_lookback <= 0:
+            raise ValueError("HCE lookback periods must be positive")

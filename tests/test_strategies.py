@@ -34,7 +34,10 @@ from botragram.models import Candle
 from botragram.strategies import StrategyFactory
 from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
-from botragram.strategies.price_action import ChochFvgStrategy
+from botragram.strategies.price_action import (
+    ChochFvgStrategy,
+    HighConfluenceExhaustionStrategy,
+)
 from botragram.strategies.scalping import (
     EMAScalpingStrategy,
     RSIBBScalpingStrategy,
@@ -114,6 +117,12 @@ def _create_strategy_settings(
         atr_period=2,
         vwap_volume_period=2,
         vwap_volume_multiplier=Decimal("1.2"),
+        hce_trend_period=5,
+        hce_bb_period=3,
+        hce_rsi_period=2,
+        hce_volume_period=2,
+        hce_adx_period=2,
+        hce_swing_lookback=2,
     )
 
 
@@ -128,6 +137,10 @@ def _create_strategy_settings(
         (StrategyType.EMA_CROSS, EMACrossStrategy),
         (StrategyType.EMA_RSI, EMARsiStrategy),
         (StrategyType.EMA_SCALPING, EMAScalpingStrategy),
+        (
+            StrategyType.HIGH_CONFLUENCE_EXHAUSTION,
+            HighConfluenceExhaustionStrategy,
+        ),
         (StrategyType.ICHIMOKU_CLOUD, IchimokuCloudStrategy),
         (StrategyType.MACD_SWING, MACDSwingStrategy),
         (StrategyType.RSI_BB_SCALPING, RSIBBScalpingStrategy),
@@ -411,6 +424,7 @@ def test_vwap_breakout_evaluates_zero_volume_candles_safely() -> None:
         StrategyType.EMA_CROSS,
         StrategyType.EMA_RSI,
         StrategyType.EMA_SCALPING,
+        StrategyType.HIGH_CONFLUENCE_EXHAUSTION,
         StrategyType.ICHIMOKU_CLOUD,
         StrategyType.MACD_SWING,
         StrategyType.RSI_BB_SCALPING,
@@ -511,6 +525,16 @@ def test_strategy_default_intervals_and_exit_rates() -> None:
     assert tp_m == Decimal("0.05")
     assert tp_m / sl_m >= Decimal("2")
 
+    assert (
+        get_strategy_default_interval(StrategyType.HIGH_CONFLUENCE_EXHAUSTION)
+        is Interval.M5
+    )
+    sl_hce, tp_hce = get_strategy_default_exit_rates(
+        StrategyType.HIGH_CONFLUENCE_EXHAUSTION
+    )
+    assert sl_hce == Decimal("0.012")
+    assert tp_hce == Decimal("0.010")
+
 
 def test_strategy_settings_default_interval() -> None:
     """Verify StrategySettings exposes default_interval."""
@@ -528,6 +552,11 @@ def test_strategy_settings_default_interval() -> None:
 
     settings_choch = StrategySettings(strategy_type=StrategyType.CHOCH_FVG)
     assert settings_choch.default_interval is Interval.M5
+
+    settings_hce = StrategySettings(
+        strategy_type=StrategyType.HIGH_CONFLUENCE_EXHAUSTION
+    )
+    assert settings_hce.default_interval is Interval.M5
 
 
 def test_choch_fvg_strategy_signal_generation() -> None:

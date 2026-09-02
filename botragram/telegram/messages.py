@@ -876,6 +876,11 @@ def get_strategy_message(
             lines.append("<b>Concept:</b> Smart Money (CHoCH + FVG)")
             lines.append("<b>Swing Window:</b> 5")
             lines.append("<b>Volume Multiplier:</b> 1.2x")
+        case StrategyType.HIGH_CONFLUENCE_EXHAUSTION:
+            lines.append("<b>Concept:</b> High Confluence Exhaustion")
+            lines.append("<b>BB:</b> 20 (StdDev: 2.5)")
+            lines.append("<b>RSI Extremes:</b> 20 / 80")
+            lines.append("<b>Volume:</b> &gt;1.3x SMA20 | <b>ADX Max:</b> 35")
         case _:
             lines.append(f"<b>Fast EMA period:</b> {fast_period}")
             lines.append(f"<b>Slow EMA period:</b> {slow_period}")
