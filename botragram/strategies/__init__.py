@@ -1,6 +1,7 @@
 from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
 from botragram.strategies.factory import StrategyFactory, StrategyResolver
+from botragram.strategies.price_action import ChochFvgStrategy
 from botragram.strategies.scalping import EMAScalpingStrategy
 from botragram.strategies.swing import (
     MACDSwingStrategy,
@@ -17,6 +18,7 @@ __all__ = [
     "ADXTrendStrategy",
     "BaseStrategy",
     "BollingerBreakoutStrategy",
+    "ChochFvgStrategy",
     "EMACrossStrategy",
     "EMARsiStrategy",
     "EMAScalpingStrategy",

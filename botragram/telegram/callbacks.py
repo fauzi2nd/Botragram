@@ -402,7 +402,7 @@ async def handle_callback_query(
         try:
             challenge = await service.request_close_all(
                 requested_by=requester,
-                auto_pause=False,
+                auto_pause=True,
             )
         except (RuntimeError, ValueError) as error:
             await query.edit_message_text(
@@ -430,7 +430,7 @@ async def handle_callback_query(
             challenge = await service.request_close_position(
                 symbol=operator_symbol,
                 requested_by=requester,
-                auto_pause=False,
+                auto_pause=True,
             )
         except (RuntimeError, ValueError) as error:
             await query.edit_message_text(

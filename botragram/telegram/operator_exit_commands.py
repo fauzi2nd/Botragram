@@ -143,7 +143,7 @@ async def close_position_command(
         challenge = await service.request_close_position(
             symbol=args[0],
             requested_by=requester,
-            auto_pause=False,
+            auto_pause=True,
         )
     except (RuntimeError, ValueError) as error:
         await message.reply_text(f"Close-position request rejected: {error}")
@@ -177,7 +177,7 @@ async def close_all_command(
     try:
         challenge = await service.request_close_all(
             requested_by=requester,
-            auto_pause=False,
+            auto_pause=True,
         )
     except (RuntimeError, ValueError) as error:
         await message.reply_text(f"Close-all request rejected: {error}")

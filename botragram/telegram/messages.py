@@ -405,6 +405,15 @@ def get_positions_message(
 
     for position in positions:
         side_icon = "🟢" if position.side.value == "long" else "🔴"
+        roi_str = ""
+        notional = position.entry_price * position.quantity
+        if notional > Decimal("0"):
+            margin = notional / Decimal(str(max(position.leverage, 1)))
+            if margin > Decimal("0"):
+                roi_val = (position.unrealized_pnl / margin) * Decimal("100")
+                sign = "+" if roi_val > Decimal("0") else ""
+                roi_str = f" ({sign}{roi_val:.2f}%)"
+
         lines.append(
             f"\n{side_icon} <b>{escape(position.symbol)}</b> · "
             f"{position.side.value.upper()} · {position.leverage}x\n"
@@ -413,7 +422,7 @@ def get_positions_message(
             f"{_format_optional_price(position.current_price)}\n"
             f"SL / TP: {_format_optional_price(position.stop_loss)} / "
             f"{_format_optional_price(position.take_profit)}\n"
-            f"PnL={format_currency(position.unrealized_pnl, symbol='USDT')} · "
+            f"PnL={format_currency(position.unrealized_pnl, symbol='USDT')}{roi_str} · "
             f"SL+ Step {position.protection_step}"
         )
 
@@ -862,6 +871,10 @@ def get_strategy_message(
             lines.append("<b>VWAP:</b> Volume Weighted Avg Price")
             lines.append("<b>ATR period:</b> 14")
             lines.append("<b>Volume multiplier:</b> 1.2x")
+        case StrategyType.CHOCH_FVG:
+            lines.append("<b>Concept:</b> Smart Money (CHoCH + FVG)")
+            lines.append("<b>Swing Window:</b> 5")
+            lines.append("<b>Volume Multiplier:</b> 1.2x")
         case _:
             lines.append(f"<b>Fast EMA period:</b> {fast_period}")
             lines.append(f"<b>Slow EMA period:</b> {slow_period}")

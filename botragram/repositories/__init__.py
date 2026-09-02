@@ -35,6 +35,9 @@ from botragram.repositories.position_repository import PositionRepository
 from botragram.repositories.runtime_risk_limit_repository import (
     RuntimeRiskLimitRepository,
 )
+from botragram.repositories.runtime_settings_repository import (
+    RuntimeSettingsRepository,
+)
 from botragram.repositories.signal_repository import SignalRepository
 from botragram.repositories.submission_attempt_repository import (
     SubmissionAttemptRepository,
@@ -54,4 +57,5 @@ __all__ = [
     "PositionRepository",
     "SubmissionAttemptRepository",
     "RuntimeRiskLimitRepository",
+    "RuntimeSettingsRepository",
 ]

@@ -559,7 +559,7 @@ def test_tpsl_ratio_keyboard_and_message() -> None:
 
 
 def test_new_strategy_messages_and_keyboard() -> None:
-    """Verify RSI BB scalping and VWAP breakout in messages and keyboard."""
+    """Verify RSI BB scalping, VWAP breakout, and CHoCH FVG in messages and keyboard."""
     rsi_msg = get_strategy_message("rsi_bb_scalping", confirmed=True)
     assert "RSI period" in rsi_msg
     assert "BB period" in rsi_msg
@@ -568,12 +568,17 @@ def test_new_strategy_messages_and_keyboard() -> None:
     assert "VWAP" in vwap_msg
     assert "ATR period" in vwap_msg
 
+    choch_msg = get_strategy_message("choch_fvg", confirmed=True)
+    assert "CHoCH + FVG" in choch_msg
+    assert "Swing Window" in choch_msg
+
     keyboard = get_strategy_keyboard("rsi_bb_scalping", confirmed=True)
     callbacks = {
         button.callback_data for row in keyboard.inline_keyboard for button in row
     }
     assert "cb_strategy_rsi_bb_scalping" in callbacks
     assert "cb_strategy_vwap_breakout" in callbacks
+    assert "cb_strategy_choch_fvg" in callbacks
 
 
 def test_trading_menu_keyboard_sync_with_pause_state() -> None:

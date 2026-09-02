@@ -113,6 +113,7 @@ botragram/
 |-- indicators/
 |   |-- momentum/
 |   |-- overlap/
+|   |-- price_action/         # Deterministic price action & SMC calculations (CHoCH, FVG)
 |   |-- trend/
 |   |-- volatility/
 |   `-- volume/
@@ -150,6 +151,7 @@ botragram/
 |   |-- operator_exit_repository.py # Restart-safe operator exit ownership contract
 |   |-- position_repository.py # Active position persistence contract
 |   |-- runtime_risk_limit_repository.py # Durable current-limit + audit boundary
+|   |-- runtime_settings_repository.py # Durable runtime configuration and strategy persistence
 |   `-- submission_attempt_repository.py # Incomplete entry attempt contract
 |-- services/
 |   |-- account_service.py
@@ -204,12 +206,14 @@ botragram/
 |       |-- migrations.py
 |       |-- operator_exit_repository.py # Durable operator exit operations and attempts
 |       |-- runtime_risk_limit_repository.py # Current singleton + append-only audit
+|       |-- runtime_settings_repository.py # SQLite runtime settings persistence
 |       `-- *_repository.py
 |-- strategies/
 |   |-- factory.py
 |   |-- ai/
 |   |-- base/
 |   |-- breakout/
+|   |-- price_action/          # Smart Money Concepts / Structure Shift (CHoCH, FVG)
 |   |-- scalping/
 |   |-- swing/
 |   `-- trend/

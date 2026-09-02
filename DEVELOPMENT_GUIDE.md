@@ -724,6 +724,100 @@ Botragram/
 |   |   |-- trend/
 |   |   |   |-- __init__.py
 |   |   |   |-- adx.py
+|   |   |-- environment_provider.py
+|   |   |-- lifecycle.py
+|   |   |-- market_type_switch.py     # Guarded Spot/Futures soft restart
+|   |   |-- runtime_control.py
+|   |   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
+|   |   |-- settings_manager.py
+|   |   |-- shutdown.py
+|   |   |-- startup.py
+|   |   |-- terminal_monitor.py        # Rich status/stream/log dashboard
+|   |   `-- trading_runner.py
+|   |-- config/
+|   |   |-- __init__.py
+|   |   |-- ai_settings.py
+|   |   |-- app_settings.py
+|   |   |-- exchange_settings.py
+|   |   |-- logging_settings.py
+|   |   |-- market_settings.py
+|   |   |-- risk_settings.py
+|   |   |-- settings.py
+|   |   |-- strategy_settings.py
+|   |   `-- telegram_settings.py
+|   |-- constants/
+|   |   |-- __init__.py
+|   |   |-- ai.py
+|   |   |-- app.py
+|   |   |-- env.py
+|   |   |-- exchange.py
+|   |   |-- indicator.py
+|   |   |-- market.py
+|   |   |-- order.py
+|   |   |-- position.py
+|   |   |-- risk.py
+|   |   |-- strategy.py
+|   |   |-- telegram.py
+|   |   `-- time.py
+|   |-- engine/
+|   |   |-- __init__.py
+|   |   |-- backtest_engine.py
+|   |   |-- order_engine.py
+|   |   |-- pnl_engine.py
+|   |   |-- portfolio_engine.py
+|   |   |-- position_engine.py
+|   |   |-- risk_engine.py
+|   |   |-- signal_engine.py
+|   |   `-- trading_engine.py
+|   |-- enums/`n|   |   |-- live_futures_user_data_status.py # Freshness state for private Futures cache
+|   |   |-- __init__.py
+|   |   |-- base.py
+|   |   |-- environment.py
+|   |   `-- <domain_enum>.py
+|   |-- exceptions/
+|   |   |-- __init__.py
+|   |   |-- base.py
+|   |   `-- <domain_exception>.py
+|   |-- exchanges/
+|   |   |-- __init__.py
+|   |   |-- factory.py
+|   |   |-- base/
+|   |   |   |-- __init__.py
+|   |   |   |-- client.py
+|   |   |   |-- mapper.py
+|   |   |   |-- rest.py
+|   |   |   `-- stream.py
+|   |   |-- binance/
+|   |   |   |-- __init__.py
+|   |   |   |-- client.py
+|   |   |   |-- futures_client.py`n|   |   |-- futures_user_data_stream.py # Binance private account User Data Stream
+|   |   |   |-- mapper.py
+|   |   |   |-- rest.py
+|   |   |   `-- stream.py
+|   |   |-- bitget/
+|   |   |-- bybit/
+|   |   `-- okx/
+|   |       |-- __init__.py
+|   |       |-- client.py
+|   |       |-- mapper.py
+|   |       |-- rest.py
+|   |       `-- stream.py
+|   |-- indicators/
+|   |   |-- __init__.py
+|   |   |-- momentum/
+|   |   |   |-- __init__.py
+|   |   |   |-- macd.py
+|   |   |   `-- rsi.py
+|   |   |-- overlap/
+|   |   |   |-- __init__.py
+|   |   |   |-- ichimoku.py
+|   |   |   `-- psar.py
+|   |   |-- price_action/
+|   |   |   |-- __init__.py
+|   |   |   `-- choch_fvg.py
+|   |   |-- trend/
+|   |   |   |-- __init__.py
+|   |   |   |-- adx.py
 |   |   |   |-- ema.py
 |   |   |   |-- sma.py
 |   |   |   `-- supertrend.py
@@ -735,7 +829,8 @@ Botragram/
 |   |       |-- __init__.py
 |   |       |-- obv.py
 |   |       `-- vwap.py
-|   |-- models/`n|   |   |-- futures_user_data.py # Immutable private account, position, and order updates
+|   |-- models/
+|   |   |-- futures_user_data.py # Immutable private account, position, and order updates
 |   |   |-- __init__.py
 |   |   |-- account.py
 |   |   |-- backtest.py
@@ -756,6 +851,7 @@ Botragram/
 |   |   |-- closed_position_lifecycle_repository.py
 |   |   |-- order_repository.py
 |   |   |-- position_repository.py
+|   |   |-- runtime_settings_repository.py
 |   |   |-- signal_repository.py
 |   |   `-- trade_repository.py
 |   |-- services/
@@ -790,6 +886,7 @@ Botragram/
 |   |       |-- closed_position_lifecycle_repository.py
 |   |       |-- legacy_live_ledger_migration.py # One-time legacy TESTNET LIVE ledger import
 |   |       |-- migrations.py
+|   |       |-- runtime_settings_repository.py
 |   |       `-- <entity_repository>.py
 |   |-- strategies/
 |   |   |-- __init__.py
@@ -797,6 +894,7 @@ Botragram/
 |   |   |-- ai/
 |   |   |-- base/
 |   |   |-- breakout/
+|   |   |-- price_action/
 |   |   |-- scalping/
 |   |   |-- swing/
 |   |   `-- trend/

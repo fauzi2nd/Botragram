@@ -43,7 +43,12 @@ class _StrategySessionSwitcher(Protocol):
         """Return the strategy owned by the current session."""
         ...
 
-    async def prepare_strategy(self, *, strategy_type: StrategyType) -> bool:
+    async def prepare_strategy(
+        self,
+        *,
+        strategy_type: StrategyType,
+        allow_legacy_positions: bool = True,
+    ) -> bool:
         """Validate and stage one safe strategy replacement."""
         ...
 

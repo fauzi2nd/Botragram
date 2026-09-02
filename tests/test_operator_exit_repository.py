@@ -51,7 +51,7 @@ async def test_migration_17_adds_operator_exit_tables(tmp_path: Path) -> None:
             "operator_exit_operations",
         )
 
-        assert await manager.initialize() == 18
+        assert await manager.initialize(target_version=18) == 18
         columns = await database.fetch_all(
             statement="PRAGMA table_info(operator_exit_operations);"
         )

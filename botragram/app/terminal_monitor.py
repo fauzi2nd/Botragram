@@ -647,6 +647,19 @@ class TerminalMonitor:
             f"events={status.stream.event_count}"
         )
 
+    def _resolve_display_strategy_type(self) -> str:
+        """Return active strategy name, safely resolving multi-context portfolios."""
+        try:
+            return self.runtime_control.strategy_type.value.upper()
+        except RuntimeError:
+            raw_strategy: object = object.__getattribute__(
+                self.runtime_control,
+                "strategy_type",
+            )
+            if isinstance(raw_strategy, StrategyType):
+                return raw_strategy.value.upper()
+            return self.configured_strategy_type.value.upper()
+
     def _build_status_panel(self, status: TerminalStatus) -> Panel:
         """Build aggregate runtime and safety information without symbol duplication."""
         table = Table.grid(expand=True, padding=(0, 1))
@@ -660,7 +673,7 @@ class TerminalMonitor:
             )
             table.add_row(
                 "Strategy Type",
-                self.configured_strategy_type.value.upper(),
+                self._resolve_display_strategy_type(),
             )
             table.add_row("Position Management", health.status.value.upper())
             if health.reason is not None:
@@ -692,7 +705,7 @@ class TerminalMonitor:
             )
             table.add_row(
                 "Strategy Type",
-                self.configured_strategy_type.value.upper(),
+                self._resolve_display_strategy_type(),
             )
             table.add_row("Mode", self.trade_mode.value.upper())
             table.add_row("Portfolio", self._format_portfolio_capacity(status))
@@ -989,7 +1002,7 @@ class TerminalMonitor:
         details.add_row("Interval", discovery.interval.value)
         details.add_row(
             "Strategy",
-            self.configured_strategy_type.value.upper(),
+            self._resolve_display_strategy_type(),
         )
         details.add_row("Window", self._format_discovery_window(discovery))
         details.add_row("Scope", self._format_discovery_scope(discovery))
@@ -1133,6 +1146,7 @@ class TerminalMonitor:
         table.add_column("Entry", justify="right", no_wrap=True)
         table.add_column("Mark", justify="right", no_wrap=True)
         table.add_column("PnL", justify="right", no_wrap=True)
+        table.add_column("ROI", justify="right", no_wrap=True)
         table.add_column("SL", justify="right", no_wrap=True)
         table.add_column("TP", justify="right", no_wrap=True)
         table.add_column("Step", justify="right", no_wrap=True)
@@ -1141,7 +1155,7 @@ class TerminalMonitor:
         if health_snapshot is None:
             self._add_paper_position_rows(table=table, status=status)
         elif not health_snapshot.contexts:
-            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "NONE")
+            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "NONE")
         else:
             for context in health_snapshot.contexts:
                 position = next(
@@ -1167,7 +1181,7 @@ class TerminalMonitor:
     def _add_paper_position_rows(self, *, table: Table, status: TerminalStatus) -> None:
         """Render paper positions in the same compact canonical table."""
         if not status.positions:
-            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "NONE")
+            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "NONE")
             return
         for position in status.positions:
             table.add_row(
@@ -1178,6 +1192,12 @@ class TerminalMonitor:
                 self._format_compact_decimal(position.entry_price),
                 self._format_compact_decimal(position.current_price),
                 self.format_position_pnl(position.unrealized_pnl),
+                self.format_position_roi(
+                    unrealized_pnl=position.unrealized_pnl,
+                    entry_price=position.entry_price,
+                    quantity=position.quantity,
+                    leverage=position.leverage,
+                ),
                 self._format_compact_price(position.stop_loss),
                 self._format_compact_price(position.take_profit),
                 str(position.protection_step),
@@ -1205,6 +1225,7 @@ class TerminalMonitor:
                 "-",
                 "-",
                 "-",
+                "-",
                 "POSITION MISSING",
             )
             return
@@ -1223,6 +1244,12 @@ class TerminalMonitor:
             self._format_compact_decimal(position.entry_price),
             self._format_compact_decimal(mark),
             self.format_position_pnl(position.unrealized_pnl),
+            self.format_position_roi(
+                unrealized_pnl=position.unrealized_pnl,
+                entry_price=position.entry_price,
+                quantity=position.quantity,
+                leverage=position.leverage,
+            ),
             self._format_compact_price(position.stop_loss),
             self._format_compact_price(position.take_profit),
             str(position.protection_step),
@@ -1245,6 +1272,26 @@ class TerminalMonitor:
         """Format one position PnL compactly while retaining its sign."""
         formatted = TerminalMonitor._format_compact_decimal(unrealized_pnl)
         return f"+{formatted}" if unrealized_pnl > _DECIMAL_ZERO else formatted
+
+    @staticmethod
+    def format_position_roi(
+        *,
+        unrealized_pnl: Decimal,
+        entry_price: Decimal,
+        quantity: Decimal,
+        leverage: int = 1,
+    ) -> str:
+        """Format position return on investment (ROI) percentage with sign."""
+        notional = entry_price * quantity
+        if notional <= _DECIMAL_ZERO:
+            return "0.00%"
+        eff_leverage = Decimal(str(max(leverage, 1)))
+        initial_margin = notional / eff_leverage
+        if initial_margin <= _DECIMAL_ZERO:
+            return "0.00%"
+        roi_pct = (unrealized_pnl / initial_margin) * Decimal("100")
+        sign = "+" if roi_pct > _DECIMAL_ZERO else ""
+        return f"{sign}{roi_pct:.2f}%"
 
     def _format_compact_price(self, price: Decimal | None) -> str:
         """Format an optional protection trigger for a compact table column."""

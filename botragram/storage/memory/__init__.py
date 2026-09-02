@@ -34,6 +34,9 @@ from botragram.storage.memory.order_repository import (
 from botragram.storage.memory.position_repository import (
     MemoryPositionRepository,
 )
+from botragram.storage.memory.runtime_settings_repository import (
+    MemoryRuntimeSettingsRepository,
+)
 from botragram.storage.memory.signal_repository import (
     MemorySignalRepository,
 )
@@ -51,6 +54,7 @@ __all__ = [
     "MemoryOrderRepository",
     "MemoryOperatorExitRepository",
     "MemoryPositionRepository",
+    "MemoryRuntimeSettingsRepository",
     "MemorySignalRepository",
     "MemorySubmissionAttemptRepository",
     "MemoryTradeRepository",

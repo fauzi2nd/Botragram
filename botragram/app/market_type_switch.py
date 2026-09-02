@@ -14,6 +14,7 @@ from botragram.constants import get_strategy_default_interval
 from botragram.enums import ExecutionPolicy, MarketType, StrategyType, TradeMode
 from botragram.exceptions import ExecutionPolicySwitchBlockedError
 from botragram.models import Position
+from botragram.repositories import RuntimeSettingsRepository
 
 __all__ = [
     "MarketTypeSwitchService",
@@ -219,6 +220,7 @@ class MarketTypeSwitchService:
     restart_coordinator: RuntimeRestartCoordinator
     settings: Settings | None = None
     submission_attempt_repository: _IncompleteSubmissionProvider | None = None
+    runtime_settings_repository: RuntimeSettingsRepository | None = None
 
     async def _get_positions(self) -> Sequence[Position]:
         """Return the authoritative position view for the active trade mode."""
@@ -318,7 +320,12 @@ class MarketTypeSwitchService:
             return self.runtime_control.strategy_type
         return settings.strategy.strategy_type
 
-    async def prepare_strategy(self, *, strategy_type: StrategyType) -> bool:
+    async def prepare_strategy(
+        self,
+        *,
+        strategy_type: StrategyType,
+        allow_legacy_positions: bool = True,
+    ) -> bool:
         """Validate and stage a strategy replacement for a fresh runtime session."""
         if self.settings is None:
             raise RuntimeError("Strategy switching is unavailable")
@@ -338,9 +345,14 @@ class MarketTypeSwitchService:
             ),
         )
         SettingsManager.validate(settings=candidate)
-        await self._require_safe_session_replacement(
-            blocked_message="Close every active position before switching strategy",
-        )
+        if not allow_legacy_positions:
+            await self._require_safe_session_replacement(
+                blocked_message="Close every active position before switching strategy",
+            )
+        if self.runtime_settings_repository is not None:
+            await self.runtime_settings_repository.save_strategy(
+                strategy_type=strategy_type,
+            )
         self.restart_coordinator.stage(strategy_type=strategy_type)
         return True
 

@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Strategy type enumeration.
+    Persistence boundary for durable runtime settings.
 
 Python:
     3.14+
@@ -16,32 +16,28 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-from enum import unique
+from abc import ABC, abstractmethod
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.base import BaseEnum
+from botragram.enums import StrategyType
 
-__all__ = ["StrategyType"]
+__all__ = ["RuntimeSettingsRepository"]
 
 
 # =============================================================================
-# Enums
+# Repository Interface
 # =============================================================================
-@unique
-class StrategyType(BaseEnum):
-    """Supported trading strategy types."""
+class RuntimeSettingsRepository(ABC):
+    """Persist and restore runtime settings across process restarts."""
 
-    ADX_TREND = "adx_trend"
-    BOLLINGER_BREAKOUT = "bollinger_breakout"
-    CHOCH_FVG = "choch_fvg"
-    EMA_CROSS = "ema_cross"
-    EMA_RSI = "ema_rsi"
-    EMA_SCALPING = "ema_scalping"
-    ICHIMOKU_CLOUD = "ichimoku_cloud"
-    MACD_SWING = "macd_swing"
-    RSI_BB_SCALPING = "rsi_bb_scalping"
-    SUPERTREND = "supertrend"
-    VWAP_BREAKOUT = "vwap_breakout"
-    CUSTOM = "custom"
+    __slots__ = ()
+
+    @abstractmethod
+    async def get_strategy(self) -> StrategyType | None:
+        """Return the latest durable runtime strategy, if configured."""
+
+    @abstractmethod
+    async def save_strategy(self, *, strategy_type: StrategyType) -> None:
+        """Atomically persist the active runtime strategy."""

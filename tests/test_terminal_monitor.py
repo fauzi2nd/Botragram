@@ -259,7 +259,9 @@ def _create_monitor(
 
     return TerminalMonitor(
         runtime_control=(
-            runtime_control if runtime_control is not None else TradingRuntimeControl()
+            runtime_control
+            if runtime_control is not None
+            else TradingRuntimeControl(strategy_type=configured_strategy_type)
         ),
         paper_balance_provider=(
             paper_balance

@@ -108,3 +108,11 @@ class StrategySettings:
     atr_period: int = 14
     vwap_volume_period: int = 20
     vwap_volume_multiplier: Decimal = Decimal("1.2")
+
+    # =========================================================================
+    # CHoCH + FVG (Smart Money Concepts)
+    # =========================================================================
+    choch_swing_window: int = 5
+    choch_fvg_lookback: int = 20
+    choch_min_body_ratio: Decimal = Decimal("0.50")
+    choch_volume_multiplier: Decimal = Decimal("1.2")

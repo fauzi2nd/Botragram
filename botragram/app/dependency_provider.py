@@ -10,7 +10,9 @@ Python:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
@@ -40,6 +42,7 @@ from botragram.constants import (
     BINANCE_TESTNET_REST_BASE_URL,
     BINANCE_TESTNET_WEBSOCKET_BASE_URL,
     BINANCE_WEBSOCKET_BASE_URL,
+    get_strategy_default_interval,
 )
 from botragram.engine import (
     OrderEngine,
@@ -77,6 +80,7 @@ from botragram.repositories import (
     OrderRepository,
     PositionRepository,
     RuntimeRiskLimitRepository,
+    RuntimeSettingsRepository,
     SignalRepository,
     SubmissionAttemptRepository,
     TradeRepository,
@@ -133,6 +137,7 @@ from botragram.storage.sqlite import (
     SQLiteOrderRepository,
     SQLitePositionRepository,
     SQLiteRuntimeRiskLimitRepository,
+    SQLiteRuntimeSettingsRepository,
     SQLiteSignalRepository,
     SQLiteSubmissionAttemptRepository,
     SQLiteTestnetLegacyLiveLedgerMigration,
@@ -211,6 +216,7 @@ class DependencyProvider:
         "_runtime_reporter",
         "_runtime_risk_limit_repository",
         "_runtime_risk_limit_service",
+        "_runtime_settings_repository",
         "_settings",
         "_signal_engine",
         "_signal_repository",
@@ -289,6 +295,7 @@ class DependencyProvider:
         ) = None
         self._submission_attempt_repository: SubmissionAttemptRepository | None = None
         self._runtime_risk_limit_repository: RuntimeRiskLimitRepository | None = None
+        self._runtime_settings_repository: RuntimeSettingsRepository | None = None
         self._operator_exit_repository: OperatorExitRepository | None = None
         self._order_repository: OrderRepository | None = None
         self._trade_repository: TradeRepository | None = None
@@ -444,6 +451,24 @@ class DependencyProvider:
             await SQLiteMigrationManager(database=database).initialize()
             await self._migrate_legacy_testnet_live_ledger(database=database)
             self._build_repositories(database=database)
+            persisted_strategy = await self.runtime_settings_repository.get_strategy()
+            if (
+                persisted_strategy is not None
+                and persisted_strategy is not self._settings.strategy.strategy_type
+            ):
+                self._settings = replace(
+                    self._settings,
+                    strategy=replace(
+                        self._settings.strategy,
+                        strategy_type=persisted_strategy,
+                    ),
+                    market=replace(
+                        self._settings.market,
+                        interval=get_strategy_default_interval(persisted_strategy),
+                    ),
+                )
+                self._runtime_control.strategy_type = persisted_strategy
+                self._runtime_control.interval = self._settings.market.interval
             await self._initialize_runtime_risk_limit_service()
             await self._build_exchange_dependencies()
             self._build_engines()
@@ -529,6 +554,7 @@ class DependencyProvider:
                 restart_coordinator=self.restart_coordinator,
                 settings=self._settings,
                 submission_attempt_repository=self.submission_attempt_repository,
+                runtime_settings_repository=self.runtime_settings_repository,
             )
             self._operator_exit_service = OperatorExitService(
                 trade_mode=self._settings.app.trade_mode,
@@ -676,6 +702,10 @@ class DependencyProvider:
     @property
     def runtime_risk_limit_repository(self) -> RuntimeRiskLimitRepository:
         return self._require(self._runtime_risk_limit_repository)
+
+    @property
+    def runtime_settings_repository(self) -> RuntimeSettingsRepository:
+        return self._require(self._runtime_settings_repository)
 
     @property
     def operator_exit_repository(self) -> OperatorExitRepository:
@@ -872,6 +902,9 @@ class DependencyProvider:
         self._runtime_risk_limit_repository = SQLiteRuntimeRiskLimitRepository(
             database=database
         )
+        self._runtime_settings_repository = SQLiteRuntimeSettingsRepository(
+            database=database
+        )
         self._operator_exit_repository = SQLiteOperatorExitRepository(database=database)
         self._order_repository = SQLiteOrderRepository(database=database)
         self._trade_repository = SQLiteTradeRepository(database=database)
@@ -1028,6 +1061,12 @@ class DependencyProvider:
 
     def _select_runtime_strategy(self, strategy_type: StrategyType) -> None:
         self.signal_engine.get_minimum_candles(strategy_type=strategy_type)
+        if self._runtime_settings_repository is not None:
+            asyncio.create_task(
+                self._runtime_settings_repository.save_strategy(
+                    strategy_type=strategy_type,
+                )
+            )
         _LOGGER.info("Runtime strategy selected: strategy=%s", strategy_type.value)
 
     def _build_services(self) -> None:
@@ -1394,6 +1433,7 @@ class DependencyProvider:
         self._submission_attempt_repository = None
         self._runtime_risk_limit_repository = None
         self._runtime_risk_limit_service = None
+        self._runtime_settings_repository = None
         self._operator_exit_repository = None
         self._operator_exit_service = None
         self._order_repository = None

@@ -34,6 +34,7 @@ from botragram.models import Candle
 from botragram.strategies import StrategyFactory
 from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
+from botragram.strategies.price_action import ChochFvgStrategy
 from botragram.strategies.scalping import (
     EMAScalpingStrategy,
     RSIBBScalpingStrategy,
@@ -524,3 +525,94 @@ def test_strategy_settings_default_interval() -> None:
 
     settings_swing = StrategySettings(strategy_type=StrategyType.MACD_SWING)
     assert settings_swing.default_interval is Interval.H1
+
+    settings_choch = StrategySettings(strategy_type=StrategyType.CHOCH_FVG)
+    assert settings_choch.default_interval is Interval.M5
+
+
+def test_choch_fvg_strategy_signal_generation() -> None:
+    """Verify ChochFvgStrategy generates valid signals and respects minimum candles."""
+    strategy = ChochFvgStrategy(
+        swing_window=3,
+        fvg_lookback=10,
+        volume_period=10,
+    )
+    assert strategy.strategy_type is StrategyType.CHOCH_FVG
+    assert strategy.minimum_candles >= 11
+
+    # Generate 25 candles
+    n = 25
+    candles: list[Candle] = []
+    base_time = _START_TIME
+
+    for i in range(n):
+        open_time = base_time + timedelta(minutes=5 * i)
+        close_time = open_time + timedelta(minutes=5)
+        candles.append(
+            Candle(
+                symbol="BTCUSDT",
+                interval=Interval.M5,
+                open_time=open_time,
+                close_time=close_time,
+                open_price=Decimal("95") + Decimal(str(i % 3)),
+                high_price=Decimal("100") + Decimal(str(i % 3)),
+                low_price=Decimal("90") + Decimal(str(i % 3)),
+                close_price=Decimal("95") + Decimal(str(i % 3)),
+                volume=Decimal("1000"),
+            )
+        )
+
+    # Make swing high at index 12
+    candles[12] = Candle(
+        symbol="BTCUSDT",
+        interval=Interval.M5,
+        open_time=candles[12].open_time,
+        close_time=candles[12].close_time,
+        open_price=Decimal("95"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("95"),
+        volume=Decimal("1000"),
+    )
+
+    # Bullish displacement breakout at index 23
+    candles[23] = Candle(
+        symbol="BTCUSDT",
+        interval=Interval.M5,
+        open_time=candles[23].open_time,
+        close_time=candles[23].close_time,
+        open_price=Decimal("95"),
+        high_price=Decimal("116"),
+        low_price=Decimal("94"),
+        close_price=Decimal("115"),
+        volume=Decimal("3000"),
+    )
+
+    # Pullback at index 24
+    candles[24] = Candle(
+        symbol="BTCUSDT",
+        interval=Interval.M5,
+        open_time=candles[24].open_time,
+        close_time=candles[24].close_time,
+        open_price=Decimal("115"),
+        high_price=Decimal("115"),
+        low_price=Decimal("111"),
+        close_price=Decimal("112"),
+        volume=Decimal("1500"),
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.symbol == "BTCUSDT"
+    assert signal.signal_type in (SignalType.BUY, SignalType.HOLD)
+    assert signal.strategy_name == "choch_fvg"
+
+    # Verify factory creation
+    settings = StrategySettings(strategy_type=StrategyType.CHOCH_FVG)
+    factory_strategy = StrategyFactory.create(settings=settings)
+    assert isinstance(factory_strategy, ChochFvgStrategy)
+    assert factory_strategy.strategy_type is StrategyType.CHOCH_FVG
+
+    # Verify resolver
+    resolver = StrategyFactory.create_resolver(settings=settings)
+    resolved = resolver.resolve(strategy_type=StrategyType.CHOCH_FVG)
+    assert isinstance(resolved, ChochFvgStrategy)

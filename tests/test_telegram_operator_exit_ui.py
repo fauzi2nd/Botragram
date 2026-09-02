@@ -424,3 +424,27 @@ async def test_mode_switch_with_position_offers_guarded_flatten_transition(
         record.message == "Telegram execution-policy switch validation failed"
         for record in caplog.records
     )
+
+
+@pytest.mark.asyncio
+async def test_operator_close_callbacks_request_auto_pause() -> None:
+    service = _OperatorService()
+    query = _Query(data="cb_operator_exit_close_all")
+    update = cast(
+        Update,
+        _Update(
+            message=_Message(),
+            effective_chat=_Chat(id=_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+
+    await handle_callback_query(update, _context(service=service))
+    assert service.request_calls == [f"all:telegram:{_CHAT_ID}:none:True"]
+
+    query.data = "cb_operator_exit_close_btcusdt"
+    await handle_callback_query(update, _context(service=service))
+    assert service.request_calls == [
+        f"all:telegram:{_CHAT_ID}:none:True",
+        f"position:BTCUSDT:telegram:{_CHAT_ID}:True",
+    ]

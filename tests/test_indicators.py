@@ -30,6 +30,7 @@ from botragram.indicators import (
     calculate_adx,
     calculate_atr,
     calculate_bollinger_bands,
+    calculate_choch_fvg,
     calculate_ema,
     calculate_ichimoku,
     calculate_macd,
@@ -299,3 +300,47 @@ def test_indicators_reject_misaligned_or_invalid_input() -> None:
             slow_period=2,
             signal_period=1,
         )
+
+
+def test_calculate_choch_fvg_bullish_and_bearish() -> None:
+    """Verify CHoCH and FVG calculations detect structure shifts."""
+    # 25 bars: baseline ranging
+    n = 25
+    highs = [Decimal("100") for _ in range(n)]
+    lows = [Decimal("90") for _ in range(n)]
+    closes = [Decimal("95") for _ in range(n)]
+    opens = [Decimal("94") for _ in range(n)]
+    volumes = [Decimal("1000") for _ in range(n)]
+
+    # Make a swing low at bar 10: low = 80
+    lows[10] = Decimal("80")
+    # Make a swing high at bar 12: high = 110
+    highs[12] = Decimal("110")
+
+    # Bar 23: Bullish displacement breakout above swing high 110
+    opens[23] = Decimal("95")
+    closes[23] = Decimal("115")
+    highs[23] = Decimal("116")
+    lows[23] = Decimal("94")
+    volumes[23] = Decimal("3000")
+
+    # Bar 24 (latest): Pullback / retest
+    opens[24] = Decimal("115")
+    closes[24] = Decimal("112")
+    highs[24] = Decimal("115")
+    lows[24] = Decimal("111")
+    volumes[24] = Decimal("1500")
+
+    result = calculate_choch_fvg(
+        high_prices=tuple(highs),
+        low_prices=tuple(lows),
+        close_prices=tuple(closes),
+        open_prices=tuple(opens),
+        volumes=tuple(volumes),
+        swing_window=3,
+        volume_period=10,
+    )
+
+    assert result.has_bullish_choch
+    assert result.confidence >= Decimal("0.70")
+    assert result.last_swing_high == Decimal("110")

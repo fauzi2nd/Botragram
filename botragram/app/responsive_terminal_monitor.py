@@ -251,6 +251,12 @@ class TerminalMonitor(BaseTerminalMonitor):
                         entry=self._format_compact_decimal(paper_position.entry_price),
                         mark=self._format_compact_decimal(paper_position.current_price),
                         pnl=self.format_position_pnl(paper_position.unrealized_pnl),
+                        roi=self.format_position_roi(
+                            unrealized_pnl=paper_position.unrealized_pnl,
+                            entry_price=paper_position.entry_price,
+                            quantity=paper_position.quantity,
+                            leverage=paper_position.leverage,
+                        ),
                         stop_loss=self._format_compact_price(paper_position.stop_loss),
                         take_profit=self._format_compact_price(
                             paper_position.take_profit
@@ -289,6 +295,12 @@ class TerminalMonitor(BaseTerminalMonitor):
                     entry=self._format_compact_decimal(managed_position.entry_price),
                     mark=self._format_compact_decimal(mark),
                     pnl=self.format_position_pnl(managed_position.unrealized_pnl),
+                    roi=self.format_position_roi(
+                        unrealized_pnl=managed_position.unrealized_pnl,
+                        entry_price=managed_position.entry_price,
+                        quantity=managed_position.quantity,
+                        leverage=managed_position.leverage,
+                    ),
                     stop_loss=self._format_compact_price(managed_position.stop_loss),
                     take_profit=self._format_compact_price(
                         managed_position.take_profit
@@ -317,6 +329,7 @@ class TerminalMonitor(BaseTerminalMonitor):
         entry: str,
         mark: str,
         pnl: str,
+        roi: str,
         stop_loss: str,
         take_profit: str,
         step: int,
@@ -325,7 +338,7 @@ class TerminalMonitor(BaseTerminalMonitor):
         """Append one complete managed position in four portrait rows."""
         leverage_label = f"{leverage}x" if leverage > 0 else "N/A"
         table.add_row(symbol, f"{side} | {leverage_label} | {health} | STEP {step}")
-        table.add_row("Qty / PnL", f"{quantity} / {pnl}")
+        table.add_row("Qty / PnL", f"{quantity} / {pnl} ({roi})")
         table.add_row("Entry / Mark", f"{entry} / {mark}")
         table.add_row("SL / TP", f"{stop_loss} / {take_profit}")
 

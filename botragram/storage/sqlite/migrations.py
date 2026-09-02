@@ -499,6 +499,16 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ADD COLUMN authorized_symbols TEXT NOT NULL DEFAULT '';
         """,
     ),
+    _Migration(
+        version=19,
+        script="""
+        CREATE TABLE IF NOT EXISTS runtime_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 

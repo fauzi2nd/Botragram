@@ -27,6 +27,7 @@ from botragram.config.strategy_settings import StrategySettings
 from botragram.enums import StrategyType
 from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
+from botragram.strategies.price_action import ChochFvgStrategy
 from botragram.strategies.scalping import (
     EMAScalpingStrategy,
     RSIBBScalpingStrategy,
@@ -129,6 +130,16 @@ class StrategyFactory:
                     period=settings.bb_period,
                     standard_deviation=settings.bb_standard_deviation,
                 )
+
+            case StrategyType.CHOCH_FVG:
+                return ChochFvgStrategy(
+                    swing_window=settings.choch_swing_window,
+                    fvg_lookback=settings.choch_fvg_lookback,
+                    volume_period=settings.vwap_volume_period,
+                    volume_multiplier=settings.choch_volume_multiplier,
+                    min_body_ratio=settings.choch_min_body_ratio,
+                )
+
             case StrategyType.EMA_CROSS:
                 return EMACrossStrategy(
                     fast_period=settings.fast_period,

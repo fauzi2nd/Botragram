@@ -57,3 +57,46 @@ def test_terminal_formats_signed_position_pnl() -> None:
     assert TerminalMonitor.format_position_pnl(Decimal("1.2345678")) == "+1.2345678"
     assert TerminalMonitor.format_position_pnl(Decimal("-1.2345678")) == "-1.2345678"
     assert TerminalMonitor.format_position_pnl(Decimal("0")) == "0"
+
+
+def test_terminal_formats_signed_position_roi() -> None:
+    """Calculate and format accurate ROI percentage with sign."""
+    # Profit: Notional = 100 * 1 = 100, Margin = 100 / 10 = 10, PnL = 1 -> +10.00%
+    assert (
+        TerminalMonitor.format_position_roi(
+            unrealized_pnl=Decimal("1"),
+            entry_price=Decimal("100"),
+            quantity=Decimal("1"),
+            leverage=10,
+        )
+        == "+10.00%"
+    )
+    # Loss: Notional = 50 * 2 = 100, Margin = 100 / 20 = 5, PnL = -0.25 -> -5.00%
+    assert (
+        TerminalMonitor.format_position_roi(
+            unrealized_pnl=Decimal("-0.25"),
+            entry_price=Decimal("50"),
+            quantity=Decimal("2"),
+            leverage=20,
+        )
+        == "-5.00%"
+    )
+    # Zero or invalid
+    assert (
+        TerminalMonitor.format_position_roi(
+            unrealized_pnl=Decimal("0"),
+            entry_price=Decimal("100"),
+            quantity=Decimal("1"),
+            leverage=1,
+        )
+        == "0.00%"
+    )
+    assert (
+        TerminalMonitor.format_position_roi(
+            unrealized_pnl=Decimal("1"),
+            entry_price=Decimal("0"),
+            quantity=Decimal("0"),
+            leverage=1,
+        )
+        == "0.00%"
+    )

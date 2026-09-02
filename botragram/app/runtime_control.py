@@ -359,11 +359,9 @@ class TradingRuntimeControl:
             return False
 
         selector = self._strategy_selector
+        if selector is not None:
+            selector(strategy_type)
 
-        if selector is None:
-            raise RuntimeError("Runtime strategy selector is not configured")
-
-        selector(strategy_type)
         self.strategy_type = strategy_type
         return True
 

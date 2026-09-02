@@ -43,7 +43,12 @@ class _StrategySessionSwitcher(Protocol):
         """Return the strategy owned by the current session."""
         ...
 
-    async def prepare_strategy(self, *, strategy_type: StrategyType) -> bool:
+    async def prepare_strategy(
+        self,
+        *,
+        strategy_type: StrategyType,
+        allow_legacy_positions: bool = True,
+    ) -> bool:
         """Validate and stage one safe strategy session replacement."""
         ...
 
@@ -164,18 +169,7 @@ async def strategy_switch_callback(
     if switcher is None:
         control = bot_context.runtime_control
         if control is not None:
-            if target is not control.strategy_type and await _has_open_positions(
-                bot_context
-            ):
-                await query.edit_message_text(
-                    "⚠️ <b>Tutup semua posisi sebelum mengganti strategy.</b>",
-                    parse_mode=DEFAULT_PARSE_MODE,
-                    reply_markup=get_strategy_keyboard(
-                        control.strategy_type.value,
-                        confirmed=True,
-                    ),
-                )
-                return
+            has_open = await _has_open_positions(bot_context)
             try:
                 changed = control.select_strategy(target)
             except RuntimeError as error:
@@ -191,6 +185,12 @@ async def strategy_switch_callback(
 
             bot_context.strategy_name = control.strategy_type.value
             status = "dipilih" if changed else "sudah aktif"
+            suffix = (
+                "\n\nStrategy dipilih untuk siklus/entri baru berikutnya. "
+                "Posisi terbuka tetap dikawal sampai selesai."
+                if has_open
+                else f"\n\nStrategy {status} untuk siklus berikutnya."
+            )
             await query.edit_message_text(
                 get_strategy_message(
                     control.strategy_type.value,
@@ -198,7 +198,7 @@ async def strategy_switch_callback(
                     _SLOW_PERIOD,
                     confirmed=True,
                 )
-                + f"\n\nStrategy {status} untuk siklus berikutnya.",
+                + suffix,
                 parse_mode=DEFAULT_PARSE_MODE,
                 reply_markup=get_strategy_keyboard(
                     control.strategy_type.value,
@@ -215,7 +215,10 @@ async def strategy_switch_callback(
 
     current = switcher.current_strategy_type
     try:
-        changed = await switcher.prepare_strategy(strategy_type=target)
+        changed = await switcher.prepare_strategy(
+            strategy_type=target,
+            allow_legacy_positions=True,
+        )
     except ExecutionPolicySwitchBlockedError as error:
         if error.active_position_count > 0:
             await query.edit_message_text(
@@ -266,7 +269,8 @@ async def strategy_switch_callback(
         "🔄 <b>Strategy sedang diganti.</b>\n\n"
         f"<code>{current.value}</code> → <code>{target.value}</code>\n\n"
         "Trading session akan direbuild dalam process yang sama. "
-        "Session baru tetap PAUSED sampai operator melanjutkan trading.",
+        "Session baru tetap PAUSED sampai operator melanjutkan trading. "
+        "Posisi berjalan tetap dikawal sampai selesai.",
         parse_mode=DEFAULT_PARSE_MODE,
     )
     switcher.commit_strategy(strategy_type=target)

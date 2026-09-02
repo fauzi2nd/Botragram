@@ -86,8 +86,26 @@ async def test_strategy_switch_stages_exact_soft_restart_target() -> None:
 
 
 @pytest.mark.asyncio
-async def test_strategy_switch_rejects_open_positions() -> None:
-    """Keep strategy provenance stable until the portfolio is flat."""
+async def test_strategy_switch_allows_legacy_positions_by_default() -> None:
+    """Allow switching future strategy while open positions remain managed."""
+    coordinator = RuntimeRestartCoordinator()
+    service = MarketTypeSwitchService(
+        trade_mode=TradeMode.PAPER,
+        runtime_control=TradingRuntimeControl(),
+        position_repository=_StoredPositions(positions=(_position(),)),
+        position_service=_LivePositions(),
+        restart_coordinator=coordinator,
+        settings=Settings(),
+    )
+
+    assert await service.prepare_strategy(strategy_type=StrategyType.EMA_SCALPING)
+    service.commit_strategy(strategy_type=StrategyType.EMA_SCALPING)
+    assert await coordinator.wait() is StrategyType.EMA_SCALPING
+
+
+@pytest.mark.asyncio
+async def test_strategy_switch_rejects_open_positions_when_disallowed() -> None:
+    """Keep strategy provenance stable when strict flattening is required."""
     coordinator = RuntimeRestartCoordinator()
     service = MarketTypeSwitchService(
         trade_mode=TradeMode.PAPER,
@@ -102,7 +120,10 @@ async def test_strategy_switch_rejects_open_positions() -> None:
         ExecutionPolicySwitchBlockedError,
         match="Close every active position before switching strategy",
     ):
-        await service.prepare_strategy(strategy_type=StrategyType.EMA_SCALPING)
+        await service.prepare_strategy(
+            strategy_type=StrategyType.EMA_SCALPING,
+            allow_legacy_positions=False,
+        )
 
     assert coordinator.consume() is None
 

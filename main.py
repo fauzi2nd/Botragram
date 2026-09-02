@@ -92,15 +92,17 @@ async def _run_trading(
     restart_target: MarketType | ExecutionPolicy | StrategyType | None = None,
 ) -> None:
     """Build and run trading orchestration after resources are initialized."""
+    active_settings = dependency_provider.settings
     global_discovery_telemetry = (
         GlobalDiscoveryTelemetry(
-            interval=settings.market.interval,
-            max_symbols=settings.market.discovery_max_symbols,
-            universe_limit=settings.market.discovery_universe_limit,
-            batch_size=settings.market.discovery_batch_size,
-            top_n=settings.market.discovery_top_n,
+            interval=dependency_provider.runtime_control.interval,
+            max_symbols=active_settings.market.discovery_max_symbols,
+            universe_limit=active_settings.market.discovery_universe_limit,
+            batch_size=active_settings.market.discovery_batch_size,
+            top_n=active_settings.market.discovery_top_n,
         )
-        if settings.app.effective_execution_policy is ExecutionPolicy.AUTONOMOUS_LIVE
+        if active_settings.app.effective_execution_policy
+        is ExecutionPolicy.AUTONOMOUS_LIVE
         else None
     )
     terminal_monitor = TerminalMonitor(
@@ -108,27 +110,27 @@ async def _run_trading(
         paper_balance_provider=dependency_provider.paper_trading_service,
         live_balance_provider=(
             dependency_provider.live_futures_user_data_service
-            if settings.app.trade_mode is TradeMode.LIVE
-            and settings.exchange.market_type is MarketType.FUTURES
+            if active_settings.app.trade_mode is TradeMode.LIVE
+            and active_settings.exchange.market_type is MarketType.FUTURES
             else dependency_provider.account_service
         ),
         position_provider=dependency_provider.position_repository,
         live_futures_user_data_service=(
             dependency_provider.live_futures_user_data_service
-            if settings.app.trade_mode is TradeMode.LIVE
-            and settings.exchange.market_type is MarketType.FUTURES
+            if active_settings.app.trade_mode is TradeMode.LIVE
+            and active_settings.exchange.market_type is MarketType.FUTURES
             else None
         ),
         live_balance_refresh_seconds=(
             0.0
-            if settings.app.trade_mode is TradeMode.LIVE
-            and settings.exchange.market_type is MarketType.FUTURES
+            if active_settings.app.trade_mode is TradeMode.LIVE
+            and active_settings.exchange.market_type is MarketType.FUTURES
             else 10.0
         ),
         pnl_engine=dependency_provider.pnl_engine,
-        trade_mode=settings.app.trade_mode,
-        quote_asset=settings.market.quote_asset,
-        configured_strategy_type=settings.strategy.strategy_type,
+        trade_mode=active_settings.app.trade_mode,
+        quote_asset=active_settings.market.quote_asset,
+        configured_strategy_type=dependency_provider.runtime_control.strategy_type,
         live_runtime_health_service=dependency_provider.live_runtime_health_service,
         live_trading_performance_service=(
             dependency_provider.live_trading_performance_service
@@ -139,7 +141,7 @@ async def _run_trading(
         global_discovery_telemetry_provider=global_discovery_telemetry,
         runtime_risk_limit_provider=(
             dependency_provider.runtime_risk_limit_service
-            if settings.app.effective_execution_policy
+            if active_settings.app.effective_execution_policy
             is ExecutionPolicy.AUTONOMOUS_LIVE
             else None
         ),
@@ -290,7 +292,7 @@ async def main() -> None:
                 lifecycle=lifecycle,
                 runner=lambda: _run_trading(
                     dependency_provider=dependency_provider,
-                    settings=settings,
+                    settings=dependency_provider.settings,
                     restart_coordinator=restart_coordinator,
                     restart_target=session_restart_target,
                 ),
