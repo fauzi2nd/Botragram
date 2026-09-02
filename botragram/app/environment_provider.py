@@ -68,6 +68,7 @@ from botragram.constants.env import (
     ENV_MAX_OPEN_POSITIONS,
     ENV_MAX_POSITION_SIZE_USDT,
     ENV_MAX_SPREAD_BPS,
+    ENV_MIN_SIGNAL_CONFIDENCE,
     ENV_OKX_API_KEY,
     ENV_OKX_API_SECRET,
     ENV_OKX_PASSPHRASE,
@@ -455,6 +456,10 @@ class EnvironmentProvider:
     def get_invert_signals(self) -> bool:
         """Return whether strategy signals should be inverted."""
         return self._get_bool(ENV_INVERT_SIGNALS, default=False)
+
+    def get_min_signal_confidence(self) -> str:
+        """Return the minimum signal confidence threshold for entry."""
+        return self._get_var(ENV_MIN_SIGNAL_CONFIDENCE, default="0.0")
 
     def get_scalping_stop_loss_pct(self) -> str:
         """Return the scalping stop-loss ratio."""

@@ -43,6 +43,7 @@ class StrategySettings:
 
     strategy_type: StrategyType = StrategyType.EMA_CROSS
     invert_signals: bool = False
+    min_signal_confidence: Decimal = Decimal("0.0")
 
     @property
     def default_interval(self) -> Interval:
@@ -117,3 +118,10 @@ class StrategySettings:
     choch_fvg_lookback: int = 20
     choch_min_body_ratio: Decimal = Decimal("0.50")
     choch_volume_multiplier: Decimal = Decimal("1.2")
+
+    def __post_init__(self) -> None:
+        """Validate bounded strategy settings."""
+        if not self.min_signal_confidence.is_finite():
+            raise ValueError("Minimum signal confidence must be finite")
+        if not Decimal("0.0") <= self.min_signal_confidence <= Decimal("1.0"):
+            raise ValueError("Minimum signal confidence must be between 0.0 and 1.0")

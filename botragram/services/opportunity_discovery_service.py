@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Protocol
 
 # =============================================================================
@@ -105,6 +106,7 @@ class OpportunityDiscoveryService:
 
     market_service: DiscoveryMarketDataProvider
     strategy_service: DiscoveryStrategyProvider
+    min_confidence: Decimal = Decimal("0")
     utc_now: Callable[[], datetime] = _utc_now
 
     async def discover(
@@ -289,7 +291,10 @@ class OpportunityDiscoveryService:
                     signal=signal,
                 )
 
-            if signal.signal_type in _ACTIONABLE_ENTRY_SIGNAL_TYPES:
+            if (
+                signal.signal_type in _ACTIONABLE_ENTRY_SIGNAL_TYPES
+                and signal.confidence >= self.min_confidence
+            ):
                 actionable_signals.append(signal)
 
         return tuple(

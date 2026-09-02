@@ -333,6 +333,10 @@ class SettingsManager:
         """Load strategy settings with strict optional environment selection."""
         raw_strategy_type = self._environment_provider.get_strategy_type()
         invert_signals = self._environment_provider.get_invert_signals()
+        min_signal_confidence = self._parse_decimal(
+            raw_value=self._environment_provider.get_min_signal_confidence(),
+            setting_name="MIN_SIGNAL_CONFIDENCE",
+        )
         return StrategySettings(
             strategy_type=(
                 self._parse_enum(
@@ -344,6 +348,7 @@ class SettingsManager:
                 else StrategyType.EMA_CROSS
             ),
             invert_signals=invert_signals,
+            min_signal_confidence=min_signal_confidence,
         )
 
     def load_logging_settings(self) -> LoggingSettings:

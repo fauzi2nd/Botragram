@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+from decimal import Decimal
 from pathlib import Path
 
 # =============================================================================
@@ -122,3 +123,17 @@ def test_invert_signals_environment_setting(
         strategy_type=None,
     )
     assert manager.load_strategy_settings().invert_signals is False
+
+
+def test_min_signal_confidence_environment_setting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify MIN_SIGNAL_CONFIDENCE can be loaded as Decimal."""
+    monkeypatch.setenv("MIN_SIGNAL_CONFIDENCE", "0.85")
+    manager = _create_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        strategy_type=None,
+    )
+    assert manager.load_strategy_settings().min_signal_confidence == Decimal("0.85")

@@ -1056,6 +1056,7 @@ class DependencyProvider:
         self._trading_engine = TradingEngine(
             risk_engine=self.risk_engine,
             portfolio_engine=self.portfolio_engine,
+            min_signal_confidence=self._settings.strategy.min_signal_confidence,
         )
         self._order_engine = OrderEngine(exchange_client=exchange_client)
         self._position_engine = PositionEngine(exchange_client=exchange_client)
@@ -1085,6 +1086,7 @@ class DependencyProvider:
         self._opportunity_discovery_service = OpportunityDiscoveryService(
             market_service=self.market_service,
             strategy_service=self.strategy_service,
+            min_confidence=self._settings.strategy.min_signal_confidence,
         )
         self._order_service = OrderService(
             order_engine=self.order_engine,

@@ -369,6 +369,53 @@ def test_trading_engine_blocks_hold_or_duplicate_position(
     assert reason in decision.reason
 
 
+def test_trading_engine_enforces_min_signal_confidence() -> None:
+    """Verify TradingEngine rejects signals below min_signal_confidence."""
+    engine = TradingEngine(
+        risk_engine=RiskEngine(settings=RiskSettings()),
+        min_signal_confidence=Decimal("0.80"),
+    )
+
+    # Signal with 0.70 confidence < 0.80 min threshold
+    low_confidence_signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100"),
+        confidence=Decimal("0.70"),
+        strategy_name="test",
+        generated_at=_NOW,
+    )
+
+    decision = engine.evaluate(
+        signal=low_confidence_signal,
+        account_balance=Decimal("1000"),
+        has_open_position=False,
+    )
+
+    assert not decision.should_execute
+    assert decision.risk_result is None
+    assert "below minimum threshold" in decision.reason
+
+    # Signal with 0.85 confidence >= 0.80 min threshold
+    high_confidence_signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100"),
+        confidence=Decimal("0.85"),
+        strategy_name="test",
+        generated_at=_NOW,
+    )
+
+    approved_decision = engine.evaluate(
+        signal=high_confidence_signal,
+        account_balance=Decimal("1000"),
+        has_open_position=False,
+    )
+
+    assert approved_decision.should_execute
+    assert approved_decision.risk_result is not None
+
+
 @pytest.mark.parametrize(
     ("open_positions", "maximum", "should_execute"),
     (

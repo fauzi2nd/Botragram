@@ -33,6 +33,7 @@ class TradingEngine:
 
     risk_engine: RiskEngine
     portfolio_engine: PortfolioEngine = field(default_factory=PortfolioEngine)
+    min_signal_confidence: Decimal = _DECIMAL_ZERO
 
     def evaluate(
         self,
@@ -60,6 +61,17 @@ class TradingEngine:
                 signal=signal,
                 risk_result=None,
                 reason=_HOLD_SIGNAL_REASON,
+            )
+
+        if signal.confidence < self.min_signal_confidence:
+            return TradingDecision(
+                should_execute=False,
+                signal=signal,
+                risk_result=None,
+                reason=(
+                    f"Signal confidence {signal.confidence} is below "
+                    f"minimum threshold {self.min_signal_confidence}"
+                ),
             )
 
         if has_open_position:
