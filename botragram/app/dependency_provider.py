@@ -1048,6 +1048,7 @@ class DependencyProvider:
                 settings=self._settings.strategy,
             ),
             default_strategy_type=self._settings.strategy.strategy_type,
+            invert_signals=self._settings.strategy.invert_signals,
         )
         self._risk_engine = RiskEngine(settings=self._settings.risk)
         self._pnl_engine = PnLEngine()

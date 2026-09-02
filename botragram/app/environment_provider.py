@@ -58,6 +58,7 @@ from botragram.constants.env import (
     ENV_EXCHANGE_API_SECRET_LEGACY,
     ENV_EXECUTION_POLICY,
     ENV_GEMINI_API_KEY,
+    ENV_INVERT_SIGNALS,
     ENV_LEVERAGE,
     ENV_LOG_LEVEL,
     ENV_LOG_LEVEL_LEGACY,
@@ -450,6 +451,10 @@ class EnvironmentProvider:
     def get_strategy_type(self) -> str:
         """Return the optional configured trading strategy type."""
         return self._get_var(ENV_STRATEGY_TYPE)
+
+    def get_invert_signals(self) -> bool:
+        """Return whether strategy signals should be inverted."""
+        return self._get_bool(ENV_INVERT_SIGNALS, default=False)
 
     def get_scalping_stop_loss_pct(self) -> str:
         """Return the scalping stop-loss ratio."""

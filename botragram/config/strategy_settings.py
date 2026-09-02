@@ -42,6 +42,7 @@ class StrategySettings:
     """Settings controlling indicator periods and strategy behavior."""
 
     strategy_type: StrategyType = StrategyType.EMA_CROSS
+    invert_signals: bool = False
 
     @property
     def default_interval(self) -> Interval:

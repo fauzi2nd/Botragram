@@ -16,7 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 # =============================================================================
@@ -28,9 +28,17 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine import PnLEngine, PortfolioEngine, RiskEngine, TradingEngine
-from botragram.enums import PositionSide, SignalType, StrategyType
-from botragram.models import Position, Signal
+from botragram.config.strategy_settings import StrategySettings
+from botragram.engine import (
+    PnLEngine,
+    PortfolioEngine,
+    RiskEngine,
+    SignalEngine,
+    TradingEngine,
+)
+from botragram.enums import Interval, PositionSide, SignalType, StrategyType
+from botragram.models import Candle, Position, Signal
+from botragram.strategies.factory import StrategyFactory
 
 # =============================================================================
 # Constants
@@ -650,3 +658,46 @@ def test_portfolio_engine_rejects_invalid_equity() -> None:
             positions=positions,
             account_equity=zero_equity,
         )
+
+
+def test_signal_engine_inverts_signals_when_enabled() -> None:
+    """Verify SignalEngine inverts signals when invert_signals=True."""
+    settings = StrategySettings(
+        strategy_type=StrategyType.EMA_CROSS,
+        fast_period=2,
+        slow_period=3,
+    )
+    resolver = StrategyFactory.create_resolver(settings=settings)
+    engine_normal = SignalEngine(
+        strategy_resolver=resolver,
+        default_strategy_type=StrategyType.EMA_CROSS,
+        invert_signals=False,
+    )
+    engine_inverted = SignalEngine(
+        strategy_resolver=resolver,
+        default_strategy_type=StrategyType.EMA_CROSS,
+        invert_signals=True,
+    )
+
+    closes = (Decimal("1"), Decimal("1"), Decimal("1"), Decimal("2"))
+    candles = [
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M5,
+            open_time=_NOW + timedelta(minutes=5 * i),
+            close_time=_NOW + timedelta(minutes=5 * (i + 1)),
+            open_price=c,
+            high_price=c + Decimal("1"),
+            low_price=c - Decimal("0.5"),
+            close_price=c,
+            volume=Decimal("1000"),
+        )
+        for i, c in enumerate(closes)
+    ]
+
+    normal_signal = engine_normal.generate(candles=candles)
+    inverted_signal = engine_inverted.generate(candles=candles)
+
+    assert normal_signal.signal_type is SignalType.BUY
+    assert inverted_signal.signal_type is SignalType.SELL
+    assert inverted_signal.reason is not None and "[INVERTED]" in inverted_signal.reason

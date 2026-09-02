@@ -100,3 +100,25 @@ def test_strategy_type_rejects_unknown_value(
 
     with pytest.raises(ValueError, match="STRATEGY_TYPE"):
         manager.load_strategy_settings()
+
+
+def test_invert_signals_environment_setting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify INVERT_SIGNALS can be loaded as boolean."""
+    monkeypatch.setenv("INVERT_SIGNALS", "true")
+    manager = _create_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        strategy_type=None,
+    )
+    assert manager.load_strategy_settings().invert_signals is True
+
+    monkeypatch.setenv("INVERT_SIGNALS", "false")
+    manager = _create_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        strategy_type=None,
+    )
+    assert manager.load_strategy_settings().invert_signals is False
