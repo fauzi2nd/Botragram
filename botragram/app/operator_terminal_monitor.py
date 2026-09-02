@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 import re
 from typing import Final
 
@@ -77,6 +78,24 @@ _ENUM_VALUE_KEYS: Final[frozenset[str]] = frozenset(
 )
 
 
+def _format_decimal_str(value: str) -> str:
+    """Format decimal numbers cleanly, removing excessive precision trailing zeros."""
+    try:
+        dec = Decimal(value)
+        raw = f"{dec:f}"
+        if "." in raw:
+            int_part, frac_part = raw.split(".", 1)
+            frac_trimmed = frac_part.rstrip("0")
+            if not frac_trimmed:
+                return f"{int_part}.00"
+            if len(frac_trimmed) < 2:
+                frac_trimmed = frac_trimmed.ljust(2, "0")
+            return f"{int_part}.{frac_trimmed}"
+        return raw
+    except Exception:
+        return value
+
+
 class TerminalMonitor(ResponsiveTerminalMonitor):
     """Add concise operator wording for high-frequency LIVE runtime events."""
 
@@ -100,7 +119,8 @@ class TerminalMonitor(ResponsiveTerminalMonitor):
         if protection is not None:
             return (
                 f"Protection {protection['symbol']} | "
-                f"SL {protection['stop_loss']} | TP {protection['take_profit']}"
+                f"SL {_format_decimal_str(protection['stop_loss'])} | "
+                f"TP {_format_decimal_str(protection['take_profit'])}"
             )
 
         entry = _ENTRY_COMPLETED_PATTERN.fullmatch(message)
@@ -112,8 +132,9 @@ class TerminalMonitor(ResponsiveTerminalMonitor):
             result = cls._format_candidate_result(submitted["reason"])
             return (
                 f"Order {submitted['symbol']} {submitted['position']} | {result} | "
-                f"risk {submitted['risk_amount']} | SL {submitted['stop_loss']} | "
-                f"TP {submitted['take_profit']}"
+                f"risk {_format_decimal_str(submitted['risk_amount'])} | "
+                f"SL {_format_decimal_str(submitted['stop_loss'])} | "
+                f"TP {_format_decimal_str(submitted['take_profit'])}"
             )
 
         responsive = super()._format_compact_event(message)
@@ -166,4 +187,12 @@ class TerminalMonitor(ResponsiveTerminalMonitor):
             return "N/A"
         if key in _ENUM_VALUE_KEYS:
             return normalized.replace("_", " ").upper()
+        if key in {
+            "risk_amount",
+            "stop_loss",
+            "take_profit",
+            "entry_price",
+            "mark_price",
+        }:
+            return _format_decimal_str(normalized)
         return normalized.replace("_", " ")

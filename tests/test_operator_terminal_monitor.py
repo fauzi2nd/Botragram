@@ -32,7 +32,7 @@ def test_humanizes_live_protection_verification() -> None:
         "stop_loss=0.058200 take_profit=0.056000"
     )
 
-    assert rendered == "Protection NILUSDT | SL 0.058200 | TP 0.056000"
+    assert rendered == "Protection NILUSDT | SL 0.0582 | TP 0.056"
     assert "stop_loss=" not in rendered
     assert "take_profit=" not in rendered
 
@@ -51,12 +51,13 @@ def test_humanizes_submitted_live_order() -> None:
     """Present order execution and protection without snake-case fields."""
     rendered = _TestTerminalMonitor.format_compact_event(
         "Trading cycle submitted an order: symbol=GALAUSDT order_id=4718358487 "
-        "position=LONG reason=executed_and_protected risk_amount=0.01 "
-        "stop_loss=0.001772 take_profit=0.001775"
+        "position=LONG reason=executed_and_protected "
+        "risk_amount=0.2000000000000000000000000000 "
+        "stop_loss=0.00177200 take_profit=0.00177500"
     )
 
     assert rendered == (
-        "Order GALAUSDT LONG | LIVE | risk 0.01 | SL 0.001772 | TP 0.001775"
+        "Order GALAUSDT LONG | LIVE | risk 0.20 | SL 0.001772 | TP 0.001775"
     )
     assert "executed_and_protected" not in rendered
     assert "risk_amount=" not in rendered
