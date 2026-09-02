@@ -26,6 +26,7 @@ from decimal import Decimal
 # =============================================================================
 from botragram.enums import SignalType, StrategyType
 from botragram.indicators.price_action import calculate_choch_fvg
+from botragram.indicators.trend.ema import calculate_ema
 from botragram.models import Candle, Signal
 from botragram.strategies.base import BaseStrategy
 
@@ -55,6 +56,8 @@ class ChochFvgStrategy(BaseStrategy):
     volume_period: int = 20
     volume_multiplier: Decimal = Decimal("1.2")
     min_body_ratio: Decimal = Decimal("0.50")
+    trend_period: int = 50
+    require_trend_filter: bool = True
 
     def __post_init__(self) -> None:
         """Validate strategy configuration."""
@@ -72,6 +75,9 @@ class ChochFvgStrategy(BaseStrategy):
 
         if self.min_body_ratio <= _DECIMAL_ZERO:
             raise ValueError("Minimum body ratio must be greater than zero")
+
+        if self.trend_period <= 0:
+            raise ValueError("Trend period must be greater than zero")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -110,7 +116,10 @@ class ChochFvgStrategy(BaseStrategy):
             min_body_ratio=self.min_body_ratio,
         )
 
-        signal_type, reason = self._resolve_signal(result=result)
+        signal_type, reason = self._resolve_signal(
+            result=result,
+            close_prices=close_prices,
+        )
         latest_candle = candles[-1]
 
         confidence = (
@@ -127,10 +136,11 @@ class ChochFvgStrategy(BaseStrategy):
             reason=reason,
         )
 
-    @staticmethod
     def _resolve_signal(
+        self,
         *,
         result: object,
+        close_prices: Sequence[Decimal],
     ) -> tuple[SignalType, str]:
         """Resolve signal type and rationale from CHoCH and FVG confluence."""
         from botragram.indicators.price_action import ChochFvgResult
@@ -138,25 +148,39 @@ class ChochFvgStrategy(BaseStrategy):
         if not isinstance(result, ChochFvgResult):
             return SignalType.HOLD, "Invalid CHoCH calculation result"
 
-        if result.retesting_bullish_fvg or (
-            result.has_bullish_choch and result.bullish_fvg_active
-        ):
+        trend_ok_for_buy = True
+        trend_ok_for_sell = True
+        if self.require_trend_filter and len(close_prices) >= self.trend_period:
+            trend_ema = calculate_ema(close_prices, period=self.trend_period)[-1]
+            latest_close = close_prices[-1]
+            trend_ok_for_buy = latest_close >= trend_ema
+            trend_ok_for_sell = latest_close <= trend_ema
+
+        if result.retesting_bullish_fvg:
+            if not trend_ok_for_buy:
+                return (
+                    SignalType.HOLD,
+                    "Bullish FVG retest rejected: below trend EMA",
+                )
             sweep_note = " with liquidity sweep" if result.liquidity_swept else ""
             return (
                 SignalType.BUY,
-                f"Bullish CHoCH structure shift{sweep_note} and active FVG mitigation",
+                f"Bullish CHoCH structure shift{sweep_note} and confirmed FVG retest",
             )
 
-        if result.retesting_bearish_fvg or (
-            result.has_bearish_choch and result.bearish_fvg_active
-        ):
+        if result.retesting_bearish_fvg:
+            if not trend_ok_for_sell:
+                return (
+                    SignalType.HOLD,
+                    "Bearish FVG retest rejected: above trend EMA",
+                )
             sweep_note = " with liquidity sweep" if result.liquidity_swept else ""
             return (
                 SignalType.SELL,
-                f"Bearish CHoCH structure shift{sweep_note} and active FVG mitigation",
+                f"Bearish CHoCH structure shift{sweep_note} and confirmed FVG retest",
             )
 
         return (
             SignalType.HOLD,
-            "No active CHoCH structure shift or FVG retest confirmed",
+            "No active CHoCH and FVG confluence",
         )

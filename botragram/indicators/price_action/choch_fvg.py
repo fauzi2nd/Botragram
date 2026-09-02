@@ -249,18 +249,38 @@ def calculate_choch_fvg(
     retesting_bearish_fvg = False
     active_fvg: FvgZone | None = None
 
-    # Check if latest candle is retesting an active FVG
+    # Check if latest candle is retesting an active FVG with rejection confirmation
     if active_bullish_fvgs:
         target_fvg = active_bullish_fvgs[-1]
+        # Price must touch the FVG zone and close above/at the bottom
         if latest_low <= target_fvg.top and latest_close >= target_fvg.bottom:
-            retesting_bullish_fvg = True
-            active_fvg = target_fvg
+            candle_span = latest_high - latest_low
+            lower_wick = min(latest_open, latest_close) - latest_low
+            is_rejection = (
+                lower_wick >= (candle_span * Decimal("0.25"))
+                if candle_span > _DECIMAL_ZERO
+                else False
+            )
+            # Bullish confirmation: closed green or formed a lower rejection wick
+            if latest_close >= latest_open or is_rejection:
+                retesting_bullish_fvg = True
+                active_fvg = target_fvg
 
     if active_bearish_fvgs and not retesting_bullish_fvg:
         target_fvg = active_bearish_fvgs[-1]
+        # Price must touch the FVG zone and close below/at the top
         if latest_high >= target_fvg.bottom and latest_close <= target_fvg.top:
-            retesting_bearish_fvg = True
-            active_fvg = target_fvg
+            candle_span = latest_high - latest_low
+            upper_wick = latest_high - max(latest_open, latest_close)
+            is_rejection = (
+                upper_wick >= (candle_span * Decimal("0.25"))
+                if candle_span > _DECIMAL_ZERO
+                else False
+            )
+            # Bearish confirmation: closed red or formed an upper rejection wick
+            if latest_close <= latest_open or is_rejection:
+                retesting_bearish_fvg = True
+                active_fvg = target_fvg
 
     # Confidence calculation
     confidence = _BASE_CONFIDENCE

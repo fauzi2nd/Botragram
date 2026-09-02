@@ -616,3 +616,38 @@ def test_choch_fvg_strategy_signal_generation() -> None:
     resolver = StrategyFactory.create_resolver(settings=settings)
     resolved = resolver.resolve(strategy_type=StrategyType.CHOCH_FVG)
     assert isinstance(resolved, ChochFvgStrategy)
+
+
+def test_choch_fvg_strategy_trend_filter_rejection() -> None:
+    """Verify CHoCH FVG rejects buy signals when below trend filter."""
+    strategy = ChochFvgStrategy(
+        swing_window=3,
+        fvg_lookback=10,
+        volume_period=10,
+        trend_period=15,
+        require_trend_filter=True,
+    )
+    # Generate 30 candles in overall downtrend
+    candles: list[Candle] = []
+    base_time = _START_TIME
+    for i in range(30):
+        open_time = base_time + timedelta(minutes=5 * i)
+        close_time = open_time + timedelta(minutes=5)
+        # Price steadily declining from 200 to 100
+        price = Decimal(str(200 - i * 3))
+        candles.append(
+            Candle(
+                symbol="BTCUSDT",
+                interval=Interval.M5,
+                open_time=open_time,
+                close_time=close_time,
+                open_price=price,
+                high_price=price + Decimal("2"),
+                low_price=price - Decimal("2"),
+                close_price=price,
+                volume=Decimal("1000"),
+            )
+        )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is not SignalType.BUY
