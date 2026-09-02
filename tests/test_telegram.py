@@ -278,8 +278,10 @@ def test_positions_message_uses_current_domain_model() -> None:
         symbol="BTCUSDT",
         side=PositionSide.LONG,
         quantity=Decimal("2"),
-        entry_price=Decimal("100"),
-        current_price=Decimal("110"),
+        entry_price=Decimal("0.002246"),
+        current_price=Decimal("0.002500"),
+        stop_loss=Decimal("0.002100"),
+        take_profit=Decimal("0.002800"),
         unrealized_pnl=Decimal("20"),
         leverage=1,
         opened_at=_NOW,
@@ -291,6 +293,8 @@ def test_positions_message_uses_current_domain_model() -> None:
     assert "BTCUSDT" in message
     assert "LONG" in message
     assert "Qty=2" in message
+    assert "Entry / Mark: 0.002246 / 0.0025" in message
+    assert "SL / TP: 0.0021 / 0.0028" in message
     assert "PnL=20.00 USDT" in message
     assert "Tidak ada posisi" in get_positions_message(())
 

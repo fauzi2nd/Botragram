@@ -26,7 +26,11 @@ from botragram.utils.decimal import (
     round_step_size,
     to_decimal,
 )
-from botragram.utils.formatter import format_currency, format_percentage
+from botragram.utils.formatter import (
+    format_currency,
+    format_percentage,
+    format_price,
+)
 from botragram.utils.logger import configure_logging, setup_logger, shutdown_logging
 from botragram.utils.retry import CappedExponentialBackoff
 from botragram.utils.validator import (
@@ -40,6 +44,7 @@ __all__ = [
     "configure_logging",
     "format_currency",
     "format_percentage",
+    "format_price",
     "format_utc_datetime",
     "round_price_precision",
     "round_step_size",

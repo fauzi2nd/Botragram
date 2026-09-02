@@ -64,7 +64,11 @@ from botragram.utils.decimal import (
     round_step_size,
     to_decimal,
 )
-from botragram.utils.formatter import format_currency, format_percentage
+from botragram.utils.formatter import (
+    format_currency,
+    format_percentage,
+    format_price,
+)
 from botragram.utils.validator import validate_positive_decimal, validate_symbol
 
 # =============================================================================
@@ -1271,10 +1275,17 @@ def test_datetime_utilities_use_utc() -> None:
 
 
 def test_formatting_utilities_return_stable_display_values() -> None:
-    """Verify currency and percentage formatting."""
+    """Verify currency, percentage, and price formatting."""
     assert format_currency(Decimal("100.5"), "USDT") == "100.50 USDT"
     assert format_percentage(Decimal("0.052")) == "+5.20%"
     assert format_percentage(Decimal("-0.01")) == "-1.00%"
+    assert format_price(Decimal("0.123")) == "0.123"
+    assert format_price(Decimal("0.002246")) == "0.002246"
+    assert format_price(Decimal("100.50")) == "100.50"
+    assert format_price(Decimal("100")) == "100.00"
+    assert format_price(Decimal("671.770")) == "671.77"
+    assert format_price(Decimal("0.123"), symbol="USDT") == "0.123 USDT"
+    assert format_price(Decimal("27"), min_decimals=0) == "27"
 
 
 def test_validation_utilities_accept_and_reject_domain_values() -> None:

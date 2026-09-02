@@ -46,7 +46,7 @@ from botragram.models import (
     RuntimeRiskLimits,
     Trade,
 )
-from botragram.utils.formatter import format_currency
+from botragram.utils.formatter import format_currency, format_price
 
 __all__ = [
     "get_balance_message",
@@ -179,7 +179,7 @@ def get_status_message(
     price = (
         "GLOBAL DISCOVERY"
         if autonomous_live
-        else format_currency(last_price, symbol="USDT")
+        else format_price(last_price, symbol="USDT")
         if not is_multi_context_runtime and "symbol" not in missing and last_price > 0
         else "WAITING"
     )
@@ -414,10 +414,11 @@ def get_positions_message(
                 sign = "+" if roi_val > Decimal("0") else ""
                 roi_str = f" ({sign}{roi_val:.2f}%)"
 
+        qty_str = format_price(position.quantity, min_decimals=0)
         lines.append(
             f"\n{side_icon} <b>{escape(position.symbol)}</b> · "
             f"{position.side.value.upper()} · {position.leverage}x\n"
-            f"Qty={position.quantity}\n"
+            f"Qty={qty_str}\n"
             f"Entry / Mark: {_format_optional_price(position.entry_price)} / "
             f"{_format_optional_price(position.current_price)}\n"
             f"SL / TP: {_format_optional_price(position.stop_loss)} / "
@@ -495,7 +496,7 @@ def get_market_message(
     """Return current market summary."""
     selected_symbol = escape(symbol) if confirmed else "Belum dipilih"
     price = (
-        format_currency(last_price, symbol="USDT")
+        format_price(last_price, symbol="USDT")
         if confirmed and last_price > 0
         else "WAITING"
     )
@@ -597,7 +598,7 @@ def get_paper_entry_message(
         f"<b>Symbol:</b> {escape(order.symbol)}\n"
         f"<b>Position:</b> {position.side.value.upper()}\n"
         f"<b>Quantity:</b> {order.executed_quantity}\n"
-        f"<b>Fill:</b> {format_currency(trade.price, symbol='USDT')}\n"
+        f"<b>Fill:</b> {format_price(trade.price, symbol='USDT')}\n"
         f"<b>Fee:</b> {format_currency(trade.fee, symbol=trade.fee_asset)}\n"
         f"<b>Stop Loss:</b> {_format_optional_price(position.stop_loss)}\n"
         f"<b>Take Profit:</b> {_format_optional_price(position.take_profit)}\n"
@@ -621,7 +622,7 @@ def get_paper_exit_message(
         f"<b>Symbol:</b> {escape(order.symbol)}\n"
         f"<b>Side:</b> {order.side.value}\n"
         f"<b>Quantity:</b> {order.executed_quantity}\n"
-        f"<b>Fill:</b> {format_currency(trade.price, symbol='USDT')}\n"
+        f"<b>Fill:</b> {format_price(trade.price, symbol='USDT')}\n"
         f"<b>Fee:</b> {format_currency(trade.fee, symbol=trade.fee_asset)}\n"
         f"<b>Realized PnL:</b> {format_currency(realized_pnl, symbol='USDT')}\n"
         f"<b>Available Balance:</b> "
@@ -659,7 +660,7 @@ def get_trade_completed_message(
                 start=Decimal("0"),
             )
             avg_entry = total_cost / total_qty
-            entry_price_str = format_currency(avg_entry, symbol="USDT")
+            entry_price_str = format_price(avg_entry, symbol="USDT")
             quantity_str = (
                 f"{total_qty.normalize():f}"
                 if total_qty == total_qty.to_integral()
@@ -674,7 +675,7 @@ def get_trade_completed_message(
                 start=Decimal("0"),
             )
             avg_exit = total_revenue / total_qty
-            exit_price_str = format_currency(avg_exit, symbol="USDT")
+            exit_price_str = format_price(avg_exit, symbol="USDT")
 
     formatted_gross = format_currency(
         lifecycle.gross_realized_pnl,
@@ -722,7 +723,7 @@ def get_execution_authorization_message(
         f"<b>Intent:</b> {intent}\n"
         f"<b>Strategy:</b> {escape(signal.strategy_name)}\n"
         f"<b>Confidence:</b> {signal.confidence:.2%}\n"
-        f"<b>Reference Price:</b> {format_currency(signal.price, symbol='USDT')}\n"
+        f"<b>Reference Price:</b> {format_price(signal.price, symbol='USDT')}\n"
         f"<b>Generated:</b> {escape(signal.generated_at.isoformat())}\n"
         f"<b>Expires:</b> {escape(authorization.expires_at.isoformat())}"
         f"{reason}\n\n"
@@ -782,7 +783,7 @@ def _format_optional_price(value: Decimal | None) -> str:
     if value is None:
         return "-"
 
-    return format_currency(value, symbol="USDT")
+    return format_price(value)
 
 
 def get_history_message(trades: Sequence[Trade] = ()) -> str:
@@ -801,7 +802,7 @@ def get_history_message(trades: Sequence[Trade] = ()) -> str:
         lines.append(
             f"\n<b>{escape(trade.symbol)}</b> {trade.side.value} "
             f"qty={trade.quantity}\n"
-            f"Fill={format_currency(trade.price, symbol=trade.fee_asset)} | "
+            f"Fill={format_price(trade.price, symbol=trade.fee_asset)} | "
             f"Fee={format_currency(trade.fee, symbol=trade.fee_asset)} | "
             f"PnL={pnl}\n"
             f"Time={escape(trade.executed_at.isoformat())}"
@@ -913,7 +914,7 @@ def get_stream_message(
     subscription = "ACTIVE" if subscription_active else "INACTIVE"
     first_tick = "RECEIVED" if first_tick_received else "WAITING"
     price = (
-        format_currency(last_price, symbol="USDT")
+        format_price(last_price, symbol="USDT")
         if last_price is not None and last_price > 0
         else "WAITING"
     )
