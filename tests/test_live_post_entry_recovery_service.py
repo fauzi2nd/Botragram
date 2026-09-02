@@ -171,7 +171,7 @@ async def _service(
             submission_attempt_repository=repository,
             live_recovery_repository=MemoryLiveRecoveryRepository(
                 attempt_repo=repository,
-                position_repo=positions,  # type: ignore[arg-type]
+                position_repo=positions,
             ),
             position_service=positions,
             protection_service=resolved_protection,
@@ -613,7 +613,7 @@ async def test_cancellation_propagates_for_various_operations() -> None:
         submission_attempt_repository=repository,
         live_recovery_repository=MemoryLiveRecoveryRepository(
             attempt_repo=repository,
-            position_repo=positions,  # type: ignore[arg-type]
+            position_repo=positions,
         ),
         position_service=positions,
         protection_service=protection,
@@ -667,7 +667,7 @@ async def test_cancellation_propagates_for_various_operations() -> None:
         submission_attempt_repository=repository,
         live_recovery_repository=MemoryLiveRecoveryRepository(
             attempt_repo=repository,
-            position_repo=positions,  # type: ignore[arg-type]
+            position_repo=positions,
         ),
         position_service=positions,
         protection_service=CancelProtection(),
@@ -1008,7 +1008,7 @@ async def _run2_service(
         submission_attempt_repository=repository,
         live_recovery_repository=MemoryLiveRecoveryRepository(
             attempt_repo=repository,
-            position_repo=positions,  # type: ignore[arg-type]
+            position_repo=positions,
         ),
         position_service=positions,
         protection_service=FakeProtectionService(),

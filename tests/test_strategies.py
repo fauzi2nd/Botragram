@@ -374,6 +374,34 @@ def test_vwap_breakout_generates_hold_on_flat_market() -> None:
     assert signal.confidence == Decimal("0")
 
 
+def test_vwap_breakout_evaluates_zero_volume_candles_safely() -> None:
+    """Verify VWAP breakout strategy handles zero volume candles without error."""
+    strategy = VWAPBreakoutStrategy(
+        atr_period=2,
+        volume_period=2,
+        volume_multiplier=Decimal("1.2"),
+    )
+    candles = tuple(
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=index),
+            close_time=_START_TIME + timedelta(minutes=index + 1),
+            open_price=Decimal("10"),
+            high_price=Decimal("11"),
+            low_price=Decimal("9"),
+            close_price=Decimal("10"),
+            volume=Decimal("0"),
+        )
+        for index in range(5)
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.confidence == Decimal("0")
+
+
 @pytest.mark.parametrize(
     "strategy_type",
     (

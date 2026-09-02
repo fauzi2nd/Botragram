@@ -53,7 +53,7 @@ def calculate_vwap(
 
     Raises:
         ValueError: If sequences are empty, have different lengths,
-            contain negative volume values, or cumulative volume is zero.
+            or contain negative volume values.
     """
     sequence_length = len(closes)
 
@@ -83,8 +83,8 @@ def calculate_vwap(
         cumulative_volume += volume
 
         if cumulative_volume == _DECIMAL_ZERO:
-            raise ValueError("VWAP cumulative volume must be greater than zero")
-
-        vwap_values.append(cumulative_price_volume / cumulative_volume)
+            vwap_values.append(typical_price)
+        else:
+            vwap_values.append(cumulative_price_volume / cumulative_volume)
 
     return tuple(vwap_values)

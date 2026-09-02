@@ -1299,7 +1299,7 @@ async def test_completion_persistence_failure_recovers_same_acknowledged_attempt
         submission_attempt_repository=repository,
         live_recovery_repository=MemoryLiveRecoveryRepository(
             attempt_repo=repository,
-            position_repo=positions,  # type: ignore[arg-type]
+            position_repo=positions,
         ),
         position_service=positions,
         protection_service=protection,

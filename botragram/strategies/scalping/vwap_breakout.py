@@ -114,8 +114,10 @@ class VWAPBreakoutStrategy(BaseStrategy):
         avg_volume = sum(recent_volumes, start=_DECIMAL_ZERO) / Decimal(
             len(recent_volumes)
         )
-        has_volume_surge = current_candle.volume >= (
-            avg_volume * self.volume_multiplier
+        has_volume_surge = (
+            current_candle.volume > _DECIMAL_ZERO
+            and avg_volume > _DECIMAL_ZERO
+            and current_candle.volume >= (avg_volume * self.volume_multiplier)
         )
 
         signal_type, reason = self._resolve_signal(

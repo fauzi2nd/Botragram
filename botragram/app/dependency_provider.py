@@ -1124,8 +1124,8 @@ class DependencyProvider:
             )
 
             live_recovery_repo = MemoryLiveRecoveryRepository(
-                attempt_repo=self.submission_attempt_repository,  # type: ignore[arg-type]
-                position_repo=self.position_repository,  # type: ignore[arg-type]
+                attempt_repo=self.submission_attempt_repository,
+                position_repo=self.position_repository,
             )
         self._live_post_entry_recovery_service = LivePostEntryRecoveryService(
             submission_attempt_repository=self.submission_attempt_repository,

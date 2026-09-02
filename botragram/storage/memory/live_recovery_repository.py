@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from typing import Protocol
 
 from botragram.models import SubmissionAttempt
-from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
-from botragram.storage.memory.position_repository import MemoryPositionRepository
-from botragram.storage.memory.submission_attempt_repository import (
-    MemorySubmissionAttemptRepository,
+from botragram.repositories import (
+    PositionRepository,
+    SubmissionAttemptRepository,
 )
+from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
+
+
+class PositionDeleter(Protocol):
+    async def delete(self, *, symbol: str) -> bool: ...
 
 
 class MemoryLiveRecoveryRepository(LiveRecoveryRepository):
@@ -19,8 +24,8 @@ class MemoryLiveRecoveryRepository(LiveRecoveryRepository):
     def __init__(
         self,
         *,
-        attempt_repo: MemorySubmissionAttemptRepository,
-        position_repo: MemoryPositionRepository,
+        attempt_repo: SubmissionAttemptRepository,
+        position_repo: PositionRepository | PositionDeleter,
     ) -> None:
         self._attempt_repo = attempt_repo
         self._position_repo = position_repo

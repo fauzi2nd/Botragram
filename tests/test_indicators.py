@@ -161,6 +161,25 @@ def test_vwap_uses_cumulative_price_volume() -> None:
     assert result == _decimal_series(10, "17.5")
 
 
+def test_vwap_handles_zero_cumulative_volume_gracefully() -> None:
+    """Verify VWAP falls back to typical price when volume is zero."""
+    zero_volume_result = calculate_vwap(
+        _decimal_series(10, 20),
+        _decimal_series(10, 20),
+        _decimal_series(10, 20),
+        _decimal_series(0, 0),
+    )
+    assert zero_volume_result == _decimal_series(10, 20)
+
+    initial_zero_result = calculate_vwap(
+        _decimal_series(10, 20),
+        _decimal_series(10, 20),
+        _decimal_series(10, 20),
+        _decimal_series(0, 5),
+    )
+    assert initial_zero_result == _decimal_series(10, 20)
+
+
 # =============================================================================
 # Trend and Overlap Tests
 # =============================================================================
@@ -261,14 +280,14 @@ def test_indicators_reject_misaligned_or_invalid_input() -> None:
         )
 
     vwap_prices = _decimal_series(1)
-    zero_volume = _decimal_series(0)
+    negative_volume = _decimal_series(-1)
 
-    with pytest.raises(ValueError, match="cumulative volume"):
+    with pytest.raises(ValueError, match="must not be negative"):
         calculate_vwap(
             vwap_prices,
             vwap_prices,
             vwap_prices,
-            zero_volume,
+            negative_volume,
         )
 
     macd_values = _decimal_series(1, 2, 3)
