@@ -119,6 +119,22 @@ class FakeStrategyService:
     strategy_types: list[StrategyType | None] = field(
         default_factory=list[StrategyType | None]
     )
+    minimum_candles_by_strategy: dict[StrategyType, int] = field(
+        default_factory=dict[StrategyType, int]
+    )
+
+    def get_minimum_candles(
+        self,
+        *,
+        strategy_type: StrategyType | None = None,
+    ) -> int:
+        """Return the mocked candle requirement."""
+        if (
+            strategy_type is not None
+            and strategy_type in self.minimum_candles_by_strategy
+        ):
+            return self.minimum_candles_by_strategy[strategy_type]
+        return 1
 
     def generate_signal(
         self,
@@ -1841,3 +1857,58 @@ async def _run_non_latest_signal_timestamp_test() -> None:
 
     assert strategy_service.generated_symbols == ["BTCUSDT"]
     assert strategy_service.saved_symbols == []
+
+
+def test_explicit_discovery_expands_candle_limit_to_strategy_minimum() -> None:
+    """Verify discovery fetches enough candles when strategy requires more."""
+    asyncio.run(_run_discovery_expands_candle_limit_test())
+
+
+async def _run_discovery_expands_candle_limit_test() -> None:
+    # 25 candles
+    candles = tuple(
+        _create_candle(
+            symbol="BTCUSDT",
+            open_time=_NOW - timedelta(minutes=15 * (25 - i)),
+            close_time=_NOW - timedelta(minutes=15 * (24 - i)),
+        )
+        for i in range(25)
+    )
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT",),
+        candles_by_symbol={"BTCUSDT": candles},
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.BUY,
+                confidence="0.85",
+                generated_at=_NOW,
+                strategy_name=StrategyType.HIGH_CONFLUENCE_EXHAUSTION.value,
+            )
+        },
+        minimum_candles_by_strategy={
+            StrategyType.HIGH_CONFLUENCE_EXHAUSTION: 20,
+        },
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    # Caller requests candle_limit=5, but strategy needs 20
+    opportunities = await service.discover_symbols(
+        symbols=("BTCUSDT",),
+        interval=Interval.M15,
+        candle_limit=5,
+        top_n=1,
+        strategy_type=StrategyType.HIGH_CONFLUENCE_EXHAUSTION,
+    )
+
+    assert len(opportunities) == 1
+    # Market service was asked for effective_candle_limit + 1 = 20 + 1 = 21
+    assert market_service.requested_limits == [21]
+    # Strategy was provided with 20 candles, not 5
+    assert len(strategy_service.saved_candles[0]) == 20

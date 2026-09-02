@@ -182,9 +182,8 @@ async def _run_trading(
         )
         runtime_contexts = dependency_provider.runtime_control.runtime_contexts
         strategy_types = (
-            tuple(context.strategy_type for context in runtime_contexts)
-            if runtime_contexts
-            else (settings.strategy.strategy_type,)
+            *tuple(context.strategy_type for context in runtime_contexts),
+            settings.strategy.strategy_type,
         )
         minimum_candles = max(
             dependency_provider.signal_engine.get_minimum_candles(

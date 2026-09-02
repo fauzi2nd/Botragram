@@ -228,18 +228,27 @@ class OpportunityDiscoveryService:
     ) -> tuple[Signal, ...]:
         """Evaluate one already-normalized symbol batch sequentially."""
         actionable_signals: list[Signal] = []
+        effective_candle_limit = candle_limit
+        if strategy_type is not None:
+            get_minimum = getattr(self.strategy_service, "get_minimum_candles", None)
+            if callable(get_minimum):
+                candidate_minimum = get_minimum(strategy_type=strategy_type)
+                if isinstance(candidate_minimum, int) and not isinstance(
+                    candidate_minimum, bool
+                ):
+                    effective_candle_limit = max(candle_limit, candidate_minimum)
 
         for symbol in symbols:
             candles = await self.market_service.get_candles(
                 symbol=symbol,
                 interval=interval,
-                limit=candle_limit + 1,
+                limit=effective_candle_limit + 1,
                 persist=False,
             )
             closed_candles = self._select_closed_candles(
                 candles=candles,
                 as_of=as_of,
-                candle_limit=candle_limit,
+                candle_limit=effective_candle_limit,
                 require_strict_sequence=strategy_type is not None,
             )
             if not closed_candles:

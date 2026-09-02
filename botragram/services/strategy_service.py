@@ -68,6 +68,21 @@ class StrategyService:
             strategy_type=strategy_type,
         )
 
+    def get_minimum_candles(
+        self,
+        *,
+        strategy_type: StrategyType | None = None,
+    ) -> int:
+        """Return the candle requirement for one explicit or default strategy."""
+        resolved_type = (
+            strategy_type
+            if strategy_type is not None
+            else self.signal_engine.default_strategy_type
+        )
+        return self.signal_engine.get_minimum_candles(
+            strategy_type=resolved_type,
+        )
+
     async def save_signal(
         self,
         *,
