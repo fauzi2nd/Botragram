@@ -364,8 +364,8 @@ class OperatorExitService:
             )
         except BaseException:
             self._release_runtime_gate()
-            if was_running and self.runtime_control.is_paused:
-                self.runtime_control.resume()
+            if was_running:
+                self._resume_runtime_safely()
             raise
 
     async def request_close_all(
@@ -415,8 +415,8 @@ class OperatorExitService:
             )
         except BaseException:
             self._release_runtime_gate()
-            if was_running and self.runtime_control.is_paused:
-                self.runtime_control.resume()
+            if was_running:
+                self._resume_runtime_safely()
             raise
 
     async def cancel_confirmation(
@@ -433,8 +433,8 @@ class OperatorExitService:
         was_running = pending.was_running
         self._pending_confirmation = None
         self._release_runtime_gate()
-        if was_running and self.runtime_control.is_paused:
-            self.runtime_control.resume()
+        if was_running:
+            self._resume_runtime_safely()
 
     async def confirm(
         self,
@@ -1014,8 +1014,8 @@ class OperatorExitService:
                 )
             )
             self._release_runtime_gate()
-            if was_running and self.runtime_control.is_paused:
-                self.runtime_control.resume()
+            if was_running:
+                self._resume_runtime_safely()
         _LOGGER.info(
             "Operator exit completed: operation_id=%s type=%s target_policy=%s",
             operation.operation_id,
@@ -1180,8 +1180,8 @@ class OperatorExitService:
             was_running = pending.was_running
             self._pending_confirmation = None
             self._release_runtime_gate()
-            if was_running and self.runtime_control.is_paused:
-                self.runtime_control.resume()
+            if was_running:
+                self._resume_runtime_safely()
             raise RuntimeError("Operator-exit confirmation expired")
         if pending.challenge.confirmation_id != confirmation_id.strip().lower():
             raise RuntimeError("Operator-exit confirmation identity does not match")
@@ -1196,8 +1196,8 @@ class OperatorExitService:
             was_running = pending.was_running
             self._pending_confirmation = None
             self._release_runtime_gate()
-            if was_running and self.runtime_control.is_paused:
-                self.runtime_control.resume()
+            if was_running:
+                self._resume_runtime_safely()
 
     async def _mark_recovery_required(
         self,
@@ -1357,6 +1357,21 @@ class OperatorExitService:
         """Release only this service's operator-exit runtime reservation."""
         if self.runtime_control.operator_exit_in_progress:
             self.runtime_control.end_operator_exit()
+
+    def _resume_runtime_safely(self) -> None:
+        """Resume standard or global runtime after a completed operator exit."""
+        if not self.runtime_control.is_paused:
+            return
+        try:
+            self.runtime_control.resume()
+        except RuntimeError:
+            try:
+                self.runtime_control.resume_global_cycle()
+            except RuntimeError as error:
+                _LOGGER.warning(
+                    "Auto-resume after operator exit could not resume runtime: %s",
+                    error,
+                )
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:

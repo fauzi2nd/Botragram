@@ -462,3 +462,40 @@ async def test_operator_close_all_cancel_auto_resumes_when_running() -> None:
 
     assert not runtime_control.operator_exit_in_progress
     assert not runtime_control.is_paused
+
+
+@pytest.mark.asyncio
+async def test_operator_close_all_auto_resumes_global_cycle_without_stream() -> None:
+    repository = MemoryPositionRepository()
+    await repository.save(position=_position(symbol="BTCUSDT"))
+    operator_repository = MemoryOperatorExitRepository()
+    runtime_control = TradingRuntimeControl()
+    runtime_control.confirm_exchange(runtime_control.exchange_type)
+    runtime_control.confirm_market_type(runtime_control.market_type)
+    runtime_control.resume_global_cycle()
+    assert not runtime_control.is_paused
+    paper_exit = _PaperExit(repository=repository)
+    service = _paper_service(
+        repository=repository,
+        operator_repository=operator_repository,
+        runtime_control=runtime_control,
+        paper_exit=paper_exit,
+        stream_owner=_StreamOwner(),
+        switcher=_PolicySwitcher(),
+    )
+    confirmation = await service.request_close_all(
+        requested_by="telegram:7",
+        auto_pause=True,
+    )
+    assert runtime_control.is_paused
+    assert runtime_control.operator_exit_in_progress
+
+    await service.confirm(
+        confirmation_id=confirmation.confirmation_id,
+        requested_by="telegram:7",
+        token="CONFIRM",
+    )
+
+    assert paper_exit.close_calls == 1
+    assert not runtime_control.operator_exit_in_progress
+    assert not runtime_control.is_paused
