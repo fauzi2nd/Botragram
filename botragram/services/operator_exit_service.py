@@ -181,6 +181,7 @@ class _PendingConfirmation:
     challenge: OperatorExitConfirmation
     requested_by: str
     symbol: str | None
+    was_running: bool = False
 
 
 class _RecoveryPending(RuntimeError):
@@ -336,7 +337,8 @@ class OperatorExitService:
         self._require_supported_mode()
         normalized_symbol = self._normalize_symbol(symbol)
         requester = self._normalize_requester(requested_by)
-        if auto_pause:
+        was_running = not self.runtime_control.is_paused
+        if auto_pause and was_running:
             self.runtime_control.pause()
         self.runtime_control.begin_operator_exit()
         try:
@@ -358,9 +360,12 @@ class OperatorExitService:
                 requested_by=requester,
                 symbol=normalized_symbol,
                 target_execution_policy=None,
+                was_running=was_running,
             )
         except BaseException:
             self._release_runtime_gate()
+            if was_running and self.runtime_control.is_paused:
+                self.runtime_control.resume()
             raise
 
     async def request_close_all(
@@ -384,7 +389,8 @@ class OperatorExitService:
                 raise RuntimeError(
                     "Target execution policy is outside the boot capability envelope"
                 )
-        if auto_pause:
+        was_running = not self.runtime_control.is_paused
+        if auto_pause and was_running:
             self.runtime_control.pause()
         self.runtime_control.begin_operator_exit()
         try:
@@ -405,9 +411,12 @@ class OperatorExitService:
                 requested_by=requester,
                 symbol=None,
                 target_execution_policy=target_execution_policy,
+                was_running=was_running,
             )
         except BaseException:
             self._release_runtime_gate()
+            if was_running and self.runtime_control.is_paused:
+                self.runtime_control.resume()
             raise
 
     async def cancel_confirmation(
@@ -417,12 +426,15 @@ class OperatorExitService:
         requested_by: str,
     ) -> None:
         """Cancel a process-local challenge without any financial mutation."""
-        self._require_pending(
+        pending = self._require_pending(
             confirmation_id=confirmation_id,
             requested_by=requested_by,
         )
+        was_running = pending.was_running
         self._pending_confirmation = None
         self._release_runtime_gate()
+        if was_running and self.runtime_control.is_paused:
+            self.runtime_control.resume()
 
     async def confirm(
         self,
@@ -436,6 +448,7 @@ class OperatorExitService:
             confirmation_id=confirmation_id,
             requested_by=requested_by,
         )
+        was_running = pending.was_running
         challenge = pending.challenge
         supplied = "" if token is None else token.strip().upper()
         if supplied != challenge.required_token:
@@ -462,7 +475,10 @@ class OperatorExitService:
         self._pending_confirmation = None
 
         try:
-            await self._run_operation(operation=operation)
+            await self._run_operation(
+                operation=operation,
+                was_running=was_running,
+            )
         except asyncio.CancelledError:
             await self._mark_recovery_required(
                 operation=operation,
@@ -549,7 +565,12 @@ class OperatorExitService:
             )
             await asyncio.sleep(delay)
 
-    async def _run_operation(self, *, operation: OperatorExitOperation) -> None:
+    async def _run_operation(
+        self,
+        *,
+        operation: OperatorExitOperation,
+        was_running: bool = False,
+    ) -> None:
         """Advance one confirmed operation under the process-local serializer."""
         async with self._operation_lock:
             latest = await self.operator_exit_repository.get_operation(
@@ -557,7 +578,10 @@ class OperatorExitService:
             )
             current = latest if latest is not None else operation
             if current.status is OperatorExitStatus.SWITCH_PENDING:
-                await self._complete_operation(operation=current)
+                await self._complete_operation(
+                    operation=current,
+                    was_running=was_running,
+                )
                 return
 
             flattening = replace(
@@ -578,7 +602,10 @@ class OperatorExitService:
                 updated_at=datetime.now(UTC),
             )
             await self.operator_exit_repository.save_operation(operation=reconciling)
-            await self._complete_operation(operation=reconciling)
+            await self._complete_operation(
+                operation=reconciling,
+                was_running=was_running,
+            )
 
     async def _run_paper_operation(self, *, operation: OperatorExitOperation) -> None:
         """Close PAPER positions sequentially through normal fill accounting."""
@@ -926,7 +953,12 @@ class OperatorExitService:
         if not self.runtime_control.is_position_protection_ready:
             raise _RecoveryPending("LIVE protection state is not READY")
 
-    async def _complete_operation(self, *, operation: OperatorExitOperation) -> None:
+    async def _complete_operation(
+        self,
+        *,
+        operation: OperatorExitOperation,
+        was_running: bool = False,
+    ) -> None:
         """Freshly verify safety, then durably hand off an optional soft restart."""
         positions = await self.get_positions()
         self._require_confirmed_portfolio_scope(
@@ -982,6 +1014,8 @@ class OperatorExitService:
                 )
             )
             self._release_runtime_gate()
+            if was_running and self.runtime_control.is_paused:
+                self.runtime_control.resume()
         _LOGGER.info(
             "Operator exit completed: operation_id=%s type=%s target_policy=%s",
             operation.operation_id,
@@ -1096,6 +1130,7 @@ class OperatorExitService:
         requested_by: str,
         symbol: str | None,
         target_execution_policy: ExecutionPolicy | None,
+        was_running: bool = False,
     ) -> OperatorExitConfirmation:
         """Create one bounded challenge while the runtime remains paused."""
         requires_typed = (
@@ -1125,6 +1160,7 @@ class OperatorExitService:
             challenge=challenge,
             requested_by=requested_by,
             symbol=symbol,
+            was_running=was_running,
         )
         return challenge
 
@@ -1141,8 +1177,11 @@ class OperatorExitService:
                 "Operator-exit confirmation is unavailable"
             )
         if pending.challenge.expires_at <= datetime.now(UTC):
+            was_running = pending.was_running
             self._pending_confirmation = None
             self._release_runtime_gate()
+            if was_running and self.runtime_control.is_paused:
+                self.runtime_control.resume()
             raise RuntimeError("Operator-exit confirmation expired")
         if pending.challenge.confirmation_id != confirmation_id.strip().lower():
             raise RuntimeError("Operator-exit confirmation identity does not match")
@@ -1154,8 +1193,11 @@ class OperatorExitService:
         """Release an expired no-mutation confirmation reservation."""
         pending = self._pending_confirmation
         if pending is not None and pending.challenge.expires_at <= datetime.now(UTC):
+            was_running = pending.was_running
             self._pending_confirmation = None
             self._release_runtime_gate()
+            if was_running and self.runtime_control.is_paused:
+                self.runtime_control.resume()
 
     async def _mark_recovery_required(
         self,

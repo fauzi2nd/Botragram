@@ -384,3 +384,81 @@ async def test_rebuilt_session_rejects_stale_confirmation_without_mutation() -> 
 
     assert await operator_repository.get_latest_operation() is None
     assert not runtime_control.operator_exit_in_progress
+
+
+def _running_runtime_control() -> TradingRuntimeControl:
+    control = TradingRuntimeControl()
+    control.confirm_exchange(control.exchange_type)
+    control.confirm_market_type(control.market_type)
+    control.select_symbol(control.symbol)
+    control.select_interval(control.interval)
+    control.select_strategy(control.strategy_type)
+    control.set_stream_enabled(True)
+    control.record_stream_tick(price=Decimal("100"))
+    control.resume()
+    return control
+
+
+@pytest.mark.asyncio
+async def test_operator_close_all_auto_resumes_when_running() -> None:
+    repository = MemoryPositionRepository()
+    await repository.save(position=_position(symbol="BTCUSDT"))
+    operator_repository = MemoryOperatorExitRepository()
+    runtime_control = _running_runtime_control()
+    assert not runtime_control.is_paused
+    paper_exit = _PaperExit(repository=repository)
+    service = _paper_service(
+        repository=repository,
+        operator_repository=operator_repository,
+        runtime_control=runtime_control,
+        paper_exit=paper_exit,
+        stream_owner=_StreamOwner(),
+        switcher=_PolicySwitcher(),
+    )
+    confirmation = await service.request_close_all(
+        requested_by="telegram:7",
+        auto_pause=True,
+    )
+    assert runtime_control.is_paused
+    assert runtime_control.operator_exit_in_progress
+
+    await service.confirm(
+        confirmation_id=confirmation.confirmation_id,
+        requested_by="telegram:7",
+        token="CONFIRM",
+    )
+
+    assert paper_exit.close_calls == 1
+    assert not runtime_control.operator_exit_in_progress
+    assert not runtime_control.is_paused
+
+
+@pytest.mark.asyncio
+async def test_operator_close_all_cancel_auto_resumes_when_running() -> None:
+    repository = MemoryPositionRepository()
+    await repository.save(position=_position(symbol="BTCUSDT"))
+    operator_repository = MemoryOperatorExitRepository()
+    runtime_control = _running_runtime_control()
+    assert not runtime_control.is_paused
+    service = _paper_service(
+        repository=repository,
+        operator_repository=operator_repository,
+        runtime_control=runtime_control,
+        paper_exit=_PaperExit(repository=repository),
+        stream_owner=_StreamOwner(),
+        switcher=_PolicySwitcher(),
+    )
+    confirmation = await service.request_close_all(
+        requested_by="telegram:7",
+        auto_pause=True,
+    )
+    assert runtime_control.is_paused
+    assert runtime_control.operator_exit_in_progress
+
+    await service.cancel_confirmation(
+        confirmation_id=confirmation.confirmation_id,
+        requested_by="telegram:7",
+    )
+
+    assert not runtime_control.operator_exit_in_progress
+    assert not runtime_control.is_paused
