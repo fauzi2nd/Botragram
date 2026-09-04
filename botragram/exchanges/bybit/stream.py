@@ -48,8 +48,11 @@ __all__ = [
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 _HEARTBEAT_INTERVAL_SECONDS: Final[float] = 20.0
+_INITIAL_RECONNECT_DELAY_SECONDS: Final[float] = 1.0
+_MAX_RECONNECT_DELAY_SECONDS: Final[float] = 30.0
 _PING_MESSAGE: Final[str] = json.dumps({"op": "ping"})
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
+_STREAM_CLOSED: Final[object] = object()
 
 
 # =============================================================================
@@ -59,6 +62,7 @@ class BybitStreamClient(BaseStreamClient):
     """Bybit V5 WebSocket streaming client."""
 
     __slots__ = (
+        "_closed",
         "_connected",
         "_heartbeat_task",
         "_mapper",
@@ -83,6 +87,7 @@ class BybitStreamClient(BaseStreamClient):
         self._session: aiohttp.ClientSession | None = None
         self._websocket: aiohttp.ClientWebSocketResponse | None = None
         self._connected: bool = False
+        self._closed: bool = False
         self._subscriptions: set[str] = set()
         self._queues: dict[str, set[asyncio.Queue[object]]] = {}
         self._ticker_cache: dict[str, dict[str, object]] = {}
@@ -103,14 +108,23 @@ class BybitStreamClient(BaseStreamClient):
         if self.is_connected:
             return
 
+        self._closed = False
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
 
         try:
             self._websocket = await self._session.ws_connect(self._websocket_url)
             self._connected = True
-            self._read_task = asyncio.create_task(self._read_messages())
-            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            if self._read_task is None or self._read_task.done():
+                self._read_task = asyncio.create_task(
+                    self._supervise_connection(),
+                    name="bybit-stream-supervise",
+                )
+            if self._heartbeat_task is None or self._heartbeat_task.done():
+                self._heartbeat_task = asyncio.create_task(
+                    self._heartbeat_loop(),
+                    name="bybit-stream-heartbeat",
+                )
             _LOGGER.info("Connected to Bybit WebSocket at %s", self._websocket_url)
 
             # Resubscribe active topics if reconnecting
@@ -130,7 +144,14 @@ class BybitStreamClient(BaseStreamClient):
 
     async def close(self) -> None:
         """Close WebSocket connection and clean up resources."""
+        self._closed = True
         self._connected = False
+
+        # Signal active consumer queues to exit cleanly
+        for queues in self._queues.values():
+            for queue in tuple(queues):
+                queue.put_nowait(_STREAM_CLOSED)
+
         if self._heartbeat_task is not None:
             self._heartbeat_task.cancel()
             self._heartbeat_task = None
@@ -151,36 +172,94 @@ class BybitStreamClient(BaseStreamClient):
         _LOGGER.info("Bybit WebSocket connection closed")
 
     async def _heartbeat_loop(self) -> None:
-        """Send ping every 20 seconds to keep connection alive."""
+        """Send ping every 20 seconds while connection is open."""
         try:
-            while self._connected:
+            while not self._closed:
                 await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
-                if self._websocket is not None and not self._websocket.closed:
-                    await self._websocket.send_str(_PING_MESSAGE)
+                if (
+                    self._connected
+                    and self._websocket is not None
+                    and not self._websocket.closed
+                ):
+                    try:
+                        await self._websocket.send_str(_PING_MESSAGE)
+                    except Exception as error:
+                        _LOGGER.warning("Bybit WebSocket heartbeat error: %s", error)
         except asyncio.CancelledError:
             pass
-        except Exception as error:
-            _LOGGER.warning("Bybit WebSocket heartbeat error: %s", error)
+
+    async def _supervise_connection(self) -> None:
+        """Consume messages and automatically reconnect on connection drop."""
+        reconnect_attempt = 0
+        while not self._closed:
+            try:
+                await self._read_messages()
+            except asyncio.CancelledError:
+                break
+            except Exception as error:
+                _LOGGER.warning("Bybit WebSocket read error: %s", error)
+            finally:
+                self._connected = False
+                if self._websocket is not None and not self._websocket.closed:
+                    await self._websocket.close()
+                self._websocket = None
+
+            if self._closed:
+                break
+
+            reconnect_attempt += 1
+            delay = min(
+                _INITIAL_RECONNECT_DELAY_SECONDS * (2 ** (reconnect_attempt - 1)),
+                _MAX_RECONNECT_DELAY_SECONDS,
+            )
+            _LOGGER.warning(
+                "Bybit WebSocket interrupted; reconnecting in %.1fs (attempt %d)",
+                delay,
+                reconnect_attempt,
+            )
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                break
+
+            if self._closed:
+                break
+
+            try:
+                if self._session is None or self._session.closed:
+                    self._session = aiohttp.ClientSession()
+
+                self._websocket = await self._session.ws_connect(self._websocket_url)
+                self._connected = True
+                reconnect_attempt = 0
+                _LOGGER.info(
+                    "Reconnected to Bybit WebSocket at %s", self._websocket_url
+                )
+
+                if self._subscriptions and self._websocket:
+                    sub_msg = json.dumps(
+                        {"op": "subscribe", "args": list(self._subscriptions)}
+                    )
+                    await self._websocket.send_str(sub_msg)
+            except asyncio.CancelledError:
+                break
+            except Exception as error:
+                _LOGGER.warning("Bybit WebSocket reconnect attempt failed: %s", error)
 
     async def _read_messages(self) -> None:
         """Read and dispatch incoming Bybit WebSocket frames."""
-        try:
-            while (
-                self._connected
-                and self._websocket is not None
-                and not self._websocket.closed
-            ):
-                msg = await self._websocket.receive()
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    self._handle_message(msg.data)
-                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                    break
-        except asyncio.CancelledError:
-            pass
-        except Exception as error:
-            _LOGGER.warning("Bybit WebSocket read error: %s", error)
-        finally:
-            self._connected = False
+        socket = self._websocket
+        while (
+            not self._closed
+            and self._connected
+            and socket is not None
+            and not socket.closed
+        ):
+            msg = await socket.receive()
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                self._handle_message(msg.data)
+            elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                break
 
     def handle_message(self, raw_data: str) -> None:
         """Parse Bybit V5 message frame and dispatch to queues."""
@@ -302,8 +381,10 @@ class BybitStreamClient(BaseStreamClient):
         await self._subscribe(topic)
 
         try:
-            while self._connected:
+            while not self._closed:
                 item = await queue.get()
+                if item is _STREAM_CLOSED:
+                    break
                 if isinstance(item, Ticker):
                     yield item
         finally:
@@ -330,8 +411,10 @@ class BybitStreamClient(BaseStreamClient):
         await self._subscribe(topic)
 
         try:
-            while self._connected:
+            while not self._closed:
                 item = await queue.get()
+                if item is _STREAM_CLOSED:
+                    break
                 if isinstance(item, Candle):
                     # Ensure candle carries caller interval
                     yield Candle(

@@ -7,6 +7,7 @@ from socket import gaierror
 import pytest
 
 from botragram.app.connectivity import is_transient_connectivity_error
+from botragram.exceptions import ExchangeConnectionError, ExchangeWebSocketError
 from botragram.exchanges.bybit.rest import BybitRestResponseError
 from botragram.utils.retry import CappedExponentialBackoff
 
@@ -17,6 +18,8 @@ from botragram.utils.retry import CappedExponentialBackoff
         ConnectionError("connection reset"),
         TimeoutError("request timed out"),
         gaierror(11001, "host not found"),
+        ExchangeConnectionError("exchange unreachable"),
+        ExchangeWebSocketError("websocket dropped"),
         BybitRestResponseError(ret_code=10006, ret_msg="Too many visits"),
         BybitRestResponseError(ret_code=10018, ret_msg="Exceed rate limit"),
         BybitRestResponseError(ret_code=10000, ret_msg="Server timeout"),

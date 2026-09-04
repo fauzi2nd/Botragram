@@ -25,6 +25,7 @@ from socket import gaierror
 
 import aiohttp
 
+from botragram.exceptions import ExchangeConnectionError, ExchangeWebSocketError
 from botragram.exchanges.binance.rest import BinanceRestResponseError
 from botragram.exchanges.bybit.rest import BybitRestResponseError
 
@@ -69,6 +70,8 @@ def _is_transient_exception(error: BaseException) -> bool:
             gaierror,
             aiohttp.ClientConnectionError,
             aiohttp.ClientPayloadError,
+            ExchangeConnectionError,
+            ExchangeWebSocketError,
         ),
     ):
         return True

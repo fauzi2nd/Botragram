@@ -177,8 +177,14 @@ class LiveMarketStreamService:
         """
         identity = LiveMarketStreamIdentity.from_runtime_context(context=context)
 
-        if identity in self._owned_streams:
-            return identity
+        owned_stream = self._owned_streams.get(identity)
+        if owned_stream is not None:
+            if (
+                owned_stream.lifecycle_status is LiveMarketStreamLifecycleStatus.RUNNING
+                or (owned_stream.task is not None and not owned_stream.task.done())
+            ):
+                return identity
+            await self.stop(identity=identity)
 
         owned_stream = _OwnedLiveMarketStream(
             lifecycle_status=LiveMarketStreamLifecycleStatus.STARTING,
