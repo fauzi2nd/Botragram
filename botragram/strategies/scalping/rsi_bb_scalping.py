@@ -240,7 +240,8 @@ class RSIBBScalpingStrategy(BaseStrategy):
 
         # 2. Regime Filter: ADX Ranging-Only Gate
         current_adx = _DECIMAL_ZERO
-        if len(candles) >= self.adx_period + 1:
+        min_adx_candles = (self.adx_period * 2) - 1
+        if len(candles) >= min_adx_candles:
             adx_result = calculate_adx(
                 high_prices,
                 low_prices,
