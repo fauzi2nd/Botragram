@@ -29,6 +29,12 @@ from botragram.app import (
     prepare_restarted_runtime_session,
     run_until_restart,
 )
+from botragram.app.backtest_command import (
+    format_backtest_report,
+    is_backtest_command,
+    parse_backtest_request,
+    run_backtest_command,
+)
 from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.config import Settings
 from botragram.constants import get_strategy_default_interval
@@ -234,13 +240,7 @@ async def main() -> None:
     settings_manager = SettingsManager()
     settings = settings_manager.load()
     arguments = tuple(sys.argv[1:])
-    if arguments and arguments[0].strip().lower() == "backtest":
-        from botragram.app.backtest_command import (
-            format_backtest_report,
-            parse_backtest_request,
-            run_backtest_command,
-        )
-
+    if is_backtest_command(arguments):
         request = parse_backtest_request(arguments=arguments)
         configure_logging(settings=settings.logging)
 
