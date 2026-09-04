@@ -18,7 +18,7 @@ from __future__ import annotations
 # =============================================================================
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 # =============================================================================
 # Local Imports
@@ -111,8 +111,10 @@ class MarketService:
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         persist: bool = True,
+        prefer_stored: bool = False,
+        as_of: datetime | None = None,
     ) -> Sequence[Candle]:
-        """Fetch historical candles from the exchange.
+        """Fetch historical candles from the exchange or stored data.
 
         Args:
             symbol: Trading pair symbol.
@@ -121,6 +123,8 @@ class MarketService:
             start_time: Optional inclusive start time.
             end_time: Optional inclusive end time.
             persist: Whether fetched candles should be persisted.
+            prefer_stored: Whether to return fresh persisted candles if available.
+            as_of: Evaluation reference timestamp for candle freshness.
 
         Returns:
             Candles ordered from oldest to newest.
@@ -134,8 +138,20 @@ class MarketService:
         if start_time is not None and end_time is not None and start_time > end_time:
             raise ValueError("Candle start time must not be after end time")
 
+        normalized_symbol = self._normalize_symbol(symbol)
+
+        if prefer_stored and start_time is None and end_time is None:
+            stored_candles = await self._get_fresh_stored_candles(
+                symbol=normalized_symbol,
+                interval=interval,
+                limit=limit,
+                as_of=as_of,
+            )
+            if stored_candles is not None:
+                return stored_candles
+
         candles = await self.exchange_client.get_candles(
-            symbol=self._normalize_symbol(symbol),
+            symbol=normalized_symbol,
             interval=interval,
             limit=limit,
             start_time=start_time,
@@ -148,6 +164,64 @@ class MarketService:
             )
 
         return candles
+
+    async def _get_fresh_stored_candles(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        limit: int,
+        as_of: datetime | None,
+    ) -> Sequence[Candle] | None:
+        """Return stored candles if available and fresh, otherwise None."""
+        direct_stored = await self.candle_repository.get_latest(
+            symbol=symbol,
+            interval=interval,
+            limit=limit,
+        )
+        if len(direct_stored) >= limit:
+            if self._is_candle_fresh(
+                candle=direct_stored[-1],
+                interval=interval,
+                as_of=as_of,
+            ):
+                return direct_stored
+
+        if interval is not Interval.M1:
+            try:
+                resampled = await self.get_stored_resampled_candles(
+                    symbol=symbol,
+                    target_interval=interval,
+                    limit=limit,
+                )
+                if len(resampled) >= limit:
+                    if self._is_candle_fresh(
+                        candle=resampled[-1],
+                        interval=interval,
+                        as_of=as_of,
+                    ):
+                        return resampled
+            except ValueError:
+                pass
+
+        return None
+
+    @staticmethod
+    def _is_candle_fresh(
+        *,
+        candle: Candle,
+        interval: Interval,
+        as_of: datetime | None,
+    ) -> bool:
+        """Check if candle's close_time is current relative to evaluation time."""
+        ref_time = as_of if as_of is not None else datetime.now(UTC)
+        if ref_time.tzinfo is None:
+            ref_time = ref_time.replace(tzinfo=UTC)
+        close_time = candle.close_time
+        if close_time.tzinfo is None:
+            close_time = close_time.replace(tzinfo=UTC)
+        next_close = interval.next_close_time(close_time=close_time)
+        return ref_time < next_close
 
     async def get_stored_candles(
         self,

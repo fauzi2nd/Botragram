@@ -58,6 +58,8 @@ class FakeMarketService:
     requested_symbols: list[str] = field(default_factory=list[str])
     requested_limits: list[int] = field(default_factory=list[int])
     persist_values: list[bool] = field(default_factory=list[bool])
+    prefer_stored_values: list[bool] = field(default_factory=list[bool])
+    as_of_values: list[datetime | None] = field(default_factory=list[datetime | None])
     candle_started: asyncio.Event = field(default_factory=asyncio.Event)
     active_candle_requests: int = 0
     maximum_active_candle_requests: int = 0
@@ -76,12 +78,16 @@ class FakeMarketService:
         interval: Interval,
         limit: int,
         persist: bool = True,
+        prefer_stored: bool = False,
+        as_of: datetime | None = None,
     ) -> tuple[Candle, ...]:
         """Return deterministic candles for one symbol."""
         assert interval is self.expected_interval
         self.requested_symbols.append(symbol)
         self.requested_limits.append(limit)
         self.persist_values.append(persist)
+        self.prefer_stored_values.append(prefer_stored)
+        self.as_of_values.append(as_of)
         self.active_candle_requests += 1
         self.maximum_active_candle_requests = max(
             self.maximum_active_candle_requests,

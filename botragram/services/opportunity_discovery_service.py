@@ -68,6 +68,8 @@ class DiscoveryMarketDataProvider(Protocol):
         interval: Interval,
         limit: int,
         persist: bool = True,
+        prefer_stored: bool = False,
+        as_of: datetime | None = None,
     ) -> Sequence[Candle]:
         """Return historical candles for one trading symbol."""
         ...
@@ -256,6 +258,8 @@ class OpportunityDiscoveryService:
                 interval=interval,
                 limit=effective_candle_limit + 1,
                 persist=False,
+                prefer_stored=True,
+                as_of=as_of,
             )
             closed_candles = self._select_closed_candles(
                 candles=candles,
