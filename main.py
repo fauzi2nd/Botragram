@@ -166,6 +166,31 @@ async def _run_trading(
         terminal_monitor.run(),
         name="botragram-terminal-monitor",
     )
+    sync_stop_event = asyncio.Event()
+
+    async def _check_positions_full() -> bool:
+        try:
+            positions = (
+                await dependency_provider.position_repository.get_open_positions()
+            )
+            max_limit = (
+                settings.risk.max_open_positions
+                if settings.app.effective_execution_policy
+                is not ExecutionPolicy.AUTONOMOUS_LIVE
+                else 10
+            )
+            return len(positions) >= max_limit
+        except Exception:
+            return False
+
+    sync_task = asyncio.create_task(
+        dependency_provider.candle_sync_service.run_adaptive_background_sync(
+            quote_asset=active_settings.market.quote_asset,
+            is_positions_full_provider=_check_positions_full,
+            stop_event=sync_stop_event,
+        ),
+        name="botragram-candle-background-sync",
+    )
     try:
         activate_runtime = not isinstance(
             restart_target,
@@ -235,8 +260,9 @@ async def _run_trading(
             restart_coordinator=restart_coordinator,
         )
     finally:
+        sync_stop_event.set()
         terminal_monitor.stop()
-        await asyncio.gather(monitor_task, return_exceptions=True)
+        await asyncio.gather(monitor_task, sync_task, return_exceptions=True)
 
 
 async def main() -> None:

@@ -254,3 +254,86 @@ class CandleSyncService:
                     pass
             else:
                 await asyncio.sleep(float(interval_seconds))
+
+    async def run_adaptive_background_sync(
+        self,
+        *,
+        quote_asset: str = "USDT",
+        is_positions_full_provider: Callable[[], Awaitable[bool]] | None = None,
+        interval: Interval = Interval.M1,
+        stop_event: asyncio.Event | None = None,
+        batch_size: int = 5,
+        normal_delay_seconds: float = 15.0,
+        full_delay_seconds: float = 2.0,
+        concurrency: int = 3,
+    ) -> None:
+        """Run continuous adaptive background sync across all exchange symbols.
+
+        When position slots are full (meaning no new entries need to be scanned),
+        the delay between symbol batches is reduced to quickly sync all symbols.
+        When position slots are available, the delay is increased to a gentle
+        trickle to minimize bandwidth usage and rate limit competition.
+
+        Args:
+            quote_asset: Quote asset to discover active exchange symbols for.
+            is_positions_full_provider: Optional async callable returning True if
+                current open positions have reached the risk ceiling.
+            interval: Candlestick timeframe (default: 1m).
+            stop_event: Optional event to signal graceful termination.
+            batch_size: Number of symbols to sync per batch.
+            normal_delay_seconds: Delay between batches when positions not full.
+            full_delay_seconds: Delay between batches when positions are full.
+            concurrency: Parallel requests per batch.
+        """
+        _LOGGER.info(
+            "Adaptive background candle sync started: quote_asset=%s interval=%s",
+            quote_asset,
+            interval.value,
+        )
+
+        while stop_event is None or not stop_event.is_set():
+            try:
+                all_symbols = await self.market_service.get_trading_symbols(
+                    quote_asset=quote_asset,
+                )
+                if not all_symbols:
+                    await asyncio.sleep(normal_delay_seconds)
+                    continue
+
+                for i in range(0, len(all_symbols), batch_size):
+                    if stop_event is not None and stop_event.is_set():
+                        break
+
+                    batch = all_symbols[i : i + batch_size]
+                    await self.sync_symbols(
+                        symbols=batch,
+                        interval=interval,
+                        concurrency=concurrency,
+                    )
+
+                    is_full = False
+                    if is_positions_full_provider is not None:
+                        try:
+                            is_full = await is_positions_full_provider()
+                        except Exception:
+                            is_full = False
+
+                    delay = full_delay_seconds if is_full else normal_delay_seconds
+
+                    if stop_event is not None:
+                        try:
+                            await asyncio.wait_for(
+                                stop_event.wait(),
+                                timeout=delay,
+                            )
+                            break
+                        except TimeoutError:
+                            pass
+                    else:
+                        await asyncio.sleep(delay)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as error:
+                _LOGGER.error("Error in adaptive background candle sync: %s", error)
+                await asyncio.sleep(normal_delay_seconds)

@@ -230,3 +230,39 @@ async def test_run_periodic_sync_stops_gracefully() -> None:
         assert stop_event.is_set()
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_run_adaptive_background_sync_adapts_and_stops() -> None:
+    """run_adaptive_background_sync queries trading symbols and adapts delay."""
+    db, repo = await _setup_sqlite_repo()
+    try:
+        mock_market = MagicMock(spec=MarketService)
+        mock_market.get_trading_symbols = AsyncMock(return_value=("BTCUSDT", "ETHUSDT"))
+        service = CandleSyncService(
+            market_service=mock_market,
+            candle_repository=repo,
+        )
+
+        stop_event = asyncio.Event()
+        checked_full = False
+
+        async def _mock_is_full() -> bool:
+            nonlocal checked_full
+            checked_full = True
+            stop_event.set()
+            return True
+
+        await service.run_adaptive_background_sync(
+            quote_asset="USDT",
+            is_positions_full_provider=_mock_is_full,
+            stop_event=stop_event,
+            batch_size=2,
+            normal_delay_seconds=0.1,
+            full_delay_seconds=0.01,
+        )
+
+        assert stop_event.is_set()
+        assert checked_full is True
+    finally:
+        await db.close()
