@@ -31,7 +31,7 @@ import pytest
 # =============================================================================
 from botragram.enums import Interval
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
-from botragram.models import Candle
+from botragram.models import Candle, MarketUniverseEntry
 from botragram.services.candle_sync_service import CandleSyncService
 from botragram.services.market_service import MarketService
 from botragram.storage.sqlite import (
@@ -264,5 +264,33 @@ async def test_run_adaptive_background_sync_adapts_and_stops() -> None:
 
         assert stop_event.is_set()
         assert checked_full is True
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_get_ranked_symbols_prioritizes_volume_universe() -> None:
+    """_get_ranked_symbols orders top 24h volume symbols first and appends remaining."""
+    db, repo = await _setup_sqlite_repo()
+    try:
+        mock_market = MagicMock(spec=MarketService)
+        mock_market.get_market_universe = AsyncMock(
+            return_value=(
+                MarketUniverseEntry(symbol="SOLUSDT", quote_volume=Decimal("5000000")),
+                MarketUniverseEntry(symbol="BTCUSDT", quote_volume=Decimal("4000000")),
+            )
+        )
+        mock_market.get_trading_symbols = AsyncMock(
+            return_value=("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT")
+        )
+        service = CandleSyncService(
+            market_service=mock_market,
+            candle_repository=repo,
+        )
+
+        ranked = await service.get_ranked_symbols(quote_asset="USDT")
+
+        # SOLUSDT and BTCUSDT from universe must be first, followed by others
+        assert ranked == ("SOLUSDT", "BTCUSDT", "ETHUSDT", "XRPUSDT")
     finally:
         await db.close()

@@ -293,7 +293,7 @@ class CandleSyncService:
 
         while stop_event is None or not stop_event.is_set():
             try:
-                all_symbols = await self.market_service.get_trading_symbols(
+                all_symbols = await self.get_ranked_symbols(
                     quote_asset=quote_asset,
                 )
                 if not all_symbols:
@@ -337,3 +337,43 @@ class CandleSyncService:
             except Exception as error:
                 _LOGGER.error("Error in adaptive background candle sync: %s", error)
                 await asyncio.sleep(normal_delay_seconds)
+
+    async def get_ranked_symbols(
+        self,
+        *,
+        quote_asset: str,
+    ) -> Sequence[str]:
+        """Return all exchange trading symbols with top 24h volume prioritized.
+
+        Symbols from get_market_universe (ordered by highest 24h volume/turnover)
+        appear first, followed by any remaining active trading symbols, ensuring
+        highest-liquidity scan candidates are synchronized first in every cycle.
+        """
+        ranked: list[str] = []
+        try:
+            universe_entries = await self.market_service.get_market_universe(
+                quote_asset=quote_asset,
+            )
+            ranked = [entry.symbol for entry in universe_entries]
+        except Exception as error:
+            _LOGGER.debug("Could not retrieve volume-ranked market universe: %s", error)
+
+        try:
+            trading_symbols = await self.market_service.get_trading_symbols(
+                quote_asset=quote_asset,
+            )
+        except Exception as error:
+            _LOGGER.warning("Could not retrieve trading symbols: %s", error)
+            trading_symbols = ()
+
+        if not ranked and not trading_symbols:
+            return ()
+
+        seen = set(ranked)
+        result = list(ranked)
+        for sym in trading_symbols:
+            if sym not in seen:
+                result.append(sym)
+                seen.add(sym)
+
+        return tuple(result)
