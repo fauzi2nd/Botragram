@@ -140,7 +140,7 @@ def test_exchange_factory_builds_matching_binance_dependencies() -> None:
 
 @pytest.mark.parametrize(
     "exchange_type",
-    (ExchangeType.BITGET, ExchangeType.BYBIT, ExchangeType.OKX),
+    (ExchangeType.BITGET, ExchangeType.OKX),
 )
 def test_exchange_factory_rejects_unimplemented_exchange_types(
     exchange_type: ExchangeType,

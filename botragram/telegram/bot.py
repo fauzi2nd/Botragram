@@ -59,7 +59,7 @@ def get_bot_commands() -> tuple[BotCommand, ...]:
         BotCommand("confirmexit", "Konfirmasi operator exit"),
         BotCommand("cancelexit", "Batalkan konfirmasi operator exit"),
         BotCommand("settings", "Lihat pengaturan bot"),
-        BotCommand("exchange", "Lihat exchange aktif"),
+        BotCommand("exchange", "Pilih atau ganti exchange aktif"),
         BotCommand("stop", "Lihat status penghentian bot"),
     )
     names = tuple(command.command for command in commands)

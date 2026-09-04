@@ -15,6 +15,7 @@ from telegram.ext import ContextTypes
 from botragram.app import TradingRuntimeControl
 from botragram.enums import (
     ExchangeEnvironment,
+    ExchangeType,
     ExecutionPolicy,
     MarketType,
     OperatorExitStatus,
@@ -263,6 +264,13 @@ class _Switcher:
     ) -> None:
         self.commit_calls += 1
         self.execution_policy = execution_policy
+
+    async def prepare_exchange(self, *, exchange_type: ExchangeType) -> bool:
+        del exchange_type
+        return False
+
+    def commit_exchange(self, *, exchange_type: ExchangeType) -> None:
+        del exchange_type
 
 
 def _context(

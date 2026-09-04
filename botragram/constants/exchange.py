@@ -27,7 +27,18 @@ __all__ = [
     "BINANCE_FUTURES_REST_BASE_URL",
     "BINANCE_FUTURES_TESTNET_REST_BASE_URL",
     "BINANCE_FUTURES_WEBSOCKET_BASE_URL",
-    "BINANCE_FUTURES_TESTNET_WEBSOCKET_BASE_URL",
+    "BYBIT_REST_BASE_URL",
+    "BYBIT_TESTNET_REST_BASE_URL",
+    "BYBIT_DEMO_REST_BASE_URL",
+    "BYBIT_WEBSOCKET_BASE_URL",
+    "BYBIT_TESTNET_WEBSOCKET_BASE_URL",
+    "BYBIT_DEMO_WEBSOCKET_BASE_URL",
+    "BYBIT_SPOT_WEBSOCKET_BASE_URL",
+    "BYBIT_TESTNET_SPOT_WEBSOCKET_BASE_URL",
+    "BYBIT_DEMO_SPOT_WEBSOCKET_BASE_URL",
+    "BYBIT_PRIVATE_WEBSOCKET_BASE_URL",
+    "BYBIT_TESTNET_PRIVATE_WEBSOCKET_BASE_URL",
+    "BYBIT_DEMO_PRIVATE_WEBSOCKET_BASE_URL",
 ]
 
 # =============================================================================
@@ -65,3 +76,25 @@ BINANCE_FUTURES_WEBSOCKET_BASE_URL: str = "wss://fstream.binance.com/market"
 BINANCE_FUTURES_TESTNET_WEBSOCKET_BASE_URL: str = (
     "wss://demo-fstream.binance.com/market"
 )
+
+# =============================================================================
+# Bybit URLs
+# =============================================================================
+BYBIT_REST_BASE_URL: str = "https://api.bybit.com"
+BYBIT_TESTNET_REST_BASE_URL: str = "https://api-testnet.bybit.com"
+BYBIT_DEMO_REST_BASE_URL: str = "https://api-demo.bybit.com"
+BYBIT_WEBSOCKET_BASE_URL: str = "wss://stream.bybit.com/v5/public/linear"
+BYBIT_TESTNET_WEBSOCKET_BASE_URL: str = (
+    "wss://stream-testnet.bybit.com/v5/public/linear"
+)
+BYBIT_DEMO_WEBSOCKET_BASE_URL: str = "wss://stream-demo.bybit.com/v5/public/linear"
+BYBIT_SPOT_WEBSOCKET_BASE_URL: str = "wss://stream.bybit.com/v5/public/spot"
+BYBIT_TESTNET_SPOT_WEBSOCKET_BASE_URL: str = (
+    "wss://stream-testnet.bybit.com/v5/public/spot"
+)
+BYBIT_DEMO_SPOT_WEBSOCKET_BASE_URL: str = "wss://stream-demo.bybit.com/v5/public/spot"
+BYBIT_PRIVATE_WEBSOCKET_BASE_URL: str = "wss://stream.bybit.com/v5/private"
+BYBIT_TESTNET_PRIVATE_WEBSOCKET_BASE_URL: str = (
+    "wss://stream-testnet.bybit.com/v5/private"
+)
+BYBIT_DEMO_PRIVATE_WEBSOCKET_BASE_URL: str = "wss://stream-demo.bybit.com/v5/private"

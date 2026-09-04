@@ -17,6 +17,7 @@ from botragram.app import TradingRuntimeControl
 from botragram.constants.telegram import (
     MENU_CONFIGURATION,
     MENU_DASHBOARD,
+    MENU_EXCHANGE,
     MENU_HOME,
     MENU_MARKET_OVERVIEW,
     MENU_STRATEGY,
@@ -26,6 +27,7 @@ from botragram.enums import (
     AutonomousLiveRecoveryReason,
     AutonomousLiveRecoveryStatus,
     ExchangeEnvironment,
+    ExchangeType,
     ExecutionPolicy,
     Interval,
     LiveRuntimeHealthReason,
@@ -324,6 +326,15 @@ class FakeMarketTypeSwitcher:
         """Record and activate the acknowledged execution policy."""
         self.committed_execution_policies.append(execution_policy)
         self.execution_policy = execution_policy
+
+    async def prepare_exchange(self, *, exchange_type: ExchangeType) -> bool:
+        """Record a prepared exchange target."""
+        del exchange_type
+        return True
+
+    def commit_exchange(self, *, exchange_type: ExchangeType) -> None:
+        """Record the exchange target committed."""
+        del exchange_type
 
 
 @dataclass(slots=True)
@@ -1514,6 +1525,12 @@ async def _run_autonomous_live_reply_menu_test() -> None:
     message.text = MENU_STRATEGY
     await menu_message_handler(update, context)
     assert "Strategy" in message.replies[-1]
+    assert "Discovery Workflow" not in message.replies[-1]
+
+    # MENU_EXCHANGE should open exchange menu without discovery block
+    message.text = MENU_EXCHANGE
+    await menu_message_handler(update, context)
+    assert "Exchange" in message.replies[-1]
     assert "Discovery Workflow" not in message.replies[-1]
 
 

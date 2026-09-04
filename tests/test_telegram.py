@@ -24,6 +24,7 @@ from decimal import Decimal
 # =============================================================================
 from botragram.constants.telegram import (
     MENU_CONFIGURATION,
+    MENU_EXCHANGE,
     MENU_MARKET,
     MENU_MARKET_OVERVIEW,
     MENU_PAUSE,
@@ -56,6 +57,7 @@ from botragram.telegram.keyboards import (
     get_interval_keyboard,
     get_main_menu_keyboard,
     get_market_keyboard,
+    get_status_dashboard_keyboard,
     get_strategy_keyboard,
     get_tpsl_ratio_keyboard,
     get_trading_menu_keyboard,
@@ -122,6 +124,7 @@ def test_autonomous_live_home_hides_single_symbol_controls() -> None:
     assert MENU_CONFIGURATION not in running_labels
     assert MENU_TRADING not in running_labels
     assert MENU_RISK_LIMITS in running_labels
+    assert MENU_EXCHANGE in running_labels
     assert MENU_TRADING_MODE in running_labels
     assert MENU_PAUSE in running_labels
     assert MENU_RESUME in paused_labels
@@ -137,8 +140,21 @@ def test_single_symbol_home_keeps_setup_and_adds_mode_switch() -> None:
 
     assert MENU_CONFIGURATION in labels
     assert MENU_TRADING in labels
+    assert MENU_EXCHANGE in labels
     assert MENU_TRADING_MODE in labels
     assert MENU_RISK_LIMITS not in labels
+
+
+def test_status_dashboard_keyboard_includes_exchange_button() -> None:
+    """Ensure status dashboard inline controls include the exchange button."""
+    markup = get_status_dashboard_keyboard(
+        execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+    )
+    buttons = {
+        btn.text: btn.callback_data for row in markup.inline_keyboard for btn in row
+    }
+    assert MENU_EXCHANGE in buttons
+    assert buttons[MENU_EXCHANGE] == "cb_exchange"
 
 
 def test_execution_policy_keyboard_shows_only_allowed_targets() -> None:
@@ -473,6 +489,7 @@ def test_main_menu_and_exchange_keyboard_have_stable_actions() -> None:
     assert callback_data == {
         "cb_back_main",
         "cb_exchange_binance",
+        "cb_exchange_bybit",
         "cb_product_spot",
         "cb_product_futures",
     }

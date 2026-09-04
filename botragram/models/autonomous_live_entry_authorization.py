@@ -56,7 +56,7 @@ class AutonomousLiveEntryAuthorization:
             )
 
         if (
-            self.environment is ExchangeEnvironment.TESTNET
+            self.environment is not ExchangeEnvironment.MAINNET
             and self.mainnet_explicit_opt_in
         ):
             raise ValueError("MAINNET entry opt-in requires MAINNET environment")

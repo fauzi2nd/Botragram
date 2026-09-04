@@ -46,6 +46,8 @@ from botragram.constants.env import (
     ENV_BOTRAGRAM_PROFILE,
     ENV_BYBIT_API_KEY,
     ENV_BYBIT_API_SECRET,
+    ENV_BYBIT_DEMO,
+    ENV_BYBIT_MARKET_TYPE,
     ENV_BYBIT_TESTNET,
     ENV_DISCOVERY_BATCH_SIZE,
     ENV_DISCOVERY_CADENCE_SECONDS,
@@ -673,11 +675,25 @@ class EnvironmentProvider:
             ENV_EXCHANGE_API_SECRET_LEGACY,
         )
 
+    def get_bybit_market_type(self) -> str:
+        """Return the selected Bybit product family."""
+        return self._get_var(
+            ENV_BYBIT_MARKET_TYPE,
+            default="FUTURES",
+        ).upper()
+
     def get_bybit_testnet(self) -> bool:
         """Return whether Bybit testnet mode is enabled."""
         return self._get_bool(
             ENV_BYBIT_TESTNET,
             default=True,
+        )
+
+    def get_bybit_demo(self) -> bool:
+        """Return whether Bybit Demo Trading mode is enabled."""
+        return self._get_bool(
+            ENV_BYBIT_DEMO,
+            default=False,
         )
 
     # -------------------------------------------------------------------------

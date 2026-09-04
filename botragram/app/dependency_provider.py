@@ -42,6 +42,18 @@ from botragram.constants import (
     BINANCE_TESTNET_REST_BASE_URL,
     BINANCE_TESTNET_WEBSOCKET_BASE_URL,
     BINANCE_WEBSOCKET_BASE_URL,
+    BYBIT_DEMO_PRIVATE_WEBSOCKET_BASE_URL,
+    BYBIT_DEMO_REST_BASE_URL,
+    BYBIT_DEMO_SPOT_WEBSOCKET_BASE_URL,
+    BYBIT_DEMO_WEBSOCKET_BASE_URL,
+    BYBIT_PRIVATE_WEBSOCKET_BASE_URL,
+    BYBIT_REST_BASE_URL,
+    BYBIT_SPOT_WEBSOCKET_BASE_URL,
+    BYBIT_TESTNET_PRIVATE_WEBSOCKET_BASE_URL,
+    BYBIT_TESTNET_REST_BASE_URL,
+    BYBIT_TESTNET_SPOT_WEBSOCKET_BASE_URL,
+    BYBIT_TESTNET_WEBSOCKET_BASE_URL,
+    BYBIT_WEBSOCKET_BASE_URL,
     get_strategy_default_interval,
 )
 from botragram.engine import (
@@ -65,6 +77,10 @@ from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.exchanges.binance import (
     BinanceFuturesExchangeClient,
     BinanceFuturesUserDataStream,
+)
+from botragram.exchanges.bybit import BybitFuturesExchangeClient
+from botragram.exchanges.bybit.futures_user_data_stream import (
+    BybitFuturesUserDataStream,
 )
 from botragram.exchanges.factory import ExchangeFactory
 from botragram.models import (
@@ -786,8 +802,8 @@ class DependencyProvider:
         return self._require(self._live_post_entry_recovery_service)
 
     @property
-    def live_futures_user_data_service(self) -> LiveFuturesUserDataService:
-        return self._require(self._live_futures_user_data_service)
+    def live_futures_user_data_service(self) -> LiveFuturesUserDataService | None:
+        return self._live_futures_user_data_service
 
     @property
     def live_futures_entry_service(self) -> LiveFuturesEntryService:
@@ -971,12 +987,22 @@ class DependencyProvider:
 
     async def _build_exchange_dependencies(self) -> None:
         exchange = self._settings.exchange
-        if exchange.exchange is not ExchangeType.BINANCE:
-            raise ValueError("DependencyProvider currently supports Binance")
-        rest_base_url, websocket_base_url = self._get_binance_urls(
-            testnet=exchange.testnet,
-            market_type=exchange.market_type,
-        )
+        if exchange.exchange is ExchangeType.BINANCE:
+            rest_base_url, websocket_base_url = self._get_binance_urls(
+                testnet=exchange.testnet,
+                market_type=exchange.market_type,
+            )
+        elif exchange.exchange is ExchangeType.BYBIT:
+            rest_base_url, websocket_base_url = self._get_bybit_urls(
+                testnet=exchange.testnet,
+                demo=exchange.demo,
+                market_type=exchange.market_type,
+            )
+        else:
+            raise ValueError(
+                "DependencyProvider currently supports Binance and Bybit, "
+                f"got {exchange.exchange.value!r}"
+            )
         exchange_client, stream_client = ExchangeFactory.create(
             exchange_type=exchange.exchange,
             rest_base_url=rest_base_url,
@@ -998,9 +1024,11 @@ class DependencyProvider:
             and exchange.market_type is MarketType.FUTURES
             and exchange.environment is ExchangeEnvironment.MAINNET
         ):
-            if not isinstance(exchange_client, BinanceFuturesExchangeClient):
-                raise TypeError("MAINNET Futures readiness requires Binance Futures")
-            await exchange_client.verify_mainnet_readiness()
+            if isinstance(
+                exchange_client,
+                (BinanceFuturesExchangeClient, BybitFuturesExchangeClient),
+            ):
+                await exchange_client.verify_mainnet_readiness()
         await stream_client.connect()
         _LOGGER.info("Exchange REST and WebSocket transports are ready")
 
@@ -1011,23 +1039,45 @@ class DependencyProvider:
         ):
             return
         exchange_client = self.exchange_client
-        if not isinstance(exchange_client, BinanceFuturesExchangeClient):
-            raise TypeError("LIVE Futures User Data Stream requires Binance Futures")
-        _, websocket_base_url = self._get_binance_urls(
-            testnet=self._settings.exchange.testnet,
-            market_type=MarketType.FUTURES,
-        )
-        service = LiveFuturesUserDataService(
-            snapshot_provider=exchange_client,
-            event_stream=BinanceFuturesUserDataStream(
-                rest=exchange_client.rest_transport,
-                websocket_base_url=websocket_base_url,
-            ),
-            equity_asset=self._settings.market.quote_asset,
-            equity_observer=self._live_account_drawdown_service,
-        )
-        await service.start()
-        self._live_futures_user_data_service = service
+        exchange = self._settings.exchange
+        if isinstance(exchange_client, BinanceFuturesExchangeClient):
+            _, websocket_base_url = self._get_binance_urls(
+                testnet=exchange.testnet,
+                market_type=MarketType.FUTURES,
+            )
+            service = LiveFuturesUserDataService(
+                snapshot_provider=exchange_client,
+                event_stream=BinanceFuturesUserDataStream(
+                    rest=exchange_client.rest_transport,
+                    websocket_base_url=websocket_base_url,
+                ),
+                equity_asset=self._settings.market.quote_asset,
+                equity_observer=self._live_account_drawdown_service,
+            )
+            await service.start()
+            self._live_futures_user_data_service = service
+        elif isinstance(exchange_client, BybitFuturesExchangeClient):
+            private_ws_url = self._get_bybit_private_websocket_url(
+                testnet=exchange.testnet,
+                demo=exchange.demo,
+            )
+            service = LiveFuturesUserDataService(
+                snapshot_provider=exchange_client,
+                event_stream=BybitFuturesUserDataStream(
+                    api_key=exchange.api_key,
+                    api_secret=exchange.api_secret,
+                    private_websocket_url=private_ws_url,
+                ),
+                equity_asset=self._settings.market.quote_asset,
+                equity_observer=self._live_account_drawdown_service,
+            )
+            await service.start()
+            self._live_futures_user_data_service = service
+        else:
+            _LOGGER.info(
+                "Live user data stream not supported for %s; using REST balance",
+                exchange.exchange.value,
+            )
 
     def _build_live_account_drawdown_service(self) -> None:
         if (
@@ -1104,7 +1154,10 @@ class DependencyProvider:
                 notification_publisher=self.telegram_bot,
                 pnl_asset=self._settings.market.quote_asset,
             )
-            if isinstance(exchange_client, BinanceFuturesExchangeClient)
+            if isinstance(
+                exchange_client,
+                (BinanceFuturesExchangeClient, BybitFuturesExchangeClient),
+            )
             else None
         )
         self._live_natural_exit_recovery_service = LiveNaturalExitRecoveryService(
@@ -1126,7 +1179,11 @@ class DependencyProvider:
             trading_engine=self.trading_engine,
             balance_asset=self._settings.market.quote_asset,
             equity_provider=live_user_data_service,
-            drawdown_service=self._live_account_drawdown_service,
+            drawdown_service=(
+                self._live_account_drawdown_service
+                if live_user_data_service is not None
+                else None
+            ),
             natural_exit_recovery_service=self.live_natural_exit_recovery_service,
             runtime_risk_limit_provider=runtime_limits,
         )
@@ -1192,7 +1249,10 @@ class DependencyProvider:
             max_open_positions=self._settings.risk.max_open_positions,
             venue_entry_readiness=(
                 exchange_client
-                if isinstance(exchange_client, BinanceFuturesExchangeClient)
+                if isinstance(
+                    exchange_client,
+                    (BinanceFuturesExchangeClient, BybitFuturesExchangeClient),
+                )
                 and self._settings.app.trade_mode is TradeMode.LIVE
                 and self._settings.exchange.market_type is MarketType.FUTURES
                 and self._settings.exchange.environment is ExchangeEnvironment.MAINNET
@@ -1265,8 +1325,11 @@ class DependencyProvider:
             if self._settings.exchange.market_type is not MarketType.FUTURES:
                 raise ValueError("Autonomous LIVE execution requires FUTURES")
             exchange_client = self.exchange_client
-            if not isinstance(exchange_client, BinanceFuturesExchangeClient):
-                raise TypeError("Autonomous LIVE requires Binance Futures")
+            if not isinstance(
+                exchange_client,
+                (BinanceFuturesExchangeClient, BybitFuturesExchangeClient),
+            ):
+                raise TypeError("Autonomous LIVE requires Futures exchange client")
             authorization = self._autonomous_live_entry_authorization
             intent_service = self._autonomous_live_entry_intent_service
             execution_service = self._autonomous_live_entry_execution_service
@@ -1304,6 +1367,8 @@ class DependencyProvider:
                 ),
                 discovery_rate_limit_governor=(
                     exchange_client.rest_transport.rate_limit_governor
+                    if isinstance(exchange_client, BinanceFuturesExchangeClient)
+                    else None
                 ),
                 runtime_risk_limit_provider=self.runtime_risk_limit_service,
             )
@@ -1414,6 +1479,52 @@ class DependencyProvider:
                 BINANCE_TESTNET_WEBSOCKET_BASE_URL,
             )
         return BINANCE_REST_BASE_URL, BINANCE_WEBSOCKET_BASE_URL
+
+    @staticmethod
+    def _get_bybit_urls(
+        *,
+        testnet: bool,
+        demo: bool,
+        market_type: MarketType,
+    ) -> tuple[str, str]:
+        if market_type is MarketType.FUTURES:
+            if demo:
+                return (
+                    BYBIT_DEMO_REST_BASE_URL,
+                    BYBIT_DEMO_WEBSOCKET_BASE_URL,
+                )
+            if testnet:
+                return (
+                    BYBIT_TESTNET_REST_BASE_URL,
+                    BYBIT_TESTNET_WEBSOCKET_BASE_URL,
+                )
+            return (
+                BYBIT_REST_BASE_URL,
+                BYBIT_WEBSOCKET_BASE_URL,
+            )
+        if demo:
+            return (
+                BYBIT_DEMO_REST_BASE_URL,
+                BYBIT_DEMO_SPOT_WEBSOCKET_BASE_URL,
+            )
+        if testnet:
+            return (
+                BYBIT_TESTNET_REST_BASE_URL,
+                BYBIT_TESTNET_SPOT_WEBSOCKET_BASE_URL,
+            )
+        return BYBIT_REST_BASE_URL, BYBIT_SPOT_WEBSOCKET_BASE_URL
+
+    @staticmethod
+    def _get_bybit_private_websocket_url(
+        *,
+        testnet: bool,
+        demo: bool,
+    ) -> str:
+        if demo:
+            return BYBIT_DEMO_PRIVATE_WEBSOCKET_BASE_URL
+        if testnet:
+            return BYBIT_TESTNET_PRIVATE_WEBSOCKET_BASE_URL
+        return BYBIT_PRIVATE_WEBSOCKET_BASE_URL
 
     @staticmethod
     def _require[Dependency](dependency: Dependency | None) -> Dependency:

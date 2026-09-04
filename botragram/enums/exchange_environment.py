@@ -29,3 +29,4 @@ class ExchangeEnvironment(BaseEnum):
 
     TESTNET = "testnet"
     MAINNET = "mainnet"
+    DEMO = "demo"

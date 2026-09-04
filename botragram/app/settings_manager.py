@@ -131,13 +131,21 @@ class SettingsManager:
             ),
         )
 
-    def load_exchange_settings(self) -> ExchangeSettings:
-        """Load settings for the configured active exchange."""
+    def load_exchange_settings(
+        self,
+        *,
+        exchange_override: ExchangeType | None = None,
+    ) -> ExchangeSettings:
+        """Load settings for the configured active exchange or override."""
         environment = self._environment_provider
-        exchange = self._parse_enum(
-            enum_type=ExchangeType,
-            raw_value=environment.get_active_exchange(),
-            setting_name="ACTIVE_EXCHANGE",
+        exchange = (
+            exchange_override
+            if exchange_override is not None
+            else self._parse_enum(
+                enum_type=ExchangeType,
+                raw_value=environment.get_active_exchange(),
+                setting_name="ACTIVE_EXCHANGE",
+            )
         )
 
         match exchange:
@@ -163,11 +171,25 @@ class SettingsManager:
                     testnet=environment.get_bitget_testnet(),
                 )
             case ExchangeType.BYBIT:
+                market_type = self._parse_enum(
+                    enum_type=MarketType,
+                    raw_value=environment.get_bybit_market_type(),
+                    setting_name="BYBIT_MARKET_TYPE",
+                )
+                testnet = environment.get_bybit_testnet()
+                demo = environment.get_bybit_demo()
+                if testnet and demo:
+                    raise ValueError(
+                        "BYBIT configuration cannot enable both testnet and demo "
+                        "simultaneously; set BYBIT_TESTNET=false for demo mode"
+                    )
                 return ExchangeSettings(
                     exchange=exchange,
+                    market_type=market_type,
                     api_key=environment.get_bybit_api_key(),
                     api_secret=environment.get_bybit_api_secret(),
-                    testnet=environment.get_bybit_testnet(),
+                    testnet=testnet,
+                    demo=demo,
                 )
             case ExchangeType.OKX:
                 return ExchangeSettings(
@@ -310,7 +332,7 @@ class SettingsManager:
         )
 
     @staticmethod
-    def _get_scoped_database_path(
+    def get_scoped_database_path(
         *,
         app: AppSettings,
         exchange: ExchangeSettings,
@@ -328,6 +350,18 @@ class SettingsManager:
             )
         )
         return base_path.with_stem(f"{base_path.stem}-{scope}")
+
+    @staticmethod
+    def _get_scoped_database_path(
+        *,
+        app: AppSettings,
+        exchange: ExchangeSettings,
+    ) -> Path:
+        """Backward-compatible alias for get_scoped_database_path."""
+        return SettingsManager.get_scoped_database_path(
+            app=app,
+            exchange=exchange,
+        )
 
     def load_strategy_settings(self) -> StrategySettings:
         """Load strategy settings with strict optional environment selection."""

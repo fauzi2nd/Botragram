@@ -67,6 +67,8 @@ __all__ = [
     "ENV_BITGET_TESTNET",
     "ENV_BYBIT_API_KEY",
     "ENV_BYBIT_API_SECRET",
+    "ENV_BYBIT_DEMO",
+    "ENV_BYBIT_MARKET_TYPE",
     "ENV_BYBIT_TESTNET",
     "ENV_OKX_API_KEY",
     "ENV_OKX_API_SECRET",
@@ -162,6 +164,8 @@ ENV_BITGET_TESTNET: str = "BITGET_TESTNET"
 # =============================================================================
 ENV_BYBIT_API_KEY: str = "BYBIT_API_KEY"
 ENV_BYBIT_API_SECRET: str = "BYBIT_API_SECRET"
+ENV_BYBIT_DEMO: str = "BYBIT_DEMO"
+ENV_BYBIT_MARKET_TYPE: str = "BYBIT_MARKET_TYPE"
 ENV_BYBIT_TESTNET: str = "BYBIT_TESTNET"
 
 # =============================================================================

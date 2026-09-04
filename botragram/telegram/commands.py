@@ -25,7 +25,12 @@ from typing import Final
 # =============================================================================
 # Third Party
 # =============================================================================
-from telegram import ReplyKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    Update,
+)
 from telegram.ext import ContextTypes
 
 # =============================================================================
@@ -565,7 +570,25 @@ async def settings_command(
             strategy_name=_get_runtime_strategy(ctx),
             trade_mode=ctx.trade_mode,
         )
-        await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
+        markup = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        MENU_EXCHANGE,
+                        callback_data="cb_exchange",
+                    ),
+                    InlineKeyboardButton(
+                        MENU_TRADING_MODE,
+                        callback_data="cb_policy_menu",
+                    ),
+                ]
+            ]
+        )
+        await update.message.reply_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=markup,
+        )
 
 
 async def exchange_command(
@@ -580,11 +603,6 @@ async def exchange_command(
     """
     if update.message:
         if not is_authorized_update(update=update, context=context):
-            return
-        if await _reject_discovery_managed_configuration(
-            update=update,
-            context=context,
-        ):
             return
 
         ctx = _get_context(context)
@@ -1017,7 +1035,6 @@ async def menu_message_handler(
         MENU_DASHBOARD,
         MENU_TRADING,
         MENU_CONFIGURATION,
-        MENU_EXCHANGE,
         MENU_MARKET,
         MENU_MARKET_OVERVIEW,
         MENU_INTERVAL,

@@ -318,3 +318,44 @@ async def test_execution_policy_position_block_is_typed_and_stages_no_restart() 
     assert "Close every active position" in str(captured.value)
     assert not coordinator.has_committed_restart
     assert coordinator.consume() is None
+
+
+@pytest.mark.asyncio
+async def test_exchange_switch_stages_and_commits_restart() -> None:
+    """Exchange switch stages and commits restart when safe."""
+    coordinator = RuntimeRestartCoordinator()
+    service = MarketTypeSwitchService(
+        trade_mode=TradeMode.PAPER,
+        runtime_control=TradingRuntimeControl(exchange_type=ExchangeType.BINANCE),
+        position_repository=FakeStoredPositions(),
+        position_service=FakeLivePositions(),
+        restart_coordinator=coordinator,
+    )
+
+    changed = await service.prepare_exchange(exchange_type=ExchangeType.BINANCE)
+    assert not changed
+    assert not coordinator.has_committed_restart
+
+    changed = await service.prepare_exchange(exchange_type=ExchangeType.BYBIT)
+    assert changed
+    service.commit_exchange(exchange_type=ExchangeType.BYBIT)
+    assert coordinator.has_committed_restart
+    assert coordinator.consume() is ExchangeType.BYBIT
+
+
+@pytest.mark.asyncio
+async def test_exchange_switch_blocked_by_open_positions() -> None:
+    """Exchange switch is blocked when open positions exist."""
+    coordinator = RuntimeRestartCoordinator()
+    service = MarketTypeSwitchService(
+        trade_mode=TradeMode.PAPER,
+        runtime_control=TradingRuntimeControl(exchange_type=ExchangeType.BINANCE),
+        position_repository=FakeStoredPositions(positions=(_position(),)),
+        position_service=FakeLivePositions(),
+        restart_coordinator=coordinator,
+    )
+
+    with pytest.raises(RuntimeError, match="Close every active position"):
+        await service.prepare_exchange(exchange_type=ExchangeType.BYBIT)
+
+    assert not coordinator.has_committed_restart

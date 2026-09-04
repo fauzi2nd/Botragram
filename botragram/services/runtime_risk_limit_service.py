@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Final, Protocol
 
 from botragram.models import RuntimeRiskLimits
 from botragram.repositories import RuntimeRiskLimitRepository
 
 __all__ = ["RuntimeRiskLimitService"]
+
+_logger: Final = logging.getLogger(__name__)
 
 
 class RuntimeRiskLimitChangeGuard(Protocol):
@@ -104,6 +107,13 @@ class RuntimeRiskLimitService:
             try:
                 await self.repository.save(limits=candidate)
                 self._current = candidate
+                _logger.info(
+                    "Runtime risk limits updated: max_open_positions=%s "
+                    "max_position_size_usdt=%s updated_by=%s",
+                    candidate.max_open_positions,
+                    candidate.max_position_size_usdt,
+                    candidate.updated_by,
+                )
             finally:
                 self.runtime_guard.end_risk_limit_change()
         return candidate

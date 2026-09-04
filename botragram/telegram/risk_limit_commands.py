@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal, InvalidOperation
 from typing import Final
 
@@ -16,6 +17,7 @@ from botragram.telegram.messages import get_risk_limits_message
 
 __all__ = ["risk_limits_command", "set_risk_limits_command"]
 
+_logger: Final = logging.getLogger(__name__)
 _USAGE: Final[str] = "/setrisklimits <max_open_positions> <max_position_size_usdt>"
 
 
@@ -82,6 +84,7 @@ async def set_risk_limits_command(
         await message.reply_text("Runtime risk limits are unavailable in this mode.")
         return
     if not control.is_paused:
+        _logger.warning("Rejected /setrisklimits because runtime is not paused")
         await message.reply_text("Pause trading before changing runtime risk limits.")
         return
     args = context.args or []
@@ -111,9 +114,21 @@ async def set_risk_limits_command(
             updated_by=f"telegram:{actor_id}",
         )
     except (RuntimeError, ValueError) as error:
+        _logger.warning(
+            "Runtime risk limits update rejected for actor %s: %s",
+            actor_id,
+            error,
+        )
         await message.reply_text(f"Runtime risk limits rejected: {error}")
         return
 
+    _logger.info(
+        "Runtime risk limits updated via Telegram: max_open_positions=%s "
+        "max_position_size_usdt=%s by actor %s",
+        limits.max_open_positions,
+        limits.max_position_size_usdt,
+        actor_id,
+    )
     await message.reply_text(
         "Runtime risk limits updated.\n"
         f"Open positions: {limits.max_open_positions}\n"

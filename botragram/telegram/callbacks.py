@@ -297,8 +297,7 @@ def _parse_execution_policy_callback(
 def _is_single_symbol_configuration_callback(callback_data: str) -> bool:
     """Return whether an inline action belongs only to single-symbol setup."""
     return (
-        callback_data in {"cb_exchange", "cb_market", "cb_interval"}
-        or callback_data in _EXCHANGE_CALLBACKS
+        callback_data in {"cb_market", "cb_interval"}
         or callback_data.startswith(_PRODUCT_CALLBACK_PREFIX)
         or callback_data.startswith(_MARKET_CALLBACK_PREFIX)
         or callback_data.startswith(_MARKET_PAGE_CALLBACK_PREFIX)
@@ -1244,6 +1243,7 @@ async def handle_callback_query(
         )
     elif data in _EXCHANGE_CALLBACKS:
         control = bot_context.runtime_control
+        switcher = bot_context.market_type_switcher
         raw_exchange = data.removeprefix("cb_exchange_")
 
         try:
@@ -1259,9 +1259,38 @@ async def handle_callback_query(
             )
             return
 
+        if exchange_type.value == bot_context.exchange_type.lower():
+            try:
+                changed = control.confirm_exchange(exchange_type)
+            except RuntimeError as error:
+                await query.edit_message_text(
+                    f"⚠️ <b>{escape(str(error))}</b>",
+                    parse_mode=DEFAULT_PARSE_MODE,
+                    reply_markup=_get_exchange_markup(bot_context),
+                )
+                return
+
+            status = "dikonfirmasi" if changed else "sudah dikonfirmasi"
+            await query.edit_message_text(
+                _get_exchange_configuration_message(bot_context)
+                + f"\n\nExchange {status} untuk sesi ini.",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=_get_exchange_markup(bot_context),
+            )
+            return
+
+        if switcher is None:
+            await query.edit_message_text(
+                "⚠️ <b>Perpindahan exchange tidak tersedia.</b>",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=_get_exchange_markup(bot_context),
+            )
+            return
+
         try:
-            changed = control.confirm_exchange(exchange_type)
-        except RuntimeError as error:
+            changed = await switcher.prepare_exchange(exchange_type=exchange_type)
+        except Exception as error:
+            _LOGGER.exception("Telegram exchange switch validation failed")
             await query.edit_message_text(
                 f"⚠️ <b>{escape(str(error))}</b>",
                 parse_mode=DEFAULT_PARSE_MODE,
@@ -1269,13 +1298,22 @@ async def handle_callback_query(
             )
             return
 
-        status = "dikonfirmasi" if changed else "sudah dikonfirmasi"
+        if not changed:
+            await query.edit_message_text(
+                _get_exchange_configuration_message(bot_context)
+                + "\n\nExchange tersebut sudah aktif.",
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=_get_exchange_markup(bot_context),
+            )
+            return
+
         await query.edit_message_text(
-            _get_exchange_configuration_message(bot_context)
-            + f"\n\nExchange {status} untuk sesi ini.",
+            "🔄 <b>Perpindahan connector dimulai.</b>\n\n"
+            f"Target: <b>{escape(exchange_type.value.title())}</b>\n"
+            "Botragram akan tersambung kembali secara otomatis.",
             parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=_get_exchange_markup(bot_context),
         )
+        switcher.commit_exchange(exchange_type=exchange_type)
     elif data.startswith(_PRODUCT_CALLBACK_PREFIX):
         raw_market_type = data.removeprefix(_PRODUCT_CALLBACK_PREFIX)
         switcher = bot_context.market_type_switcher
@@ -1315,7 +1353,8 @@ async def handle_callback_query(
 
         await query.edit_message_text(
             "🔄 <b>Perpindahan connector dimulai.</b>\n\n"
-            f"Target: <b>Binance {market_type.value.title()}</b>\n"
+            f"Target: <b>{escape(bot_context.exchange_type.title())} "
+            f"{escape(market_type.value.title())}</b>\n"
             "Botragram akan tersambung kembali secara otomatis.",
             parse_mode=DEFAULT_PARSE_MODE,
         )

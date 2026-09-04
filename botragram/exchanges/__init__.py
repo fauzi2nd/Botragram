@@ -19,7 +19,7 @@ from botragram.exchanges.base import (
     BaseRestClient,
     BaseStreamClient,
 )
-from botragram.exchanges.bybit import BybitClient
+from botragram.exchanges.bybit import BybitExchangeClient
 
 # =============================================================================
 # Local Imports
@@ -31,6 +31,6 @@ __all__ = [
     "BaseExchangeMapper",
     "BaseRestClient",
     "BaseStreamClient",
-    "BybitClient",
+    "BybitExchangeClient",
     "ExchangeFactory",
 ]

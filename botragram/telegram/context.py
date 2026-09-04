@@ -123,6 +123,14 @@ class BotMarketTypeSwitcher(Protocol):
         """Commit a prepared switch after its Telegram acknowledgement."""
         ...
 
+    async def prepare_exchange(self, *, exchange_type: ExchangeType) -> bool:
+        """Validate and stage an exchange connector switch."""
+        ...
+
+    def commit_exchange(self, *, exchange_type: ExchangeType) -> None:
+        """Commit a prepared exchange switch after its Telegram acknowledgement."""
+        ...
+
     @property
     def current_execution_policy(self) -> ExecutionPolicy:
         """Return the execution workflow owned by this runtime session."""

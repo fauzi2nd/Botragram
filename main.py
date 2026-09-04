@@ -38,7 +38,12 @@ from botragram.app.backtest_command import (
 from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.config import Settings
 from botragram.constants import get_strategy_default_interval
-from botragram.enums import ExecutionPolicy, MarketType, StrategyType, TradeMode
+from botragram.enums import (
+    ExchangeType,
+    ExecutionPolicy,
+    MarketType,
+    StrategyType,
+)
 from botragram.utils.logger import configure_logging, shutdown_logging
 from botragram.utils.retry import CappedExponentialBackoff
 
@@ -95,7 +100,9 @@ async def _run_trading(
     dependency_provider: DependencyProvider,
     settings: Settings,
     restart_coordinator: RuntimeRestartCoordinator,
-    restart_target: MarketType | ExecutionPolicy | StrategyType | None = None,
+    restart_target: (
+        MarketType | ExecutionPolicy | StrategyType | ExchangeType | None
+    ) = None,
 ) -> None:
     """Build and run trading orchestration after resources are initialized."""
     active_settings = dependency_provider.settings
@@ -111,31 +118,22 @@ async def _run_trading(
         is ExecutionPolicy.AUTONOMOUS_LIVE
         else None
     )
+    live_user_data = dependency_provider.live_futures_user_data_service
     terminal_monitor = TerminalMonitor(
         runtime_control=dependency_provider.runtime_control,
         paper_balance_provider=dependency_provider.paper_trading_service,
         live_balance_provider=(
-            dependency_provider.live_futures_user_data_service
-            if active_settings.app.trade_mode is TradeMode.LIVE
-            and active_settings.exchange.market_type is MarketType.FUTURES
+            live_user_data
+            if live_user_data is not None
             else dependency_provider.account_service
         ),
         position_provider=dependency_provider.position_repository,
-        live_futures_user_data_service=(
-            dependency_provider.live_futures_user_data_service
-            if active_settings.app.trade_mode is TradeMode.LIVE
-            and active_settings.exchange.market_type is MarketType.FUTURES
-            else None
-        ),
-        live_balance_refresh_seconds=(
-            0.0
-            if active_settings.app.trade_mode is TradeMode.LIVE
-            and active_settings.exchange.market_type is MarketType.FUTURES
-            else 10.0
-        ),
+        live_futures_user_data_service=live_user_data,
+        live_balance_refresh_seconds=(0.0 if live_user_data is not None else 10.0),
         pnl_engine=dependency_provider.pnl_engine,
         trade_mode=active_settings.app.trade_mode,
         quote_asset=active_settings.market.quote_asset,
+        exchange_name=active_settings.exchange.exchange.value.upper(),
         configured_strategy_type=dependency_provider.runtime_control.strategy_type,
         live_runtime_health_service=dependency_provider.live_runtime_health_service,
         live_trading_performance_service=(
@@ -260,7 +258,9 @@ async def main() -> None:
         lock_path=settings.app.database_path.with_suffix(".lock"),
     )
     market_type_confirmed = False
-    session_restart_target: MarketType | ExecutionPolicy | StrategyType | None = None
+    session_restart_target: (
+        MarketType | ExecutionPolicy | StrategyType | ExchangeType | None
+    ) = None
     configure_logging(settings=settings.logging)
 
     try:
@@ -314,8 +314,34 @@ async def main() -> None:
                 market_type_confirmed = True
                 session_restart_target = requested_restart
                 _LOGGER.info(
-                    "Application restarting with Binance market type: %s",
+                    "Application restarting with %s market type: %s",
+                    settings.exchange.exchange.value.title(),
                     requested_restart.value,
+                )
+                continue
+
+            if isinstance(requested_restart, ExchangeType):
+                new_exchange_settings = settings_manager.load_exchange_settings(
+                    exchange_override=requested_restart,
+                )
+                settings = replace(
+                    settings,
+                    exchange=new_exchange_settings,
+                    app=replace(
+                        settings.app,
+                        database_path=SettingsManager.get_scoped_database_path(
+                            app=settings.app,
+                            exchange=new_exchange_settings,
+                        ),
+                    ),
+                )
+                settings_manager.validate(settings=settings)
+                market_type_confirmed = True
+                session_restart_target = requested_restart
+                _LOGGER.info(
+                    "Application restarting with %s connector: market_type=%s",
+                    requested_restart.value.title(),
+                    new_exchange_settings.market_type.value,
                 )
                 continue
 

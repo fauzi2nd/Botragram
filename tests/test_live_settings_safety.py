@@ -11,6 +11,7 @@ from botragram.app import SettingsManager
 from botragram.app.environment_provider import EnvironmentProvider
 from botragram.config.risk_settings import RiskSettings
 from botragram.enums import ExchangeEnvironment
+from botragram.models import AutonomousLiveEntryAuthorization
 
 
 @pytest.mark.parametrize(
@@ -74,3 +75,62 @@ def test_risk_settings_reject_invalid_executable_spread_limit(value: Decimal) ->
     """Fail closed when direct configuration cannot bound MARKET spread."""
     with pytest.raises(ValueError, match="Maximum spread"):
         RiskSettings(max_spread_bps=value)
+
+
+def test_live_settings_scope_database_by_bybit_demo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep Bybit DEMO network on a separate durable SQLite file."""
+    monkeypatch.setenv("TRADE_MODE", "live")
+    monkeypatch.setenv("ACTIVE_EXCHANGE", "bybit")
+    monkeypatch.setenv("BYBIT_MARKET_TYPE", "futures")
+    monkeypatch.setenv("BYBIT_TESTNET", "false")
+    monkeypatch.setenv("BYBIT_DEMO", "true")
+    monkeypatch.setenv("BYBIT_API_KEY", "demo-key")
+    monkeypatch.setenv("BYBIT_API_SECRET", "demo-secret")
+    monkeypatch.setenv("EXECUTION_POLICY", "single_symbol")
+    monkeypatch.setenv("AUTONOMOUS_EXECUTION_ENABLED", "false")
+    monkeypatch.setenv("AUTONOMOUS_LIVE_ENTRY_ENABLED", "false")
+    monkeypatch.setenv("AUTONOMOUS_MAINNET_ENTRY_ENABLED", "false")
+    monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)
+
+    settings = SettingsManager(
+        environment_provider=EnvironmentProvider(env_path=str(tmp_path / "missing.env"))
+    ).load()
+
+    assert settings.exchange.environment is ExchangeEnvironment.DEMO
+    assert settings.app.database_path == Path("data/botragram-bybit-futures-demo.db")
+
+
+def test_autonomous_live_entry_authorization_rejects_demo_with_mainnet_opt_in() -> None:
+    """Ensure DEMO environment rejects MAINNET opt-in."""
+    with pytest.raises(
+        ValueError, match="MAINNET entry opt-in requires MAINNET environment"
+    ):
+        AutonomousLiveEntryAuthorization(
+            environment=ExchangeEnvironment.DEMO,
+            explicit_opt_in=True,
+            mainnet_explicit_opt_in=True,
+        )
+
+
+def test_bybit_settings_reject_both_testnet_and_demo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Fail closed when both BYBIT_TESTNET and BYBIT_DEMO are true."""
+    monkeypatch.setenv("ACTIVE_EXCHANGE", "bybit")
+    monkeypatch.setenv("BYBIT_MARKET_TYPE", "futures")
+    monkeypatch.setenv("BYBIT_TESTNET", "true")
+    monkeypatch.setenv("BYBIT_DEMO", "true")
+    monkeypatch.setenv("BYBIT_API_KEY", "key")
+    monkeypatch.setenv("BYBIT_API_SECRET", "secret")
+    monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)
+
+    with pytest.raises(ValueError, match="cannot enable both testnet and demo"):
+        SettingsManager(
+            environment_provider=EnvironmentProvider(
+                env_path=str(tmp_path / "missing.env")
+            )
+        ).load_exchange_settings()

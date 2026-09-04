@@ -11,7 +11,13 @@ from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.app.settings_manager import SettingsManager
 from botragram.config import Settings
 from botragram.constants import get_strategy_default_interval
-from botragram.enums import ExecutionPolicy, MarketType, StrategyType, TradeMode
+from botragram.enums import (
+    ExchangeType,
+    ExecutionPolicy,
+    MarketType,
+    StrategyType,
+    TradeMode,
+)
 from botragram.exceptions import ExecutionPolicySwitchBlockedError
 from botragram.models import Position
 from botragram.repositories import RuntimeSettingsRepository
@@ -24,7 +30,7 @@ __all__ = [
     "run_until_restart",
 ]
 
-type RuntimeRestartTarget = MarketType | ExecutionPolicy | StrategyType
+type RuntimeRestartTarget = MarketType | ExecutionPolicy | StrategyType | ExchangeType
 
 
 class _StoredPositionProvider(Protocol):
@@ -89,13 +95,19 @@ class RuntimeRestartCoordinator:
     @staticmethod
     def _resolve_target(
         *,
-        market_type: MarketType | None,
-        execution_policy: ExecutionPolicy | None,
-        strategy_type: StrategyType | None,
+        market_type: MarketType | None = None,
+        execution_policy: ExecutionPolicy | None = None,
+        strategy_type: StrategyType | None = None,
+        exchange_type: ExchangeType | None = None,
     ) -> RuntimeRestartTarget:
         targets = tuple(
             target
-            for target in (market_type, execution_policy, strategy_type)
+            for target in (
+                market_type,
+                execution_policy,
+                strategy_type,
+                exchange_type,
+            )
             if target is not None
         )
         if len(targets) != 1:
@@ -108,6 +120,7 @@ class RuntimeRestartCoordinator:
         market_type: MarketType | None = None,
         execution_policy: ExecutionPolicy | None = None,
         strategy_type: StrategyType | None = None,
+        exchange_type: ExchangeType | None = None,
     ) -> None:
         """Stage one validated target before Telegram acknowledges the request."""
         if self._requested_target is not None or self._restart_event.is_set():
@@ -116,6 +129,7 @@ class RuntimeRestartCoordinator:
             market_type=market_type,
             execution_policy=execution_policy,
             strategy_type=strategy_type,
+            exchange_type=exchange_type,
         )
 
     def commit(
@@ -124,12 +138,14 @@ class RuntimeRestartCoordinator:
         market_type: MarketType | None = None,
         execution_policy: ExecutionPolicy | None = None,
         strategy_type: StrategyType | None = None,
+        exchange_type: ExchangeType | None = None,
     ) -> None:
         """Commit the exact staged target and wake the application session."""
         target = self._resolve_target(
             market_type=market_type,
             execution_policy=execution_policy,
             strategy_type=strategy_type,
+            exchange_type=exchange_type,
         )
         if self._requested_target is not target:
             raise RuntimeError("Runtime restart request is not staged")
@@ -248,6 +264,23 @@ class MarketTypeSwitchService:
     def commit(self, *, market_type: MarketType) -> None:
         """Commit a prepared product switch after Telegram acknowledgement."""
         self.restart_coordinator.commit(market_type=market_type)
+
+    async def prepare_exchange(self, *, exchange_type: ExchangeType) -> bool:
+        """Validate and stage an exchange switch without restarting yet."""
+        if exchange_type is self.runtime_control.exchange_type:
+            self.runtime_control.confirm_exchange(exchange_type)
+            return False
+
+        self.runtime_control.require_configuration_change_allowed()
+        if await self._get_positions():
+            raise RuntimeError("Close every active position before switching exchange")
+
+        self.restart_coordinator.stage(exchange_type=exchange_type)
+        return True
+
+    def commit_exchange(self, *, exchange_type: ExchangeType) -> None:
+        """Commit a prepared exchange switch after Telegram acknowledgement."""
+        self.restart_coordinator.commit(exchange_type=exchange_type)
 
     @property
     def current_execution_policy(self) -> ExecutionPolicy:

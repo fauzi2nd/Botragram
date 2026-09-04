@@ -259,6 +259,7 @@ class TerminalMonitor:
     pnl_engine: PnLEngine
     trade_mode: TradeMode
     quote_asset: str
+    exchange_name: str = "BINANCE"
     configured_strategy_type: StrategyType = StrategyType.EMA_CROSS
     live_runtime_health_service: LiveRuntimeHealthProvider | None = None
     live_trading_performance_service: LiveTradingPerformanceProvider | None = None
@@ -709,6 +710,7 @@ class TerminalMonitor:
         table.add_column(style="white")
         health = status.live_runtime_health
         if health is not None:
+            table.add_row("Exchange", self.exchange_name.upper())
             table.add_row(
                 "Global Runner",
                 "PAUSED" if self.runtime_control.is_paused else "RUNNING",
@@ -741,6 +743,7 @@ class TerminalMonitor:
                     table.add_row("Recovery Reason", recovery.reason.value.upper())
             self._add_autonomous_entry_row(table=table, status=status)
         else:
+            table.add_row("Exchange", self.exchange_name.upper())
             table.add_row(
                 "Global Runner",
                 "PAUSED" if self.runtime_control.is_paused else "RUNNING",

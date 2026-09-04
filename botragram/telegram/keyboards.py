@@ -97,6 +97,7 @@ def get_status_dashboard_keyboard(
 
     row2 = [
         InlineKeyboardButton(pause_label, callback_data=pause_cb),
+        InlineKeyboardButton(MENU_EXCHANGE, callback_data="cb_exchange"),
         InlineKeyboardButton(MENU_TRADING_MODE, callback_data="cb_policy_menu"),
     ]
 
@@ -234,7 +235,7 @@ def get_main_menu_keyboard(
             [
                 [MENU_DASHBOARD, MENU_TRADING],
                 [MENU_CONFIGURATION, MENU_ACTIVITY],
-                [MENU_TRADING_MODE],
+                [MENU_EXCHANGE, MENU_TRADING_MODE],
             ]
         )
 
@@ -244,15 +245,15 @@ def get_main_menu_keyboard(
             [
                 [MENU_STATUS, MENU_POSITIONS],
                 [MENU_STRATEGY, MENU_RISK_LIMITS],
-                [MENU_ACTIVITY, MENU_TRADING_MODE],
-                [runtime_action],
+                [MENU_EXCHANGE, MENU_TRADING_MODE],
+                [runtime_action, MENU_ACTIVITY],
             ]
         )
 
     return _get_reply_keyboard(
         [
             [MENU_STATUS, MENU_POSITIONS],
-            [MENU_STRATEGY, MENU_ACTIVITY],
+            [MENU_STRATEGY, MENU_EXCHANGE],
             [runtime_action, MENU_TRADING_MODE],
         ]
     )
@@ -453,13 +454,9 @@ def get_exchange_keyboard(
     market_type_confirmed: bool = False,
 ) -> InlineKeyboardMarkup:
     """Get exchange selection inline keyboard."""
-
-    def _label(name: str, emoji: str) -> str:
-        check = "✅ " if exchange_confirmed and active_exchange.upper() == name else ""
-        return f"{check}{emoji} {name}"
-
     normalized = active_exchange.strip().upper()
-    emoji = "🟠" if normalized == "BINANCE" else "🟡"
+    binance_check = "✅ " if exchange_confirmed and normalized == "BINANCE" else ""
+    bybit_check = "✅ " if exchange_confirmed and normalized == "BYBIT" else ""
     spot_check = (
         "✅ " if market_type_confirmed and market_type is MarketType.SPOT else ""
     )
@@ -469,9 +466,13 @@ def get_exchange_keyboard(
     keyboard = [
         [
             InlineKeyboardButton(
-                _label(normalized, emoji),
-                callback_data=f"cb_exchange_{normalized.lower()}",
-            )
+                f"{binance_check}🟠 BINANCE",
+                callback_data="cb_exchange_binance",
+            ),
+            InlineKeyboardButton(
+                f"{bybit_check}🟡 BYBIT",
+                callback_data="cb_exchange_bybit",
+            ),
         ],
         [
             InlineKeyboardButton(f"{spot_check}Spot", callback_data="cb_product_spot"),

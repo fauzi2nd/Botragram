@@ -29,6 +29,13 @@ from botragram.exchanges.binance.client import BinanceExchangeClient
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.exchanges.binance.stream import BinanceStreamClient
+from botragram.exchanges.bybit import (
+    BybitExchangeClient,
+    BybitExchangeMapper,
+    BybitFuturesExchangeClient,
+    BybitRestClient,
+    BybitStreamClient,
+)
 
 __all__ = [
     "ExchangeFactory",
@@ -72,6 +79,12 @@ class ExchangeFactory:
                     api_key=api_key,
                     api_secret=api_secret,
                 )
+            case ExchangeType.BYBIT:
+                return BybitRestClient(
+                    base_url=base_url,
+                    api_key=api_key,
+                    api_secret=api_secret,
+                )
             case _:
                 raise ExchangeFactory._unsupported_exchange(exchange_type)
 
@@ -111,6 +124,19 @@ class ExchangeFactory:
                     )
 
                 return BinanceExchangeClient(rest=rest_client, mapper=mapper)
+            case ExchangeType.BYBIT:
+                if not isinstance(rest_client, BybitRestClient):
+                    raise TypeError("Bybit exchange client requires BybitRestClient")
+
+                bybit_mapper = BybitExchangeMapper()
+
+                if market_type is MarketType.FUTURES:
+                    return BybitFuturesExchangeClient(
+                        rest=rest_client,
+                        mapper=bybit_mapper,
+                    )
+
+                return BybitExchangeClient(rest=rest_client, mapper=bybit_mapper)
             case _:
                 raise ExchangeFactory._unsupported_exchange(exchange_type)
 
@@ -137,6 +163,11 @@ class ExchangeFactory:
                 return BinanceStreamClient(
                     base_url=base_url,
                     mapper=BinanceExchangeMapper(),
+                )
+            case ExchangeType.BYBIT:
+                return BybitStreamClient(
+                    websocket_url=base_url,
+                    mapper=BybitExchangeMapper(),
                 )
             case _:
                 raise ExchangeFactory._unsupported_exchange(exchange_type)

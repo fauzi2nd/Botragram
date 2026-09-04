@@ -46,17 +46,20 @@ class ExchangeSettings:
     api_secret: str = ""
     passphrase: str = ""
     testnet: bool = True
+    demo: bool = False
     timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
     max_retries: int = DEFAULT_MAX_RETRIES
 
     @property
     def is_live(self) -> bool:
         """Whether the application connects to the live exchange."""
-        return not self.testnet
+        return not self.testnet and not self.demo
 
     @property
     def environment(self) -> ExchangeEnvironment:
         """Return the canonical network environment for this exchange."""
+        if self.demo:
+            return ExchangeEnvironment.DEMO
         return (
             ExchangeEnvironment.TESTNET if self.testnet else ExchangeEnvironment.MAINNET
         )
