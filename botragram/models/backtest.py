@@ -50,6 +50,8 @@ class BacktestRequest:
     fee_rate: Decimal = Decimal("0.001")
     slippage_rate: Decimal = Decimal("0.0005")
     max_candles: int = 100_000
+    data_source: str = "auto"
+    database_path: str | None = None
 
     def __post_init__(self) -> None:
         """Normalize and validate request boundaries."""
@@ -70,7 +72,14 @@ class BacktestRequest:
         if self.max_candles <= 0:
             raise ValueError("Backtest candle limit must be greater than zero")
 
+        normalized_data_source = self.data_source.strip().lower()
+        if normalized_data_source not in ("auto", "local", "exchange"):
+            raise ValueError(
+                "Backtest data source must be 'auto', 'local', or 'exchange'"
+            )
+
         object.__setattr__(self, "symbol", normalized_symbol)
+        object.__setattr__(self, "data_source", normalized_data_source)
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -116,3 +125,5 @@ class BacktestResult:
     trades: tuple[BacktestTrade, ...]
     metrics: BacktestMetrics
     warnings: tuple[str, ...] = ()
+    venue_name: str = "Binance Mainnet"
+    data_source_description: str = "Exchange REST"

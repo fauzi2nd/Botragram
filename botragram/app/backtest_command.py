@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, time, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Final
 
 # =============================================================================
@@ -28,12 +29,21 @@ from typing import Final
 # =============================================================================
 from botragram.config import Settings
 from botragram.config.risk_settings import RiskSettings
-from botragram.constants import BINANCE_FUTURES_REST_BASE_URL, BINANCE_REST_BASE_URL
+from botragram.constants import (
+    BINANCE_FUTURES_REST_BASE_URL,
+    BINANCE_REST_BASE_URL,
+    BYBIT_REST_BASE_URL,
+    BYBIT_TESTNET_REST_BASE_URL,
+)
 from botragram.engine.backtest_engine import BacktestEngine
-from botragram.enums import Interval, MarketType, StrategyType
+from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.models import BacktestRequest, BacktestResult
 from botragram.services.backtest_service import BacktestService
+from botragram.services.stored_resampled_candle_provider import (
+    StoredResampledCandleProvider,
+)
+from botragram.storage.sqlite import SQLiteCandleRepository, SQLiteDatabase
 from botragram.strategies import StrategyFactory
 
 __all__ = [
@@ -66,7 +76,7 @@ def parse_backtest_request(
     """Parse validated CLI arguments into an immutable request."""
     parser = argparse.ArgumentParser(
         prog="python main.py backtest",
-        description="Replay a Botragram strategy on Binance Mainnet candles.",
+        description="Replay a Botragram strategy on historical candles.",
     )
     parser.add_argument("--market-type", required=True, choices=("spot", "futures"))
     parser.add_argument("--symbol", required=True)
@@ -90,7 +100,29 @@ def parse_backtest_request(
     parser.add_argument("--fee-rate", default="0.001")
     parser.add_argument("--slippage-rate", default="0.0005")
     parser.add_argument("--max-candles", default="100000")
+    parser.add_argument(
+        "--data-source",
+        choices=("auto", "local", "exchange"),
+        default="auto",
+        help=(
+            "Candle source: 'auto' (prefer local SQLite if available), "
+            "'local', or 'exchange'"
+        ),
+    )
+    parser.add_argument(
+        "--database-path",
+        default=None,
+        help="Optional path to SQLite database containing historical candles",
+    )
+
     namespace = parser.parse_args(tuple(arguments[1:]))
+
+    raw_db_path = namespace.database_path
+    database_path = (
+        raw_db_path.strip()
+        if isinstance(raw_db_path, str) and raw_db_path.strip()
+        else None
+    )
 
     return BacktestRequest(
         symbol=_required_string(namespace=namespace, name="symbol"),
@@ -113,6 +145,8 @@ def parse_backtest_request(
         fee_rate=_parse_decimal(namespace=namespace, name="fee_rate"),
         slippage_rate=_parse_decimal(namespace=namespace, name="slippage_rate"),
         max_candles=_parse_integer(namespace=namespace, name="max_candles"),
+        data_source=_required_string(namespace=namespace, name="data_source"),
+        database_path=database_path,
     )
 
 
@@ -121,39 +155,103 @@ async def run_backtest_command(
     settings: Settings,
     request: BacktestRequest,
 ) -> BacktestResult:
-    """Compose public Binance dependencies and execute one isolated backtest."""
-    rest_base_url = (
-        BINANCE_FUTURES_REST_BASE_URL
-        if request.market_type is MarketType.FUTURES
-        else BINANCE_REST_BASE_URL
-    )
-    rest_client = ExchangeFactory.create_rest_client(
-        exchange_type=settings.exchange.exchange,
-        base_url=rest_base_url,
-    )
-    exchange_client = ExchangeFactory.create_exchange_client(
-        exchange_type=settings.exchange.exchange,
-        rest_client=rest_client,
-        market_type=request.market_type,
-    )
+    """Compose dependencies and execute one isolated backtest."""
     strategy_settings = replace(
         settings.strategy,
         strategy_type=request.strategy_type,
     )
+    engine = BacktestEngine(
+        strategy=StrategyFactory.create(settings=strategy_settings),
+        risk_settings=_build_backtest_risk_settings(
+            settings=settings,
+            request=request,
+        ),
+    )
+
+    db_path = (
+        Path(request.database_path)
+        if request.database_path is not None
+        else settings.app.database_path
+    )
+
+    # 1. Try local data if auto or local is requested
+    if request.data_source in ("auto", "local") and db_path.exists():
+        database = SQLiteDatabase(database_path=db_path)
+        await database.connect()
+        try:
+            repo = SQLiteCandleRepository(database=database)
+            count = await repo.count(symbol=request.symbol)
+            if count > 0:
+                provider = StoredResampledCandleProvider(
+                    candle_repository=repo,
+                    source_interval=Interval.M1,
+                )
+                service = BacktestService(
+                    exchange_client=provider,
+                    engine=engine,
+                )
+                result = await service.run(request=request)
+                venue_title = settings.exchange.exchange.value.title()
+                net_type = "Testnet" if settings.exchange.testnet else "Mainnet"
+                source_desc = (
+                    f"Local SQLite Resampled (1m -> {request.interval.value}) "
+                    f"[{db_path.name}]"
+                    if request.interval is not Interval.M1
+                    else f"Local SQLite 1m [{db_path.name}]"
+                )
+                return replace(
+                    result,
+                    venue_name=f"{venue_title} {net_type}",
+                    data_source_description=source_desc,
+                )
+        finally:
+            await database.close()
+
+    if request.data_source == "local":
+        raise RuntimeError(
+            f"No local candle records found for {request.symbol} in {db_path}. "
+            "Backfill data first using tests/manual/backfill_1m_candles.py."
+        )
+
+    # 2. Query exchange REST
+    exchange_type = settings.exchange.exchange
+    if exchange_type is ExchangeType.BYBIT:
+        rest_base_url = (
+            BYBIT_TESTNET_REST_BASE_URL
+            if settings.exchange.testnet
+            else BYBIT_REST_BASE_URL
+        )
+    else:
+        rest_base_url = (
+            BINANCE_FUTURES_REST_BASE_URL
+            if request.market_type is MarketType.FUTURES
+            else BINANCE_REST_BASE_URL
+        )
+
+    rest_client = ExchangeFactory.create_rest_client(
+        exchange_type=exchange_type,
+        base_url=rest_base_url,
+    )
+    exchange_client = ExchangeFactory.create_exchange_client(
+        exchange_type=exchange_type,
+        rest_client=rest_client,
+        market_type=request.market_type,
+    )
     service = BacktestService(
         exchange_client=exchange_client,
-        engine=BacktestEngine(
-            strategy=StrategyFactory.create(settings=strategy_settings),
-            risk_settings=_build_backtest_risk_settings(
-                settings=settings,
-                request=request,
-            ),
-        ),
+        engine=engine,
     )
 
     await exchange_client.connect()
     try:
-        return await service.run(request=request)
+        result = await service.run(request=request)
+        venue_title = exchange_type.value.title()
+        net_type = "Testnet" if settings.exchange.testnet else "Mainnet"
+        return replace(
+            result,
+            venue_name=f"{venue_title} {net_type}",
+            data_source_description=f"{venue_title} REST API",
+        )
     finally:
         await exchange_client.close()
 
@@ -169,7 +267,8 @@ def format_backtest_report(*, result: BacktestResult) -> str:
         "",
         "BOTRAGRAM BACKTEST",
         "=" * 72,
-        f"Market       : Binance Mainnet {request.market_type.value.upper()}",
+        f"Market       : {result.venue_name} {request.market_type.value.upper()}",
+        f"Data Source  : {result.data_source_description}",
         f"Symbol       : {request.symbol}",
         f"Interval     : {request.interval.value}",
         f"Strategy     : {request.strategy_type.value}",

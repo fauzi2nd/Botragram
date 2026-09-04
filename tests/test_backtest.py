@@ -21,11 +21,21 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
+
+# =============================================================================
+# Third-Party Imports
+# =============================================================================
+import pytest
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.backtest_command import parse_backtest_request
+from botragram.app.backtest_command import (
+    parse_backtest_request,
+    run_backtest_command,
+)
+from botragram.config import Settings
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine.backtest_engine import BacktestEngine
 from botragram.enums import (
@@ -37,6 +47,11 @@ from botragram.enums import (
 )
 from botragram.models import BacktestRequest, BacktestResult, Candle, Signal
 from botragram.services.backtest_service import BacktestService
+from botragram.storage.sqlite import (
+    SQLiteCandleRepository,
+    SQLiteDatabase,
+    SQLiteMigrationManager,
+)
 from botragram.strategies.base import BaseStrategy
 
 # =============================================================================
@@ -371,3 +386,84 @@ async def _run_paginated_backtest() -> tuple[BacktestResult, HistoricalCandleStu
         ),
     )
     return await service.run(request=request), provider
+
+
+def test_backtest_cli_parses_data_source_and_database_path() -> None:
+    """Parse explicit data source and database path arguments."""
+    request = parse_backtest_request(
+        arguments=(
+            "backtest",
+            "--market-type",
+            "futures",
+            "--symbol",
+            "btcusdt",
+            "--interval",
+            "5m",
+            "--strategy",
+            "ema_scalping",
+            "--start",
+            "2026-09-01",
+            "--end",
+            "2026-09-02",
+            "--data-source",
+            "local",
+            "--database-path",
+            "data/custom.db",
+        )
+    )
+
+    assert request.symbol == "BTCUSDT"
+    assert request.data_source == "local"
+    assert request.database_path == "data/custom.db"
+
+
+@pytest.mark.asyncio
+async def test_backtest_command_runs_with_local_resampled_data() -> None:
+    """run_backtest_command detects local SQLite candles and resamples to 5m."""
+    import tempfile
+    import uuid
+
+    db_file = Path(tempfile.gettempdir()) / f"local_test_{uuid.uuid4().hex}.db"
+    db = SQLiteDatabase(database_path=db_file)
+    await db.connect()
+    try:
+        await SQLiteMigrationManager(database=db).initialize()
+        repo = SQLiteCandleRepository(database=db)
+        candles = tuple(
+            _create_candle(
+                minute=i,
+                open_price=f"{1000 + i}",
+                high_price=f"{1005 + i}",
+                low_price=f"{995 + i}",
+                close_price=f"{1002 + i}",
+            )
+            for i in range(100)
+        )
+        await repo.save_many(candles=candles)
+    finally:
+        await db.close()
+
+    try:
+        settings = Settings()
+        request = BacktestRequest(
+            symbol="BTCUSDT",
+            interval=Interval.M5,
+            strategy_type=StrategyType.EMA_SCALPING,
+            market_type=MarketType.FUTURES,
+            start_time=_START_TIME,
+            end_time=_START_TIME + timedelta(minutes=99),
+            initial_balance=Decimal("10000"),
+            data_source="local",
+            database_path=str(db_file),
+        )
+
+        result = await run_backtest_command(
+            settings=settings,
+            request=request,
+        )
+
+        assert result.candle_count == 20
+        assert "Local SQLite Resampled (1m -> 5m)" in result.data_source_description
+
+    finally:
+        db_file.unlink(missing_ok=True)
