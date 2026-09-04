@@ -17,6 +17,12 @@ from __future__ import annotations
 # Local Imports
 # =============================================================================
 from botragram.app.application import Application
+from botragram.app.backfill_command import (
+    format_backfill_report,
+    is_backfill_command,
+    parse_backfill_request,
+    run_backfill_command,
+)
 from botragram.app.dependency_provider import DependencyProvider
 from botragram.app.global_discovery_telemetry import (
     GlobalDiscoveryCandidate,
@@ -75,7 +81,11 @@ __all__ = [
     "TradingRunner",
     "TradingRuntimeControl",
     "calculate_seconds_until_next_candle_close",
+    "format_backfill_report",
+    "is_backfill_command",
+    "parse_backfill_request",
     "prepare_restarted_runtime_session",
+    "run_backfill_command",
     "run_until_restart",
     "shutdown_application",
     "startup_application",

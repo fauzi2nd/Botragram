@@ -29,6 +29,12 @@ from botragram.app import (
     prepare_restarted_runtime_session,
     run_until_restart,
 )
+from botragram.app.backfill_command import (
+    format_backfill_report,
+    is_backfill_command,
+    parse_backfill_request,
+    run_backfill_command,
+)
 from botragram.app.backtest_command import (
     format_backtest_report,
     is_backtest_command,
@@ -248,6 +254,26 @@ async def main() -> None:
                 request=request,
             )
             print(format_backtest_report(result=result))
+        finally:
+            shutdown_logging()
+
+        return
+
+    if is_backfill_command(arguments):
+        backfill_request = parse_backfill_request(arguments=arguments)
+        configure_logging(settings=settings.logging)
+
+        try:
+            backfill_result = await run_backfill_command(
+                settings=settings,
+                request=backfill_request,
+            )
+            print(
+                format_backfill_report(
+                    result=backfill_result,
+                    request=backfill_request,
+                )
+            )
         finally:
             shutdown_logging()
 

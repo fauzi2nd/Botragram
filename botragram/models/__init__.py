@@ -30,6 +30,10 @@ from botragram.models.autonomous_live_entry_intent import (
 from botragram.models.autonomous_live_recovery_snapshot import (
     AutonomousLiveRecoverySnapshot,
 )
+from botragram.models.backfill import (
+    BackfillRequest,
+    BackfillResult,
+)
 from botragram.models.backtest import (
     BacktestMetrics,
     BacktestRequest,
@@ -104,6 +108,8 @@ __all__ = [
     "AutonomousLiveEntryExecutionResult",
     "AutonomousLiveRecoverySnapshot",
     "Balance",
+    "BackfillRequest",
+    "BackfillResult",
     "BacktestMetrics",
     "BacktestRequest",
     "BacktestResult",

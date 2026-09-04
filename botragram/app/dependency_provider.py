@@ -108,6 +108,7 @@ from botragram.services import (
     AutonomousLiveEntryIntentService,
     AutonomousLiveRecoveryObservabilityService,
     AutonomousPaperExecutionService,
+    CandleSyncService,
     ClosedPositionLifecycleService,
     ExecutionAuthorizationService,
     HealthService,
@@ -186,6 +187,7 @@ class DependencyProvider:
         "_autonomous_live_recovery_observability_service",
         "_autonomous_paper_execution_service",
         "_candle_repository",
+        "_candle_sync_service",
         "_closed_position_lifecycle_repository",
         "_closed_position_lifecycle_service",
         "_database",
@@ -349,6 +351,7 @@ class DependencyProvider:
         self._human_confirmed_paper_execution_service: (
             HumanConfirmedPaperExecutionService | None
         ) = None
+        self._candle_sync_service: CandleSyncService | None = None
         self._closed_position_lifecycle_service: (
             ClosedPositionLifecycleService | None
         ) = None
@@ -850,6 +853,10 @@ class DependencyProvider:
         return self._require(self._market_service)
 
     @property
+    def candle_sync_service(self) -> CandleSyncService:
+        return self._require(self._candle_sync_service)
+
+    @property
     def opportunity_discovery_service(self) -> OpportunityDiscoveryService:
         return self._require(self._opportunity_discovery_service)
 
@@ -1127,6 +1134,10 @@ class DependencyProvider:
         self._market_service = MarketService(
             exchange_client=exchange_client,
             stream_client=self.stream_client,
+            candle_repository=self.candle_repository,
+        )
+        self._candle_sync_service = CandleSyncService(
+            market_service=self.market_service,
             candle_repository=self.candle_repository,
         )
         self._strategy_service = StrategyService(
