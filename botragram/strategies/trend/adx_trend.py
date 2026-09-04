@@ -40,6 +40,10 @@ _DECIMAL_ZERO = Decimal("0")
 _DECIMAL_ONE = Decimal("1")
 _DECIMAL_TWO = Decimal("2")
 _DECIMAL_ONE_HUNDRED = Decimal("100")
+_BASE_CONFIDENCE = Decimal("0.60")
+_MAX_CONFIDENCE = Decimal("0.95")
+_ADX_WEIGHT = Decimal("0.20")
+_DI_WEIGHT = Decimal("0.15")
 
 
 # =============================================================================
@@ -224,11 +228,10 @@ class ADXTrendStrategy(BaseStrategy):
             else _DECIMAL_ZERO
         )
 
-        trend_confidence = (
-            abs(fast_ema - slow_ema) / abs(slow_ema)
-            if slow_ema != _DECIMAL_ZERO
-            else _DECIMAL_ZERO
-        )
+        adx_bonus = adx_confidence * _ADX_WEIGHT
+        di_bonus = di_confidence * _DI_WEIGHT
 
-        combined = (adx_confidence + di_confidence + trend_confidence) / Decimal("3")
-        return min(max(combined, _DECIMAL_ZERO), _DECIMAL_ONE)
+        return min(
+            _BASE_CONFIDENCE + adx_bonus + di_bonus,
+            _MAX_CONFIDENCE,
+        )

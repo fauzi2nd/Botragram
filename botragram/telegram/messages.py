@@ -876,6 +876,16 @@ def get_strategy_message(
             lines.append("<b>Concept:</b> Smart Money (CHoCH + FVG)")
             lines.append("<b>Swing Window:</b> 5")
             lines.append("<b>Volume Multiplier:</b> 1.2x")
+        case StrategyType.CHOCH_RSI_BB_HYBRID:
+            lines.append("<b>Concept:</b> SMC Structure + RSI/BB Hybrid")
+            lines.append("<b>Structure:</b> CHoCH + FVG Context")
+            lines.append("<b>Trigger:</b> BB Extremity + RSI Rejection")
+            lines.append("<b>Risk:</b> DynATR + Anti-Churn Cooldown")
+        case StrategyType.LIQUIDITY_SWEEP_EXHAUSTION:
+            lines.append("<b>Concept:</b> Liquidity Sweep + Exhaustion (LSE)")
+            lines.append("<b>Sweep:</b> Swing Break + Wick &gt;= 50%")
+            lines.append("<b>Confirm:</b> Midpoint Penetration Close")
+            lines.append("<b>Volume:</b> &gt;=1.3x | <b>RSI:</b> &lt;38 / &gt;62")
         case StrategyType.HIGH_CONFLUENCE_EXHAUSTION:
             lines.append("<b>Concept:</b> High Confluence Exhaustion")
             lines.append("<b>BB:</b> 20 (StdDev: 2.5)")

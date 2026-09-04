@@ -44,6 +44,7 @@ from botragram.exchanges.factory import ExchangeFactory
 from botragram.models import MarketUniverseEntry, Order, Position
 
 _NOW = datetime(2026, 8, 7, tzinfo=UTC)
+_TIME_ENDPOINT = "/fapi/v1/time"
 _EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
 _BULK_TICKER_ENDPOINT = "/fapi/v1/ticker/24hr"
 _TRADES_ENDPOINT = "/fapi/v1/userTrades"
@@ -989,7 +990,7 @@ async def test_futures_immediate_rejection_keeps_predecessor() -> None:
             stop_loss_client_algo_id: str | None = None,
             take_profit_client_algo_id: str | None = None,
         ) -> tuple[Order, ...]:
-            del (
+            _ = (
                 symbol,
                 side,
                 quantity,
@@ -1375,3 +1376,18 @@ async def test_futures_stop_replacement_retires_exact_predecessor() -> None:
     assert tuple(order.client_order_id for order in client.open_protections) == (
         replacement_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_futures_client_connect_synchronizes_time() -> None:
+    """Synchronize clock offset upon connection to prevent timestamp drift."""
+    rest = RecordingBinanceRestClient()
+    rest.get_responses[_TIME_ENDPOINT] = {"serverTime": 1_700_000_000_000}
+    client = BinanceFuturesExchangeClient(
+        rest=rest,
+        mapper=BinanceExchangeMapper(),
+    )
+
+    await client.connect()
+
+    assert rest.requests == [("GET", _TIME_ENDPOINT, None, False)]

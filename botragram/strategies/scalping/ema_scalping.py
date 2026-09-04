@@ -38,6 +38,11 @@ __all__ = [
 # =============================================================================
 _DECIMAL_ZERO = Decimal("0")
 _DECIMAL_ONE = Decimal("1")
+_BASE_CONFIDENCE = Decimal("0.60")
+_MAX_CONFIDENCE = Decimal("0.95")
+_BODY_WEIGHT = Decimal("0.20")
+_SEPARATION_SCALE = Decimal("0.005")
+_SEPARATION_WEIGHT = Decimal("0.15")
 
 
 # =============================================================================
@@ -212,14 +217,17 @@ class EMAScalpingStrategy(BaseStrategy):
             return _DECIMAL_ZERO
 
         if slow_ema == _DECIMAL_ZERO:
-            trend_confidence = _DECIMAL_ZERO
+            trend_ratio = _DECIMAL_ZERO
         else:
-            trend_confidence = min(
-                abs(fast_ema - slow_ema) / abs(slow_ema),
+            trend_ratio = min(
+                abs(fast_ema - slow_ema) / abs(slow_ema) / _SEPARATION_SCALE,
                 _DECIMAL_ONE,
             )
 
+        body_bonus = min(body_ratio, _DECIMAL_ONE) * _BODY_WEIGHT
+        trend_bonus = trend_ratio * _SEPARATION_WEIGHT
+
         return min(
-            (trend_confidence + body_ratio) / Decimal("2"),
-            _DECIMAL_ONE,
+            _BASE_CONFIDENCE + body_bonus + trend_bonus,
+            _MAX_CONFIDENCE,
         )

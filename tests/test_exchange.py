@@ -446,3 +446,35 @@ def test_binance_mapper_rejects_malformed_payloads() -> None:
 
     with pytest.raises(ValueError, match="balances"):
         mapper.map_account({"balances": {}})
+
+
+@pytest.mark.asyncio
+async def test_binance_exchange_client_connect_synchronizes_time() -> None:
+    """Synchronize clock offset upon connection to prevent timestamp drift."""
+
+    class TimeRestClient(BinanceRestClient):
+        def __init__(self) -> None:
+            super().__init__(base_url="https://example.test")
+            self.requested_path = ""
+
+        async def get(
+            self,
+            path: str,
+            *,
+            params: QueryParams | None = None,
+            headers: RequestHeaders | None = None,
+            authenticated: bool = False,
+        ) -> JsonResponse:
+            del params, headers, authenticated
+            self.requested_path = path
+            return {"serverTime": 1_700_000_000_000}
+
+    rest = TimeRestClient()
+    client = BinanceExchangeClient(
+        rest=rest,
+        mapper=BinanceExchangeMapper(),
+    )
+
+    await client.connect()
+
+    assert rest.requested_path == "/api/v3/time"

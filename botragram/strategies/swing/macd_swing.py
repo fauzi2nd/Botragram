@@ -38,6 +38,10 @@ __all__ = [
 # =============================================================================
 _DECIMAL_ZERO = Decimal("0")
 _DECIMAL_ONE = Decimal("1")
+_BASE_CONFIDENCE = Decimal("0.60")
+_MAX_CONFIDENCE = Decimal("0.95")
+_SEPARATION_SCALE = Decimal("0.05")
+_BONUS_WEIGHT = Decimal("0.35")
 
 
 # =============================================================================
@@ -118,6 +122,7 @@ class MACDSwingStrategy(BaseStrategy):
             signal_type=signal_type,
             price=latest.close_price,
             confidence=self._calculate_confidence(
+                signal_type=signal_type,
                 current_macd=current_macd,
                 current_signal=current_signal,
             ),
@@ -155,19 +160,25 @@ class MACDSwingStrategy(BaseStrategy):
     @staticmethod
     def _calculate_confidence(
         *,
+        signal_type: SignalType,
         current_macd: Decimal,
         current_signal: Decimal,
     ) -> Decimal:
         """Calculate crossover confidence."""
+        if signal_type is SignalType.HOLD:
+            return _DECIMAL_ZERO
+
         denominator = max(
             abs(current_macd),
             abs(current_signal),
-            Decimal("1"),
+            _DECIMAL_ONE,
         )
 
-        confidence = abs(current_macd - current_signal) / denominator
+        relative_separation = abs(current_macd - current_signal) / denominator
+        separation_ratio = min(relative_separation / _SEPARATION_SCALE, _DECIMAL_ONE)
+        bonus = separation_ratio * _BONUS_WEIGHT
 
         return min(
-            confidence,
-            _DECIMAL_ONE,
+            _BASE_CONFIDENCE + bonus,
+            _MAX_CONFIDENCE,
         )

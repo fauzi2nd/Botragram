@@ -38,10 +38,10 @@ _FAILURE_RETRY_SECONDS: Final[float] = 5.0
 _PENDING_RECONCILIATION_ATTEMPTS: Final[int] = 2
 _PENDING_RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
 _PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = (
-    Decimal("0.50"),
+    Decimal("0.30"),
+    Decimal("0.45"),
     Decimal("0.60"),
-    Decimal("0.70"),
-    Decimal("0.80"),
+    Decimal("0.75"),
     Decimal("0.90"),
 )
 _LOCKED_PROGRESS_LAG: Final[Decimal] = Decimal("0.20")

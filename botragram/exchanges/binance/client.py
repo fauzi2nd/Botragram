@@ -63,6 +63,7 @@ type RequestParams = dict[str, RequestValue]
 # Endpoints
 # =============================================================================
 _PING_ENDPOINT = "/api/v3/ping"
+_TIME_ENDPOINT = "/api/v3/time"
 _EXCHANGE_INFO_ENDPOINT = "/api/v3/exchangeInfo"
 _ACCOUNT_ENDPOINT = "/api/v3/account"
 _TICKER_ENDPOINT = "/api/v3/ticker/24hr"
@@ -91,7 +92,7 @@ class BinanceExchangeClient(BaseExchangeClient):
         rest: BinanceRestClient,
         mapper: BinanceExchangeMapper,
     ) -> None:
-        """Initialize the Binance exchange client."""
+        """Initialize the Binance Spot exchange client."""
         self._rest = rest
         self._mapper = mapper
 
@@ -105,10 +106,8 @@ class BinanceExchangeClient(BaseExchangeClient):
     # =========================================================================
 
     async def connect(self) -> None:
-        """Initialize exchange resources.
-
-        BinanceRestClient creates its HTTP session lazily.
-        """
+        """Initialize exchange resources and synchronize server time."""
+        await self._rest.synchronize_time(path=_TIME_ENDPOINT)
 
     async def close(self) -> None:
         """Close exchange resources."""
@@ -329,7 +328,7 @@ class BinanceExchangeClient(BaseExchangeClient):
         emulated with independent orders because one leg could remain active
         after the other fills.
         """
-        del (
+        _ = (
             symbol,
             side,
             quantity,
@@ -494,7 +493,7 @@ class BinanceExchangeClient(BaseExchangeClient):
         previous_client_algo_id: str | None = None,
     ) -> Order:
         """Reject unsupported Spot stop replacement until OCO is implemented."""
-        del (
+        _ = (
             symbol,
             side,
             quantity,

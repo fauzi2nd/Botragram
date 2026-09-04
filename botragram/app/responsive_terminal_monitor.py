@@ -24,6 +24,7 @@ from rich.text import Text
 from botragram.app.terminal_monitor import TerminalMonitor as BaseTerminalMonitor
 from botragram.app.terminal_monitor import TerminalStatus
 from botragram.enums import LiveFuturesUserDataStatus, TradeMode
+from botragram.models import Position
 
 __all__ = ["TerminalMonitor"]
 
@@ -64,7 +65,7 @@ class TerminalMonitor(BaseTerminalMonitor):
     """Render the existing monitor data with width-aware Rich layouts."""
 
     async def collect_status(self) -> TerminalStatus:
-        """Prefer authoritative private Futures PnL when that cache is ready."""
+        """Prefer authoritative private Futures PnL when stream price is not ready."""
         status = await super().collect_status()
         user_data = status.live_futures_user_data
         if (
@@ -74,11 +75,43 @@ class TerminalMonitor(BaseTerminalMonitor):
         ):
             return status
 
+        # When live market stream prices refreshed positions, preserve live PnL.
+        if any(
+            self._has_live_stream_price(position=p, status=status)
+            for p in status.positions
+        ):
+            return status
+
         authoritative_unrealized_pnl = sum(
             (update.unrealized_pnl for update in user_data.position_updates),
             start=Decimal("0"),
         )
         return replace(status, unrealized_pnl=authoritative_unrealized_pnl)
+
+    def _has_live_stream_price(
+        self,
+        *,
+        position: Position,
+        status: TerminalStatus,
+    ) -> bool:
+        """Return whether one position is backed by an active stream price."""
+        stream_states = (
+            status.live_runtime_health.stream_states
+            if status.live_runtime_health is not None
+            else ()
+        )
+        stream_price = self._get_matching_stream_price(
+            position=position,
+            stream_states=stream_states,
+        )
+        if (
+            stream_price is None
+            and status.live_runtime_health is None
+            and status.stream.enabled
+            and position.symbol == self.runtime_control.symbol
+        ):
+            stream_price = status.stream.last_price
+        return stream_price is not None
 
     def render_dashboard(self, status: TerminalStatus) -> Layout:
         """Choose a readable layout from the active terminal width."""

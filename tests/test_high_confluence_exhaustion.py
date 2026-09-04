@@ -73,7 +73,7 @@ def test_high_confluence_exhaustion_initialization_and_validation() -> None:
     """Verify parameters and bounded validation."""
     strategy = HighConfluenceExhaustionStrategy()
     assert strategy.strategy_type is StrategyType.HIGH_CONFLUENCE_EXHAUSTION
-    assert strategy.minimum_candles >= 51
+    assert strategy.minimum_candles >= 201
 
     with pytest.raises(ValueError, match="Bollinger Bands period"):
         HighConfluenceExhaustionStrategy(bb_period=0)
@@ -114,31 +114,25 @@ def test_high_confluence_exhaustion_requires_minimum_candles() -> None:
 
 
 def test_high_confluence_exhaustion_generates_long_signal() -> None:
-    """Verify BUY signal when extreme oversold, lower BB, volume, and sweep align."""
-    strategy = HighConfluenceExhaustionStrategy(trend_period=50)
+    """Verify BUY signal when uptrend dip buying confluence aligns."""
+    strategy = HighConfluenceExhaustionStrategy(
+        trend_period=50, intermediate_trend_period=20, adx_max_threshold=Decimal("70.0")
+    )
 
-    # 50 oscillating warmup candles
-    closes = [Decimal(str(100.0 + (0.5 if i % 2 == 0 else -0.5))) for i in range(50)]
-    # Consecutive drop with lower lows
-    closes += [
-        Decimal("97.0"),
-        Decimal("97.5"),
-        Decimal("94.0"),
-        Decimal("94.5"),
-        Decimal("91.0"),
-        Decimal("91.5"),
-        Decimal("87.0"),
-        Decimal("83.0"),
-        Decimal("78.5"),
-    ]
+    # 40 candles rising, then 20 flat at 100, then 11 down candles
+    closes = [Decimal(str(50.0 + i * 1.25)) for i in range(40)]
+    closes += [Decimal("100.0") for _ in range(20)]
+    closes += [Decimal(str(100.0 - (i + 1) * 0.7)) for i in range(11)]
+
     highs = [c + Decimal("0.8") for c in closes]
     lows = [c - Decimal("0.8") for c in closes]
     opens = [c for c in closes]
 
-    # Reversal climax candle with long lower wick & sweep
-    lows[-1] = Decimal("72.0")
-    highs[-1] = Decimal("80.0")
-    opens[-1] = Decimal("75.0")
+    # Climax candle with lower wick & sweep
+    lows[-1] = Decimal("90.0")
+    opens[-1] = Decimal("91.5")
+    highs[-1] = Decimal("93.0")
+    closes[-1] = Decimal("92.6")
 
     candles: list[Candle] = []
     for i in range(len(closes)):
@@ -162,37 +156,31 @@ def test_high_confluence_exhaustion_generates_long_signal() -> None:
 
     # Verify BUY signal was produced
     assert signal.signal_type is SignalType.BUY
-    assert signal.confidence >= Decimal("0.70")
+    assert signal.confidence >= Decimal("0.65")
     assert signal.reason is not None
     assert "Long exhaustion confluence" in signal.reason
 
 
 def test_high_confluence_exhaustion_generates_short_signal() -> None:
-    """Verify SELL signal when extreme overbought, upper BB, volume, and sweep align."""
-    strategy = HighConfluenceExhaustionStrategy(trend_period=50)
+    """Verify SELL signal when downtrend rally exhaustion confluence aligns."""
+    strategy = HighConfluenceExhaustionStrategy(
+        trend_period=50, intermediate_trend_period=20, adx_max_threshold=Decimal("70.0")
+    )
 
-    # 50 oscillating warmup candles
-    closes = [Decimal(str(100.0 + (0.5 if i % 2 == 0 else -0.5))) for i in range(50)]
-    # Consecutive climb with higher highs
-    closes += [
-        Decimal("103.0"),
-        Decimal("102.5"),
-        Decimal("106.0"),
-        Decimal("105.5"),
-        Decimal("109.0"),
-        Decimal("108.5"),
-        Decimal("113.0"),
-        Decimal("117.0"),
-        Decimal("121.5"),
-    ]
+    # 40 candles falling, then 20 flat at 100, then 11 up candles
+    closes = [Decimal(str(150.0 - i * 1.25)) for i in range(40)]
+    closes += [Decimal("100.0") for _ in range(20)]
+    closes += [Decimal(str(100.0 + (i + 1) * 0.7)) for i in range(11)]
+
     highs = [c + Decimal("0.8") for c in closes]
     lows = [c - Decimal("0.8") for c in closes]
     opens = [c for c in closes]
 
-    # Reversal climax candle with long upper wick & sweep
-    lows[-1] = Decimal("120.0")
-    highs[-1] = Decimal("128.0")
-    opens[-1] = Decimal("125.0")
+    # Climax candle with upper wick & sweep
+    highs[-1] = Decimal("110.0")
+    opens[-1] = Decimal("108.5")
+    lows[-1] = Decimal("107.0")
+    closes[-1] = Decimal("107.4")
 
     candles: list[Candle] = []
     for i in range(len(closes)):
@@ -216,14 +204,16 @@ def test_high_confluence_exhaustion_generates_short_signal() -> None:
 
     # Verify SELL signal was produced
     assert signal.signal_type is SignalType.SELL
-    assert signal.confidence >= Decimal("0.70")
+    assert signal.confidence >= Decimal("0.65")
     assert signal.reason is not None
     assert "Short exhaustion confluence" in signal.reason
 
 
 def test_high_confluence_exhaustion_blocks_on_high_adx() -> None:
     """Verify HOLD signal when ADX exceeds runaway threshold."""
-    strategy = HighConfluenceExhaustionStrategy(trend_period=50)
+    strategy = HighConfluenceExhaustionStrategy(
+        trend_period=50, intermediate_trend_period=20
+    )
 
     # Linear persistent plunge creates ADX > 40
     candles: list[Candle] = []
@@ -252,7 +242,9 @@ def test_high_confluence_exhaustion_blocks_on_high_adx() -> None:
 
 def test_high_confluence_exhaustion_blocks_on_insufficient_volume() -> None:
     """Verify HOLD signal when volume displacement is below multiplier."""
-    strategy = HighConfluenceExhaustionStrategy(trend_period=50)
+    strategy = HighConfluenceExhaustionStrategy(
+        trend_period=50, intermediate_trend_period=20
+    )
     candles: list[Candle] = []
 
     for i in range(65):
@@ -298,9 +290,11 @@ def test_factory_creates_high_confluence_exhaustion_strategy() -> None:
     assert isinstance(resolved, HighConfluenceExhaustionStrategy)
 
 
-def test_high_confluence_exhaustion_strong_wick_overrides_trend_filter() -> None:
-    """Verify strong rejection wick (>40%) allows mean-reversion counter-trend entry."""
-    strategy = HighConfluenceExhaustionStrategy(trend_period=50)
+def test_high_confluence_exhaustion_strict_trend_blocks_counter_trend() -> None:
+    """Verify falling knife below EMA is strictly rejected even with large wick."""
+    strategy = HighConfluenceExhaustionStrategy(
+        trend_period=50, intermediate_trend_period=20
+    )
 
     # Warmup with high price (120) so EMA is high (~110+)
     closes = [Decimal("120.0") for _ in range(50)]
@@ -318,8 +312,7 @@ def test_high_confluence_exhaustion_strong_wick_overrides_trend_filter() -> None
     lows = [c - Decimal("1.0") for c in closes]
     opens = [c for c in closes]
 
-    # Reversal candle with huge lower wick: total range = 15,
-    # lower wick = 8 (53% wick ratio)
+    # Reversal candle with huge lower wick (53% wick ratio) but below EMA (~110)
     lows[-1] = Decimal("68.0")
     opens[-1] = Decimal("78.0")
     closes[-1] = Decimal("82.0")
@@ -344,5 +337,180 @@ def test_high_confluence_exhaustion_strong_wick_overrides_trend_filter() -> None
         )
 
     signal = strategy.generate_signal(candles=candles)
-    assert signal.signal_type is SignalType.BUY
-    assert signal.confidence >= Decimal("0.65")
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.reason is not None
+    assert "Exhaustion confluence conditions not met" in signal.reason
+
+
+def test_high_confluence_exhaustion_blocks_on_low_confidence() -> None:
+    """Verify HOLD signal when technical conditions pass but confidence < 0.75."""
+    strategy = HighConfluenceExhaustionStrategy(
+        trend_period=50,
+        intermediate_trend_period=20,
+        adx_max_threshold=Decimal("70.0"),
+        volume_multiplier=Decimal("1.1"),
+    )
+
+    closes = [Decimal(str(50.0 + i * 1.25)) for i in range(40)]
+    closes += [Decimal("100.0") for _ in range(20)]
+    closes += [Decimal(str(100.0 - (i + 1) * 0.7)) for i in range(11)]
+
+    highs = [c + Decimal("0.8") for c in closes]
+    lows = [c - Decimal("0.8") for c in closes]
+    opens = [c for c in closes]
+
+    # Rejection candle meeting bare minimum (32% wick ratio, no sweep, no volume climax)
+    # Range = 2.0. Lower wick = 0.65 -> 32.5% wick ratio (> 0.30 but < 0.40, no bonus)
+    # Volume = 12.0 vs 10.0 SMA (1.2x >= 1.1x mult, but < 1.5x, no volume bonus)
+    # Close is above EMA50 (~88)
+    lows[-1] = Decimal("91.35")
+    opens[-1] = Decimal("92.0")
+    closes[-1] = Decimal("92.5")
+    highs[-1] = Decimal("93.35")
+
+    candles: list[Candle] = []
+    for i in range(len(closes)):
+        t = _START_TIME + timedelta(minutes=5 * i)
+        vol = Decimal("12.0") if i == len(closes) - 1 else Decimal("10.0")
+        candles.append(
+            Candle(
+                symbol="BTCUSDT",
+                interval=Interval.M5,
+                open_time=t,
+                close_time=t + timedelta(minutes=5),
+                open_price=opens[i],
+                high_price=highs[i],
+                low_price=lows[i],
+                close_price=closes[i],
+                volume=vol,
+            )
+        )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.confidence < Decimal("0.75")
+    assert signal.reason == "Confidence below threshold"
+
+
+# =============================================================================
+# Phase 6 — Macro Regime Filter Tests
+# =============================================================================
+def test_hce_regime_filter_blocks_long_in_bearish_regime() -> None:
+    """Phase 6: LONG must be suppressed when EMA50 < EMA200 (bearish regime).
+
+    Scenario: candle history is trending strongly down so EMA50 < EMA200.
+    Despite an oversold bounce candle with all LONG confluence conditions met,
+    the macro regime gate must emit HOLD and NOT BUY.
+    """
+    # trend_period=100, intermediate_trend_period=20
+    # History: 80 candles falling sharply (150 -> 70) then 20 flat at low
+    # => EMA20 ~= low price, EMA100 ~= much higher => bearish regime confirmed
+    strategy = HighConfluenceExhaustionStrategy(
+        trend_period=100,
+        intermediate_trend_period=20,
+        adx_max_threshold=Decimal("70.0"),
+    )
+
+    # 100 strongly descending candles: 150 down to 50, step -1 each
+    closes = [Decimal(str(150 - i)) for i in range(100)]
+    # Append a bounce reversal candle with lower wick + high volume
+    bounced_close = Decimal("52.0")
+    closes.append(bounced_close)
+
+    highs = [c + Decimal("0.5") for c in closes]
+    lows = [c - Decimal("0.5") for c in closes]
+    opens = list(closes)
+
+    # Make final candle a large lower-wick candle to satisfy LONG confluence
+    lows[-1] = Decimal("42.0")  # huge lower wick (sweep below)
+    opens[-1] = Decimal("50.0")
+    closes[-1] = Decimal("52.0")
+    highs[-1] = Decimal("53.0")
+
+    candles: list[Candle] = []
+    for i in range(len(closes)):
+        t = _START_TIME + timedelta(minutes=5 * i)
+        vol = Decimal("50.0") if i == len(closes) - 1 else Decimal("10.0")
+        candles.append(
+            Candle(
+                symbol="BTCUSDT",
+                interval=Interval.M5,
+                open_time=t,
+                close_time=t + timedelta(minutes=5),
+                open_price=opens[i],
+                high_price=highs[i],
+                low_price=lows[i],
+                close_price=closes[i],
+                volume=vol,
+            )
+        )
+
+    signal = strategy.generate_signal(candles=candles)
+    # Regime filter blocks LONG; exhaustion conditions not met for SHORT either
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.reason is not None
+
+
+def test_hce_regime_filter_blocks_short_in_bullish_regime() -> None:
+    """Phase 6: SHORT must be suppressed when EMA50 > EMA200 (bullish regime).
+
+    Scenario: candle history is trending strongly up so EMA50 > EMA200.
+    Despite an overbought rally candle with all SHORT confluence conditions met,
+    the macro regime gate must emit HOLD (short blocked by uptrend regime).
+    """
+    strategy = HighConfluenceExhaustionStrategy(
+        trend_period=100,
+        intermediate_trend_period=20,
+        adx_max_threshold=Decimal("200.0"),
+    )
+
+    # 100 strongly ascending candles: 50 up to 150, step +1 each
+    closes = [Decimal(str(50 + i)) for i in range(100)]
+    # Append a climax candle with upper wick to meet SHORT confluence
+    closes.append(Decimal("148.0"))
+
+    highs = [c + Decimal("0.5") for c in closes]
+    lows = [c - Decimal("0.5") for c in closes]
+    opens = list(closes)
+
+    # Make final candle a large upper-wick candle (sweep above, rejection)
+    highs[-1] = Decimal("158.0")
+    opens[-1] = Decimal("150.0")
+    closes[-1] = Decimal("148.0")
+    lows[-1] = Decimal("147.0")
+
+    candles: list[Candle] = []
+    for i in range(len(closes)):
+        t = _START_TIME + timedelta(minutes=5 * i)
+        vol = Decimal("50.0") if i == len(closes) - 1 else Decimal("10.0")
+        candles.append(
+            Candle(
+                symbol="BTCUSDT",
+                interval=Interval.M5,
+                open_time=t,
+                close_time=t + timedelta(minutes=5),
+                open_price=opens[i],
+                high_price=highs[i],
+                low_price=lows[i],
+                close_price=closes[i],
+                volume=vol,
+            )
+        )
+
+    signal = strategy.generate_signal(candles=candles)
+    # Regime is bullish: SHORT blocked → "Short blocked by macro uptrend regime"
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.reason is not None
+    assert "Short blocked by macro uptrend regime" in signal.reason
+
+
+def test_hce_rejects_invalid_intermediate_trend_period() -> None:
+    """Phase 6: intermediate_trend_period must be < trend_period."""
+    with pytest.raises(ValueError, match="intermediate_trend_period must be less"):
+        HighConfluenceExhaustionStrategy(trend_period=50, intermediate_trend_period=50)
+
+    with pytest.raises(ValueError, match="intermediate_trend_period must be less"):
+        HighConfluenceExhaustionStrategy(trend_period=50, intermediate_trend_period=100)
+
+    with pytest.raises(ValueError, match="Intermediate trend period must be positive"):
+        HighConfluenceExhaustionStrategy(trend_period=200, intermediate_trend_period=0)

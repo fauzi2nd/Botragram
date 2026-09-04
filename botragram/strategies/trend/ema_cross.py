@@ -38,6 +38,10 @@ __all__ = [
 # =============================================================================
 _DECIMAL_ZERO = Decimal("0")
 _DECIMAL_ONE = Decimal("1")
+_BASE_CONFIDENCE = Decimal("0.60")
+_MAX_CONFIDENCE = Decimal("0.95")
+_SEPARATION_SCALE = Decimal("0.005")
+_BONUS_WEIGHT = Decimal("0.35")
 
 
 # =============================================================================
@@ -126,6 +130,7 @@ class EMACrossStrategy(BaseStrategy):
             signal_type=signal_type,
             price=latest_candle.close_price,
             confidence=self._calculate_confidence(
+                signal_type=signal_type,
                 fast_ema=current_fast,
                 slow_ema=current_slow,
             ),
@@ -163,16 +168,19 @@ class EMACrossStrategy(BaseStrategy):
     @staticmethod
     def _calculate_confidence(
         *,
+        signal_type: SignalType,
         fast_ema: Decimal,
         slow_ema: Decimal,
     ) -> Decimal:
         """Calculate normalized EMA separation confidence."""
-        if slow_ema == _DECIMAL_ZERO:
+        if signal_type is SignalType.HOLD or slow_ema == _DECIMAL_ZERO:
             return _DECIMAL_ZERO
 
         separation = abs(fast_ema - slow_ema) / abs(slow_ema)
+        separation_ratio = min(separation / _SEPARATION_SCALE, _DECIMAL_ONE)
+        bonus = separation_ratio * _BONUS_WEIGHT
 
         return min(
-            separation,
-            _DECIMAL_ONE,
+            _BASE_CONFIDENCE + bonus,
+            _MAX_CONFIDENCE,
         )

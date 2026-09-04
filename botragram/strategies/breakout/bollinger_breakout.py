@@ -38,6 +38,10 @@ __all__ = [
 # =============================================================================
 _DECIMAL_ZERO = Decimal("0")
 _DECIMAL_ONE = Decimal("1")
+_BASE_CONFIDENCE = Decimal("0.60")
+_MAX_CONFIDENCE = Decimal("0.95")
+_DISTANCE_SCALE = Decimal("0.01")
+_BONUS_WEIGHT = Decimal("0.35")
 
 
 # =============================================================================
@@ -172,7 +176,13 @@ class BollingerBreakoutStrategy(BaseStrategy):
         else:
             distance = (lower_band - close_price) / abs(close_price)
 
-        return min(
-            max(distance, _DECIMAL_ZERO),
+        distance_ratio = min(
+            max(distance, _DECIMAL_ZERO) / _DISTANCE_SCALE,
             _DECIMAL_ONE,
+        )
+        bonus = distance_ratio * _BONUS_WEIGHT
+
+        return min(
+            _BASE_CONFIDENCE + bonus,
+            _MAX_CONFIDENCE,
         )

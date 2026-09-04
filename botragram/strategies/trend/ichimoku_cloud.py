@@ -39,6 +39,12 @@ __all__ = [
 _DECIMAL_ZERO = Decimal("0")
 _DECIMAL_ONE = Decimal("1")
 _DECIMAL_TWO = Decimal("2")
+_BASE_CONFIDENCE = Decimal("0.60")
+_MAX_CONFIDENCE = Decimal("0.95")
+_CLOUD_DISTANCE_SCALE = Decimal("0.01")
+_CLOUD_WEIGHT = Decimal("0.20")
+_TK_SEPARATION_SCALE = Decimal("0.01")
+_TK_WEIGHT = Decimal("0.15")
 
 
 # =============================================================================
@@ -241,5 +247,12 @@ class IchimokuCloudStrategy(BaseStrategy):
                 else _DECIMAL_ZERO
             )
 
-        combined = (cloud_distance + tk_separation) / _DECIMAL_TWO
-        return min(max(combined, _DECIMAL_ZERO), _DECIMAL_ONE)
+        cloud_bonus = (
+            min(cloud_distance / _CLOUD_DISTANCE_SCALE, _DECIMAL_ONE) * _CLOUD_WEIGHT
+        )
+        tk_bonus = min(tk_separation / _TK_SEPARATION_SCALE, _DECIMAL_ONE) * _TK_WEIGHT
+
+        return min(
+            _BASE_CONFIDENCE + cloud_bonus + tk_bonus,
+            _MAX_CONFIDENCE,
+        )

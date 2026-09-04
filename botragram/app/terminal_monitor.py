@@ -396,6 +396,11 @@ class TerminalMonitor:
             positions=tuple(await self.position_provider.get_open_positions()),
             user_data=live_futures_user_data,
         )
+        positions = self._refresh_positions_with_stream(
+            positions=positions,
+            stream=stream,
+            live_runtime_health=live_runtime_health,
+        )
         balance, realized_pnl = await self._get_portfolio_metrics(
             sample_time=sample_time,
         )
@@ -518,20 +523,19 @@ class TerminalMonitor:
         self._last_balance_refresh_monotonic = sample_time
         return balance, None
 
-    def _calculate_unrealized_pnl(
+    def _refresh_positions_with_stream(
         self,
         *,
-        positions: Sequence[Position],
+        positions: tuple[Position, ...],
         stream: MarketStreamTelemetry,
         live_runtime_health: LiveRuntimeHealthSnapshot | None,
-    ) -> Decimal:
-        """Calculate PnL using a fresh selected-symbol stream price when present."""
-        total = _DECIMAL_ZERO
-        can_use_legacy_singular_stream = live_runtime_health is None
-
+    ) -> tuple[Position, ...]:
+        """Overlay fresh stream price and dynamic unrealized PnL when available."""
         stream_states = (
             live_runtime_health.stream_states if live_runtime_health is not None else ()
         )
+        can_use_legacy_singular_stream = live_runtime_health is None
+        refreshed: list[Position] = []
         for position in positions:
             stream_price = self._get_matching_stream_price(
                 position=position,
@@ -544,12 +548,50 @@ class TerminalMonitor:
                 and position.symbol == self.runtime_control.symbol
             ):
                 stream_price = stream.last_price
-            total += self.pnl_engine.calculate_unrealized(
-                position=position,
-                current_price=stream_price,
-            )
 
-        return total
+            if stream_price is not None:
+                live_pnl = self.pnl_engine.calculate_unrealized(
+                    position=position,
+                    current_price=stream_price,
+                )
+                refreshed.append(
+                    replace(
+                        position,
+                        current_price=stream_price,
+                        unrealized_pnl=live_pnl,
+                    )
+                )
+            elif (
+                position.unrealized_pnl.is_zero()
+                and position.current_price != position.entry_price
+            ):
+                live_pnl = self.pnl_engine.calculate_unrealized(
+                    position=position,
+                    current_price=position.current_price,
+                )
+                refreshed.append(
+                    replace(
+                        position,
+                        unrealized_pnl=live_pnl,
+                    )
+                )
+            else:
+                refreshed.append(position)
+        return tuple(refreshed)
+
+    def _calculate_unrealized_pnl(
+        self,
+        *,
+        positions: Sequence[Position],
+        stream: MarketStreamTelemetry,
+        live_runtime_health: LiveRuntimeHealthSnapshot | None,
+    ) -> Decimal:
+        """Calculate total unrealized PnL across all managed positions."""
+        del stream, live_runtime_health
+        return sum(
+            (position.unrealized_pnl for position in positions),
+            start=_DECIMAL_ZERO,
+        )
 
     @staticmethod
     def _get_matching_stream_price(

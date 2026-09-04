@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from botragram.config.risk_settings import RiskSettings
+from botragram.constants.strategy import get_strategy_default_exit_rates
 from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.models import PositionSize, RiskMetrics, RiskResult, Signal
 
@@ -264,6 +265,10 @@ class RiskEngine:
                 return (
                     self.settings.swing_stop_loss_pct,
                     self.settings.swing_take_profit_pct,
+                )
+            case StrategyType.HIGH_CONFLUENCE_EXHAUSTION:
+                return get_strategy_default_exit_rates(
+                    StrategyType.HIGH_CONFLUENCE_EXHAUSTION
                 )
             case _:
                 return self.settings.stop_loss_pct, self.settings.take_profit_pct

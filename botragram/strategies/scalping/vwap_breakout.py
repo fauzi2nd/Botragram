@@ -37,6 +37,9 @@ __all__ = [
 # =============================================================================
 _DECIMAL_ZERO = Decimal("0")
 _DECIMAL_ONE = Decimal("1")
+_BASE_CONFIDENCE = Decimal("0.60")
+_MAX_CONFIDENCE = Decimal("0.95")
+_BONUS_WEIGHT = Decimal("0.35")
 
 
 # =============================================================================
@@ -200,5 +203,10 @@ class VWAPBreakoutStrategy(BaseStrategy):
             return _DECIMAL_ZERO
 
         distance = abs(current_close - vwap)
-        confidence = distance / atr
-        return min(max(confidence, _DECIMAL_ZERO), _DECIMAL_ONE)
+        penetration_ratio = min(max(distance / atr, _DECIMAL_ZERO), _DECIMAL_ONE)
+        bonus = penetration_ratio * _BONUS_WEIGHT
+
+        return min(
+            _BASE_CONFIDENCE + bonus,
+            _MAX_CONFIDENCE,
+        )

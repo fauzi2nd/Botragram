@@ -24,7 +24,7 @@ Botragram adalah sistem trading algoritmik otomatis berbasis Python (3.14+) deng
 - 🛡️ **Capital Safety & Risk First**: Manajemen risiko berbasis stop-loss distance, validasi ukuran lot exchange, batasan drawdown akun, dan pencegahan submission ganda (idempotency).
 - 🧠 **Smart Money Concepts & Multi-Strategy**: Dilengkapi strategi canggih `CHoCH + FVG Retest` dengan konfirmasi displacement & liquidity sweep, serta 9+ strategi indikator scalping, trend, dan swing.
 - ⚡ **Autonomous Market-Wide Discovery**: Memindai dan meranking 100+ pair USDT perpetual teratas berdasarkan volume 24 jam secara berurutan (*sequential batch scanning*).
-- 🔄 **Stepped Trailing Profit Protection (SL+)**: Mengunci profit bertahap (50% → 90% progress target) secara otomatis via real-time WebSocket market stream.
+- 🔄 **Stepped Trailing Profit Protection (SL+)**: Mengunci profit bertahap (30% → 90% progress target) secara otomatis via real-time WebSocket market stream.
 - 📊 **Real-Time ROI & Responsive Terminal**: Dashboard terminal interaktif (Rich) dengan kalkulasi persentase ROI presisi terhadap margin, mendukung tampilan compact/portrait.
 - 📱 **Telegram Control Plane**: Navigasi menu modern, notifikasi instan eksekusi & trailing SL, penggantian strategi dinamis, pengaturan risk limit, dan operator close position.
 - 💾 **Persistent Runtime State**: Pilihan strategi dan konfigurasi runtime tersimpan permanen di SQLite sehingga tidak hilang saat restart atau crash.

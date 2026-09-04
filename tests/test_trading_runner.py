@@ -219,7 +219,7 @@ class SuccessfulGlobalExecutor:
         submit_order: bool = True,
     ) -> tuple[TradingResult, ...]:
         """Satisfy the general runner protocol without using this path."""
-        del (
+        _ = (
             symbol,
             interval,
             candle_limit,
@@ -283,7 +283,7 @@ class ReportingGlobalExecutor:
         submit_order: bool = True,
     ) -> tuple[TradingResult, ...]:
         """Satisfy the general runner protocol without using this path."""
-        del (
+        _ = (
             symbol,
             interval,
             candle_limit,
@@ -333,7 +333,7 @@ class FailingGlobalExecutor:
         submit_order: bool = True,
     ) -> tuple[TradingResult, ...]:
         """Satisfy the general runner protocol without using this path."""
-        del (
+        _ = (
             symbol,
             interval,
             candle_limit,
@@ -382,7 +382,7 @@ class SequentialContextExecutor:
         submit_order: bool = True,
     ) -> tuple[TradingResult, ...]:
         """Record one context cycle and expose sequential execution state."""
-        del (
+        _ = (
             interval,
             candle_limit,
             live_management_authorization,

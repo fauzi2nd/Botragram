@@ -38,6 +38,10 @@ __all__ = [
 # =============================================================================
 _DECIMAL_ZERO = Decimal("0")
 _DECIMAL_ONE = Decimal("1")
+_BASE_CONFIDENCE = Decimal("0.60")
+_MAX_CONFIDENCE = Decimal("0.95")
+_DISTANCE_SCALE = Decimal("0.01")
+_BONUS_WEIGHT = Decimal("0.35")
 
 
 # =============================================================================
@@ -162,8 +166,10 @@ class SupertrendStrategy(BaseStrategy):
             return _DECIMAL_ZERO
 
         distance = abs(close_price - supertrend) / abs(close_price)
+        distance_ratio = min(distance / _DISTANCE_SCALE, _DECIMAL_ONE)
+        bonus = distance_ratio * _BONUS_WEIGHT
 
         return min(
-            distance,
-            _DECIMAL_ONE,
+            _BASE_CONFIDENCE + bonus,
+            _MAX_CONFIDENCE,
         )

@@ -60,10 +60,10 @@ _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DECIMAL_HUNDRED: Final[Decimal] = Decimal("100")
 _STRATEGY_WINDOW: Final[int] = 500
 _PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = (
-    Decimal("0.50"),
+    Decimal("0.30"),
+    Decimal("0.45"),
     Decimal("0.60"),
-    Decimal("0.70"),
-    Decimal("0.80"),
+    Decimal("0.75"),
     Decimal("0.90"),
 )
 _LOCKED_PROGRESS_LAG: Final[Decimal] = Decimal("0.20")

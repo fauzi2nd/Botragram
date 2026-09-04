@@ -29,7 +29,9 @@ from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
 from botragram.strategies.price_action import (
     ChochFvgStrategy,
+    ChochRsiBbHybridStrategy,
     HighConfluenceExhaustionStrategy,
+    LiquiditySweepExhaustionStrategy,
 )
 from botragram.strategies.scalping import (
     EMAScalpingStrategy,
@@ -138,9 +140,39 @@ class StrategyFactory:
                 return ChochFvgStrategy(
                     swing_window=settings.choch_swing_window,
                     fvg_lookback=settings.choch_fvg_lookback,
-                    volume_period=settings.vwap_volume_period,
+                    volume_period=settings.choch_volume_period,
                     volume_multiplier=settings.choch_volume_multiplier,
                     min_body_ratio=settings.choch_min_body_ratio,
+                    min_gap_ratio=settings.choch_min_gap_ratio,
+                    trend_period=settings.choch_trend_period,
+                    intermediate_trend_period=settings.choch_intermediate_trend_period,
+                    min_confidence=settings.choch_min_confidence,
+                )
+
+            case StrategyType.CHOCH_RSI_BB_HYBRID:
+                return ChochRsiBbHybridStrategy(
+                    swing_window=settings.crbb_swing_window,
+                    fvg_lookback=settings.crbb_fvg_lookback,
+                    volume_period=settings.crbb_volume_period,
+                    volume_multiplier=settings.crbb_volume_multiplier,
+                    min_gap_ratio=settings.crbb_min_gap_ratio,
+                    trend_period=settings.crbb_trend_period,
+                    intermediate_trend_period=settings.crbb_intermediate_trend_period,
+                    bb_period=settings.crbb_bb_period,
+                    bb_standard_deviation=settings.crbb_bb_std_dev,
+                    rsi_period=settings.crbb_rsi_period,
+                    rsi_oversold=settings.crbb_rsi_oversold,
+                    rsi_overbought=settings.crbb_rsi_overbought,
+                    adx_period=settings.crbb_adx_period,
+                    adx_ranging_threshold=settings.crbb_adx_ranging_threshold,
+                    atr_period=settings.crbb_atr_period,
+                    max_natr_threshold=settings.crbb_max_natr_threshold,
+                    min_wick_ratio=settings.crbb_min_wick_ratio,
+                    strong_wick_ratio=settings.crbb_strong_wick_ratio,
+                    min_confidence=settings.crbb_min_confidence,
+                    cooldown_bars=settings.crbb_cooldown_bars,
+                    max_hold_bars=settings.crbb_max_hold_bars,
+                    short_bias_multiplier=settings.crbb_short_bias_multiplier,
                 )
 
             case StrategyType.EMA_CROSS:
@@ -177,6 +209,7 @@ class StrategyFactory:
                     adx_period=settings.hce_adx_period,
                     adx_max_threshold=settings.hce_adx_max_threshold,
                     trend_period=settings.hce_trend_period,
+                    intermediate_trend_period=settings.hce_intermediate_trend_period,
                     swing_lookback=settings.hce_swing_lookback,
                 )
 
@@ -185,6 +218,29 @@ class StrategyFactory:
                     conversion_period=settings.ichimoku_conversion_period,
                     base_period=settings.ichimoku_base_period,
                     leading_span_period=settings.ichimoku_leading_span_period,
+                )
+
+            case StrategyType.LIQUIDITY_SWEEP_EXHAUSTION:
+                return LiquiditySweepExhaustionStrategy(
+                    swing_lookback=settings.lse_swing_lookback,
+                    min_wick_ratio=settings.lse_min_wick_ratio,
+                    volume_period=settings.lse_volume_period,
+                    volume_multiplier=settings.lse_volume_multiplier,
+                    rsi_period=settings.lse_rsi_period,
+                    rsi_oversold=settings.lse_rsi_oversold,
+                    rsi_overbought=settings.lse_rsi_overbought,
+                    atr_period=settings.lse_atr_period,
+                    atr_multiplier_sl=settings.lse_atr_multiplier_sl,
+                    atr_multiplier_tp1=settings.lse_atr_multiplier_tp1,
+                    atr_multiplier_tp2=settings.lse_atr_multiplier_tp2,
+                    min_natr_threshold=settings.lse_min_natr_threshold,
+                    max_natr_threshold=settings.lse_max_natr_threshold,
+                    filter_funding=settings.lse_filter_funding,
+                    funding_buffer_minutes=settings.lse_funding_buffer_minutes,
+                    min_confidence=settings.lse_min_confidence,
+                    cooldown_bars=settings.lse_cooldown_bars,
+                    max_hold_bars=settings.lse_max_hold_bars,
+                    short_bias_multiplier=settings.lse_short_bias_multiplier,
                 )
 
             case StrategyType.MACD_SWING:

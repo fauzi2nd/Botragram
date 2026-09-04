@@ -51,13 +51,16 @@ _DECIMAL_ZERO = Decimal("0")
 class ChochFvgStrategy(BaseStrategy):
     """Generate signals from Smart Money Concepts CHoCH and FVG mitigations."""
 
-    swing_window: int = 5
+    swing_window: int = 8
     fvg_lookback: int = 20
     volume_period: int = 20
-    volume_multiplier: Decimal = Decimal("1.2")
-    min_body_ratio: Decimal = Decimal("0.50")
-    trend_period: int = 50
+    volume_multiplier: Decimal = Decimal("1.35")
+    min_body_ratio: Decimal = Decimal("0.60")
+    min_gap_ratio: Decimal = Decimal("0.0015")
+    trend_period: int = 200
+    intermediate_trend_period: int = 50
     require_trend_filter: bool = True
+    min_confidence: Decimal = Decimal("0.75")
 
     def __post_init__(self) -> None:
         """Validate strategy configuration."""
@@ -76,8 +79,20 @@ class ChochFvgStrategy(BaseStrategy):
         if self.min_body_ratio <= _DECIMAL_ZERO:
             raise ValueError("Minimum body ratio must be greater than zero")
 
+        if self.min_gap_ratio < _DECIMAL_ZERO:
+            raise ValueError("Minimum gap ratio must not be negative")
+
         if self.trend_period <= 0:
             raise ValueError("Trend period must be greater than zero")
+
+        if self.intermediate_trend_period <= 0:
+            raise ValueError("Intermediate trend period must be greater than zero")
+
+        if self.intermediate_trend_period >= self.trend_period:
+            raise ValueError("intermediate_trend_period must be less than trend_period")
+
+        if not (_DECIMAL_ZERO <= self.min_confidence <= Decimal("1")):
+            raise ValueError("Minimum confidence must be between 0.0 and 1.0")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -87,7 +102,14 @@ class ChochFvgStrategy(BaseStrategy):
     @property
     def minimum_candles(self) -> int:
         """Return the minimum candle count required for evaluation."""
-        return max(self.swing_window * 2 + 1, self.volume_period + 1)
+        base_min = max(self.swing_window * 2 + 1, self.volume_period + 1)
+        if self.require_trend_filter:
+            return max(
+                base_min,
+                self.trend_period + 1,
+                self.intermediate_trend_period + 1,
+            )
+        return base_min
 
     def generate_signal(
         self,
@@ -114,6 +136,7 @@ class ChochFvgStrategy(BaseStrategy):
             volume_period=self.volume_period,
             volume_multiplier=self.volume_multiplier,
             min_body_ratio=self.min_body_ratio,
+            min_gap_ratio=self.min_gap_ratio,
         )
 
         signal_type, reason = self._resolve_signal(
@@ -151,16 +174,28 @@ class ChochFvgStrategy(BaseStrategy):
         trend_ok_for_buy = True
         trend_ok_for_sell = True
         if self.require_trend_filter and len(close_prices) >= self.trend_period:
-            trend_ema = calculate_ema(close_prices, period=self.trend_period)[-1]
+            ema_macro = calculate_ema(close_prices, period=self.trend_period)[-1]
+            ema_inter = calculate_ema(
+                close_prices, period=self.intermediate_trend_period
+            )[-1]
             latest_close = close_prices[-1]
-            trend_ok_for_buy = latest_close >= trend_ema
-            trend_ok_for_sell = latest_close <= trend_ema
+
+            is_macro_bearish = ema_inter < ema_macro
+            is_macro_bullish = ema_inter > ema_macro
+
+            trend_ok_for_buy = (latest_close >= ema_macro) and not is_macro_bearish
+            trend_ok_for_sell = (latest_close <= ema_macro) and not is_macro_bullish
 
         if result.retesting_bullish_fvg:
             if not trend_ok_for_buy:
                 return (
                     SignalType.HOLD,
-                    "Bullish FVG retest rejected: below trend EMA",
+                    "Bullish FVG retest rejected: below trend EMA or macro downtrend",
+                )
+            if result.confidence < self.min_confidence:
+                return (
+                    SignalType.HOLD,
+                    "Confidence below threshold",
                 )
             sweep_note = " with liquidity sweep" if result.liquidity_swept else ""
             return (
@@ -172,7 +207,12 @@ class ChochFvgStrategy(BaseStrategy):
             if not trend_ok_for_sell:
                 return (
                     SignalType.HOLD,
-                    "Bearish FVG retest rejected: above trend EMA",
+                    "Bearish FVG retest rejected: above trend EMA or macro uptrend",
+                )
+            if result.confidence < self.min_confidence:
+                return (
+                    SignalType.HOLD,
+                    "Confidence below threshold",
                 )
             sweep_note = " with liquidity sweep" if result.liquidity_swept else ""
             return (

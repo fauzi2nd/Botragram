@@ -125,3 +125,18 @@ async def test_nonready_private_futures_state_keeps_existing_pnl_fallback() -> N
 
     assert status.positions[0].unrealized_pnl == Decimal("1")
     assert status.unrealized_pnl == Decimal("1")
+
+
+@pytest.mark.asyncio
+async def test_active_market_stream_drives_realtime_position_and_total_pnl() -> None:
+    """Prefer real-time market stream calculation over static private snapshot."""
+    monitor = _monitor(user_data=_snapshot(status=LiveFuturesUserDataStatus.READY))
+    monitor.runtime_control.set_stream_enabled(True)
+    monitor.runtime_control.record_stream_tick(price=Decimal("115"))
+
+    status = await monitor.collect_status()
+
+    # (115 - 100) * 1 = 15 instead of the stale 7.25
+    assert status.positions[0].current_price == Decimal("115")
+    assert status.positions[0].unrealized_pnl == Decimal("15")
+    assert status.unrealized_pnl == Decimal("15")

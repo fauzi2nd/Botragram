@@ -630,7 +630,7 @@ class AutonomousPaperTradingCycleExecutor:
         submit_order: bool = True,
     ) -> Sequence[TradingResult]:
         """Execute one bounded PAPER discovery cycle without order submission."""
-        del (
+        _ = (
             symbol,
             strategy_type,
             live_management_authorization,
@@ -855,7 +855,7 @@ class AutonomousLiveTradingCycleExecutor:
         submit_order: bool = True,
     ) -> Sequence[TradingResult]:
         """Satisfy the legacy executor boundary without using a symbol context."""
-        del (
+        _ = (
             symbol,
             strategy_type,
             live_management_authorization,
@@ -968,7 +968,7 @@ class HumanConfirmedPaperTradingCycleExecutor:
         submit_order: bool = True,
     ) -> Sequence[TradingResult]:
         """Prepare human approvals while structurally rejecting order submission."""
-        del (
+        _ = (
             symbol,
             strategy_type,
             live_management_authorization,

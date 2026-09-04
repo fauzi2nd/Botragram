@@ -36,7 +36,9 @@ from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
 from botragram.strategies.price_action import (
     ChochFvgStrategy,
+    ChochRsiBbHybridStrategy,
     HighConfluenceExhaustionStrategy,
+    LiquiditySweepExhaustionStrategy,
 )
 from botragram.strategies.scalping import (
     EMAScalpingStrategy,
@@ -118,11 +120,30 @@ def _create_strategy_settings(
         vwap_volume_period=2,
         vwap_volume_multiplier=Decimal("1.2"),
         hce_trend_period=5,
+        hce_intermediate_trend_period=2,
         hce_bb_period=3,
         hce_rsi_period=2,
         hce_volume_period=2,
         hce_adx_period=2,
         hce_swing_lookback=2,
+        choch_trend_period=5,
+        choch_intermediate_trend_period=2,
+        choch_swing_window=2,
+        choch_fvg_lookback=2,
+        choch_volume_period=2,
+        crbb_trend_period=5,
+        crbb_intermediate_trend_period=2,
+        crbb_swing_window=2,
+        crbb_fvg_lookback=2,
+        crbb_volume_period=2,
+        crbb_bb_period=2,
+        crbb_rsi_period=2,
+        crbb_adx_period=2,
+        crbb_atr_period=2,
+        lse_swing_lookback=2,
+        lse_volume_period=2,
+        lse_rsi_period=2,
+        lse_atr_period=2,
     )
 
 
@@ -134,6 +155,8 @@ def _create_strategy_settings(
     (
         (StrategyType.ADX_TREND, ADXTrendStrategy),
         (StrategyType.BOLLINGER_BREAKOUT, BollingerBreakoutStrategy),
+        (StrategyType.CHOCH_FVG, ChochFvgStrategy),
+        (StrategyType.CHOCH_RSI_BB_HYBRID, ChochRsiBbHybridStrategy),
         (StrategyType.EMA_CROSS, EMACrossStrategy),
         (StrategyType.EMA_RSI, EMARsiStrategy),
         (StrategyType.EMA_SCALPING, EMAScalpingStrategy),
@@ -142,6 +165,10 @@ def _create_strategy_settings(
             HighConfluenceExhaustionStrategy,
         ),
         (StrategyType.ICHIMOKU_CLOUD, IchimokuCloudStrategy),
+        (
+            StrategyType.LIQUIDITY_SWEEP_EXHAUSTION,
+            LiquiditySweepExhaustionStrategy,
+        ),
         (StrategyType.MACD_SWING, MACDSwingStrategy),
         (StrategyType.RSI_BB_SCALPING, RSIBBScalpingStrategy),
         (StrategyType.SUPERTREND, SupertrendStrategy),
@@ -264,7 +291,7 @@ def test_ema_cross_generates_buy_signal_on_latest_bullish_crossover() -> None:
     assert signal.price == Decimal("2")
     assert signal.strategy_name == StrategyType.EMA_CROSS.value
     assert signal.generated_at == candles[-1].close_time
-    assert Decimal("0") < signal.confidence <= Decimal("1")
+    assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
 
 
 def test_ichimoku_cloud_generates_buy_signal_on_bullish_tk_cross_above_cloud() -> None:
@@ -283,7 +310,7 @@ def test_ichimoku_cloud_generates_buy_signal_on_bullish_tk_cross_above_cloud() -
     assert signal.symbol == "BTCUSDT"
     assert signal.price == Decimal("20")
     assert signal.strategy_name == StrategyType.ICHIMOKU_CLOUD.value
-    assert Decimal("0") < signal.confidence <= Decimal("1")
+    assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
 
 
 def test_ichimoku_cloud_generates_sell_signal_on_bearish_tk_cross_below_cloud() -> None:
@@ -302,7 +329,7 @@ def test_ichimoku_cloud_generates_sell_signal_on_bearish_tk_cross_below_cloud() 
     assert signal.symbol == "BTCUSDT"
     assert signal.price == Decimal("10")
     assert signal.strategy_name == StrategyType.ICHIMOKU_CLOUD.value
-    assert Decimal("0") < signal.confidence <= Decimal("1")
+    assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
 
 
 def test_adx_trend_holds_when_adx_is_below_threshold() -> None:
@@ -336,7 +363,7 @@ def test_adx_trend_generates_buy_on_strong_uptrend() -> None:
 
     assert signal.signal_type is SignalType.BUY
     assert signal.strategy_name == StrategyType.ADX_TREND.value
-    assert Decimal("0") < signal.confidence <= Decimal("1")
+    assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
 
 
 def test_adx_trend_generates_sell_on_strong_downtrend() -> None:
@@ -353,7 +380,7 @@ def test_adx_trend_generates_sell_on_strong_downtrend() -> None:
 
     assert signal.signal_type is SignalType.SELL
     assert signal.strategy_name == StrategyType.ADX_TREND.value
-    assert Decimal("0") < signal.confidence <= Decimal("1")
+    assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
 
 
 def test_rsi_bb_scalping_generates_hold_on_flat_market() -> None:
@@ -371,6 +398,147 @@ def test_rsi_bb_scalping_generates_hold_on_flat_market() -> None:
 
     assert signal.signal_type is SignalType.HOLD
     assert signal.confidence == Decimal("0")
+
+
+def test_rsi_bb_scalping_oversold_bounce_generates_buy() -> None:
+    """Verify RSI BB scalping emits BUY on oversold bounce with rejection wick."""
+    strategy = RSIBBScalpingStrategy(
+        bb_period=3,
+        rsi_period=3,
+        bb_standard_deviation=Decimal("2"),
+        rsi_oversold=Decimal("30"),
+        rsi_overbought=Decimal("70"),
+        ranging_only=False,
+        require_trend_filter=False,
+        min_confidence=Decimal("0.60"),
+    )
+    candles = [
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=0),
+            close_time=_START_TIME + timedelta(minutes=1),
+            open_price=Decimal("100"),
+            high_price=Decimal("101"),
+            low_price=Decimal("99"),
+            close_price=Decimal("100"),
+            volume=Decimal("10"),
+        ),
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=1),
+            close_time=_START_TIME + timedelta(minutes=2),
+            open_price=Decimal("98"),
+            high_price=Decimal("99"),
+            low_price=Decimal("90"),
+            close_price=Decimal("91"),
+            volume=Decimal("10"),
+        ),
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=2),
+            close_time=_START_TIME + timedelta(minutes=3),
+            open_price=Decimal("91"),
+            high_price=Decimal("92"),
+            low_price=Decimal("80"),
+            close_price=Decimal("81"),
+            volume=Decimal("10"),
+        ),
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=3),
+            close_time=_START_TIME + timedelta(minutes=4),
+            open_price=Decimal("81"),
+            high_price=Decimal("85"),
+            low_price=Decimal("70"),
+            close_price=Decimal("84"),
+            volume=Decimal("15"),
+        ),
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=4),
+            close_time=_START_TIME + timedelta(minutes=5),
+            open_price=Decimal("84"),
+            high_price=Decimal("88"),
+            low_price=Decimal("82"),
+            close_price=Decimal("87"),
+            volume=Decimal("12"),
+        ),
+    ]
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.BUY
+    assert signal.confidence >= Decimal("0.60")
+    assert "DynATR TP" in str(signal.reason)
+    assert "DynATR SL" in str(signal.reason)
+
+
+def test_rsi_bb_scalping_extreme_volatility_returns_hold() -> None:
+    """Verify extreme normalized ATR suppresses scalping entry."""
+    strategy = RSIBBScalpingStrategy(
+        bb_period=3,
+        rsi_period=3,
+        atr_period=3,
+        max_natr_threshold=Decimal("0.01"),  # Very strict NATR threshold (1%)
+        ranging_only=False,
+        require_trend_filter=False,
+    )
+    # Wild candles where ATR will easily exceed 1% of close
+    candles = [
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=i),
+            close_time=_START_TIME + timedelta(minutes=i + 1),
+            open_price=Decimal("100"),
+            high_price=Decimal("120"),
+            low_price=Decimal("80"),
+            close_price=Decimal("95" if i % 2 == 0 else "105"),
+            volume=Decimal("10"),
+        )
+        for i in range(10)
+    ]
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.HOLD
+    assert "Extreme volatility" in str(signal.reason)
+
+
+def test_rsi_bb_scalping_adx_filter_suppresses_entry_in_strong_trend() -> None:
+    """Verify ADX >= threshold suppresses scalping when ranging_only is True."""
+    strategy = RSIBBScalpingStrategy(
+        bb_period=3,
+        rsi_period=3,
+        adx_period=3,
+        adx_ranging_threshold=Decimal("20.0"),
+        ranging_only=True,
+        require_trend_filter=False,
+    )
+    candles = [
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=i),
+            close_time=_START_TIME + timedelta(minutes=i + 1),
+            open_price=Decimal(str(100 + i * 5)),
+            high_price=Decimal(str(105 + i * 5)),
+            low_price=Decimal(str(99 + i * 5)),
+            close_price=Decimal(str(104 + i * 5)),
+            volume=Decimal("10"),
+        )
+        for i in range(10)
+    ]
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.HOLD
+    assert "Strong trend" in str(signal.reason)
 
 
 def test_vwap_breakout_generates_hold_on_flat_market() -> None:
@@ -532,8 +700,8 @@ def test_strategy_default_intervals_and_exit_rates() -> None:
     sl_hce, tp_hce = get_strategy_default_exit_rates(
         StrategyType.HIGH_CONFLUENCE_EXHAUSTION
     )
-    assert sl_hce == Decimal("0.010")
-    assert tp_hce == Decimal("0.015")
+    assert sl_hce == Decimal("0.007")
+    assert tp_hce == Decimal("0.014")
 
 
 def test_strategy_settings_default_interval() -> None:
@@ -565,9 +733,12 @@ def test_choch_fvg_strategy_signal_generation() -> None:
         swing_window=3,
         fvg_lookback=10,
         volume_period=10,
+        trend_period=15,
+        intermediate_trend_period=5,
+        min_confidence=Decimal("0.60"),
     )
     assert strategy.strategy_type is StrategyType.CHOCH_FVG
-    assert strategy.minimum_candles >= 11
+    assert strategy.minimum_candles >= 16
 
     # Generate 25 candles
     n = 25
@@ -654,6 +825,7 @@ def test_choch_fvg_strategy_trend_filter_rejection() -> None:
         fvg_lookback=10,
         volume_period=10,
         trend_period=15,
+        intermediate_trend_period=5,
         require_trend_filter=True,
     )
     # Generate 30 candles in overall downtrend
@@ -680,3 +852,230 @@ def test_choch_fvg_strategy_trend_filter_rejection() -> None:
 
     signal = strategy.generate_signal(candles=candles)
     assert signal.signal_type is not SignalType.BUY
+
+
+def test_choch_fvg_strategy_validation() -> None:
+    """Verify ChochFvgStrategy enforces bounded parameter invariants."""
+    with pytest.raises(ValueError, match="CHoCH swing window"):
+        ChochFvgStrategy(swing_window=0)
+
+    with pytest.raises(ValueError, match="FVG lookback"):
+        ChochFvgStrategy(fvg_lookback=0)
+
+    with pytest.raises(ValueError, match="Volume period"):
+        ChochFvgStrategy(volume_period=0)
+
+    with pytest.raises(ValueError, match="Volume multiplier"):
+        ChochFvgStrategy(volume_multiplier=Decimal("0"))
+
+    with pytest.raises(ValueError, match="Minimum body ratio"):
+        ChochFvgStrategy(min_body_ratio=Decimal("0"))
+
+    with pytest.raises(ValueError, match="Minimum gap ratio"):
+        ChochFvgStrategy(min_gap_ratio=Decimal("-0.01"))
+
+    with pytest.raises(ValueError, match="Trend period"):
+        ChochFvgStrategy(trend_period=0)
+
+    with pytest.raises(ValueError, match="Intermediate trend period"):
+        ChochFvgStrategy(intermediate_trend_period=0)
+
+    with pytest.raises(ValueError, match="intermediate_trend_period must be less"):
+        ChochFvgStrategy(trend_period=50, intermediate_trend_period=50)
+
+    with pytest.raises(ValueError, match="Minimum confidence"):
+        ChochFvgStrategy(min_confidence=Decimal("1.5"))
+
+
+def test_choch_fvg_strategy_confidence_rejection() -> None:
+    """Verify marginal signals with confidence below threshold are rejected."""
+    strategy = ChochFvgStrategy(
+        swing_window=3,
+        fvg_lookback=10,
+        volume_period=10,
+        trend_period=15,
+        intermediate_trend_period=5,
+        min_confidence=Decimal("0.95"),
+    )
+    # Generate 25 flat candles
+    candles: list[Candle] = []
+    base_time = _START_TIME
+    for i in range(25):
+        open_time = base_time + timedelta(minutes=5 * i)
+        close_time = open_time + timedelta(minutes=5)
+        candles.append(
+            Candle(
+                symbol="BTCUSDT",
+                interval=Interval.M5,
+                open_time=open_time,
+                close_time=close_time,
+                open_price=Decimal("100"),
+                high_price=Decimal("101"),
+                low_price=Decimal("99"),
+                close_price=Decimal("100"),
+                volume=Decimal("100"),
+            )
+        )
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+
+
+def test_macd_swing_generates_buy_signal_with_unified_confidence() -> None:
+    """Verify MACD swing strategy emits BUY with unified confidence (0.60 - 0.95)."""
+    strategy = MACDSwingStrategy(fast_period=2, slow_period=3, signal_period=2)
+    candles = _create_candles((10, 10, 10, 8, 6, 12))
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.BUY
+    assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
+
+
+def test_supertrend_generates_buy_signal_with_unified_confidence() -> None:
+    """Verify Supertrend strategy emits BUY with unified confidence (0.60 - 0.95)."""
+    strategy = SupertrendStrategy(period=2, multiplier=Decimal("1.0"))
+    candles = _create_candles((20, 18, 16, 14, 12, 25))
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.BUY
+    assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
+
+
+def test_bollinger_breakout_generates_buy_signal_with_unified_confidence() -> None:
+    """Verify Bollinger breakout emits BUY with unified confidence (0.60 - 0.95)."""
+    strategy = BollingerBreakoutStrategy(period=3, standard_deviation=Decimal("1.0"))
+    candles = _create_candles((10, 10, 10, 10, 30))
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.BUY
+    assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
+
+
+def test_ema_scalping_generates_buy_signal_with_unified_confidence() -> None:
+    """Verify EMA scalping strategy emits BUY with unified confidence (0.60 - 0.95)."""
+    strategy = EMAScalpingStrategy(
+        fast_period=2,
+        slow_period=3,
+        minimum_body_ratio=Decimal("0.50"),
+    )
+    candles = [
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=0),
+            close_time=_START_TIME + timedelta(minutes=1),
+            open_price=Decimal("10"),
+            high_price=Decimal("11"),
+            low_price=Decimal("9"),
+            close_price=Decimal("10"),
+            volume=Decimal("10"),
+        ),
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=1),
+            close_time=_START_TIME + timedelta(minutes=2),
+            open_price=Decimal("10"),
+            high_price=Decimal("11"),
+            low_price=Decimal("9"),
+            close_price=Decimal("10"),
+            volume=Decimal("10"),
+        ),
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=2),
+            close_time=_START_TIME + timedelta(minutes=3),
+            open_price=Decimal("10"),
+            high_price=Decimal("11"),
+            low_price=Decimal("9"),
+            close_price=Decimal("10"),
+            volume=Decimal("10"),
+        ),
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M1,
+            open_time=_START_TIME + timedelta(minutes=3),
+            close_time=_START_TIME + timedelta(minutes=4),
+            open_price=Decimal("11"),
+            high_price=Decimal("20"),
+            low_price=Decimal("10"),
+            close_price=Decimal("19"),
+            volume=Decimal("10"),
+        ),
+    ]
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.BUY
+    assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
+
+
+def test_ema_rsi_generates_buy_signal_with_unified_confidence() -> None:
+    """Verify EMA RSI strategy emits BUY with unified confidence (0.60 - 0.95)."""
+    strategy = EMARsiStrategy(
+        fast_period=2,
+        slow_period=3,
+        rsi_period=2,
+        rsi_oversold=Decimal("40"),
+        rsi_overbought=Decimal("70"),
+    )
+    candles = _create_candles((20, 10, 5, 12, 18))
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type in (SignalType.BUY, SignalType.HOLD)
+    if signal.signal_type is SignalType.BUY:
+        assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
+    else:
+        assert signal.confidence == Decimal("0")
+
+
+def test_vwap_breakout_generates_signals_with_unified_confidence() -> None:
+    """Verify VWAP breakout strategy emits unified confidence (0.60 - 0.95 or 0)."""
+    strategy = VWAPBreakoutStrategy(
+        volume_period=2,
+        volume_multiplier=Decimal("1.1"),
+        atr_period=2,
+    )
+    candles = [
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M5,
+            open_time=_START_TIME + timedelta(minutes=0),
+            close_time=_START_TIME + timedelta(minutes=5),
+            open_price=Decimal("100"),
+            high_price=Decimal("101"),
+            low_price=Decimal("99"),
+            close_price=Decimal("100"),
+            volume=Decimal("10"),
+        ),
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M5,
+            open_time=_START_TIME + timedelta(minutes=5),
+            close_time=_START_TIME + timedelta(minutes=10),
+            open_price=Decimal("100"),
+            high_price=Decimal("101"),
+            low_price=Decimal("99"),
+            close_price=Decimal("100"),
+            volume=Decimal("10"),
+        ),
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M5,
+            open_time=_START_TIME + timedelta(minutes=10),
+            close_time=_START_TIME + timedelta(minutes=15),
+            open_price=Decimal("100"),
+            high_price=Decimal("101"),
+            low_price=Decimal("99"),
+            close_price=Decimal("100"),
+            volume=Decimal("10"),
+        ),
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M5,
+            open_time=_START_TIME + timedelta(minutes=15),
+            close_time=_START_TIME + timedelta(minutes=20),
+            open_price=Decimal("100"),
+            high_price=Decimal("110"),
+            low_price=Decimal("99"),
+            close_price=Decimal("108"),
+            volume=Decimal("50"),
+        ),
+    ]
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.BUY
+    assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")

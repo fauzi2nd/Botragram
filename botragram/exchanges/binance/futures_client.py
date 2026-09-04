@@ -97,6 +97,10 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         """Initialize the Binance Futures exchange client."""
         super().__init__(rest=rest, mapper=mapper)
 
+    async def connect(self) -> None:
+        """Initialize exchange resources and synchronize server time."""
+        await self._rest.synchronize_time(path=_TIME_ENDPOINT)
+
     async def ping(self) -> bool:
         """Return whether Binance Futures is reachable."""
         try:

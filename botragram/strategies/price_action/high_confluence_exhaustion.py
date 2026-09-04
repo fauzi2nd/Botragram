@@ -3,8 +3,9 @@ Botragram
 
 Description:
     High Confluence Exhaustion strategy combining Bollinger Bands, RSI,
-    ADX regime filter, Volume displacement, HTF EMA trend, and Liquidity
-    Sweep / Rejection wicks for ultra high win-rate mean reversion.
+    ADX regime filter, Volume displacement, dual-EMA macro regime gate,
+    and Liquidity Sweep / Rejection wicks for ultra high win-rate mean
+    reversion.
 
 Python:
     3.14+
@@ -48,8 +49,7 @@ _DECIMAL_ONE: Decimal = Decimal("1")
 _DECIMAL_BASE_CONFIDENCE: Decimal = Decimal("0.65")
 _DECIMAL_MIN_CONFIDENCE: Decimal = Decimal("0.60")
 _DECIMAL_MAX_CONFIDENCE: Decimal = Decimal("0.95")
-_DECIMAL_PROXIMITY_THRESHOLD: Decimal = Decimal("0.01")
-_DECIMAL_NEUTRAL_ADX_CAP: Decimal = Decimal("25.0")
+_DECIMAL_ENTRY_CONFIDENCE_THRESHOLD: Decimal = Decimal("0.75")
 _DECIMAL_MIN_WICK_RATIO: Decimal = Decimal("0.30")
 _DECIMAL_STRONG_WICK_RATIO: Decimal = Decimal("0.40")
 _DECIMAL_DEEP_WICK_RATIO: Decimal = Decimal("0.50")
@@ -73,13 +73,14 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
     bb_period: int = 20
     bb_std_dev: Decimal = Decimal("2.0")
     rsi_period: int = 14
-    rsi_oversold: Decimal = Decimal("28.0")
-    rsi_overbought: Decimal = Decimal("72.0")
+    rsi_oversold: Decimal = Decimal("32.0")
+    rsi_overbought: Decimal = Decimal("68.0")
     volume_period: int = 20
-    volume_multiplier: Decimal = Decimal("1.3")
+    volume_multiplier: Decimal = Decimal("1.2")
     adx_period: int = 14
     adx_max_threshold: Decimal = Decimal("42.0")
-    trend_period: int = 50
+    trend_period: int = 200
+    intermediate_trend_period: int = 50
     swing_lookback: int = 10
 
     def __post_init__(self) -> None:
@@ -100,6 +101,10 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
             raise ValueError("ADX parameters must be positive")
         if self.trend_period <= 0 or self.swing_lookback <= 0:
             raise ValueError("Lookback periods must be positive")
+        if self.intermediate_trend_period <= 0:
+            raise ValueError("Intermediate trend period must be positive")
+        if self.intermediate_trend_period >= self.trend_period:
+            raise ValueError("intermediate_trend_period must be less than trend_period")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -111,6 +116,7 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
         """Return the minimum candle count required for evaluation."""
         return max(
             self.trend_period + 1,
+            self.intermediate_trend_period + 1,
             self.bb_period + 1,
             self.rsi_period + 2,
             self.adx_period * 2 + 1,
@@ -157,9 +163,19 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
                 ),
             )
 
-        # 2. HTF Trend Baseline (EMA 200)
+        # 2. HTF Trend Baseline (EMA 200) and Intermediate EMA (EMA 50)
         ema_values = calculate_ema(close_prices, period=self.trend_period)
         latest_ema = ema_values[-1]
+        ema_intermediate_values = calculate_ema(
+            close_prices, period=self.intermediate_trend_period
+        )
+        latest_ema_intermediate = ema_intermediate_values[-1]
+
+        # 2a. Macro Regime Gate — Asymmetric Directional Filter
+        # Bearish regime: EMA 50 < EMA 200 -> short-only
+        # Bullish regime: EMA 50 > EMA 200 -> long-only
+        is_macro_bearish = latest_ema_intermediate < latest_ema
+        is_macro_bullish = latest_ema_intermediate > latest_ema
 
         # 3. Bollinger Bands (20, 2.5)
         bb_result = calculate_bollinger_bands(
@@ -220,61 +236,81 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
         prior_swing_low = min(c.low_price for c in lookback_slice)
         prior_swing_high = max(c.high_price for c in lookback_slice)
 
-        # LONG Confluence Check
-        is_long_neutral_or_bullish = (
-            close_price >= latest_ema
-            or latest_adx < _DECIMAL_NEUTRAL_ADX_CAP
-            or ((latest_ema - close_price) / close_price)
-            <= _DECIMAL_PROXIMITY_THRESHOLD
-            or lower_wick_ratio >= _DECIMAL_STRONG_WICK_RATIO
-        )
-        touches_lower_bb = latest_candle.low_price <= latest_lower_bb
-        is_rsi_oversold = latest_rsi <= self.rsi_oversold
+        # LONG Confluence Check (Strict Trend Alignment: Uptrend dip buying)
+        # Block LONG entirely when macro regime is bearish (EMA 50 < EMA 200)
+        if is_macro_bearish:
+            # Fall through to SHORT check below; LONG is disabled
+            pass
+        else:
+            is_long_trend_aligned = close_price >= latest_ema
+            touches_lower_bb = latest_candle.low_price <= latest_lower_bb
+            is_rsi_oversold = latest_rsi <= self.rsi_oversold
 
-        has_long_sweep = (
-            latest_candle.low_price < prior_swing_low and close_price > prior_swing_low
-        )
-        has_long_rejection = (
-            lower_wick_ratio >= _DECIMAL_MIN_WICK_RATIO
-            and close_price > (latest_candle.low_price + total_range * Decimal("0.35"))
-        )
-        long_rejection_confirmed = has_long_sweep or has_long_rejection
-
-        if (
-            is_long_neutral_or_bullish
-            and touches_lower_bb
-            and is_rsi_oversold
-            and long_rejection_confirmed
-        ):
-            confidence = self._calculate_confidence(
-                is_long=True,
-                rsi=latest_rsi,
-                volume=latest_candle.volume,
-                volume_sma=latest_volume_sma,
-                has_sweep=has_long_sweep,
-                wick_ratio=lower_wick_ratio,
+            has_long_sweep = (
+                latest_candle.low_price < prior_swing_low
+                and close_price > prior_swing_low
             )
+            has_long_rejection = (
+                lower_wick_ratio >= _DECIMAL_MIN_WICK_RATIO
+                and close_price
+                > (latest_candle.low_price + total_range * Decimal("0.35"))
+            )
+            long_rejection_confirmed = has_long_sweep or has_long_rejection
+
+            if (
+                is_long_trend_aligned
+                and touches_lower_bb
+                and is_rsi_oversold
+                and long_rejection_confirmed
+            ):
+                confidence = self._calculate_confidence(
+                    is_long=True,
+                    rsi=latest_rsi,
+                    volume=latest_candle.volume,
+                    volume_sma=latest_volume_sma,
+                    has_sweep=has_long_sweep,
+                    wick_ratio=lower_wick_ratio,
+                )
+                if confidence < _DECIMAL_ENTRY_CONFIDENCE_THRESHOLD:
+                    return Signal(
+                        symbol=symbol,
+                        signal_type=SignalType.HOLD,
+                        price=close_price,
+                        confidence=confidence,
+                        strategy_name=self.strategy_type.value,
+                        generated_at=as_of,
+                        reason="Confidence below threshold",
+                    )
+                return Signal(
+                    symbol=symbol,
+                    signal_type=SignalType.BUY,
+                    price=close_price,
+                    confidence=confidence,
+                    strategy_name=self.strategy_type.value,
+                    generated_at=as_of,
+                    reason=(
+                        f"Long exhaustion confluence (RSI {latest_rsi:.1f} <= "
+                        f"{self.rsi_oversold:.1f}, Low <= Lower BB, Vol "
+                        f"{latest_candle.volume:.1f} >= "
+                        f"{self.volume_multiplier}x SMA)"
+                    ),
+                )
+
+        # SHORT Confluence Check (Strict Trend Alignment: Downtrend rally shorting)
+        # Block SHORT entirely when macro regime is bullish (EMA 50 > EMA 200)
+        if is_macro_bullish:
+            # No signal in either direction — regime mismatch
             return Signal(
                 symbol=symbol,
-                signal_type=SignalType.BUY,
+                signal_type=SignalType.HOLD,
                 price=close_price,
-                confidence=confidence,
+                confidence=_DECIMAL_ZERO,
                 strategy_name=self.strategy_type.value,
                 generated_at=as_of,
-                reason=(
-                    f"Long exhaustion confluence (RSI {latest_rsi:.1f} <= "
-                    f"{self.rsi_oversold:.1f}, Low <= Lower BB, "
-                    f"Vol {latest_candle.volume:.1f} >= {self.volume_multiplier}x SMA)"
-                ),
+                reason="Short blocked by macro uptrend regime",
             )
 
-        # SHORT Confluence Check
-        is_short_neutral_or_bearish = (
-            close_price <= latest_ema
-            or latest_adx < _DECIMAL_NEUTRAL_ADX_CAP
-            or ((close_price - latest_ema) / latest_ema) <= _DECIMAL_PROXIMITY_THRESHOLD
-            or upper_wick_ratio >= _DECIMAL_STRONG_WICK_RATIO
-        )
+        is_short_trend_aligned = close_price <= latest_ema
         touches_upper_bb = latest_candle.high_price >= latest_upper_bb
         is_rsi_overbought = latest_rsi >= self.rsi_overbought
 
@@ -289,7 +325,7 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
         short_rejection_confirmed = has_short_sweep or has_short_rejection
 
         if (
-            is_short_neutral_or_bearish
+            is_short_trend_aligned
             and touches_upper_bb
             and is_rsi_overbought
             and short_rejection_confirmed
@@ -302,6 +338,16 @@ class HighConfluenceExhaustionStrategy(BaseStrategy):
                 has_sweep=has_short_sweep,
                 wick_ratio=upper_wick_ratio,
             )
+            if confidence < _DECIMAL_ENTRY_CONFIDENCE_THRESHOLD:
+                return Signal(
+                    symbol=symbol,
+                    signal_type=SignalType.HOLD,
+                    price=close_price,
+                    confidence=confidence,
+                    strategy_name=self.strategy_type.value,
+                    generated_at=as_of,
+                    reason="Confidence below threshold",
+                )
             return Signal(
                 symbol=symbol,
                 signal_type=SignalType.SELL,

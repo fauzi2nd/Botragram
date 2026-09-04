@@ -344,3 +344,66 @@ def test_calculate_choch_fvg_bullish_and_bearish() -> None:
     assert result.has_bullish_choch
     assert result.confidence >= Decimal("0.70")
     assert result.last_swing_high == Decimal("110")
+
+
+def test_calculate_choch_fvg_min_gap_ratio_filter() -> None:
+    """Verify microscopic FVG gaps below min_gap_ratio are filtered out."""
+    # 25 bars: baseline flat at 100
+    n = 25
+    highs = [Decimal("100.0") for _ in range(n)]
+    lows = [Decimal("98.0") for _ in range(n)]
+    closes = [Decimal("99.0") for _ in range(n)]
+    opens = [Decimal("99.0") for _ in range(n)]
+    volumes = [Decimal("1000") for _ in range(n)]
+
+    # Form a tiny gap at bar 20: low[20] = 100.05 > high[18] = 100.0
+    # (gap = 0.05 / 100 = 0.05%)
+    highs[18] = Decimal("100.0")
+    opens[19] = Decimal("100.02")
+    closes[19] = Decimal("100.04")
+    highs[19] = Decimal("100.06")
+    lows[19] = Decimal("100.01")
+    for k in range(20, n):
+        lows[k] = Decimal("100.05")
+        highs[k] = Decimal("100.10")
+        opens[k] = Decimal("100.07")
+        closes[k] = Decimal("100.08")
+
+    # With default min_gap_ratio = 0.15% (0.0015), the 0.05% gap should be ignored
+    result_filtered = calculate_choch_fvg(
+        high_prices=tuple(highs),
+        low_prices=tuple(lows),
+        close_prices=tuple(closes),
+        open_prices=tuple(opens),
+        volumes=tuple(volumes),
+        swing_window=3,
+        volume_period=10,
+        min_gap_ratio=Decimal("0.0015"),
+    )
+    assert not result_filtered.bullish_fvg_active
+
+    # With min_gap_ratio = 0.0, the tiny gap should be detected
+    result_unfiltered = calculate_choch_fvg(
+        high_prices=tuple(highs),
+        low_prices=tuple(lows),
+        close_prices=tuple(closes),
+        open_prices=tuple(opens),
+        volumes=tuple(volumes),
+        swing_window=3,
+        volume_period=10,
+        min_gap_ratio=Decimal("0.0"),
+    )
+    assert result_unfiltered.bullish_fvg_active
+
+    # Negative min_gap_ratio must raise ValueError
+    with pytest.raises(ValueError, match="Minimum gap ratio"):
+        calculate_choch_fvg(
+            high_prices=tuple(highs),
+            low_prices=tuple(lows),
+            close_prices=tuple(closes),
+            open_prices=tuple(opens),
+            volumes=tuple(volumes),
+            swing_window=3,
+            volume_period=10,
+            min_gap_ratio=Decimal("-0.01"),
+        )

@@ -106,6 +106,7 @@ def _detect_fvg_zones(
     low_prices: Sequence[Decimal],
     close_prices: Sequence[Decimal],
     lookback: int,
+    min_gap_ratio: Decimal = Decimal("0.0015"),
 ) -> list[FvgZone]:
     """Scan recent candles to extract active and unmitigated FVG zones."""
     n = len(high_prices)
@@ -117,7 +118,11 @@ def _detect_fvg_zones(
         if low_prices[i] > high_prices[i - 2]:
             bottom = high_prices[i - 2]
             top = low_prices[i]
+            gap = top - bottom
             midpoint = (top + bottom) / _DECIMAL_TWO
+
+            if midpoint > _DECIMAL_ZERO and (gap / midpoint) < min_gap_ratio:
+                continue
 
             # Check if subsequent candles before n mitigated below bottom
             mitigated = any(low_prices[k] <= bottom for k in range(i + 1, n))
@@ -136,7 +141,11 @@ def _detect_fvg_zones(
         elif high_prices[i] < low_prices[i - 2]:
             bottom = high_prices[i]
             top = low_prices[i - 2]
+            gap = top - bottom
             midpoint = (top + bottom) / _DECIMAL_TWO
+
+            if midpoint > _DECIMAL_ZERO and (gap / midpoint) < min_gap_ratio:
+                continue
 
             # Check if subsequent candles before n mitigated above top
             mitigated = any(high_prices[k] >= top for k in range(i + 1, n))
@@ -166,8 +175,12 @@ def calculate_choch_fvg(
     volume_period: int = 20,
     volume_multiplier: Decimal = Decimal("1.2"),
     min_body_ratio: Decimal = Decimal("0.50"),
+    min_gap_ratio: Decimal = Decimal("0.0015"),
 ) -> ChochFvgResult:
     """Calculate CHoCH structure shift, liquidity sweeps, and FVG mitigations."""
+    if min_gap_ratio < _DECIMAL_ZERO:
+        raise ValueError("Minimum gap ratio must not be negative")
+
     n = len(close_prices)
     if n < max(swing_window * 2 + 1, volume_period + 1):
         raise ValueError(
@@ -240,6 +253,7 @@ def calculate_choch_fvg(
         low_prices=low_prices,
         close_prices=close_prices,
         lookback=fvg_lookback,
+        min_gap_ratio=min_gap_ratio,
     )
 
     active_bullish_fvgs = [f for f in fvg_zones if f.is_bullish and not f.mitigated]

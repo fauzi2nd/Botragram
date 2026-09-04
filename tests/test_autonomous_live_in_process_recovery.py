@@ -112,7 +112,7 @@ class _GlobalExecutor:
         synchronize_position: bool = True,
         submit_order: bool = True,
     ) -> tuple[TradingResult, ...]:
-        del (
+        _ = (
             symbol,
             strategy_type,
             live_management_authorization,

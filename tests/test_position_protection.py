@@ -318,7 +318,7 @@ def _stepped_position(
 
 @pytest.mark.asyncio
 async def test_paper_protection_advances_steps_and_never_moves_backward() -> None:
-    """Lock 30% at half TP progress and 40% at sixty percent progress."""
+    """Lock 10% at 30% TP progress and 25% at 45% progress."""
     repository = MemoryPositionRepository()
     await repository.save(position=_short_position())
     exchange = RecordingProtectionExchange()
@@ -329,13 +329,13 @@ async def test_paper_protection_advances_steps_and_never_moves_backward() -> Non
         position_refresh_seconds=0.001,
     )
 
-    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
-    await manager.on_market_tick(ticker=_ticker(price="99.4", seconds=2))
-    await manager.on_market_tick(ticker=_ticker(price="99.45", seconds=3))
+    await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=1))
+    await manager.on_market_tick(ticker=_ticker(price="99.55", seconds=2))
+    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=3))
 
     position = await repository.get_by_symbol(symbol="BTCUSDT")
     assert position is not None
-    assert position.stop_loss == Decimal("99.60")
+    assert position.stop_loss == Decimal("99.75")
     assert position.protection_step == 2
     assert exchange.stop_replacements == []
 
@@ -352,13 +352,13 @@ async def test_live_protection_verifies_exchange_before_persisting_step() -> Non
         exchange_client=exchange,
     )
 
-    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+    await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=1))
 
     position = await repository.get_by_symbol(symbol="BTCUSDT")
     assert position is not None
-    assert exchange.stop_replacements == [Decimal("99.70")]
+    assert exchange.stop_replacements == [Decimal("99.90")]
     assert exchange.stop_client_algo_ids[0] is not None
-    assert position.stop_loss == Decimal("99.70")
+    assert position.stop_loss == Decimal("99.90")
     assert position.stop_loss_client_algo_id == exchange.stop_client_algo_ids[0]
     assert position.protection_step == 1
 
@@ -378,8 +378,8 @@ async def test_live_protection_assigns_a_fresh_identity_to_each_stop_replacement
         position_refresh_seconds=0.001,
     )
 
-    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
-    await manager.on_market_tick(ticker=_ticker(price="99.4", seconds=2))
+    await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=1))
+    await manager.on_market_tick(ticker=_ticker(price="99.55", seconds=2))
 
     assert len(exchange.stop_client_algo_ids) == 2
     assert exchange.stop_client_algo_ids[0] is not None
@@ -411,12 +411,12 @@ async def test_live_stepped_long_stop_uses_canonical_price_filter_normalization(
 
     stored = await repository.get_by_symbol(symbol=position.symbol)
     assert stored is not None
-    assert exchange.stop_replacements == [Decimal("0.0022610")]
+    assert exchange.stop_replacements == [Decimal("0.0022600")]
     pending = repository.updated_positions[0]
     assert pending.stop_loss == Decimal("0.0022490")
-    assert pending.pending_stop_loss == Decimal("0.0022610")
+    assert pending.pending_stop_loss == Decimal("0.0022600")
     assert pending.pending_stop_loss_client_algo_id is not None
-    assert stored.stop_loss == Decimal("0.0022610")
+    assert stored.stop_loss == Decimal("0.0022600")
     assert stored.stop_loss_client_algo_id == pending.pending_stop_loss_client_algo_id
     assert stored.pending_stop_loss is None
     assert stored.pending_stop_loss_client_algo_id is None
@@ -508,9 +508,9 @@ async def test_invalid_live_stepped_stop_defers_without_losing_protection() -> N
 
     stored = await repository.get_by_symbol(symbol=position.symbol)
     assert stored is not None
-    assert exchange.stop_replacements == [Decimal("0.0022610")]
-    assert stored.stop_loss == Decimal("0.0022610")
-    assert stored.protection_step == 1
+    assert exchange.stop_replacements == [Decimal("0.0022600")]
+    assert stored.stop_loss == Decimal("0.0022600")
+    assert stored.protection_step == 2
 
 
 @pytest.mark.asyncio
@@ -594,8 +594,8 @@ async def test_paper_stream_closes_position_when_stepped_stop_is_hit() -> None:
         exchange_client=RecordingProtectionExchange(),
     )
 
-    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
-    await service.on_market_tick(ticker=_ticker(price="99.7", seconds=2))
+    await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=1))
+    await service.on_market_tick(ticker=_ticker(price="99.95", seconds=2))
 
     assert await position_repository.get_by_symbol(symbol="BTCUSDT") is None
 
@@ -637,7 +637,7 @@ async def test_live_immediate_trigger_rejection_clears_only_proven_pending_stop(
         exchange_client=exchange,
     )
 
-    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+    await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=1))
 
     cleared = await repository.get_by_symbol(symbol=position.symbol)
     assert cleared is not None
@@ -650,11 +650,11 @@ async def test_live_immediate_trigger_rejection_clears_only_proven_pending_stop(
     assert exchange.stop_replacements == []
 
     first_pending = repository.updated_positions[0]
-    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=2))
+    await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=2))
 
     advanced = await repository.get_by_symbol(symbol=position.symbol)
     assert advanced is not None
-    assert advanced.stop_loss == Decimal("99.70")
+    assert advanced.stop_loss == Decimal("99.90")
     assert advanced.stop_loss_client_algo_id is not None
     assert (
         advanced.stop_loss_client_algo_id
@@ -690,14 +690,14 @@ async def test_live_immediate_rejection_keeps_pending_when_current_unproven() ->
         )
 
         with pytest.raises(RuntimeError):
-            await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+            await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=1))
 
         pending = await repository.get_by_symbol(symbol=position.symbol)
         assert pending is not None
         assert pending.stop_loss == position.stop_loss
         assert pending.stop_loss_client_algo_id == current_id
         assert pending.protection_step == 0
-        assert pending.pending_stop_loss == Decimal("99.70")
+        assert pending.pending_stop_loss == Decimal("99.90")
         assert pending.pending_stop_loss_client_algo_id is not None
         assert pending.pending_protection_step == 1
 
@@ -752,23 +752,23 @@ async def test_live_failed_step_keeps_current_stop_and_pending_intent() -> None:
     )
 
     with pytest.raises(RuntimeError, match="configured replacement failure"):
-        await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+        await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=1))
 
     pending = await repository.get_by_symbol(symbol=position.symbol)
     assert pending is not None
     assert pending.stop_loss == Decimal("100.5")
     assert pending.stop_loss_client_algo_id == current_id
     assert pending.protection_step == 0
-    assert pending.pending_stop_loss == Decimal("99.70")
+    assert pending.pending_stop_loss == Decimal("99.90")
     assert pending.pending_stop_loss_client_algo_id is not None
     assert pending.pending_protection_step == 1
 
     await asyncio.sleep(0.002)
-    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=2))
+    await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=2))
 
     promoted = await repository.get_by_symbol(symbol=position.symbol)
     assert promoted is not None
-    assert promoted.stop_loss == Decimal("99.70")
+    assert promoted.stop_loss == Decimal("99.90")
     assert promoted.stop_loss_client_algo_id == pending.pending_stop_loss_client_algo_id
     assert promoted.protection_step == 1
     assert promoted.pending_stop_loss is None
@@ -785,7 +785,7 @@ async def test_live_absent_invalid_pending_stop_is_retired_without_churn() -> No
     position = replace(
         _short_position(),
         stop_loss_client_algo_id=current_id,
-        pending_stop_loss=Decimal("99.70"),
+        pending_stop_loss=Decimal("99.90"),
         pending_stop_loss_client_algo_id=stale_pending_id,
         pending_protection_step=1,
     )
@@ -799,7 +799,7 @@ async def test_live_absent_invalid_pending_stop_is_retired_without_churn() -> No
         position_refresh_seconds=0.001,
     )
 
-    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+    await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=1))
 
     cleared = await repository.get_by_symbol(symbol=position.symbol)
     assert cleared is not None
@@ -811,13 +811,13 @@ async def test_live_absent_invalid_pending_stop_is_retired_without_churn() -> No
     assert cleared.pending_protection_step == 0
     assert exchange.stop_replacements == []
 
-    exchange.mark_price = Decimal("99.5")
+    exchange.mark_price = Decimal("99.7")
     await asyncio.sleep(0.002)
-    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=2))
+    await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=2))
 
     advanced = await repository.get_by_symbol(symbol=position.symbol)
     assert advanced is not None
-    assert advanced.stop_loss == Decimal("99.700000")
+    assert advanced.stop_loss == Decimal("99.900000")
     assert advanced.stop_loss_client_algo_id is not None
     assert advanced.stop_loss_client_algo_id != stale_pending_id
     assert advanced.protection_step == 1
@@ -845,7 +845,7 @@ async def test_live_terminal_pending_stop_requires_active_predecessor() -> None:
                     quantity=Decimal("1"),
                     executed_quantity=Decimal("0"),
                     price=None,
-                    stop_price=Decimal("99.70"),
+                    stop_price=Decimal("99.90"),
                     created_at=_NOW,
                     updated_at=_NOW,
                 )
@@ -856,7 +856,7 @@ async def test_live_terminal_pending_stop_requires_active_predecessor() -> None:
     position = replace(
         _short_position(),
         stop_loss_client_algo_id=current_id,
-        pending_stop_loss=Decimal("99.70"),
+        pending_stop_loss=Decimal("99.90"),
         pending_stop_loss_client_algo_id=pending_id,
         pending_protection_step=1,
     )
@@ -869,7 +869,7 @@ async def test_live_terminal_pending_stop_requires_active_predecessor() -> None:
     )
 
     with pytest.raises(RuntimeError, match="Current LIVE STOP is absent"):
-        await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+        await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=1))
 
     assert await repository.get_by_symbol(symbol=position.symbol) == position
 
@@ -882,14 +882,14 @@ async def test_live_active_pending_stop_promotes_despite_moved_mark_price() -> N
     position = replace(
         _short_position(),
         stop_loss_client_algo_id=current_id,
-        pending_stop_loss=Decimal("99.70"),
+        pending_stop_loss=Decimal("99.90"),
         pending_stop_loss_client_algo_id=pending_id,
         pending_protection_step=1,
     )
     repository = MemoryPositionRepository()
     await repository.save(position=position)
     exchange = SteppedPriceFilterExchange(mark_price=Decimal("100"))
-    exchange.stop_replacements.append(Decimal("99.70"))
+    exchange.stop_replacements.append(Decimal("99.90"))
     exchange.stop_client_algo_ids.append(pending_id)
     manager = PositionProtectionManager(
         trade_mode=TradeMode.LIVE,
@@ -897,11 +897,11 @@ async def test_live_active_pending_stop_promotes_despite_moved_mark_price() -> N
         exchange_client=exchange,
     )
 
-    await manager.on_market_tick(ticker=_ticker(price="99.5", seconds=1))
+    await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=1))
 
     promoted = await repository.get_by_symbol(symbol=position.symbol)
     assert promoted is not None
-    assert promoted.stop_loss == Decimal("99.70")
+    assert promoted.stop_loss == Decimal("99.90")
     assert promoted.stop_loss_client_algo_id == pending_id
     assert promoted.protection_step == 1
     assert promoted.pending_stop_loss is None
