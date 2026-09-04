@@ -26,11 +26,13 @@ from socket import gaierror
 import aiohttp
 
 from botragram.exchanges.binance.rest import BinanceRestResponseError
+from botragram.exchanges.bybit.rest import BybitRestResponseError
 
 __all__ = ["is_transient_connectivity_error"]
 
 
 _TRANSIENT_HTTP_STATUSES = frozenset({408, 418, 429})
+_TRANSIENT_BYBIT_RET_CODES = frozenset({10000, 10006, 10016, 10018})
 _TRANSIENT_ERRNOS = frozenset(
     {
         ECONNABORTED,
@@ -55,6 +57,8 @@ def _is_transient_exception(error: BaseException) -> bool:
     """Classify one exception without relying on unstable message text."""
     if isinstance(error, BinanceRestResponseError):
         return error.status in _TRANSIENT_HTTP_STATUSES or error.status >= 500
+    if isinstance(error, BybitRestResponseError):
+        return error.ret_code in _TRANSIENT_BYBIT_RET_CODES
     if isinstance(error, aiohttp.ClientResponseError):
         return error.status in _TRANSIENT_HTTP_STATUSES or error.status >= 500
     if isinstance(

@@ -106,6 +106,7 @@ _UNATTENDED_RECOVERY_HEALTH_REASONS: Final[frozenset[LiveRuntimeHealthReason]] =
             LiveRuntimeHealthReason.USER_DATA_STREAM_NOT_READY,
             LiveRuntimeHealthReason.MONITOR_MISSING,
             LiveRuntimeHealthReason.MONITOR_UNHEALTHY,
+            LiveRuntimeHealthReason.RECONCILIATION_REQUIRED,
         }
     )
 )
@@ -1747,9 +1748,13 @@ class TradingRunner:
         snapshot: LiveRuntimeHealthSnapshot,
     ) -> bool:
         """Allow dependency recovery only with no exposure or exact ownership."""
-        return snapshot.reason in _UNATTENDED_RECOVERY_HEALTH_REASONS and (
-            not snapshot.contexts
-            or (snapshot.authorization_present and snapshot.authorization_exact)
+        return (
+            snapshot.status is not LiveRuntimeHealthStatus.BLOCKED
+            and snapshot.reason in _UNATTENDED_RECOVERY_HEALTH_REASONS
+            and (
+                not snapshot.contexts
+                or (snapshot.authorization_present and snapshot.authorization_exact)
+            )
         )
 
     async def _handle_autonomous_live_runtime_failure(

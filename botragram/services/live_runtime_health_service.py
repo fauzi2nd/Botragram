@@ -158,7 +158,7 @@ class LiveRuntimeHealthService:
                 )
                 if missing_contexts:
                     return self._snapshot(
-                        status=LiveRuntimeHealthStatus.BLOCKED,
+                        status=LiveRuntimeHealthStatus.DEGRADED,
                         reason=LiveRuntimeHealthReason.RECONCILIATION_REQUIRED,
                         affected_contexts=missing_contexts,
                         contexts=contexts,

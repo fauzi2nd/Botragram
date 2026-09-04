@@ -1137,6 +1137,9 @@ class DependencyProvider:
             market_service=self.market_service,
             strategy_service=self.strategy_service,
             min_confidence=self._settings.strategy.min_signal_confidence,
+            candle_request_delay_seconds=(
+                self._settings.market.discovery_candle_delay_seconds
+            ),
         )
         self._order_service = OrderService(
             order_engine=self.order_engine,

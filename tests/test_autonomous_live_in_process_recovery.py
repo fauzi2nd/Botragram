@@ -509,6 +509,41 @@ async def _run_degraded_runtime_health_recovery_test() -> None:
     assert not control.is_paused
 
 
+def test_degraded_reconciliation_required_consumes_unattended_recovery() -> None:
+    asyncio.run(_run_degraded_reconciliation_required_recovery_test())
+
+
+async def _run_degraded_reconciliation_required_recovery_test() -> None:
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.DEGRADED,
+        reason=LiveRuntimeHealthReason.RECONCILIATION_REQUIRED,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    recovery = _RecoveryProvider(
+        control=control,
+        outcomes=[True],
+        on_success=health.set_active,
+    )
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+
+    task = asyncio.create_task(runner.run())
+    await asyncio.wait_for(recovery.completed.wait(), timeout=1.0)
+    await asyncio.wait_for(executor.successful_execution.wait(), timeout=1.0)
+    runner.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert executor.calls == 1
+    assert recovery.calls == 1
+    assert not control.is_paused
+
+
 def test_blocked_runtime_health_never_consumes_automatic_recovery() -> None:
     asyncio.run(_run_blocked_runtime_health_test())
 

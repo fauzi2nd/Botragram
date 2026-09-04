@@ -7,6 +7,7 @@ from socket import gaierror
 import pytest
 
 from botragram.app.connectivity import is_transient_connectivity_error
+from botragram.exchanges.bybit.rest import BybitRestResponseError
 from botragram.utils.retry import CappedExponentialBackoff
 
 
@@ -16,6 +17,10 @@ from botragram.utils.retry import CappedExponentialBackoff
         ConnectionError("connection reset"),
         TimeoutError("request timed out"),
         gaierror(11001, "host not found"),
+        BybitRestResponseError(ret_code=10006, ret_msg="Too many visits"),
+        BybitRestResponseError(ret_code=10018, ret_msg="Exceed rate limit"),
+        BybitRestResponseError(ret_code=10000, ret_msg="Server timeout"),
+        BybitRestResponseError(ret_code=10016, ret_msg="Server error"),
     ],
 )
 def test_connectivity_classifier_accepts_transient_network_errors(
@@ -23,6 +28,18 @@ def test_connectivity_classifier_accepts_transient_network_errors(
 ) -> None:
     """Recognize transport failures without matching unstable error messages."""
     assert is_transient_connectivity_error(error)
+
+
+@pytest.mark.parametrize(
+    "ret_code",
+    [10001, 10002, 10003, 110007],
+)
+def test_connectivity_classifier_rejects_bybit_non_transient_ret_codes(
+    ret_code: int,
+) -> None:
+    """Do not classify Bybit business or auth errors as transient."""
+    error = BybitRestResponseError(ret_code=ret_code, ret_msg="non-transient error")
+    assert not is_transient_connectivity_error(error)
 
 
 def test_connectivity_classifier_walks_wrapped_error_chain() -> None:

@@ -65,6 +65,12 @@ _HEADER_SIGN_TYPE: Final[str] = "X-BAPI-SIGN-TYPE"
 
 _RET_CODE_OK: Final[int] = 0
 _SERVER_TIME_PATH: Final[str] = "/v5/market/time"
+_RETRYABLE_RATE_LIMIT_RET_CODES: Final[frozenset[int]] = frozenset({10006, 10018})
+_RETRYABLE_SERVER_RET_CODES: Final[frozenset[int]] = frozenset({10000, 10016})
+_RETRYABLE_RET_CODES: Final[frozenset[int]] = (
+    _RETRYABLE_RATE_LIMIT_RET_CODES | _RETRYABLE_SERVER_RET_CODES
+)
+_RATE_LIMIT_MIN_BACKOFF_SECONDS: Final[float] = 1.5
 
 
 # =============================================================================
@@ -233,11 +239,21 @@ class BybitRestClient(BaseRestClient):
         """Read and validate a top-level JSON object or array."""
         text = await response.text()
         if not text:
+            if response.status == 429:
+                raise BybitRestResponseError(
+                    ret_code=10006,
+                    ret_msg="HTTP 429 Too Many Requests (empty body)",
+                )
             return {}
 
         try:
             payload: object = json.loads(text)
         except json.JSONDecodeError as error:
+            if response.status == 429:
+                raise BybitRestResponseError(
+                    ret_code=10006,
+                    ret_msg=f"HTTP 429 Too Many Requests: {text[:200]}",
+                ) from error
             raise RuntimeError("Bybit returned a non-JSON response") from error
 
         if isinstance(payload, dict):
@@ -302,6 +318,31 @@ class BybitRestClient(BaseRestClient):
                     error,
                 )
                 await asyncio.sleep(self._retry_delay_seconds * (2**attempt))
+            except BybitRestResponseError as error:
+                if (
+                    attempt >= self._max_retries
+                    or error.ret_code not in _RETRYABLE_RET_CODES
+                ):
+                    raise
+                backoff = (
+                    max(
+                        _RATE_LIMIT_MIN_BACKOFF_SECONDS,
+                        self._retry_delay_seconds * (2**attempt),
+                    )
+                    if error.ret_code in _RETRYABLE_RATE_LIMIT_RET_CODES
+                    else self._retry_delay_seconds * (2**attempt)
+                )
+                _LOGGER.warning(
+                    "Bybit GET %s returned retryable error %d (attempt %d/%d), "
+                    "backing off %.1fs: %s",
+                    path,
+                    error.ret_code,
+                    attempt + 1,
+                    self._max_retries,
+                    backoff,
+                    error.ret_msg,
+                )
+                await asyncio.sleep(backoff)
 
         raise RuntimeError("Unreachable request loop termination")
 
@@ -351,6 +392,31 @@ class BybitRestClient(BaseRestClient):
                     error,
                 )
                 await asyncio.sleep(self._retry_delay_seconds * (2**attempt))
+            except BybitRestResponseError as error:
+                if (
+                    attempt >= self._max_retries
+                    or error.ret_code not in _RETRYABLE_RET_CODES
+                ):
+                    raise
+                backoff = (
+                    max(
+                        _RATE_LIMIT_MIN_BACKOFF_SECONDS,
+                        self._retry_delay_seconds * (2**attempt),
+                    )
+                    if error.ret_code in _RETRYABLE_RATE_LIMIT_RET_CODES
+                    else self._retry_delay_seconds * (2**attempt)
+                )
+                _LOGGER.warning(
+                    "Bybit POST %s returned retryable error %d (attempt %d/%d), "
+                    "backing off %.1fs: %s",
+                    path,
+                    error.ret_code,
+                    attempt + 1,
+                    self._max_retries,
+                    backoff,
+                    error.ret_msg,
+                )
+                await asyncio.sleep(backoff)
 
         raise RuntimeError("Unreachable request loop termination")
 
@@ -394,5 +460,30 @@ class BybitRestClient(BaseRestClient):
                     error,
                 )
                 await asyncio.sleep(self._retry_delay_seconds * (2**attempt))
+            except BybitRestResponseError as error:
+                if (
+                    attempt >= self._max_retries
+                    or error.ret_code not in _RETRYABLE_RET_CODES
+                ):
+                    raise
+                backoff = (
+                    max(
+                        _RATE_LIMIT_MIN_BACKOFF_SECONDS,
+                        self._retry_delay_seconds * (2**attempt),
+                    )
+                    if error.ret_code in _RETRYABLE_RATE_LIMIT_RET_CODES
+                    else self._retry_delay_seconds * (2**attempt)
+                )
+                _LOGGER.warning(
+                    "Bybit DELETE %s returned retryable error %d (attempt %d/%d), "
+                    "backing off %.1fs: %s",
+                    path,
+                    error.ret_code,
+                    attempt + 1,
+                    self._max_retries,
+                    backoff,
+                    error.ret_msg,
+                )
+                await asyncio.sleep(backoff)
 
         raise RuntimeError("Unreachable request loop termination")

@@ -317,6 +317,6 @@ def test_missing_exchange_position_blocks_and_requests_reconciliation() -> None:
 
     snapshot = service.get_snapshot()
 
-    assert snapshot.status is LiveRuntimeHealthStatus.BLOCKED
+    assert snapshot.status is LiveRuntimeHealthStatus.DEGRADED
     assert snapshot.reason is LiveRuntimeHealthReason.RECONCILIATION_REQUIRED
     assert snapshot.affected_contexts == (context,)

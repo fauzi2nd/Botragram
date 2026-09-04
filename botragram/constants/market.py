@@ -20,6 +20,7 @@ from decimal import Decimal
 
 __all__ = [
     "DEFAULT_DISCOVERY_BATCH_SIZE",
+    "DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS",
     "DEFAULT_DISCOVERY_MAX_SYMBOLS",
     "DEFAULT_DISCOVERY_TOP_N",
     "DEFAULT_DISCOVERY_UNIVERSE_LIMIT",
@@ -35,6 +36,7 @@ DEFAULT_DISCOVERY_UNIVERSE_LIMIT: int = 100
 DEFAULT_DISCOVERY_BATCH_SIZE: int = 20
 DEFAULT_DISCOVERY_MAX_SYMBOLS: int = 20
 DEFAULT_DISCOVERY_TOP_N: int = 5
+DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS: float = 0.05
 
 # =============================================================================
 # Trading Fees (fallback values)

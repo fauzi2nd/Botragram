@@ -134,3 +134,16 @@ def test_bybit_settings_reject_both_testnet_and_demo(
                 env_path=str(tmp_path / "missing.env")
             )
         ).load_exchange_settings()
+
+
+def test_market_settings_load_discovery_candle_delay_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Load and validate DISCOVERY_CANDLE_DELAY_SECONDS from environment."""
+    monkeypatch.setenv("DISCOVERY_CANDLE_DELAY_SECONDS", "0.1")
+    monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)
+    market = SettingsManager(
+        environment_provider=EnvironmentProvider(env_path=str(tmp_path / "missing.env"))
+    ).load_market_settings()
+    assert market.discovery_candle_delay_seconds == 0.1

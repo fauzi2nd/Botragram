@@ -23,6 +23,7 @@ from dataclasses import dataclass
 # =============================================================================
 from botragram.constants import (
     DEFAULT_DISCOVERY_BATCH_SIZE,
+    DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS,
     DEFAULT_DISCOVERY_MAX_SYMBOLS,
     DEFAULT_DISCOVERY_TOP_N,
     DEFAULT_DISCOVERY_UNIVERSE_LIMIT,
@@ -53,6 +54,7 @@ class MarketSettings:
     discovery_batch_size: int = DEFAULT_DISCOVERY_BATCH_SIZE
     discovery_top_n: int = DEFAULT_DISCOVERY_TOP_N
     discovery_cadence_seconds: int | None = None
+    discovery_candle_delay_seconds: float = DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
 
     def __post_init__(self) -> None:
         """Validate bounded market-discovery configuration."""
@@ -80,6 +82,13 @@ class MarketSettings:
             or self.discovery_cadence_seconds <= 0
         ):
             raise ValueError("Discovery cadence must be a positive integer")
+        if (
+            isinstance(self.discovery_candle_delay_seconds, bool)
+            or self.discovery_candle_delay_seconds < 0.0
+        ):
+            raise ValueError(
+                "Discovery candle delay seconds must be a non-negative number"
+            )
 
     @property
     def symbol(self) -> str:

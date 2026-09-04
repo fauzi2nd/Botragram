@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ from typing import Final, Protocol
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.constants import DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
 from botragram.enums import Interval, SignalType, StrategyType
 from botragram.models import Candle, Signal
 from botragram.utils.validator import validate_symbol
@@ -111,6 +113,7 @@ class OpportunityDiscoveryService:
     market_service: DiscoveryMarketDataProvider
     strategy_service: DiscoveryStrategyProvider
     min_confidence: Decimal = Decimal("0")
+    candle_request_delay_seconds: float = DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
     utc_now: Callable[[], datetime] = _utc_now
 
     async def discover(
@@ -245,7 +248,9 @@ class OpportunityDiscoveryService:
                 candidate_minimum = minimum_value
                 effective_candle_limit = max(candle_limit, candidate_minimum)
 
-        for symbol in symbols:
+        for index, symbol in enumerate(symbols):
+            if index > 0 and self.candle_request_delay_seconds > 0:
+                await asyncio.sleep(self.candle_request_delay_seconds)
             candles = await self.market_service.get_candles(
                 symbol=symbol,
                 interval=interval,

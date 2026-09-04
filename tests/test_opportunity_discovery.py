@@ -2043,3 +2043,90 @@ async def _run_skip_value_error_test() -> None:
 
     assert len(opportunities) == 1
     assert opportunities[0].symbol == "BTCUSDT"
+
+
+def test_discovery_applies_candle_pacing_delay() -> None:
+    """Ensure sequential candle fetches apply the configured pacing delay."""
+    asyncio.run(_run_candle_pacing_delay_test())
+
+
+async def _run_candle_pacing_delay_test() -> None:
+    from unittest.mock import patch
+
+    candle_btc = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW,
+    )
+    candle_eth = _create_candle(
+        symbol="ETHUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW,
+    )
+    candle_sol = _create_candle(
+        symbol="SOLUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW,
+    )
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT", "ETHUSDT", "SOLUSDT"),
+        candles_by_symbol={
+            "BTCUSDT": (candle_btc,),
+            "ETHUSDT": (candle_eth,),
+            "SOLUSDT": (candle_sol,),
+        },
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.BUY,
+                confidence="0.9",
+                generated_at=_NOW,
+                strategy_name=StrategyType.EMA_CROSS.value,
+            ),
+            "ETHUSDT": _create_signal(
+                symbol="ETHUSDT",
+                signal_type=SignalType.BUY,
+                confidence="0.8",
+                generated_at=_NOW,
+                strategy_name=StrategyType.EMA_CROSS.value,
+            ),
+            "SOLUSDT": _create_signal(
+                symbol="SOLUSDT",
+                signal_type=SignalType.BUY,
+                confidence="0.7",
+                generated_at=_NOW,
+                strategy_name=StrategyType.EMA_CROSS.value,
+            ),
+        },
+        minimum_candles_by_strategy={
+            StrategyType.EMA_CROSS: 1,
+        },
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        candle_request_delay_seconds=0.05,
+        utc_now=lambda: _NOW,
+    )
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        if seconds > 0:
+            sleep_calls.append(seconds)
+
+    with patch(
+        "botragram.services.opportunity_discovery_service.asyncio.sleep",
+        side_effect=fake_sleep,
+    ):
+        await service.discover_symbols(
+            symbols=("BTCUSDT", "ETHUSDT", "SOLUSDT"),
+            interval=Interval.M15,
+            candle_limit=1,
+            top_n=3,
+            strategy_type=StrategyType.EMA_CROSS,
+        )
+
+    assert sleep_calls == [0.05, 0.05]

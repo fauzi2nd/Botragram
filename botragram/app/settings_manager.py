@@ -30,6 +30,7 @@ from botragram.config.risk_settings import RiskSettings
 from botragram.config.settings import Settings
 from botragram.config.strategy_settings import StrategySettings
 from botragram.config.telegram_settings import TelegramSettings
+from botragram.constants import DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
 from botragram.constants.strategy import get_strategy_default_interval
 from botragram.enums import (
     ExchangeEnvironment,
@@ -220,6 +221,7 @@ class SettingsManager:
         environment = self._environment_provider
         raw_interval = environment.get_market_interval()
         raw_discovery_cadence = environment.get_discovery_cadence_seconds()
+        raw_candle_delay = environment.get_discovery_candle_delay_seconds()
         default_interval = (
             get_strategy_default_interval(strategy_type)
             if strategy_type is not None
@@ -246,6 +248,14 @@ class SettingsManager:
                 )
                 if raw_discovery_cadence
                 else None
+            ),
+            discovery_candle_delay_seconds=(
+                self._parse_non_negative_float(
+                    raw_value=raw_candle_delay,
+                    setting_name="DISCOVERY_CANDLE_DELAY_SECONDS",
+                )
+                if raw_candle_delay
+                else DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
             ),
         )
 
@@ -618,6 +628,23 @@ class SettingsManager:
         if value <= 0:
             raise ValueError(
                 f"Environment variable {setting_name!r} must be greater than zero"
+            )
+
+        return value
+
+    @staticmethod
+    def _parse_non_negative_float(*, raw_value: str, setting_name: str) -> float:
+        """Parse one non-negative floating point configuration value."""
+        try:
+            value = float(raw_value)
+        except ValueError as error:
+            raise ValueError(
+                f"Environment variable {setting_name!r} must be a number"
+            ) from error
+
+        if value < 0.0:
+            raise ValueError(
+                f"Environment variable {setting_name!r} must be non-negative"
             )
 
         return value

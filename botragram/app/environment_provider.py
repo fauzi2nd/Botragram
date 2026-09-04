@@ -51,6 +51,7 @@ from botragram.constants.env import (
     ENV_BYBIT_TESTNET,
     ENV_DISCOVERY_BATCH_SIZE,
     ENV_DISCOVERY_CADENCE_SECONDS,
+    ENV_DISCOVERY_CANDLE_DELAY_SECONDS,
     ENV_DISCOVERY_UNIVERSE_LIMIT,
     ENV_EMA_CROSS_STOP_LOSS_PCT,
     ENV_EMA_CROSS_TAKE_PROFIT_PCT,
@@ -588,6 +589,10 @@ class EnvironmentProvider:
     def get_discovery_cadence_seconds(self) -> str:
         """Return the optional autonomous global discovery cadence."""
         return self._get_var(ENV_DISCOVERY_CADENCE_SECONDS)
+
+    def get_discovery_candle_delay_seconds(self) -> str:
+        """Return the optional pacing delay between candle requests in seconds."""
+        return self._get_var(ENV_DISCOVERY_CANDLE_DELAY_SECONDS)
 
     def get_active_exchange(self) -> str:
         """Return the configured active exchange."""
