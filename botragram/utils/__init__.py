@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.utils.candle_aggregator import RealtimeCandleAggregator
 from botragram.utils.candle_resampler import resample_candles
 from botragram.utils.datetime import (
     current_utc_timestamp_ms,
@@ -47,6 +48,7 @@ __all__ = [
     "format_percentage",
     "format_price",
     "format_utc_datetime",
+    "RealtimeCandleAggregator",
     "resample_candles",
     "round_price_precision",
     "round_step_size",

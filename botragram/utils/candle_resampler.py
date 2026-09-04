@@ -29,6 +29,8 @@ from botragram.enums import Interval
 from botragram.models import Candle
 
 __all__ = [
+    "get_bucket_close_time",
+    "get_bucket_open_time",
     "resample_candles",
 ]
 
@@ -39,9 +41,9 @@ _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 
 
 # =============================================================================
-# Private Helper Functions
+# Helper Functions
 # =============================================================================
-def _get_bucket_open_time(dt: datetime, target_interval: Interval) -> datetime:
+def get_bucket_open_time(dt: datetime, target_interval: Interval) -> datetime:
     """Return the UTC bucket open time for a given candle timestamp and interval.
 
     Args:
@@ -67,13 +69,15 @@ def _get_bucket_open_time(dt: datetime, target_interval: Interval) -> datetime:
     return datetime.fromtimestamp(aligned_epoch, tz=timezone.utc)
 
 
-def _get_bucket_close_time(
-    bucket_open: datetime, target_interval: Interval
-) -> datetime:
+def get_bucket_close_time(bucket_open: datetime, target_interval: Interval) -> datetime:
     """Return the UTC bucket close time for a given bucket open and interval."""
     if target_interval is Interval.MN1:
         return target_interval.next_close_time(close_time=bucket_open)
     return bucket_open + timedelta(seconds=target_interval.seconds)
+
+
+_get_bucket_open_time = get_bucket_open_time
+_get_bucket_close_time = get_bucket_close_time
 
 
 # =============================================================================

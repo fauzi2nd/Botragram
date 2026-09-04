@@ -27,6 +27,7 @@ from botragram.enums import Interval
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.models import Candle, ExecutableQuote, MarketUniverseEntry, Ticker
 from botragram.repositories import CandleRepository
+from botragram.utils.candle_aggregator import RealtimeCandleAggregator
 from botragram.utils.candle_resampler import resample_candles
 
 __all__ = [
@@ -342,6 +343,58 @@ class MarketService:
                 )
 
             yield candle
+
+    async def stream_resampled_candles(
+        self,
+        *,
+        symbol: str,
+        target_interval: Interval,
+        source_interval: Interval = Interval.M1,
+        persist_source: bool = True,
+        closed_only: bool = True,
+    ) -> AsyncIterator[Candle]:
+        """Stream real-time resampled candles aggregated on-the-fly from a base stream.
+
+        Args:
+            symbol: Trading pair symbol.
+            target_interval: Destination timeframe.
+            source_interval: Base timeframe received from exchange stream (default: 1m).
+            persist_source: Whether incoming source candles are saved to storage.
+            closed_only: When True, only yields closed candles when bucket boundary
+                finishes. When False, yields the forming candle on each tick.
+
+        Yields:
+            Standardized target timeframe candle updates.
+        """
+        normalized_symbol = self._normalize_symbol(symbol)
+
+        if target_interval is source_interval:
+            async for candle in self.stream_candles(
+                symbol=normalized_symbol,
+                interval=source_interval,
+                persist=persist_source,
+            ):
+                yield candle
+            return
+
+        aggregator = RealtimeCandleAggregator(target_interval=target_interval)
+
+        async for source_candle in self.stream_client.stream_candles(
+            symbol=normalized_symbol,
+            interval=source_interval,
+        ):
+            if persist_source:
+                await self.candle_repository.save(
+                    candle=source_candle,
+                )
+
+            closed_candle, forming_candle = aggregator.update(source_candle)
+
+            if closed_only:
+                if closed_candle is not None:
+                    yield closed_candle
+            else:
+                yield forming_candle
 
     async def unsubscribe(
         self,
