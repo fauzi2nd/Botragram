@@ -175,12 +175,22 @@ class AutonomousLiveEntryExecutionService:
                 status=(AutonomousLiveEntryExecutionStatus.SYMBOL_READINESS_REJECTED),
                 decision=decision,
             )
-        except VenueRuleValidationError:
+        except VenueRuleValidationError as error:
+            _LOGGER.warning(
+                "Autonomous LIVE entry rejected by venue rule: symbol=%s error=%s",
+                intent.symbol,
+                error,
+            )
             return AutonomousLiveEntryExecutionResult(
                 status=AutonomousLiveEntryExecutionStatus.VENUE_RULE_REJECTED,
                 decision=decision,
             )
-        except ExchangeOrderRejectedError:
+        except ExchangeOrderRejectedError as error:
+            _LOGGER.warning(
+                "Autonomous LIVE entry rejected by exchange: symbol=%s error=%s",
+                intent.symbol,
+                error,
+            )
             return AutonomousLiveEntryExecutionResult(
                 status=AutonomousLiveEntryExecutionStatus.EXCHANGE_REJECTED,
                 decision=decision,

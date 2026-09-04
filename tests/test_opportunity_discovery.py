@@ -1912,3 +1912,134 @@ async def _run_discovery_expands_candle_limit_test() -> None:
     assert market_service.requested_limits == [21]
     # Strategy was provided with 20 candles, not 5
     assert len(strategy_service.saved_candles[0]) == 20
+
+
+def test_discovery_skips_symbols_with_insufficient_candles_for_strategy() -> None:
+    """Ensure candidate symbols lacking the strategy's minimum candles are skipped."""
+    asyncio.run(_run_skip_insufficient_candles_test())
+
+
+async def _run_skip_insufficient_candles_test() -> None:
+    short_candles = tuple(
+        _create_candle(
+            symbol="NEWCOIN",
+            open_time=_NOW - timedelta(minutes=15 * (10 - index)),
+            close_time=_NOW - timedelta(minutes=15 * (9 - index)),
+        )
+        for index in range(10)
+    )
+    sufficient_candles = tuple(
+        _create_candle(
+            symbol="BTCUSDT",
+            open_time=_NOW - timedelta(minutes=15 * (25 - index)),
+            close_time=_NOW - timedelta(minutes=15 * (24 - index)),
+        )
+        for index in range(25)
+    )
+    market_service = FakeMarketService(
+        symbols=("NEWCOIN", "BTCUSDT"),
+        candles_by_symbol={
+            "NEWCOIN": short_candles,
+            "BTCUSDT": sufficient_candles,
+        },
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.BUY,
+                confidence="0.9",
+                generated_at=_NOW,
+                strategy_name=StrategyType.HIGH_CONFLUENCE_EXHAUSTION.value,
+            )
+        },
+        minimum_candles_by_strategy={
+            StrategyType.HIGH_CONFLUENCE_EXHAUSTION: 20,
+        },
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    opportunities = await service.discover_symbols(
+        symbols=("NEWCOIN", "BTCUSDT"),
+        interval=Interval.M15,
+        candle_limit=5,
+        top_n=2,
+        strategy_type=StrategyType.HIGH_CONFLUENCE_EXHAUSTION,
+    )
+
+    # NEWCOIN had only 10 candles (< 20 required), so it was skipped
+    assert len(opportunities) == 1
+    assert opportunities[0].symbol == "BTCUSDT"
+    assert "NEWCOIN" not in strategy_service.generated_symbols
+    assert "BTCUSDT" in strategy_service.generated_symbols
+
+
+def test_discovery_skips_symbols_raising_value_error_in_strategy() -> None:
+    """Ensure candidate symbols raising ValueError during evaluation are skipped."""
+    asyncio.run(_run_skip_value_error_test())
+
+
+async def _run_skip_value_error_test() -> None:
+    candle_btc = _create_candle(
+        symbol="BTCUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW,
+    )
+    candle_eth = _create_candle(
+        symbol="ETHUSDT",
+        open_time=_NOW - timedelta(minutes=15),
+        close_time=_NOW,
+    )
+    market_service = FakeMarketService(
+        symbols=("ETHUSDT", "BTCUSDT"),
+        candles_by_symbol={
+            "ETHUSDT": (candle_eth,),
+            "BTCUSDT": (candle_btc,),
+        },
+    )
+
+    class FailingStrategyService(FakeStrategyService):
+        def generate_signal(
+            self,
+            *,
+            candles: Sequence[Candle],
+            strategy_type: StrategyType | None = None,
+        ) -> Signal:
+            if candles[0].symbol == "ETHUSDT":
+                raise ValueError("Strategy rejected ETHUSDT candles")
+            return super().generate_signal(candles=candles, strategy_type=strategy_type)
+
+    strategy_service = FailingStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.BUY,
+                confidence="0.9",
+                generated_at=_NOW,
+                strategy_name=StrategyType.EMA_CROSS.value,
+            )
+        },
+        minimum_candles_by_strategy={
+            StrategyType.EMA_CROSS: 1,
+        },
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+
+    opportunities = await service.discover_symbols(
+        symbols=("ETHUSDT", "BTCUSDT"),
+        interval=Interval.M15,
+        candle_limit=1,
+        top_n=2,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    assert len(opportunities) == 1
+    assert opportunities[0].symbol == "BTCUSDT"

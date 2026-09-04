@@ -38,6 +38,7 @@ from botragram.app import (
     SingleSymbolTradingCycleExecutor,
     TradingRunner,
     TradingRuntimeControl,
+    calculate_seconds_until_next_candle_close,
 )
 from botragram.app.global_discovery_telemetry import GlobalDiscoveryTelemetry
 from botragram.app.trading_runner import GlobalDiscoveryCycleReport
@@ -1826,3 +1827,67 @@ async def _run_cancellation_test() -> None:
         await task
 
     assert not runner.is_running
+
+
+def test_runner_calculate_seconds_until_next_candle_close_5m() -> None:
+    """Verify 5m candle close delay calculation with default 2.0s buffer."""
+    # Base divisible by 300: 300 * 1000 = 300_000.0
+    base = 300_000.0
+    # 70 seconds into a 300s candle: remaining = 230s + 2s buffer = 232s
+    delay = calculate_seconds_until_next_candle_close(
+        interval=Interval.M5, wall_time=base + 70.0
+    )
+    assert delay == pytest.approx(232.0)
+
+    # 1 second before candle close: remaining = 1s + 2s buffer = 3s
+    delay = calculate_seconds_until_next_candle_close(
+        interval=Interval.M5, wall_time=base + 299.0
+    )
+    assert delay == pytest.approx(3.0)
+
+    # 1 second after candle close: remaining = (300 - 1) + 2 = 301s
+    delay = calculate_seconds_until_next_candle_close(
+        interval=Interval.M5, wall_time=base + 301.0
+    )
+    assert delay == pytest.approx(301.0)
+
+
+def test_runner_calculate_seconds_until_next_candle_close_15m_and_1h() -> None:
+    """Verify 15m and 1h candle close delay calculations."""
+    # Base divisible by 900: 900_000.0
+    base_15m = 900_000.0
+    # 100 seconds into a 900s candle (15m): remaining = 800s + 2s buffer = 802s
+    delay = calculate_seconds_until_next_candle_close(
+        interval=Interval.M15, wall_time=base_15m + 100.0
+    )
+    assert delay == pytest.approx(802.0)
+
+    # For 1h interval (3600s): base 3_600_000.0, 600s into candle:
+    # remaining = 3000s + 2s = 3002s
+    base_1h = 3_600_000.0
+    delay = calculate_seconds_until_next_candle_close(
+        interval=Interval.H1, wall_time=base_1h + 600.0
+    )
+    assert delay == pytest.approx(3002.0)
+
+
+def test_runner_global_cadence_auto_syncs_and_respects_override() -> None:
+    """Ensure cadence auto-syncs when None and returns explicit override when set."""
+    executor = SuccessfulGlobalExecutor(results=())
+    runner_auto = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M5,
+        cycle_interval_seconds=None,
+    )
+    assert runner_auto.effective_cycle_interval_seconds == 300.0
+    delay = runner_auto.calculate_seconds_until_next_candle_close()
+    assert 0.0 < delay <= 302.0
+
+    runner_explicit = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M5,
+        cycle_interval_seconds=45.0,
+    )
+    assert runner_explicit.effective_cycle_interval_seconds == 45.0

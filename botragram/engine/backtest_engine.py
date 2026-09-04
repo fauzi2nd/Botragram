@@ -59,6 +59,8 @@ __all__ = [
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DECIMAL_HUNDRED: Final[Decimal] = Decimal("100")
 _STRATEGY_WINDOW: Final[int] = 500
+_BREAKEVEN_ROI_THRESHOLD: Final[Decimal] = Decimal("0.10")
+_BREAKEVEN_FEE_BUFFER: Final[Decimal] = Decimal("0.001")
 _PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = (
     Decimal("0.30"),
     Decimal("0.45"),
@@ -280,23 +282,52 @@ class BacktestEngine:
 
         if position.side is PositionSide.LONG:
             progress = (candle.high_price - position.entry_price) / tp_distance
+            pnl_pct = (
+                (candle.high_price - position.entry_price) / position.entry_price
+                if position.entry_price > _DECIMAL_ZERO
+                else _DECIMAL_ZERO
+            )
         else:
             progress = (position.entry_price - candle.low_price) / tp_distance
+            pnl_pct = (
+                (position.entry_price - candle.low_price) / position.entry_price
+                if position.entry_price > _DECIMAL_ZERO
+                else _DECIMAL_ZERO
+            )
 
-        step = sum(1 for threshold in _PROGRESS_THRESHOLDS if progress >= threshold)
+        roi = pnl_pct * Decimal(position.leverage)
+
+        tp_steps = sum(1 for threshold in _PROGRESS_THRESHOLDS if progress >= threshold)
+        if tp_steps > 0:
+            step = tp_steps + 1
+        elif roi >= _BREAKEVEN_ROI_THRESHOLD:
+            step = 1
+        else:
+            step = 0
+
         if step <= position.protection_step:
             return
 
-        locked_progress = _PROGRESS_THRESHOLDS[step - 1] - _LOCKED_PROGRESS_LAG
+        if step == 1:
+            buffer = position.entry_price * _BREAKEVEN_FEE_BUFFER
+            if position.side is PositionSide.LONG:
+                replacement_stop = position.entry_price + buffer
+            else:
+                replacement_stop = position.entry_price - buffer
+        else:
+            locked_progress = _PROGRESS_THRESHOLDS[step - 2] - _LOCKED_PROGRESS_LAG
+            if position.side is PositionSide.LONG:
+                replacement_stop = position.entry_price + tp_distance * locked_progress
+            else:
+                replacement_stop = position.entry_price - tp_distance * locked_progress
+
         if position.side is PositionSide.LONG:
-            replacement_stop = position.entry_price + tp_distance * locked_progress
             if (
                 position.stop_loss is not None
                 and replacement_stop <= position.stop_loss
             ):
                 return
         else:
-            replacement_stop = position.entry_price - tp_distance * locked_progress
             if (
                 position.stop_loss is not None
                 and replacement_stop >= position.stop_loss

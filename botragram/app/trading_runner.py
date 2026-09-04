@@ -21,7 +21,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from time import monotonic
+from time import monotonic, time
 from typing import Final, Protocol, runtime_checkable
 
 from botragram.app.connectivity import is_transient_connectivity_error
@@ -79,6 +79,7 @@ __all__ = [
     "SingleSymbolTradingCycleExecutor",
     "TradingCycleExecutor",
     "TradingRunner",
+    "calculate_seconds_until_next_candle_close",
 ]
 
 
@@ -89,6 +90,7 @@ _DEFAULT_CANDLE_LIMIT: Final[int] = 100
 _DEFAULT_PAPER_ACCOUNT_BALANCE: Final[Decimal] = Decimal("10000")
 _DEFAULT_HEARTBEAT_INTERVAL_SECONDS: Final[float] = 30.0
 _DEFAULT_AUTONOMOUS_LIVE_HEALTH_CHECK_INTERVAL_SECONDS: Final[float] = 1.0
+_DEFAULT_CANDLE_CLOSE_BUFFER_SECONDS: Final[float] = 2.0
 _RESULT_REASON_UNAVAILABLE: Final[str] = "No reason provided"
 _AUTONOMOUS_LIVE_CLOSED_CANDLE_REPLAY_REASON: Final[str] = (
     "closed_candle_opportunity_already_claimed"
@@ -1366,7 +1368,7 @@ class TradingRunner:
                     if self._is_global_cycle_executor():
                         results = await self._run_global_cycle()
                         self._global_next_eligible_monotonic = (
-                            monotonic() + self._get_global_cadence_seconds()
+                            monotonic() + self._calculate_next_global_cycle_delay()
                         )
                         self._observe_global_discovery(
                             operation="waiting",
@@ -1420,7 +1422,7 @@ class TradingRunner:
 
                     consecutive_failures = 0
                     self._global_next_eligible_monotonic = (
-                        monotonic() + self._get_global_cadence_seconds()
+                        monotonic() + self._calculate_next_global_cycle_delay()
                     )
                     self._observe_global_discovery(
                         operation="waiting",
@@ -1927,6 +1929,15 @@ class TradingRunner:
                     )
                     continue
 
+                if not contexts and self._is_global_cycle_executor():
+                    _LOGGER.info(
+                        "Runtime heartbeat: state=%s symbol=DISCOVERY "
+                        "strategy=%s stream=IDLE",
+                        state,
+                        self.runtime_control.strategy_type.value,
+                    )
+                    continue
+
                 _LOGGER.info(
                     "Runtime heartbeat: state=%s symbol=%s strategy=%s stream=%s",
                     state,
@@ -2283,6 +2294,19 @@ class TradingRunner:
                 candidate.outcome,
             )
 
+    def calculate_seconds_until_next_candle_close(
+        self,
+        *,
+        wall_time: float | None = None,
+        buffer_seconds: float = _DEFAULT_CANDLE_CLOSE_BUFFER_SECONDS,
+    ) -> float:
+        """Calculate seconds from now until the next candle closes plus buffer."""
+        return calculate_seconds_until_next_candle_close(
+            interval=self.interval,
+            wall_time=wall_time,
+            buffer_seconds=buffer_seconds,
+        )
+
     def _get_global_cadence_seconds(self) -> float:
         """Return the established global discovery cadence."""
         return (
@@ -2290,6 +2314,13 @@ class TradingRunner:
             if self.cycle_interval_seconds is not None
             else float(self.interval.seconds)
         )
+
+    def _calculate_next_global_cycle_delay(self) -> float:
+        """Return the delay in seconds until the next global discovery cycle."""
+        if self.cycle_interval_seconds is not None:
+            return self.cycle_interval_seconds
+
+        return self.calculate_seconds_until_next_candle_close()
 
     async def _wait_for_global_cycle(self) -> None:
         """Wait for cadence while waking early on recovered-runtime degradation."""
@@ -2468,3 +2499,21 @@ class TradingRunner:
     def _format_optional_decimal(value: Decimal | None) -> str:
         """Format optional numeric order context for plain-text logging."""
         return format(value, "f") if value is not None else "N/A"
+
+
+def calculate_seconds_until_next_candle_close(
+    *,
+    interval: Interval,
+    wall_time: float | None = None,
+    buffer_seconds: float = _DEFAULT_CANDLE_CLOSE_BUFFER_SECONDS,
+) -> float:
+    """Calculate seconds from now until the next candle closes plus buffer."""
+    current_wall_time = time() if wall_time is None else wall_time
+    interval_seconds = float(interval.seconds)
+    if interval_seconds <= 0.0:
+        return buffer_seconds
+    elapsed_in_candle = current_wall_time % interval_seconds
+    delay = (interval_seconds - elapsed_in_candle) + buffer_seconds
+    if delay < buffer_seconds:
+        delay += interval_seconds
+    return delay

@@ -292,44 +292,76 @@ class BybitExchangeClient(BaseExchangeClient):
         end_time: datetime | None = None,
     ) -> Sequence[Candle]:
         """Return candlestick market data."""
+        if limit <= 0:
+            raise ValueError("Candle limit must be greater than zero")
+
+        if start_time is not None and end_time is not None and start_time > end_time:
+            raise ValueError("Candle start time must not be after end time")
+
         interval_code = BYBIT_INTERVAL_MAP.get(interval, "15")
-        params: dict[str, str | int] = {
-            "category": "linear",
-            "symbol": symbol.strip().upper(),
-            "interval": interval_code,
-            "limit": min(limit, 1000),
-        }
-        if start_time is not None:
-            params["start"] = int(start_time.timestamp() * 1000)
-        if end_time is not None:
-            params["end"] = int(end_time.timestamp() * 1000)
-
-        payload = await self._rest.get(
-            _KLINE_ENDPOINT,
-            params=params,
-            authenticated=False,
-        )
+        symbol_upper = symbol.strip().upper()
         candles: list[Candle] = []
-        if isinstance(payload, dict):
-            raw_result = payload.get("result")
-            if isinstance(raw_result, dict):
-                result_map = cast(ExchangePayload, raw_result)
-                kline_list = result_map.get("list")
-                if isinstance(kline_list, list):
-                    for raw_candle in cast(list[object], kline_list):
-                        if isinstance(raw_candle, (list, tuple)):
-                            seq = cast(list[object] | tuple[object, ...], raw_candle)
-                            candles.append(
-                                self._mapper.map_candle(
-                                    tuple(seq),
-                                    symbol=symbol,
-                                    interval=interval,
-                                )
-                            )
+        current_end_ms: int | None = (
+            int(end_time.timestamp() * 1000) if end_time is not None else None
+        )
+        remaining = limit
 
-        # Bybit returns klines newest first; sort oldest to newest
+        while remaining > 0:
+            batch_limit = min(remaining, 1000)
+            params: dict[str, str | int] = {
+                "category": "linear",
+                "symbol": symbol_upper,
+                "interval": interval_code,
+                "limit": batch_limit,
+            }
+            if start_time is not None:
+                params["start"] = int(start_time.timestamp() * 1000)
+            if current_end_ms is not None:
+                params["end"] = current_end_ms
+
+            payload = await self._rest.get(
+                _KLINE_ENDPOINT,
+                params=params,
+                authenticated=False,
+            )
+            batch_candles: list[Candle] = []
+            if isinstance(payload, dict):
+                raw_result = payload.get("result")
+                if isinstance(raw_result, dict):
+                    result_map = cast(ExchangePayload, raw_result)
+                    kline_list = result_map.get("list")
+                    if isinstance(kline_list, list):
+                        for raw_candle in cast(list[object], kline_list):
+                            if isinstance(raw_candle, (list, tuple)):
+                                seq = cast(
+                                    list[object] | tuple[object, ...], raw_candle
+                                )
+                                batch_candles.append(
+                                    self._mapper.map_candle(
+                                        tuple(seq),
+                                        symbol=symbol_upper,
+                                        interval=interval,
+                                    )
+                                )
+
+            if not batch_candles:
+                break
+
+            candles.extend(batch_candles)
+            remaining -= len(batch_candles)
+
+            if len(batch_candles) < batch_limit or remaining <= 0:
+                break
+
+            # Bybit returns klines newest first; oldest candle is batch_candles[-1]
+            oldest_open_ms = int(batch_candles[-1].open_time.timestamp() * 1000)
+            next_end_ms = oldest_open_ms - 1
+            if current_end_ms is not None and next_end_ms >= current_end_ms:
+                break
+            current_end_ms = next_end_ms
+
         candles.sort(key=lambda c: c.open_time)
-        return tuple(candles)
+        return tuple(candles[-limit:])
 
     async def get_trades(
         self,

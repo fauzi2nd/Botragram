@@ -149,9 +149,9 @@ async def _run_real_service_failure_and_cancellation_test() -> None:
 
 @pytest.mark.parametrize(
     ("universe_size", "expected_batch_sizes"),
-    ((47, (20, 20, 7)), (7, (7,))),
+    ((47, (20, 20)), (7, (7,))),
 )
-def test_partial_sweeps_complete_the_tail_before_refresh(
+def test_partial_sweeps_round_down_to_full_batches(
     universe_size: int,
     expected_batch_sizes: tuple[int, ...],
 ) -> None:
@@ -188,6 +188,63 @@ async def _run_partial_sweep_test(
     assert provider.calls == 2
     assert refreshed.rank_start == 1
     assert len(refreshed.entries) == min(20, universe_size)
+
+
+@pytest.mark.parametrize(
+    ("exchange_total", "batch_size", "expected_universe_size", "expected_batch_count"),
+    (
+        (753, 150, 750, 5),  # Bybit: 753 rounded down to 750 (5 full batches)
+        (526, 150, 450, 3),  # Binance: 526 rounded down to 450 (3 full batches)
+    ),
+)
+def test_rotation_rounds_down_large_exchange_universe_to_full_batches(
+    exchange_total: int,
+    batch_size: int,
+    expected_universe_size: int,
+    expected_batch_count: int,
+) -> None:
+    asyncio.run(
+        _run_large_exchange_universe_rounding_test(
+            exchange_total=exchange_total,
+            batch_size=batch_size,
+            expected_universe_size=expected_universe_size,
+            expected_batch_count=expected_batch_count,
+        )
+    )
+
+
+async def _run_large_exchange_universe_rounding_test(
+    *,
+    exchange_total: int,
+    batch_size: int,
+    expected_universe_size: int,
+    expected_batch_count: int,
+) -> None:
+    snapshot_1 = _entries(prefix="A", count=exchange_total)
+    snapshot_2 = _entries(prefix="B", count=exchange_total)
+    provider = _RankedUniverseProvider(outcomes=[snapshot_1, snapshot_2])
+    service = VolumeRankedDiscoveryUniverseService(
+        market_service=provider,
+        quote_asset="USDT",
+        universe_limit=1000,
+        batch_size=batch_size,
+    )
+
+    for i in range(expected_batch_count):
+        batch = await service.get_current_batch()
+        assert batch.universe_size == expected_universe_size
+        assert batch.rank_start == i * batch_size + 1
+        assert batch.rank_end == (i + 1) * batch_size
+        assert len(batch.entries) == batch_size
+        service.complete_batch(batch=batch)
+
+    # After the last full batch, the next batch refreshes and wraps back to rank 1
+    assert provider.calls == 1
+    refreshed = await service.get_current_batch()
+    assert provider.calls == 2
+    assert refreshed.universe_size == expected_universe_size
+    assert refreshed.rank_start == 1
+    assert refreshed.rank_end == batch_size
 
 
 def test_failed_required_refresh_cannot_reuse_the_completed_snapshot() -> None:

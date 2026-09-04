@@ -212,6 +212,11 @@ class LiveFuturesUserDataService:
         """Return cache freshness and account state without exchange I/O."""
         return await self.cache.get_snapshot()
 
+    @property
+    def open_position_symbols(self) -> frozenset[str]:
+        """Return symbols of all currently open cached positions."""
+        return self.cache.open_position_symbols
+
     async def _consume_forever(self) -> None:
         """Reconnect after interruption with socket-first REST synchronization."""
         reconnect_attempt = 0

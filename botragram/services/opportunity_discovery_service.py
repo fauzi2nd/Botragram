@@ -16,11 +16,12 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Final, Protocol
 
 # =============================================================================
 # Local Imports
@@ -37,7 +38,10 @@ __all__ = [
 # =============================================================================
 # Constants
 # =============================================================================
-_ACTIONABLE_ENTRY_SIGNAL_TYPES = frozenset({SignalType.BUY, SignalType.SELL})
+_ACTIONABLE_ENTRY_SIGNAL_TYPES: Final[frozenset[SignalType]] = frozenset(
+    {SignalType.BUY, SignalType.SELL}
+)
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -229,14 +233,17 @@ class OpportunityDiscoveryService:
         """Evaluate one already-normalized symbol batch sequentially."""
         actionable_signals: list[Signal] = []
         effective_candle_limit = candle_limit
-        if strategy_type is not None:
-            get_minimum = getattr(self.strategy_service, "get_minimum_candles", None)
-            if callable(get_minimum):
-                candidate_minimum = get_minimum(strategy_type=strategy_type)
-                if isinstance(candidate_minimum, int) and not isinstance(
-                    candidate_minimum, bool
-                ):
-                    effective_candle_limit = max(candle_limit, candidate_minimum)
+        candidate_minimum: int | None = None
+        get_minimum = getattr(self.strategy_service, "get_minimum_candles", None)
+        if callable(get_minimum):
+            minimum_value = (
+                get_minimum(strategy_type=strategy_type)
+                if strategy_type is not None
+                else get_minimum()
+            )
+            if isinstance(minimum_value, int) and not isinstance(minimum_value, bool):
+                candidate_minimum = minimum_value
+                effective_candle_limit = max(candle_limit, candidate_minimum)
 
         for symbol in symbols:
             candles = await self.market_service.get_candles(
@@ -252,9 +259,23 @@ class OpportunityDiscoveryService:
                 require_strict_sequence=strategy_type is not None,
             )
             if not closed_candles:
-                raise RuntimeError(
-                    f"No closed candles available for discovery: {symbol}"
+                _LOGGER.debug(
+                    "Skipping discovery symbol %s: no closed candles available",
+                    symbol,
                 )
+                continue
+
+            if (
+                candidate_minimum is not None
+                and len(closed_candles) < candidate_minimum
+            ):
+                _LOGGER.debug(
+                    "Skipping discovery symbol %s: insufficient candles (%d < %d)",
+                    symbol,
+                    len(closed_candles),
+                    candidate_minimum,
+                )
+                continue
 
             if strategy_type is not None:
                 self._validate_closed_candle_provenance(
@@ -268,16 +289,24 @@ class OpportunityDiscoveryService:
                     as_of=as_of,
                 )
 
-            if strategy_type is None:
-                signal = await self.strategy_service.generate_and_save(
-                    candles=closed_candles,
-                    strategy_type=None,
+            try:
+                if strategy_type is None:
+                    signal = await self.strategy_service.generate_and_save(
+                        candles=closed_candles,
+                        strategy_type=None,
+                    )
+                else:
+                    signal = self.strategy_service.generate_signal(
+                        candles=closed_candles,
+                        strategy_type=strategy_type,
+                    )
+            except ValueError as error:
+                _LOGGER.warning(
+                    "Skipping discovery symbol %s due to strategy validation error: %s",
+                    symbol,
+                    error,
                 )
-            else:
-                signal = self.strategy_service.generate_signal(
-                    candles=closed_candles,
-                    strategy_type=strategy_type,
-                )
+                continue
 
             signal_generated_at = self._normalize_utc_datetime(
                 value=signal.generated_at,

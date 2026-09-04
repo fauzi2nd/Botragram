@@ -74,6 +74,11 @@ class LiveFuturesUserDataHealthProvider(Protocol):
         """Return current private-stream freshness."""
         ...
 
+    @property
+    def open_position_symbols(self) -> frozenset[str]:
+        """Return symbols of all currently open cached positions."""
+        ...
+
 
 # =============================================================================
 # Service Classes
@@ -139,6 +144,31 @@ class LiveRuntimeHealthService:
                 stream_states=stream_states,
                 monitor_states=monitor_states,
             )
+
+        if (
+            user_data_service is not None
+            and user_data_service.status is LiveFuturesUserDataStatus.READY
+        ):
+            open_symbols = getattr(user_data_service, "open_position_symbols", None)
+            if open_symbols is not None:
+                missing_contexts = tuple(
+                    context
+                    for context in contexts
+                    if context.symbol.upper() not in open_symbols
+                )
+                if missing_contexts:
+                    return self._snapshot(
+                        status=LiveRuntimeHealthStatus.BLOCKED,
+                        reason=LiveRuntimeHealthReason.RECONCILIATION_REQUIRED,
+                        affected_contexts=missing_contexts,
+                        contexts=contexts,
+                        authorization_present=authorization_present,
+                        authorization_exact=authorization_exact,
+                        runner_paused=runner_paused,
+                        cycle_in_progress=cycle_in_progress,
+                        stream_states=stream_states,
+                        monitor_states=monitor_states,
+                    )
 
         reconciliation_context = self.runtime_control.reconciliation_required_context
         if reconciliation_context is not None:

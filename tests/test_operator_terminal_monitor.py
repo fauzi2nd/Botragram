@@ -116,3 +116,13 @@ def test_generic_humanizer_preserves_unstructured_message() -> None:
     rendered = _TestTerminalMonitor.format_compact_event(message)
 
     assert rendered == message
+
+
+def test_humanizes_discovery_idle_heartbeat() -> None:
+    """Present discovery idle heartbeat cleanly without single-symbol fallback."""
+    rendered = _TestTerminalMonitor.format_compact_event(
+        "Runtime heartbeat: state=RUNNING symbol=DISCOVERY "
+        "strategy=choch_fvg stream=IDLE"
+    )
+
+    assert rendered == "Runtime RUNNING | DISCOVERY | CHOCH FVG | stream IDLE"

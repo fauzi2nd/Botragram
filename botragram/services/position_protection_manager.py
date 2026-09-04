@@ -37,6 +37,8 @@ _POSITION_REFRESH_SECONDS: Final[float] = 1.0
 _FAILURE_RETRY_SECONDS: Final[float] = 5.0
 _PENDING_RECONCILIATION_ATTEMPTS: Final[int] = 2
 _PENDING_RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
+_BREAKEVEN_ROI_THRESHOLD: Final[Decimal] = Decimal("0.10")
+_BREAKEVEN_FEE_BUFFER: Final[Decimal] = Decimal("0.001")
 _PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = (
     Decimal("0.30"),
     Decimal("0.45"),
@@ -58,6 +60,8 @@ class PositionProtectionManager:
     exchange_client: BaseExchangeClient
     position_refresh_seconds: float = _POSITION_REFRESH_SECONDS
     failure_retry_seconds: float = _FAILURE_RETRY_SECONDS
+    breakeven_roi_threshold: Decimal = _BREAKEVEN_ROI_THRESHOLD
+    breakeven_fee_buffer: Decimal = _BREAKEVEN_FEE_BUFFER
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
         default_factory=LivePositionLifecycleCoordinator,
     )
@@ -68,12 +72,18 @@ class PositionProtectionManager:
     _retry_after_monotonic: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Validate the bounded repository refresh cadence."""
+        """Validate the bounded repository refresh cadence and thresholds."""
         if self.position_refresh_seconds <= 0:
             raise ValueError("Position refresh interval must be greater than zero")
 
         if self.failure_retry_seconds <= 0:
             raise ValueError("Protection retry interval must be greater than zero")
+
+        if self.breakeven_roi_threshold <= 0:
+            raise ValueError("Breakeven ROI threshold must be greater than zero")
+
+        if self.breakeven_fee_buffer < 0:
+            raise ValueError("Breakeven fee buffer must be non-negative")
 
     async def on_market_tick(self, *, ticker: Ticker) -> None:
         """Advance profit protection when a stream tick crosses a new step."""
@@ -105,14 +115,22 @@ class PositionProtectionManager:
                 position=position,
                 current_price=ticker.last_price,
             )
-            step = self._resolve_step(progress=progress)
+            roi = self._calculate_roi(
+                position=position,
+                current_price=ticker.last_price,
+            )
+            step = self._resolve_step(
+                progress=progress,
+                roi=roi,
+                breakeven_roi_threshold=self.breakeven_roi_threshold,
+            )
             if step <= position.protection_step:
                 return
 
-            locked_progress = _PROGRESS_THRESHOLDS[step - 1] - _LOCKED_PROGRESS_LAG
             replacement_stop = self._calculate_stop_loss(
                 position=position,
-                locked_progress=locked_progress,
+                step=step,
+                breakeven_fee_buffer=self.breakeven_fee_buffer,
             )
             final_stop = replacement_stop
 
@@ -180,6 +198,11 @@ class PositionProtectionManager:
 
             await self.position_repository.update(position=protected_position)
             self._cached_position = protected_position
+            locked_progress = (
+                _PROGRESS_THRESHOLDS[step - 2] - _LOCKED_PROGRESS_LAG
+                if step >= 2
+                else _DECIMAL_ZERO
+            )
             _LOGGER.info(
                 "Position profit protection advanced: mode=%s symbol=%s side=%s "
                 "step=%d tp_progress=%.2f%% locked_progress=%.2f%% stop_loss=%s",
@@ -584,22 +607,67 @@ class PositionProtectionManager:
         return max(favorable_move / target_distance, _DECIMAL_ZERO)
 
     @staticmethod
-    def _resolve_step(*, progress: Decimal) -> int:
-        """Return the highest crossed step number."""
-        return sum(progress >= threshold for threshold in _PROGRESS_THRESHOLDS)
-
-    @staticmethod
-    def _calculate_stop_loss(
+    def _calculate_roi(
         *,
         position: Position,
-        locked_progress: Decimal,
+        current_price: Decimal,
     ) -> Decimal:
-        """Calculate the profit-lock price for a long or short position."""
-        take_profit = position.take_profit
+        """Return return-on-equity (ROI) ratio based on position leverage."""
+        if position.entry_price <= _DECIMAL_ZERO or position.leverage <= 0:
+            return _DECIMAL_ZERO
 
+        if position.side is PositionSide.LONG:
+            price_change = (current_price - position.entry_price) / position.entry_price
+        else:
+            price_change = (position.entry_price - current_price) / position.entry_price
+
+        return price_change * Decimal(position.leverage)
+
+    @classmethod
+    def _resolve_step(
+        cls,
+        *,
+        progress: Decimal,
+        roi: Decimal,
+        breakeven_roi_threshold: Decimal = _BREAKEVEN_ROI_THRESHOLD,
+    ) -> int:
+        """Return the highest crossed protection step number.
+
+        Step 1: Breakeven lock activated when ROI >= breakeven_roi_threshold.
+        Steps 2..6: Stepped profit protection based on TP progress
+        (30%, 45%, 60%, 75%, 90%).
+        """
+        tp_steps = sum(progress >= threshold for threshold in _PROGRESS_THRESHOLDS)
+        if tp_steps > 0:
+            return tp_steps + 1
+        if roi >= breakeven_roi_threshold:
+            return 1
+        return 0
+
+    @classmethod
+    def _calculate_stop_loss(
+        cls,
+        *,
+        position: Position,
+        step: int,
+        breakeven_fee_buffer: Decimal = _BREAKEVEN_FEE_BUFFER,
+    ) -> Decimal:
+        """Calculate the profit-lock price for a specific protection step."""
+        if step == 1:
+            buffer = position.entry_price * breakeven_fee_buffer
+            if position.side is PositionSide.LONG:
+                return position.entry_price + buffer
+            return position.entry_price - buffer
+
+        take_profit = position.take_profit
         if take_profit is None:
             raise ValueError("Profit protection requires a take-profit price")
 
+        threshold_idx = step - 2
+        if not (0 <= threshold_idx < len(_PROGRESS_THRESHOLDS)):
+            raise ValueError(f"Invalid protection step: {step}")
+
+        locked_progress = _PROGRESS_THRESHOLDS[threshold_idx] - _LOCKED_PROGRESS_LAG
         locked_distance = abs(take_profit - position.entry_price) * locked_progress
 
         if position.side is PositionSide.LONG:

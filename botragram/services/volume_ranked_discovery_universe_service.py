@@ -33,10 +33,11 @@ class RankedMarketUniverseProvider(Protocol):
 
 @dataclass(slots=True, kw_only=True)
 class VolumeRankedDiscoveryUniverseService:
-    """Rotate bounded batches through the complete active ranked snapshot.
+    """Rotate bounded batches through the volume-ranked active snapshot.
 
-    ``universe_limit`` is retained as a validated compatibility/telemetry setting;
-    autonomous LIVE no longer truncates the exchange-provided active universe.
+    The active universe is rounded down to the largest multiple of ``batch_size``
+    to ensure full batches and avoid trailing partial batches with illiquid
+    tail symbols.
     """
 
     market_service: RankedMarketUniverseProvider
@@ -75,10 +76,16 @@ class VolumeRankedDiscoveryUniverseService:
             ranked_entries = await self.market_service.get_market_universe(
                 quote_asset=self.quote_asset,
             )
-            refreshed_snapshot = tuple(ranked_entries)
-            if not refreshed_snapshot:
+            raw_entries = tuple(ranked_entries)
+            if not raw_entries:
                 raise RuntimeError("Ranked discovery universe must not be empty")
-            self._snapshot = refreshed_snapshot
+            full_batch_count = len(raw_entries) // self.batch_size
+            usable_count = (
+                full_batch_count * self.batch_size
+                if full_batch_count > 0
+                else len(raw_entries)
+            )
+            self._snapshot = raw_entries[:usable_count]
             self._next_offset = 0
 
         snapshot = self._snapshot

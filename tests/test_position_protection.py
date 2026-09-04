@@ -336,7 +336,7 @@ async def test_paper_protection_advances_steps_and_never_moves_backward() -> Non
     position = await repository.get_by_symbol(symbol="BTCUSDT")
     assert position is not None
     assert position.stop_loss == Decimal("99.75")
-    assert position.protection_step == 2
+    assert position.protection_step == 3
     assert exchange.stop_replacements == []
 
 
@@ -360,7 +360,7 @@ async def test_live_protection_verifies_exchange_before_persisting_step() -> Non
     assert exchange.stop_client_algo_ids[0] is not None
     assert position.stop_loss == Decimal("99.90")
     assert position.stop_loss_client_algo_id == exchange.stop_client_algo_ids[0]
-    assert position.protection_step == 1
+    assert position.protection_step == 2
 
 
 @pytest.mark.asyncio
@@ -510,7 +510,7 @@ async def test_invalid_live_stepped_stop_defers_without_losing_protection() -> N
     assert stored is not None
     assert exchange.stop_replacements == [Decimal("0.0022600")]
     assert stored.stop_loss == Decimal("0.0022600")
-    assert stored.protection_step == 2
+    assert stored.protection_step == 3
 
 
 @pytest.mark.asyncio
@@ -660,7 +660,7 @@ async def test_live_immediate_trigger_rejection_clears_only_proven_pending_stop(
         advanced.stop_loss_client_algo_id
         != first_pending.pending_stop_loss_client_algo_id
     )
-    assert advanced.protection_step == 1
+    assert advanced.protection_step == 2
     assert advanced.pending_stop_loss_client_algo_id is None
     assert exchange.previous_stop_client_algo_ids == [current_id, current_id]
 
@@ -699,7 +699,7 @@ async def test_live_immediate_rejection_keeps_pending_when_current_unproven() ->
         assert pending.protection_step == 0
         assert pending.pending_stop_loss == Decimal("99.90")
         assert pending.pending_stop_loss_client_algo_id is not None
-        assert pending.pending_protection_step == 1
+        assert pending.pending_protection_step == 2
 
 
 @pytest.mark.asyncio
@@ -761,7 +761,7 @@ async def test_live_failed_step_keeps_current_stop_and_pending_intent() -> None:
     assert pending.protection_step == 0
     assert pending.pending_stop_loss == Decimal("99.90")
     assert pending.pending_stop_loss_client_algo_id is not None
-    assert pending.pending_protection_step == 1
+    assert pending.pending_protection_step == 2
 
     await asyncio.sleep(0.002)
     await manager.on_market_tick(ticker=_ticker(price="99.7", seconds=2))
@@ -770,7 +770,7 @@ async def test_live_failed_step_keeps_current_stop_and_pending_intent() -> None:
     assert promoted is not None
     assert promoted.stop_loss == Decimal("99.90")
     assert promoted.stop_loss_client_algo_id == pending.pending_stop_loss_client_algo_id
-    assert promoted.protection_step == 1
+    assert promoted.protection_step == 2
     assert promoted.pending_stop_loss is None
     assert promoted.pending_stop_loss_client_algo_id is None
     assert promoted.pending_protection_step == 0
@@ -820,7 +820,7 @@ async def test_live_absent_invalid_pending_stop_is_retired_without_churn() -> No
     assert advanced.stop_loss == Decimal("99.900000")
     assert advanced.stop_loss_client_algo_id is not None
     assert advanced.stop_loss_client_algo_id != stale_pending_id
-    assert advanced.protection_step == 1
+    assert advanced.protection_step == 2
 
 
 @pytest.mark.asyncio
@@ -907,3 +907,128 @@ async def test_live_active_pending_stop_promotes_despite_moved_mark_price() -> N
     assert promoted.pending_stop_loss is None
     assert promoted.pending_stop_loss_client_algo_id is None
     assert exchange.previous_stop_client_algo_ids == [current_id]
+
+
+@pytest.mark.asyncio
+async def test_position_protection_activates_breakeven_at_target_roi_long() -> None:
+    """Lock Breakeven+ for Long when ROI reaches 10% before 30% TP progress."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=20,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("99"),
+        take_profit=Decimal("104"),
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = RecordingProtectionExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.PAPER,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="100.55", seconds=1))
+
+    updated = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert updated is not None
+    assert updated.protection_step == 1
+    assert updated.stop_loss == Decimal("100.10")
+
+
+@pytest.mark.asyncio
+async def test_position_protection_activates_breakeven_at_target_roi_short() -> None:
+    """Lock Breakeven+ for Short when ROI reaches 10% before 30% TP progress."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=20,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("101"),
+        take_profit=Decimal("96"),
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = RecordingProtectionExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.PAPER,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="99.45", seconds=1))
+
+    updated = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert updated is not None
+    assert updated.protection_step == 1
+    assert updated.stop_loss == Decimal("99.90")
+
+
+@pytest.mark.asyncio
+async def test_position_protection_advances_from_breakeven_to_tp_progress() -> None:
+    """Advance monotonically from Breakeven (Step 1) to TP progress steps (Steps 2+)."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=20,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("99"),
+        take_profit=Decimal("104"),
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = RecordingProtectionExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.PAPER,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+    )
+
+    # Step 1: 10% ROI reached -> Breakeven lock (100.10)
+    await manager.on_market_tick(ticker=_ticker(price="100.55", seconds=1))
+    pos_step1 = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos_step1 is not None
+    assert pos_step1.protection_step == 1
+    assert pos_step1.stop_loss == Decimal("100.10")
+
+    # Step 2: 30% TP progress reached (favorable = 1.40, TP dist = 4.0, progress = 35%)
+    # locked_progress = 0.30 - 0.20 = 0.10 -> stop = 100 + 4.0 * 0.10 = 100.40
+    await manager.on_market_tick(ticker=_ticker(price="101.40", seconds=2))
+    pos_step2 = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos_step2 is not None
+    assert pos_step2.protection_step == 2
+    assert pos_step2.stop_loss == Decimal("100.40")
+
+    # Step 3: 45% TP progress reached (favorable = 2.00, progress = 50%)
+    # locked_progress = 0.45 - 0.20 = 0.25 -> stop = 100 + 4.0 * 0.25 = 101.00
+    await manager.on_market_tick(ticker=_ticker(price="102.00", seconds=3))
+    pos_step3 = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos_step3 is not None
+    assert pos_step3.protection_step == 3
+    assert pos_step3.stop_loss == Decimal("101.00")
+
+    # Pullback tick: price drops to 101.50 -> stop loss does not move backward
+    await manager.on_market_tick(ticker=_ticker(price="101.50", seconds=4))
+    pos_pullback = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos_pullback is not None
+    assert pos_pullback.protection_step == 3
+    assert pos_pullback.stop_loss == Decimal("101.00")

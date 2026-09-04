@@ -239,6 +239,58 @@ async def _run_stepped_protection_backtest() -> BacktestResult:
     return await engine.run(request=request, candles=candles)
 
 
+def test_backtest_arms_breakeven_stop_when_target_roi_reached() -> None:
+    """Lock Breakeven+ when 10% ROI is reached and exit in profit on pullback."""
+    result = asyncio.run(_run_breakeven_protection_backtest())
+
+    assert result.candle_count == 3
+    assert result.metrics.total_trades == 1
+    assert result.trades[0].reason == "Paper stop-loss triggered"
+    assert result.trades[0].exit_price >= Decimal("100.10")
+    assert result.trades[0].exit_price > result.trades[0].entry_price
+
+
+async def _run_breakeven_protection_backtest() -> BacktestResult:
+    """Cross 10% ROI without reaching 30% TP progress, then hit Breakeven+ stop."""
+    engine = BacktestEngine(
+        strategy=BuyThenHoldStrategy(),
+        risk_settings=RiskSettings(leverage=20),
+    )
+    candles = (
+        _create_candle(
+            minute=0,
+            open_price="100",
+            high_price="100.2",
+            low_price="99.9",
+            close_price="100",
+        ),
+        _create_candle(
+            minute=1,
+            open_price="100.1",
+            high_price="100.55",
+            low_price="99.95",
+            close_price="100.50",
+        ),
+        _create_candle(
+            minute=2,
+            open_price="100.50",
+            high_price="100.50",
+            low_price="100.05",
+            close_price="100.10",
+        ),
+    )
+    request = BacktestRequest(
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+        market_type=MarketType.FUTURES,
+        start_time=_START_TIME,
+        end_time=_START_TIME + timedelta(minutes=3),
+        initial_balance=Decimal("100"),
+    )
+    return await engine.run(request=request, candles=candles)
+
+
 # =============================================================================
 # CLI Tests
 # =============================================================================

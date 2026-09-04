@@ -41,6 +41,7 @@ class _UserData:
     """Expose deterministic private-stream freshness."""
 
     status: LiveFuturesUserDataStatus
+    open_position_symbols: frozenset[str] = frozenset()
 
 
 def _context(symbol: str) -> LiveRuntimePositionContext:
@@ -291,3 +292,31 @@ def test_private_stream_non_ready_blocks_zero_position_entry_health(
     assert snapshot.status is LiveRuntimeHealthStatus.DEGRADED
     assert snapshot.reason is LiveRuntimeHealthReason.USER_DATA_STREAM_NOT_READY
     assert snapshot.contexts == ()
+
+
+def test_missing_exchange_position_blocks_and_requests_reconciliation() -> None:
+    """Block and demand reconciliation when position is missing on exchange."""
+    context = _context("SAHARAUSDT")
+    service, control = _service(
+        contexts=(context,),
+        streams=(_stream(context),),
+        monitors=(_monitor(context),),
+        authorize=True,
+        resume=True,
+    )
+    service = LiveRuntimeHealthService(
+        runtime_control=control,
+        market_stream_service=service.market_stream_service,
+        protection_monitoring_service=service.protection_monitoring_service,
+        live_futures_user_data_service=_UserData(
+            status=LiveFuturesUserDataStatus.READY,
+            open_position_symbols=frozenset(),  # SAHARAUSDT is closed on exchange
+        ),
+        clock=lambda: 1.0,
+    )
+
+    snapshot = service.get_snapshot()
+
+    assert snapshot.status is LiveRuntimeHealthStatus.BLOCKED
+    assert snapshot.reason is LiveRuntimeHealthReason.RECONCILIATION_REQUIRED
+    assert snapshot.affected_contexts == (context,)

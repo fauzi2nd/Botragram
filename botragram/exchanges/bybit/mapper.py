@@ -200,6 +200,10 @@ class BybitExchangeMapper(BaseExchangeMapper):
         """Map Bybit WebSocket linear ticker payload into a Ticker model."""
         symbol = self._to_string(payload.get("symbol")).strip().upper()
         last_price = self._to_decimal(payload.get("lastPrice"))
+        if last_price <= _DECIMAL_ZERO:
+            last_price = self._to_decimal(payload.get("markPrice"))
+        if last_price <= _DECIMAL_ZERO:
+            last_price = self._to_decimal(payload.get("indexPrice"))
         bid_price = self._to_decimal(payload.get("bid1Price", last_price))
         ask_price = self._to_decimal(payload.get("ask1Price", last_price))
 
@@ -279,12 +283,35 @@ class BybitExchangeMapper(BaseExchangeMapper):
         raw_side = self._to_string(payload.get("side")).strip().upper()
         side = _SIDE_MAP.get(raw_side, OrderSide.BUY)
 
+        client_order_id = self._to_string(payload.get("orderLinkId")).strip() or None
         raw_type = self._to_string(payload.get("orderType")).strip().upper()
         stop_order_type = self._to_string(payload.get("stopOrderType")).strip().upper()
-        if stop_order_type in ("STOPLOSS", "STOP_LOSS", "STOP"):
-            order_type = OrderType.STOP
+        trigger_direction = self._to_string(payload.get("triggerDirection")).strip()
+        is_market = raw_type == "MARKET"
+
+        if stop_order_type in ("STOPLOSS", "STOP_LOSS"):
+            order_type = OrderType.STOP_MARKET if is_market else OrderType.STOP
         elif stop_order_type in ("TAKEPROFIT", "TAKE_PROFIT"):
-            order_type = OrderType.TAKE_PROFIT
+            order_type = (
+                OrderType.TAKE_PROFIT_MARKET if is_market else OrderType.TAKE_PROFIT
+            )
+        elif stop_order_type in ("STOP", "TPSLORDER"):
+            is_tp = False
+            if client_order_id and client_order_id.startswith("btp-"):
+                is_tp = True
+            elif client_order_id and client_order_id.startswith("bsl-"):
+                is_tp = False
+            elif trigger_direction == "1":
+                is_tp = side is OrderSide.SELL
+            elif trigger_direction == "2":
+                is_tp = side is OrderSide.BUY
+
+            if is_tp:
+                order_type = (
+                    OrderType.TAKE_PROFIT_MARKET if is_market else OrderType.TAKE_PROFIT
+                )
+            else:
+                order_type = OrderType.STOP_MARKET if is_market else OrderType.STOP
         else:
             order_type = _ORDER_TYPE_MAP.get(raw_type, OrderType.MARKET)
 
@@ -299,8 +326,6 @@ class BybitExchangeMapper(BaseExchangeMapper):
 
         trigger_val = self._to_decimal(payload.get("triggerPrice"))
         stop_price = trigger_val if trigger_val > _DECIMAL_ZERO else None
-
-        client_order_id = self._to_string(payload.get("orderLinkId")).strip() or None
 
         created_at = self._to_datetime(payload.get("createdTime"))
         updated_at = self._to_datetime(
@@ -374,6 +399,13 @@ class BybitExchangeMapper(BaseExchangeMapper):
 
         executed_at = self._to_datetime(payload.get("execTime", payload.get("time")))
 
+        raw_realized_pnl = payload.get("closedPnl", payload.get("realizedPnl"))
+        realized_pnl = (
+            self._to_decimal(raw_realized_pnl)
+            if raw_realized_pnl is not None and raw_realized_pnl != ""
+            else None
+        )
+
         return Trade(
             trade_id=trade_id,
             order_id=order_id,
@@ -385,6 +417,7 @@ class BybitExchangeMapper(BaseExchangeMapper):
             fee=fee,
             fee_asset=fee_asset,
             executed_at=executed_at,
+            realized_pnl=realized_pnl,
         )
 
     def map_symbol_rules(self, payload: ExchangePayload) -> ExchangeSymbolRules:
@@ -396,6 +429,7 @@ class BybitExchangeMapper(BaseExchangeMapper):
         max_qty = Decimal("1000000")
         qty_step = _DEFAULT_QTY_STEP
 
+        lot_map: ExchangePayload | None = None
         if isinstance(lot_filter, dict):
             lot_map = cast(ExchangePayload, lot_filter)
             min_qty = self._to_decimal(lot_map.get("minOrderQty"), min_qty)
@@ -422,7 +456,11 @@ class BybitExchangeMapper(BaseExchangeMapper):
             if parsed_tick > _DECIMAL_ZERO:
                 tick_size = parsed_tick
 
-        min_notional_val = self._to_decimal(payload.get("minNotionalValue"))
+        min_notional_val = _DECIMAL_ZERO
+        if lot_map is not None:
+            min_notional_val = self._to_decimal(lot_map.get("minNotionalValue"))
+        if min_notional_val <= _DECIMAL_ZERO:
+            min_notional_val = self._to_decimal(payload.get("minNotionalValue"))
         min_notional = min_notional_val if min_notional_val > _DECIMAL_ZERO else None
 
         return ExchangeSymbolRules(

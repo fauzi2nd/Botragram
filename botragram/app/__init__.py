@@ -47,6 +47,7 @@ from botragram.app.trading_runner import (
     SingleSymbolTradingCycleExecutor,
     TradingCycleExecutor,
     TradingRunner,
+    calculate_seconds_until_next_candle_close,
 )
 
 __all__ = [
@@ -73,6 +74,7 @@ __all__ = [
     "TradingCycleExecutor",
     "TradingRunner",
     "TradingRuntimeControl",
+    "calculate_seconds_until_next_candle_close",
     "prepare_restarted_runtime_session",
     "run_until_restart",
     "shutdown_application",

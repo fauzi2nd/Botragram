@@ -19,7 +19,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
+from decimal import Decimal
 from typing import Final, cast
 
 # =============================================================================
@@ -48,6 +49,7 @@ _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 _HEARTBEAT_INTERVAL_SECONDS: Final[float] = 20.0
 _PING_MESSAGE: Final[str] = json.dumps({"op": "ping"})
+_DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 
 
 # =============================================================================
@@ -64,6 +66,7 @@ class BybitStreamClient(BaseStreamClient):
         "_read_task",
         "_session",
         "_subscriptions",
+        "_ticker_cache",
         "_websocket",
         "_websocket_url",
     )
@@ -82,6 +85,7 @@ class BybitStreamClient(BaseStreamClient):
         self._connected: bool = False
         self._subscriptions: set[str] = set()
         self._queues: dict[str, set[asyncio.Queue[object]]] = {}
+        self._ticker_cache: dict[str, dict[str, object]] = {}
         self._read_task: asyncio.Task[None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
 
@@ -143,6 +147,7 @@ class BybitStreamClient(BaseStreamClient):
             await self._session.close()
             self._session = None
 
+        self._ticker_cache.clear()
         _LOGGER.info("Bybit WebSocket connection closed")
 
     async def _heartbeat_loop(self) -> None:
@@ -177,6 +182,14 @@ class BybitStreamClient(BaseStreamClient):
         finally:
             self._connected = False
 
+    def handle_message(self, raw_data: str) -> None:
+        """Parse Bybit V5 message frame and dispatch to queues."""
+        self._handle_message(raw_data)
+
+    def get_cached_ticker(self, symbol: str) -> Mapping[str, object] | None:
+        """Return cached raw ticker payload for a symbol, if any."""
+        return self._ticker_cache.get(symbol.strip().upper())
+
     def _handle_message(self, raw_data: str) -> None:
         """Parse Bybit V5 message frame and dispatch to queues."""
         try:
@@ -197,19 +210,40 @@ class BybitStreamClient(BaseStreamClient):
         if not isinstance(topic, str):
             return
 
-        queues = self._queues.get(topic)
-        if not queues:
-            return
-
         # Handle ticker topic
         if topic.startswith("tickers."):
             data = payload.get("data")
+            msg_type = payload.get("type")
             if isinstance(data, dict):
-                ticker = self._mapper.map_stream_ticker(cast(ExchangePayload, data))
-                for q in tuple(queues):
-                    q.put_nowait(ticker)
+                data_dict = cast(dict[str, object], data)
+                parts = topic.split(".")
+                symbol = (
+                    parts[1]
+                    if len(parts) >= 2
+                    else str(data_dict.get("symbol", "")).strip().upper()
+                )
+
+                cached = self._ticker_cache.get(symbol)
+                if msg_type == "snapshot" or cached is None:
+                    merged = dict(data_dict)
+                else:
+                    merged = dict(cached)
+                    merged.update(data_dict)
+                self._ticker_cache[symbol] = merged
+
+                queues = self._queues.get(topic)
+                if queues:
+                    ticker = self._mapper.map_stream_ticker(
+                        cast(ExchangePayload, merged)
+                    )
+                    if ticker.last_price > _DECIMAL_ZERO:
+                        for q in tuple(queues):
+                            q.put_nowait(ticker)
 
         elif topic.startswith("kline."):
+            queues = self._queues.get(topic)
+            if not queues:
+                return
             data = payload.get("data")
             if isinstance(data, list) and data:
                 kline_list = cast(list[object], data)
@@ -239,6 +273,7 @@ class BybitStreamClient(BaseStreamClient):
     async def unsubscribe(self, *, symbol: str) -> None:
         """Unsubscribe all topics associated with a symbol."""
         normalized_symbol = symbol.strip().upper()
+        self._ticker_cache.pop(normalized_symbol, None)
         topics_to_remove = [t for t in self._subscriptions if normalized_symbol in t]
         for topic in topics_to_remove:
             self._subscriptions.discard(topic)

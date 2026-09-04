@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Final, cast
@@ -26,10 +27,15 @@ from typing import Final, cast
 # Local Imports
 # =============================================================================
 from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
+from botragram.exceptions import (
+    ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
+    ExchangeOrderRejectedError,
+)
 from botragram.exchanges.base.mapper import ExchangePayload
 from botragram.exchanges.bybit.client import BybitExchangeClient
 from botragram.exchanges.bybit.mapper import BybitExchangeMapper
-from botragram.exchanges.bybit.rest import BybitRestClient
+from botragram.exchanges.bybit.rest import BybitRestClient, BybitRestResponseError
 from botragram.models import Order, Position, Trade
 
 __all__ = [
@@ -48,6 +54,8 @@ _ORDER_REALTIME_ENDPOINT: Final[str] = "/v5/order/realtime"
 _POSITION_LIST_ENDPOINT: Final[str] = "/v5/position/list"
 _SET_LEVERAGE_ENDPOINT: Final[str] = "/v5/position/set-leverage"
 _EXECUTION_LIST_ENDPOINT: Final[str] = "/v5/execution/list"
+_CLOSED_PNL_ENDPOINT: Final[str] = "/v5/position/closed-pnl"
+_INSTRUMENTS_INFO_ENDPOINT: Final[str] = "/v5/market/instruments-info"
 
 
 # =============================================================================
@@ -102,11 +110,20 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         if client_order_id:
             data["orderLinkId"] = client_order_id
 
-        payload = await self._rest.post(
-            _ORDER_CREATE_ENDPOINT,
-            data=data,
-            authenticated=True,
-        )
+        try:
+            payload = await self._rest.post(
+                _ORDER_CREATE_ENDPOINT,
+                data=data,
+                authenticated=True,
+            )
+        except BybitRestResponseError as error:
+            raise ExchangeOrderRejectedError(
+                f"Bybit explicitly rejected the order: {error}"
+            ) from error
+        except (TimeoutError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                f"Bybit order outcome is unknown: {error}"
+            ) from error
 
         order_id = ""
         if isinstance(payload, dict):
@@ -169,11 +186,20 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
             if stop_loss_client_algo_id:
                 data["orderLinkId"] = stop_loss_client_algo_id
 
-            resp = await self._rest.post(
-                _ORDER_CREATE_ENDPOINT,
-                data=data,
-                authenticated=True,
-            )
+            try:
+                resp = await self._rest.post(
+                    _ORDER_CREATE_ENDPOINT,
+                    data=data,
+                    authenticated=True,
+                )
+            except BybitRestResponseError as error:
+                raise ExchangeOrderRejectedError(
+                    f"Bybit protection order was rejected: {error}"
+                ) from error
+            except (TimeoutError, RuntimeError) as error:
+                raise ExchangeOrderOutcomeUnknownError(
+                    f"Bybit protection order outcome is unknown: {error}"
+                ) from error
             order_id = ""
             if isinstance(resp, dict):
                 raw_result = resp.get("result")
@@ -187,7 +213,7 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                     order_id=order_id or "bybit-sl",
                     symbol=normalized_symbol,
                     side=side,
-                    order_type=OrderType.STOP,
+                    order_type=OrderType.STOP_MARKET,
                     status=OrderStatus.NEW,
                     quantity=quantity,
                     executed_quantity=Decimal("0"),
@@ -216,11 +242,20 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
             if take_profit_client_algo_id:
                 tp_data["orderLinkId"] = take_profit_client_algo_id
 
-            resp = await self._rest.post(
-                _ORDER_CREATE_ENDPOINT,
-                data=tp_data,
-                authenticated=True,
-            )
+            try:
+                resp = await self._rest.post(
+                    _ORDER_CREATE_ENDPOINT,
+                    data=tp_data,
+                    authenticated=True,
+                )
+            except BybitRestResponseError as error:
+                raise ExchangeOrderRejectedError(
+                    f"Bybit protection order was rejected: {error}"
+                ) from error
+            except (TimeoutError, RuntimeError) as error:
+                raise ExchangeOrderOutcomeUnknownError(
+                    f"Bybit protection order outcome is unknown: {error}"
+                ) from error
             order_id = ""
             if isinstance(resp, dict):
                 raw_result = resp.get("result")
@@ -234,7 +269,7 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                     order_id=order_id or "bybit-tp",
                     symbol=normalized_symbol,
                     side=side,
-                    order_type=OrderType.TAKE_PROFIT,
+                    order_type=OrderType.TAKE_PROFIT_MARKET,
                     status=OrderStatus.NEW,
                     quantity=quantity,
                     executed_quantity=Decimal("0"),
@@ -344,7 +379,9 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                     if isinstance(first, dict):
                         return self._mapper.map_order(cast(ExchangePayload, first))
 
-        raise ValueError(f"Order {order_id!r} not found for symbol {symbol!r}")
+        raise ExchangeOrderNotFoundError(
+            f"Order {order_id!r} not found for symbol {symbol!r}"
+        )
 
     async def get_order_by_client_order_id(
         self, *, symbol: str, client_order_id: str
@@ -369,7 +406,7 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                     if isinstance(first, dict):
                         return self._mapper.map_order(cast(ExchangePayload, first))
 
-        raise ValueError(
+        raise ExchangeOrderNotFoundError(
             f"Order with client ID {client_order_id!r} not found for symbol {symbol!r}"
         )
 
@@ -381,6 +418,8 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         }
         if symbol is not None:
             params["symbol"] = symbol.strip().upper()
+        else:
+            params["settleCoin"] = "USDT"
 
         payload = await self._rest.get(
             _ORDER_REALTIME_ENDPOINT,
@@ -412,6 +451,8 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         }
         if symbol is not None:
             params["symbol"] = symbol.strip().upper()
+        else:
+            params["settleCoin"] = "USDT"
 
         payload = await self._rest.get(
             _ORDER_REALTIME_ENDPOINT,
@@ -457,7 +498,7 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                     if isinstance(first, dict):
                         return self._mapper.map_order(cast(ExchangePayload, first))
 
-        raise ValueError(
+        raise ExchangeOrderNotFoundError(
             f"Protection order {client_id!r} not found for symbol {symbol!r}"
         )
 
@@ -630,6 +671,50 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                             trade = self._mapper.map_trade(cast(ExchangePayload, item))
                             if trade.order_id == normalized_order_id:
                                 trades.append(trade)
+
+        if trades and any(trade.realized_pnl is None for trade in trades):
+            closed_pnl_payload = await self._rest.get(
+                _CLOSED_PNL_ENDPOINT,
+                params={
+                    "category": "linear",
+                    "symbol": normalized_symbol,
+                    "orderId": normalized_order_id,
+                    "limit": 10,
+                },
+                authenticated=True,
+            )
+            closed_pnl: Decimal | None = None
+            if isinstance(closed_pnl_payload, dict):
+                pnl_result = closed_pnl_payload.get("result")
+                if isinstance(pnl_result, dict):
+                    pnl_list = cast(ExchangePayload, pnl_result).get("list")
+                    if isinstance(pnl_list, list):
+                        for item in cast(list[object], pnl_list):
+                            if isinstance(item, dict):
+                                item_map = cast(ExchangePayload, item)
+                                if (
+                                    str(item_map.get("orderId", "")).strip()
+                                    == normalized_order_id
+                                ):
+                                    raw_pnl = item_map.get("closedPnl")
+                                    if raw_pnl is not None and raw_pnl != "":
+                                        closed_pnl = Decimal(str(raw_pnl))
+                                        break
+            if closed_pnl is not None:
+                total_qty = sum((trade.quantity for trade in trades), Decimal("0"))
+                if total_qty > Decimal("0") and len(trades) > 1:
+                    trades = [
+                        replace(
+                            trade,
+                            realized_pnl=closed_pnl * (trade.quantity / total_qty),
+                        )
+                        for trade in trades
+                    ]
+                else:
+                    trades = [
+                        replace(trade, realized_pnl=closed_pnl) for trade in trades
+                    ]
+
         return tuple(trades)
 
     async def verify_mainnet_readiness(self) -> None:
@@ -644,5 +729,53 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         entry_notional: Decimal,
     ) -> None:
         """Fail closed unless one symbol is safe for a MAINNET entry."""
-        del maximum_leverage, entry_notional
-        await self.get_market_entry_rules(symbol=symbol)
+        del entry_notional
+        if isinstance(maximum_leverage, bool) or maximum_leverage <= 0:
+            raise ValueError("Maximum leverage must be greater than zero")
+
+        normalized_symbol = symbol.strip().upper()
+        payload = await self._rest.get(
+            _INSTRUMENTS_INFO_ENDPOINT,
+            params={"category": "linear", "symbol": normalized_symbol},
+            authenticated=False,
+        )
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"Invalid instruments-info response for {normalized_symbol!r}"
+            )
+
+        raw_result = payload.get("result")
+        if not isinstance(raw_result, dict):
+            raise ValueError(f"No instrument result found for {normalized_symbol!r}")
+
+        inst_list = cast(ExchangePayload, raw_result).get("list")
+        if not isinstance(inst_list, list) or not inst_list:
+            raise ValueError(f"No instrument rules found for {normalized_symbol!r}")
+
+        first = cast(list[object], inst_list)[0]
+        if not isinstance(first, dict):
+            raise ValueError(f"Invalid instrument data for {normalized_symbol!r}")
+
+        first_map = cast(ExchangePayload, first)
+        self._mapper.map_symbol_rules(first_map)
+
+        max_allowed_leverage = maximum_leverage
+        lev_filter = first_map.get("leverageFilter")
+        if isinstance(lev_filter, dict):
+            raw_max = cast(ExchangePayload, lev_filter).get("maxLeverage")
+            if raw_max is not None and str(raw_max).strip() != "":
+                try:
+                    max_allowed_leverage = int(float(str(raw_max)))
+                except ValueError, TypeError:
+                    max_allowed_leverage = maximum_leverage
+
+        target_leverage = max(1, min(maximum_leverage, max_allowed_leverage))
+        await self.set_leverage(symbol=normalized_symbol, leverage=target_leverage)
+        _LOGGER.info(
+            "Bybit symbol leverage verified and aligned: symbol=%s leverage=%dx "
+            "(maximum_allowed=%dx requested=%dx)",
+            normalized_symbol,
+            target_leverage,
+            max_allowed_leverage,
+            maximum_leverage,
+        )

@@ -218,6 +218,15 @@ class LiveFuturesUserDataCache:
                 recent_algo_updates=tuple(self._recent_algo_updates),
             )
 
+    @property
+    def open_position_symbols(self) -> frozenset[str]:
+        """Return symbols of all currently non-zero cached positions."""
+        return frozenset(
+            symbol
+            for symbol, pos in self._positions.items()
+            if pos.quantity != _DECIMAL_ZERO
+        )
+
     def _apply_position_update(
         self,
         *,

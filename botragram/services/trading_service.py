@@ -266,10 +266,23 @@ class TradingService:
         if account_balance_override is not None and account_balance_override <= 0:
             raise ValueError("Account balance override must be greater than zero")
 
+        effective_candle_limit = candle_limit
+        get_minimum = getattr(self.strategy_service, "get_minimum_candles", None)
+        if callable(get_minimum):
+            candidate_minimum = (
+                get_minimum(strategy_type=strategy_type)
+                if strategy_type is not None
+                else get_minimum()
+            )
+            if isinstance(candidate_minimum, int) and not isinstance(
+                candidate_minimum, bool
+            ):
+                effective_candle_limit = max(candle_limit, candidate_minimum)
+
         candles = await self.market_service.get_candles(
             symbol=normalized_symbol,
             interval=interval,
-            limit=candle_limit,
+            limit=effective_candle_limit,
         )
 
         signal = await self.strategy_service.generate_and_save(

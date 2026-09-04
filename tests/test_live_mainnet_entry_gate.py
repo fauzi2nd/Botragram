@@ -16,6 +16,7 @@ from botragram.enums import (
     OrderStatus,
     OrderType,
     SignalType,
+    StrategyType,
     TradeMode,
 )
 from botragram.models import (
@@ -288,3 +289,77 @@ async def _run_wide_spread_test() -> None:
     assert result.reason == "market_reference_rejected"
     assert risk_evaluator.entry_price_override is None
     assert protected_entry.calls == 0
+
+
+def test_single_symbol_live_entry_requests_effective_candle_limit_for_strategy() -> (
+    None
+):
+    """Ensure TradingService requests effective candle limit for strategy."""
+    asyncio.run(_run_effective_candle_limit_test())
+
+
+async def _run_effective_candle_limit_test() -> None:
+    @dataclass(slots=True)
+    class _RecordingMarketData:
+        requested_limit: int = 0
+
+        async def get_candles(
+            self, *, symbol: str, interval: Interval, limit: int
+        ) -> Sequence[Candle]:
+            del symbol, interval
+            self.requested_limit = limit
+            return ()
+
+    @dataclass(slots=True, kw_only=True)
+    class _StrategyWithMinimum:
+        signal: Signal
+
+        def get_minimum_candles(
+            self, *, strategy_type: StrategyType | None = None
+        ) -> int:
+            del strategy_type
+            return 201
+
+        async def generate_and_save(
+            self,
+            *,
+            candles: Sequence[Candle],
+            strategy_type: StrategyType | None = None,
+        ) -> Signal:
+            del candles, strategy_type
+            return self.signal
+
+    signal = _signal()
+    market = _RecordingMarketData()
+    strat = _StrategyWithMinimum(signal=signal)
+    service = TradingService(
+        market_service=market,
+        strategy_service=strat,
+        account_service=_UnusedAccount(),
+        position_service=_UnusedPosition(),
+        order_service=_UnusedOrder(),
+        trading_engine=TradingEngine(risk_engine=RiskEngine(settings=RiskSettings())),
+        live_futures_entry_service=_ProtectedEntry(order=_order()),
+        live_entry_risk_evaluation_service=_RiskEvaluator(
+            evaluation=_risk_evaluation(signal)
+        ),
+        live_executable_quote_provider=_QuoteProvider(
+            quote=ExecutableQuote(
+                symbol="BTCUSDT",
+                bid_price=Decimal("100.9"),
+                ask_price=Decimal("101"),
+                timestamp=_NOW + timedelta(seconds=1),
+            )
+        ),
+        trade_mode=TradeMode.LIVE,
+        utc_now=lambda: _NOW + timedelta(seconds=2),
+    )
+
+    await service.execute(
+        symbol="BTCUSDT",
+        interval=Interval.M15,
+        candle_limit=100,
+        strategy_type=StrategyType.CHOCH_FVG,
+    )
+
+    assert market.requested_limit == 201

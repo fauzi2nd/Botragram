@@ -99,6 +99,11 @@ _STATUS_MAP: Final[Mapping[str, OrderStatus]] = {
     "UNTRIGGERED": OrderStatus.NEW,
     "Triggered": OrderStatus.NEW,
     "TRIGGERED": OrderStatus.NEW,
+    "Deactivated": OrderStatus.CANCELED,
+    "DEACTIVATED": OrderStatus.CANCELED,
+    "PartiallyFilledCanceled": OrderStatus.CANCELED,
+    "PARTIALLYFILLEDCANCELED": OrderStatus.CANCELED,
+    "PARTIALLY_FILLED_CANCELED": OrderStatus.CANCELED,
 }
 
 _POSITION_SIDE_MAP: Final[Mapping[str, PositionSide]] = {
@@ -456,8 +461,13 @@ class BybitFuturesUserDataStream:
                     payload=order_payload,
                     observed_at=observed_at,
                 )
-            except ValueError:
-                _LOGGER.warning("Bybit private stream ignored unsupported order update")
+            except ValueError as error:
+                _LOGGER.warning(
+                    "Bybit private stream ignored unsupported order update: error=%s "
+                    "payload=%s",
+                    error,
+                    order_payload,
+                )
                 continue
         return None
 
@@ -481,8 +491,39 @@ class BybitFuturesUserDataStream:
         if side is None:
             raise ValueError(f"Bybit order update unknown side: {raw_side!r}")
 
+        client_order_id = str(payload.get("orderLinkId", "")).strip() or None
         raw_order_type = str(payload.get("orderType", "")).strip()
-        order_type = _ORDER_TYPE_MAP.get(raw_order_type)
+        stop_order_type = str(payload.get("stopOrderType", "")).strip().upper()
+        trigger_direction = str(payload.get("triggerDirection", "")).strip()
+        is_market = raw_order_type.upper() == "MARKET"
+
+        if stop_order_type in ("STOPLOSS", "STOP_LOSS"):
+            order_type: OrderType | None = (
+                OrderType.STOP_MARKET if is_market else OrderType.STOP
+            )
+        elif stop_order_type in ("TAKEPROFIT", "TAKE_PROFIT"):
+            order_type = (
+                OrderType.TAKE_PROFIT_MARKET if is_market else OrderType.TAKE_PROFIT
+            )
+        elif stop_order_type in ("STOP", "TPSLORDER"):
+            is_tp = False
+            if client_order_id and client_order_id.startswith("btp-"):
+                is_tp = True
+            elif client_order_id and client_order_id.startswith("bsl-"):
+                is_tp = False
+            elif trigger_direction == "1":
+                is_tp = side is OrderSide.SELL
+            elif trigger_direction == "2":
+                is_tp = side is OrderSide.BUY
+
+            if is_tp:
+                order_type = (
+                    OrderType.TAKE_PROFIT_MARKET if is_market else OrderType.TAKE_PROFIT
+                )
+            else:
+                order_type = OrderType.STOP_MARKET if is_market else OrderType.STOP
+        else:
+            order_type = _ORDER_TYPE_MAP.get(raw_order_type)
         if order_type is None:
             raise ValueError(
                 f"Bybit order update unknown order type: {raw_order_type!r}"
