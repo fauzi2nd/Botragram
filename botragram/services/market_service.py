@@ -27,6 +27,7 @@ from botragram.enums import Interval
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.models import Candle, ExecutableQuote, MarketUniverseEntry, Ticker
 from botragram.repositories import CandleRepository
+from botragram.utils.candle_resampler import resample_candles
 
 __all__ = [
     "MarketService",
@@ -174,6 +175,122 @@ class MarketService:
             symbol=self._normalize_symbol(symbol),
             interval=interval,
             limit=limit,
+        )
+
+    async def get_stored_resampled_candles(
+        self,
+        *,
+        symbol: str,
+        target_interval: Interval,
+        limit: int,
+        source_interval: Interval = Interval.M1,
+        closed_only: bool = True,
+        min_candles_per_bucket: int = 1,
+    ) -> Sequence[Candle]:
+        """Return resampled candles on-the-fly from persisted data.
+
+        Args:
+            symbol: Trading pair symbol.
+            target_interval: Destination timeframe.
+            limit: Maximum number of resampled candles to return.
+            source_interval: Base timeframe stored in database (default: 1m).
+            closed_only: Exclude the in-progress forming candle.
+            min_candles_per_bucket: Minimum source candles required per bucket.
+
+        Returns:
+            Aggregated candles ordered from oldest to newest.
+
+        Raises:
+            ValueError: If limit <= 0 or intervals are incompatible.
+        """
+        if limit <= 0:
+            raise ValueError("Candle limit must be greater than zero")
+
+        normalized_symbol = self._normalize_symbol(symbol)
+
+        if target_interval is source_interval:
+            return await self.candle_repository.get_latest(
+                symbol=normalized_symbol,
+                interval=target_interval,
+                limit=limit,
+            )
+
+        multiplier = max(1, target_interval.seconds // source_interval.seconds)
+        source_limit = (limit + 2) * multiplier
+
+        source_candles = await self.candle_repository.get_latest(
+            symbol=normalized_symbol,
+            interval=source_interval,
+            limit=source_limit,
+        )
+        if not source_candles:
+            return ()
+
+        resampled = resample_candles(
+            candles=source_candles,
+            target_interval=target_interval,
+            closed_only=closed_only,
+            min_candles_per_bucket=min_candles_per_bucket,
+        )
+        if len(resampled) > limit:
+            return resampled[-limit:]
+        return resampled
+
+    async def get_stored_resampled_candles_between(
+        self,
+        *,
+        symbol: str,
+        target_interval: Interval,
+        start_time: datetime,
+        end_time: datetime,
+        source_interval: Interval = Interval.M1,
+        closed_only: bool = True,
+        min_candles_per_bucket: int = 1,
+    ) -> Sequence[Candle]:
+        """Return resampled candles within a datetime range using persisted data.
+
+        Args:
+            symbol: Trading pair symbol.
+            target_interval: Destination timeframe.
+            start_time: Inclusive start boundary.
+            end_time: Inclusive end boundary.
+            source_interval: Base timeframe stored in database (default: 1m).
+            closed_only: Exclude the in-progress forming candle.
+            min_candles_per_bucket: Minimum source candles required per bucket.
+
+        Returns:
+            Aggregated candles ordered from oldest to newest.
+
+        Raises:
+            ValueError: If start_time > end_time or intervals are incompatible.
+        """
+        if start_time > end_time:
+            raise ValueError("Candle start time must not be after end time")
+
+        normalized_symbol = self._normalize_symbol(symbol)
+
+        if target_interval is source_interval:
+            return await self.candle_repository.get_between(
+                symbol=normalized_symbol,
+                interval=target_interval,
+                start_time=start_time,
+                end_time=end_time,
+            )
+
+        source_candles = await self.candle_repository.get_between(
+            symbol=normalized_symbol,
+            interval=source_interval,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        if not source_candles:
+            return ()
+
+        return resample_candles(
+            candles=source_candles,
+            target_interval=target_interval,
+            closed_only=closed_only,
+            min_candles_per_bucket=min_candles_per_bucket,
         )
 
     async def stream_ticker(
