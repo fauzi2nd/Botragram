@@ -43,6 +43,7 @@ class RecordingProtectionExchange(BinanceFuturesExchangeClient):
     """Record verified stop replacements without network access."""
 
     __slots__ = (
+        "created_orders",
         "previous_stop_client_algo_ids",
         "stop_client_algo_ids",
         "stop_replacements",
@@ -54,9 +55,37 @@ class RecordingProtectionExchange(BinanceFuturesExchangeClient):
             rest=BinanceRestClient(base_url="https://example.test"),
             mapper=BinanceExchangeMapper(),
         )
+        self.created_orders: list[Order] = []
         self.stop_replacements: list[Decimal] = []
         self.stop_client_algo_ids: list[str | None] = []
         self.previous_stop_client_algo_ids: list[str | None] = []
+
+    async def create_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        order_type: OrderType,
+        quantity: Decimal,
+        price: Decimal | None = None,
+        client_order_id: str | None = None,
+    ) -> Order:
+        order = Order(
+            order_id=f"order-{len(self.created_orders) + 1}",
+            client_order_id=client_order_id,
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            status=OrderStatus.NEW,
+            quantity=quantity,
+            executed_quantity=Decimal("0"),
+            price=price,
+            stop_price=None,
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+        self.created_orders.append(order)
+        return order
 
     async def ensure_stop_loss_order(
         self,
@@ -1032,3 +1061,141 @@ async def test_position_protection_advances_from_breakeven_to_tp_progress() -> N
     assert pos_pullback is not None
     assert pos_pullback.protection_step == 3
     assert pos_pullback.stop_loss == Decimal("101.00")
+
+
+def test_partial_take_profit_validation_rejects_out_of_bounds() -> None:
+    """Reject invalid partial TP ratio or trigger progress outside (0, 1)."""
+    repository = MemoryPositionRepository()
+    exchange = RecordingProtectionExchange()
+
+    with pytest.raises(ValueError, match="Partial TP ratio"):
+        PositionProtectionManager(
+            trade_mode=TradeMode.PAPER,
+            position_repository=repository,
+            exchange_client=exchange,
+            partial_tp_ratio=Decimal("0"),
+        )
+
+    with pytest.raises(ValueError, match="Partial TP ratio"):
+        PositionProtectionManager(
+            trade_mode=TradeMode.PAPER,
+            position_repository=repository,
+            exchange_client=exchange,
+            partial_tp_ratio=Decimal("1.0"),
+        )
+
+    with pytest.raises(ValueError, match="Partial TP trigger progress"):
+        PositionProtectionManager(
+            trade_mode=TradeMode.PAPER,
+            position_repository=repository,
+            exchange_client=exchange,
+            partial_tp_trigger_progress=Decimal("0"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_partial_take_profit_paper_execution() -> None:
+    """Exercise partial exit and breakeven adjustment in paper trading mode."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = RecordingProtectionExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.PAPER,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    # Progress = 0% -> below 50% trigger
+    await manager.on_market_tick(ticker=_ticker(price="102.00", seconds=1))
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.quantity == Decimal("10")
+    assert not pos.partial_tp_executed
+
+    # Price moves to 105.00 -> Progress = 50% -> triggers Partial TP!
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=2))
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.quantity == Decimal("5")  # 50% closed
+    assert pos.partial_tp_executed is True
+    # Stop loss moved to at least Breakeven (100.10)
+    assert pos.stop_loss is not None
+    assert pos.stop_loss >= Decimal("100.10")
+
+    # Subsequent tick at higher price should not trigger partial TP again
+    await manager.on_market_tick(ticker=_ticker(price="106.00", seconds=3))
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.quantity == Decimal("5")  # stays 5
+
+
+@pytest.mark.asyncio
+async def test_partial_take_profit_live_execution() -> None:
+    """Exercise LIVE market order submission and stop order quantity update."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        stop_loss_client_algo_id="bsl-initial00000000000000000000000",
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = RecordingProtectionExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    # Price moves to 105.00 -> Progress = 50%
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=1))
+
+    # Verify market order created to close 5 BTC
+    assert len(exchange.created_orders) == 1
+    market_order = exchange.created_orders[0]
+    assert market_order.symbol == "BTCUSDT"
+    assert market_order.side is OrderSide.SELL
+    assert market_order.order_type is OrderType.MARKET
+    assert market_order.quantity == Decimal("5")
+
+    # Verify stop loss order replacement was submitted for remaining 5 BTC
+    assert len(exchange.stop_replacements) == 1
+    assert (
+        exchange.previous_stop_client_algo_ids[-1]
+        == "bsl-initial00000000000000000000000"
+    )
+
+    # Verify updated position persisted
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.quantity == Decimal("5")
+    assert pos.partial_tp_executed is True

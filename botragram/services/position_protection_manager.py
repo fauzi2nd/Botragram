@@ -62,6 +62,9 @@ class PositionProtectionManager:
     failure_retry_seconds: float = _FAILURE_RETRY_SECONDS
     breakeven_roi_threshold: Decimal = _BREAKEVEN_ROI_THRESHOLD
     breakeven_fee_buffer: Decimal = _BREAKEVEN_FEE_BUFFER
+    partial_tp_enabled: bool = False
+    partial_tp_ratio: Decimal = Decimal("0.50")
+    partial_tp_trigger_progress: Decimal = Decimal("0.50")
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
         default_factory=LivePositionLifecycleCoordinator,
     )
@@ -84,6 +87,14 @@ class PositionProtectionManager:
 
         if self.breakeven_fee_buffer < 0:
             raise ValueError("Breakeven fee buffer must be non-negative")
+
+        if not (_DECIMAL_ZERO < self.partial_tp_ratio < Decimal("1")):
+            raise ValueError("Partial TP ratio must be between 0 and 1 exclusive")
+
+        if not (_DECIMAL_ZERO < self.partial_tp_trigger_progress < Decimal("1")):
+            raise ValueError(
+                "Partial TP trigger progress must be between 0 and 1 exclusive"
+            )
 
     async def on_market_tick(self, *, ticker: Ticker) -> None:
         """Advance profit protection when a stream tick crosses a new step."""
@@ -115,6 +126,18 @@ class PositionProtectionManager:
                 position=position,
                 current_price=ticker.last_price,
             )
+
+            if (
+                self.partial_tp_enabled
+                and not position.partial_tp_executed
+                and progress >= self.partial_tp_trigger_progress
+            ):
+                position = await self._execute_partial_take_profit(
+                    position=position,
+                    ticker=ticker,
+                    progress=progress,
+                )
+
             roi = self._calculate_roi(
                 position=position,
                 current_price=ticker.last_price,
@@ -214,6 +237,148 @@ class PositionProtectionManager:
                 locked_progress * Decimal("100"),
                 final_stop,
             )
+
+    async def _execute_partial_take_profit(
+        self,
+        *,
+        position: Position,
+        ticker: Ticker,
+        progress: Decimal,
+    ) -> Position:
+        """Execute a partial take-profit exit and advance stop-loss to breakeven."""
+        del progress
+        raw_close_qty = position.quantity * self.partial_tp_ratio
+        closing_side = self._closing_side(position.side)
+
+        if self.trade_mode is TradeMode.LIVE:
+            try:
+                rules = await self.exchange_client.get_market_entry_rules(
+                    symbol=position.symbol,
+                )
+                close_qty = (
+                    raw_close_qty // rules.market_quantity_step
+                ) * rules.market_quantity_step
+            except Exception as err:
+                _LOGGER.warning(
+                    "Failed to fetch market entry rules for partial TP on %s: %s",
+                    position.symbol,
+                    err,
+                )
+                return position
+
+            remaining_qty = position.quantity - close_qty
+            if close_qty <= _DECIMAL_ZERO or remaining_qty < rules.market_min_quantity:
+                _LOGGER.warning(
+                    "Partial TP skipped: quantity %s cannot split with ratio %s "
+                    "(min_qty=%s, step=%s)",
+                    position.quantity,
+                    self.partial_tp_ratio,
+                    rules.market_min_quantity,
+                    rules.market_quantity_step,
+                )
+                return position
+
+            client_order_id = f"ptp-{Position.create_stop_loss_client_algo_id()}"
+            try:
+                await self.exchange_client.create_order(
+                    symbol=position.symbol,
+                    side=closing_side,
+                    order_type=OrderType.MARKET,
+                    quantity=close_qty,
+                    client_order_id=client_order_id,
+                )
+            except Exception as err:
+                _LOGGER.error(
+                    "Failed to execute LIVE partial TP order for %s: %s",
+                    position.symbol,
+                    err,
+                )
+                self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
+                return position
+
+            be_stop = self._calculate_stop_loss(
+                position=position,
+                step=1,
+                breakeven_fee_buffer=self.breakeven_fee_buffer,
+            )
+            try:
+                final_stop = await self._normalize_live_replacement_stop(
+                    position=position,
+                    raw_stop=be_stop,
+                )
+            except VenueRuleValidationError:
+                final_stop = be_stop
+
+            new_stop = (
+                final_stop
+                if self._is_tighter_stop(position=position, replacement_stop=final_stop)
+                else position.stop_loss
+            )
+
+            new_stop_id = Position.create_stop_loss_client_algo_id()
+            if new_stop is not None:
+                try:
+                    await self.exchange_client.ensure_stop_loss_order(
+                        symbol=position.symbol,
+                        side=closing_side,
+                        quantity=remaining_qty,
+                        stop_loss=new_stop,
+                        client_algo_id=new_stop_id,
+                        previous_client_algo_id=position.stop_loss_client_algo_id,
+                    )
+                except Exception as err:
+                    _LOGGER.warning(
+                        "Failed to update LIVE stop loss after partial TP for %s: %s",
+                        position.symbol,
+                        err,
+                    )
+
+            updated_position = replace(
+                position,
+                quantity=remaining_qty,
+                current_price=ticker.last_price,
+                stop_loss=new_stop,
+                stop_loss_client_algo_id=new_stop_id,
+                protection_step=max(position.protection_step, 1),
+                partial_tp_executed=True,
+                updated_at=ticker.timestamp,
+            )
+        else:
+            close_qty = (position.quantity * self.partial_tp_ratio).normalize()
+            remaining_qty = position.quantity - close_qty
+            be_stop = self._calculate_stop_loss(
+                position=position,
+                step=1,
+                breakeven_fee_buffer=self.breakeven_fee_buffer,
+            )
+            new_stop = (
+                be_stop
+                if self._is_tighter_stop(position=position, replacement_stop=be_stop)
+                else position.stop_loss
+            )
+            updated_position = replace(
+                position,
+                quantity=remaining_qty,
+                current_price=ticker.last_price,
+                stop_loss=new_stop,
+                protection_step=max(position.protection_step, 1),
+                partial_tp_executed=True,
+                updated_at=ticker.timestamp,
+            )
+
+        await self.position_repository.update(position=updated_position)
+        self._cached_position = updated_position
+
+        _LOGGER.info(
+            "Partial take-profit executed: mode=%s symbol=%s closed_qty=%s "
+            "remaining_qty=%s stop_loss=%s",
+            self.trade_mode.value,
+            position.symbol,
+            close_qty,
+            remaining_qty,
+            updated_position.stop_loss,
+        )
+        return updated_position
 
     async def _resume_pending_stop_replacement(
         self,

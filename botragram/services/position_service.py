@@ -184,6 +184,10 @@ class PositionService:
                 exchange_position.entry_client_order_id
                 or stored_position.entry_client_order_id
             ),
+            partial_tp_executed=(
+                exchange_position.partial_tp_executed
+                or stored_position.partial_tp_executed
+            ),
         )
 
     async def get(

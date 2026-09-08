@@ -64,6 +64,11 @@ class RiskSettings:
     ema_cross_stop_loss_pct: Decimal = Decimal("0.02")
     ema_cross_take_profit_pct: Decimal = Decimal("0.04")
 
+    # Partial Take Profit
+    partial_tp_enabled: bool = False
+    partial_tp_ratio: Decimal = Decimal("0.50")
+    partial_tp_trigger_progress: Decimal = Decimal("0.50")
+
     def __post_init__(self) -> None:
         """Validate global and strategy-specific risk ratios."""
         ratios = (
@@ -124,3 +129,18 @@ class RiskSettings:
 
         if self.ema_cross_take_profit_pct <= self.ema_cross_stop_loss_pct:
             raise ValueError("EMA cross take-profit must exceed EMA cross stop-loss")
+
+        if self.partial_tp_enabled:
+            if not self.partial_tp_ratio.is_finite() or not (
+                Decimal("0") < self.partial_tp_ratio < Decimal("1")
+            ):
+                raise ValueError(
+                    "Partial take-profit ratio must be strictly between 0 and 1"
+                )
+            if not self.partial_tp_trigger_progress.is_finite() or not (
+                Decimal("0") < self.partial_tp_trigger_progress < Decimal("1")
+            ):
+                raise ValueError(
+                    "Partial take-profit trigger progress must be "
+                    "strictly between 0 and 1"
+                )

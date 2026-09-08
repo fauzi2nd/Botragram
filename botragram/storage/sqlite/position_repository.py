@@ -67,10 +67,11 @@ INSERT INTO positions (
     pending_stop_loss,
     pending_stop_loss_client_algo_id,
     pending_protection_step,
-    entry_client_order_id
+    entry_client_order_id,
+    partial_tp_executed
 )
 VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT (
     symbol
@@ -94,7 +95,8 @@ DO UPDATE SET
     pending_stop_loss = excluded.pending_stop_loss,
     pending_stop_loss_client_algo_id = excluded.pending_stop_loss_client_algo_id,
     pending_protection_step = excluded.pending_protection_step,
-    entry_client_order_id = excluded.entry_client_order_id;
+    entry_client_order_id = excluded.entry_client_order_id,
+    partial_tp_executed = excluded.partial_tp_executed;
 """
 
 _UPDATE_POSITION_SQL: Final[str] = """
@@ -118,7 +120,8 @@ SET
     pending_stop_loss = ?,
     pending_stop_loss_client_algo_id = ?,
     pending_protection_step = ?,
-    entry_client_order_id = ?
+    entry_client_order_id = ?,
+    partial_tp_executed = ?
 WHERE symbol = ?;
 """
 
@@ -143,7 +146,8 @@ SELECT
     pending_stop_loss,
     pending_stop_loss_client_algo_id,
     pending_protection_step,
-    entry_client_order_id
+    entry_client_order_id,
+    partial_tp_executed
 FROM positions
 """
 
@@ -223,6 +227,7 @@ type PositionParameters = tuple[
     str | None,
     int,
     str | None,
+    int,
 ]
 
 type PositionUpdateParameters = tuple[
@@ -245,6 +250,7 @@ type PositionUpdateParameters = tuple[
     str | None,
     int,
     str | None,
+    int,
     str,
 ]
 
@@ -438,6 +444,7 @@ class SQLitePositionRepository(PositionRepository):
             position.pending_stop_loss_client_algo_id,
             position.pending_protection_step,
             position.entry_client_order_id,
+            1 if position.partial_tp_executed else 0,
         )
 
     @classmethod
@@ -476,6 +483,7 @@ class SQLitePositionRepository(PositionRepository):
             position.pending_stop_loss_client_algo_id,
             position.pending_protection_step,
             position.entry_client_order_id,
+            1 if position.partial_tp_executed else 0,
             cls._normalize_symbol(position.symbol),
         )
 
@@ -569,6 +577,12 @@ class SQLitePositionRepository(PositionRepository):
             entry_client_order_id=cls._get_optional_string(
                 row,
                 column="entry_client_order_id",
+            ),
+            partial_tp_executed=bool(
+                cls._get_integer(
+                    row,
+                    column="partial_tp_executed",
+                )
             ),
         )
 

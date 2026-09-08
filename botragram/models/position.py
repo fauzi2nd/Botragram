@@ -72,6 +72,7 @@ class Position:
     pending_stop_loss_client_algo_id: str | None = None
     pending_protection_step: int = 0
     entry_client_order_id: str | None = None
+    partial_tp_executed: bool = False
 
     def __post_init__(self) -> None:
         """Validate distinct current and pending protection identities."""
