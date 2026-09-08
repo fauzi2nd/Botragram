@@ -55,6 +55,10 @@ class FakeMarketService:
     failing_symbol: str | None = None
     block_candles: bool = False
     expected_interval: Interval = Interval.M15
+    allowed_intervals: tuple[Interval, ...] | None = None
+    candles_by_symbol_and_interval: dict[tuple[str, Interval], tuple[Candle, ...]] = (
+        field(default_factory=dict[tuple[str, Interval], tuple[Candle, ...]])
+    )
     requested_symbols: list[str] = field(default_factory=list[str])
     requested_limits: list[int] = field(default_factory=list[int])
     persist_values: list[bool] = field(default_factory=list[bool])
@@ -82,7 +86,10 @@ class FakeMarketService:
         as_of: datetime | None = None,
     ) -> tuple[Candle, ...]:
         """Return deterministic candles for one symbol."""
-        assert interval is self.expected_interval
+        if self.allowed_intervals is not None:
+            assert interval in self.allowed_intervals
+        else:
+            assert interval is self.expected_interval
         self.requested_symbols.append(symbol)
         self.requested_limits.append(limit)
         self.persist_values.append(persist)
@@ -104,6 +111,8 @@ class FakeMarketService:
                 await asyncio.Event().wait()
 
             await asyncio.sleep(0)
+            if (symbol, interval) in self.candles_by_symbol_and_interval:
+                return self.candles_by_symbol_and_interval[(symbol, interval)]
             return self.candles_by_symbol.get(
                 symbol,
                 (_create_candle(symbol=symbol),),
@@ -2136,3 +2145,126 @@ async def _run_candle_pacing_delay_test() -> None:
         )
 
     assert sleep_calls == [0.05, 0.05]
+
+
+def test_discovery_mtf_trend_filter_rejects_counter_trend_signal() -> None:
+    """Verify counter-trend signals are rejected when MTF confirmation is active."""
+    asyncio.run(_run_discovery_mtf_trend_filter_test())
+
+
+async def _run_discovery_mtf_trend_filter_test() -> None:
+    # 1h Bearish candles for BTCUSDT: prices falling from 200 to 140
+    btc_1h_candles = tuple(
+        _create_candle(
+            symbol="BTCUSDT",
+            interval=Interval.H1,
+            close_time=_NOW - timedelta(hours=20 - i),
+            open_time=_NOW - timedelta(hours=21 - i),
+            close_price=Decimal("200") - Decimal(i * 3),
+        )
+        for i in range(20)
+    )
+
+    # 1h Bullish candles for ETHUSDT: prices rising from 100 to 160
+    eth_1h_candles = tuple(
+        _create_candle(
+            symbol="ETHUSDT",
+            interval=Interval.H1,
+            close_time=_NOW - timedelta(hours=20 - i),
+            open_time=_NOW - timedelta(hours=21 - i),
+            close_price=Decimal("100") + Decimal(i * 3),
+        )
+        for i in range(20)
+    )
+
+    # 15m execution candles
+    btc_15m = (
+        _create_candle(
+            symbol="BTCUSDT",
+            interval=Interval.M15,
+            open_time=_NOW - timedelta(minutes=15),
+            close_time=_NOW,
+        ),
+    )
+    eth_15m = (
+        _create_candle(
+            symbol="ETHUSDT",
+            interval=Interval.M15,
+            open_time=_NOW - timedelta(minutes=15),
+            close_time=_NOW,
+        ),
+    )
+
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT", "ETHUSDT"),
+        allowed_intervals=(Interval.M15, Interval.H1),
+        candles_by_symbol_and_interval={
+            ("BTCUSDT", Interval.M15): btc_15m,
+            ("ETHUSDT", Interval.M15): eth_15m,
+            ("BTCUSDT", Interval.H1): btc_1h_candles,
+            ("ETHUSDT", Interval.H1): eth_1h_candles,
+        },
+    )
+
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.BUY,
+                confidence="0.9",
+                generated_at=_NOW,
+                strategy_name=StrategyType.EMA_CROSS.value,
+            ),
+            "ETHUSDT": _create_signal(
+                symbol="ETHUSDT",
+                signal_type=SignalType.BUY,
+                confidence="0.8",
+                generated_at=_NOW,
+                strategy_name=StrategyType.EMA_CROSS.value,
+            ),
+        },
+        minimum_candles_by_strategy={
+            StrategyType.EMA_CROSS: 1,
+        },
+    )
+
+    # With MTF enabled: BTC is rejected (BUY against Bearish 1h),
+    # ETH is accepted (BUY with Bullish 1h)
+    service_mtf = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        mtf_confirmation_enabled=True,
+        mtf_interval=Interval.H1,
+        mtf_ema_period=10,
+        utc_now=lambda: _NOW,
+    )
+
+    signals_mtf = await service_mtf.discover_symbols(
+        symbols=("BTCUSDT", "ETHUSDT"),
+        interval=Interval.M15,
+        candle_limit=1,
+        top_n=2,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    assert len(signals_mtf) == 1
+    assert signals_mtf[0].symbol == "ETHUSDT"
+
+    # With MTF disabled: both BTC and ETH are accepted
+    service_plain = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        mtf_confirmation_enabled=False,
+        utc_now=lambda: _NOW,
+    )
+
+    signals_plain = await service_plain.discover_symbols(
+        symbols=("BTCUSDT", "ETHUSDT"),
+        interval=Interval.M15,
+        candle_limit=1,
+        top_n=2,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    assert len(signals_plain) == 2
+    assert {s.symbol for s in signals_plain} == {"BTCUSDT", "ETHUSDT"}

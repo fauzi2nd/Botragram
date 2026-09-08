@@ -29,6 +29,7 @@ from typing import Final, Protocol
 # =============================================================================
 from botragram.constants import DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
 from botragram.enums import Interval, SignalType, StrategyType
+from botragram.indicators.trend import evaluate_mtf_trend
 from botragram.models import Candle, Signal
 from botragram.utils.validator import validate_symbol
 
@@ -117,6 +118,9 @@ class OpportunityDiscoveryService:
     min_confidence: Decimal = Decimal("0")
     candle_request_delay_seconds: float = DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
     utc_now: Callable[[], datetime] = _utc_now
+    mtf_confirmation_enabled: bool = False
+    mtf_interval: Interval = Interval.H1
+    mtf_ema_period: int = 50
 
     async def discover(
         self,
@@ -342,6 +346,54 @@ class OpportunityDiscoveryService:
                 signal.signal_type in _ACTIONABLE_ENTRY_SIGNAL_TYPES
                 and signal.confidence >= self.min_confidence
             ):
+                if self.mtf_confirmation_enabled:
+                    mtf_candles = await self.market_service.get_candles(
+                        symbol=symbol,
+                        interval=self.mtf_interval,
+                        limit=self.mtf_ema_period + 5,
+                        persist=False,
+                        prefer_stored=True,
+                        as_of=as_of,
+                    )
+                    closed_mtf_candles = self._select_closed_candles(
+                        candles=mtf_candles,
+                        as_of=as_of,
+                        candle_limit=self.mtf_ema_period + 1,
+                        require_strict_sequence=False,
+                    )
+                    trend_result = evaluate_mtf_trend(
+                        closed_mtf_candles,
+                        ema_period=self.mtf_ema_period,
+                    )
+                    if (
+                        signal.signal_type is SignalType.BUY
+                        and not trend_result.is_aligned_with_buy
+                    ):
+                        _LOGGER.info(
+                            "MTF trend filter rejected BUY signal for %s: "
+                            "higher_tf=%s trend=%s close=%s ema=%s",
+                            symbol,
+                            self.mtf_interval.value,
+                            trend_result.direction.value,
+                            trend_result.current_close,
+                            trend_result.ema_value,
+                        )
+                        continue
+                    if (
+                        signal.signal_type is SignalType.SELL
+                        and not trend_result.is_aligned_with_sell
+                    ):
+                        _LOGGER.info(
+                            "MTF trend filter rejected SELL signal for %s: "
+                            "higher_tf=%s trend=%s close=%s ema=%s",
+                            symbol,
+                            self.mtf_interval.value,
+                            trend_result.direction.value,
+                            trend_result.current_close,
+                            trend_result.ema_value,
+                        )
+                        continue
+
                 actionable_signals.append(signal)
 
         return tuple(

@@ -44,6 +44,9 @@ class StrategySettings:
     strategy_type: StrategyType = StrategyType.EMA_CROSS
     invert_signals: bool = False
     min_signal_confidence: Decimal = Decimal("0.0")
+    mtf_confirmation_enabled: bool = False
+    mtf_interval: Interval = Interval.H1
+    mtf_ema_period: int = 50
 
     @property
     def default_interval(self) -> Interval:
