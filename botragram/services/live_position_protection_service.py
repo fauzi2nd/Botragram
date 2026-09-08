@@ -728,15 +728,20 @@ class LivePositionProtectionService:
         """Reject a queried algo order whose durable leg identity does not match."""
         expected_trigger = (
             position.stop_loss
-            if order_type is OrderType.STOP_MARKET
+            if order_type in (OrderType.STOP_MARKET, OrderType.STOP)
             else position.take_profit
+        )
+        expected_types = (
+            {OrderType.STOP_MARKET, OrderType.STOP}
+            if order_type in (OrderType.STOP_MARKET, OrderType.STOP)
+            else {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
         )
         if (
             order.client_order_id != client_id
             or order.symbol.upper() != position.symbol.upper()
             or order.side
             is not LivePositionProtectionService._closing_side(position.side)
-            or order.order_type is not order_type
+            or order.order_type not in expected_types
             or order.quantity < position.quantity
             or order.stop_price is None
             or expected_trigger is None

@@ -86,6 +86,7 @@ from botragram.telegram.keyboards import (
     get_stream_keyboard,
     get_trading_menu_keyboard,
 )
+from botragram.telegram.leverage_commands import leverage_command
 from botragram.telegram.messages import (
     get_balance_message,
     get_exchange_message,
@@ -1119,6 +1120,8 @@ async def menu_message_handler(
         await pause_bot_command(update, context)
     elif action == MENU_RISK_LIMITS:
         await risk_limits_command(update, context)
+    elif action in {"⚡ Leverage", "Leverage"}:
+        await leverage_command(update, context)
     elif action == MENU_TRADING_MODE:
         await trading_mode_command(update, context)
     elif action == MENU_TEST:

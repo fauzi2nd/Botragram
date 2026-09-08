@@ -71,6 +71,7 @@ class RiskEngine:
         account_balance: Decimal,
         current_drawdown_pct: Decimal = _DECIMAL_ZERO,
         max_position_size_usdt: Decimal | None = None,
+        leverage: int | None = None,
     ) -> RiskResult:
         """Evaluate a signal against configured and optional runtime limits."""
         self._validate_inputs(
@@ -80,6 +81,13 @@ class RiskEngine:
         )
         effective_max_position_size = self._resolve_max_position_size(
             runtime_limit=max_position_size_usdt,
+        )
+        effective_leverage = (
+            leverage
+            if (
+                leverage is not None and not isinstance(leverage, bool) and leverage > 0
+            )
+            else self.settings.leverage
         )
 
         if signal.signal_type is SignalType.HOLD:
@@ -137,7 +145,7 @@ class RiskEngine:
             position=PositionSize(
                 quantity=quantity,
                 notional=notional,
-                leverage=self.settings.leverage,
+                leverage=effective_leverage,
             ),
             metrics=RiskMetrics(
                 entry_price=signal.price,

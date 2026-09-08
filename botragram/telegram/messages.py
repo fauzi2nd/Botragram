@@ -56,6 +56,7 @@ __all__ = [
     "get_history_message",
     "get_live_runtime_health_message",
     "get_interval_message",
+    "get_leverage_message",
     "get_market_message",
     "get_market_overview_message",
     "get_market_search_prompt_message",
@@ -1058,6 +1059,8 @@ def get_risk_limits_message(
     max_open_positions_ceiling: int,
     max_position_size_usdt_ceiling: Decimal,
     is_paused: bool,
+    current_leverage: int = 1,
+    leverage_ceiling: int = 50,
 ) -> str:
     """Return formatted autonomous LIVE risk limits status and controls."""
     updated_str = limits.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1073,10 +1076,12 @@ def get_risk_limits_message(
         f"(Ceiling: {max_open_positions_ceiling})\n"
         f"• <b>Max Position Size:</b> <b>{limits.max_position_size_usdt} USDT</b> "
         f"(Ceiling: {max_position_size_usdt_ceiling} USDT)\n"
+        f"• <b>Leverage:</b> <b>{current_leverage}x</b> "
+        f"(Ceiling: {leverage_ceiling}x)\n"
         f"• <b>Source:</b> <code>{limits.updated_by}</code>\n"
         f"• <b>Updated:</b> <code>{updated_str}</code>\n\n"
         "<i>Gunakan tombol di bawah atau perintah: "
-        "<code>/setrisklimits &lt;pos&gt; &lt;size&gt;</code></i>"
+        "<code>/setrisklimits &lt;pos&gt; &lt;size&gt; [leverage]</code></i>"
     )
 
 
@@ -1108,4 +1113,27 @@ def get_tpsl_ratio_message(
         f"• <b>Risk : Reward Ratio:</b> <b>1 : {rr_ratio:.2f}</b>\n\n"
         "<i>Gunakan tombol di bawah untuk fine-tuning atau memilih preset RR "
         "(saat PAUSED).</i>"
+    )
+
+
+def get_leverage_message(
+    *,
+    current_leverage: int,
+    max_leverage: int = 100,
+    is_paused: bool,
+) -> str:
+    """Return formatted futures leverage status and tuning controls."""
+    pause_status = (
+        "🟢 <b>PAUSED (Bisa diubah)</b>"
+        if is_paused
+        else "🔴 <b>RUNNING (Jeda bot untuk mengubah)</b>"
+    )
+    return (
+        "⚡ <b>Pengaturan Leverage Futures</b>\n\n"
+        f"• <b>Status:</b> {pause_status}\n"
+        f"• <b>Leverage Aktif:</b> <b>{current_leverage}x</b>\n"
+        f"• <b>Maksimum yang Didukung:</b> <b>{max_leverage}x</b>\n\n"
+        "<i>Gunakan tombol di bawah untuk fine-tuning atau memilih preset leverage "
+        "(saat PAUSED), atau gunakan perintah:</i>\n"
+        "<code>/setleverage &lt;angka 1-100&gt;</code>"
     )

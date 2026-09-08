@@ -66,6 +66,7 @@ from botragram.telegram.keyboards import (
     get_execution_policy_confirmation_keyboard,
     get_execution_policy_keyboard,
     get_interval_keyboard,
+    get_leverage_keyboard,
     get_main_menu_keyboard,
     get_market_keyboard,
     get_market_search_keyboard,
@@ -82,6 +83,7 @@ from botragram.telegram.messages import (
     get_execution_authorization_outcome_message,
     get_history_message,
     get_interval_message,
+    get_leverage_message,
     get_market_message,
     get_market_search_prompt_message,
     get_orders_message,
@@ -974,9 +976,12 @@ async def handle_callback_query(
             "cb_risk_pos_dec",
             "cb_risk_size_inc",
             "cb_risk_size_dec",
+            "cb_risk_lev_inc",
+            "cb_risk_lev_dec",
         }
         or data.startswith("cb_risk_set_pos_")
         or data.startswith("cb_risk_set_size_")
+        or data.startswith("cb_risk_set_lev_")
     ):
         risk_limit_service = bot_context.runtime_risk_limit_service
         if risk_limit_service is None:
@@ -998,6 +1003,8 @@ async def handle_callback_query(
         current_limits = risk_limit_service.get_snapshot()
         control = bot_context.runtime_control
         is_paused = control.is_paused if control is not None else False
+        current_lev = control.leverage if control is not None else bot_context.leverage
+        lev_ceiling = bot_context.leverage_ceiling
 
         if data != "cb_risk_limits":
             if not is_paused:
@@ -1013,6 +1020,7 @@ async def handle_callback_query(
                 new_size = current_limits.max_position_size_usdt
                 ceil_pos = risk_limit_service.max_open_positions_ceiling
                 ceil_size = risk_limit_service.max_position_size_usdt_ceiling
+                new_lev = current_lev
 
                 if data == "cb_risk_pos_inc":
                     new_pos = min(new_pos + 1, ceil_pos)
@@ -1022,6 +1030,10 @@ async def handle_callback_query(
                     new_size = min(new_size + Decimal("5"), ceil_size)
                 elif data == "cb_risk_size_dec":
                     new_size = max(new_size - Decimal("5"), Decimal("5"))
+                elif data == "cb_risk_lev_inc":
+                    new_lev = min(current_lev + 5, lev_ceiling)
+                elif data == "cb_risk_lev_dec":
+                    new_lev = max(current_lev - 5, 1)
                 elif data.startswith("cb_risk_set_pos_"):
                     try:
                         val = int(data.removeprefix("cb_risk_set_pos_"))
@@ -1034,39 +1046,64 @@ async def handle_callback_query(
                         new_size = min(max(val_dec, Decimal("5")), ceil_size)
                     except ValueError, InvalidOperation:
                         pass
+                elif data.startswith("cb_risk_set_lev_"):
+                    try:
+                        val_lev = int(data.removeprefix("cb_risk_set_lev_"))
+                        new_lev = min(max(val_lev, 1), lev_ceiling)
+                    except ValueError:
+                        pass
 
                 user = update.effective_user
                 actor_id = user.id if user is not None else 0
-                try:
-                    current_limits = await risk_limit_service.update(
-                        max_open_positions=new_pos,
-                        max_position_size_usdt=new_size,
-                        updated_by=f"telegram:{actor_id}",
-                    )
+
+                if new_lev != current_lev and control is not None:
                     try:
-                        await query.answer(
-                            f"✅ Limits: {new_pos} Pos | {new_size} USDT",
-                            show_alert=False,
+                        control.select_leverage(new_lev)
+                        bot_context.leverage = new_lev
+                        current_lev = new_lev
+                    except Exception as lev_err:
+                        _LOGGER.warning("Leverage selection failed: %s", lev_err)
+
+                if (
+                    new_pos != current_limits.max_open_positions
+                    or new_size != current_limits.max_position_size_usdt
+                ):
+                    try:
+                        current_limits = await risk_limit_service.update(
+                            max_open_positions=new_pos,
+                            max_position_size_usdt=new_size,
+                            updated_by=f"telegram:{actor_id}",
                         )
-                    except Exception:
-                        pass
-                except (RuntimeError, ValueError) as error:
-                    try:
-                        await query.answer(f"⚠️ {error}", show_alert=True)
-                    except Exception:
-                        pass
+                    except (RuntimeError, ValueError) as error:
+                        try:
+                            await query.answer(f"⚠️ {error}", show_alert=True)
+                        except Exception:
+                            pass
+
+                try:
+                    toast = (
+                        f"✅ Limits: {new_pos} Pos | {new_size} USDT "
+                        f"| {current_lev}x Lev"
+                    )
+                    await query.answer(toast, show_alert=False)
+                except Exception:
+                    pass
 
         msg = get_risk_limits_message(
             limits=current_limits,
             max_open_positions_ceiling=risk_limit_service.max_open_positions_ceiling,
             max_position_size_usdt_ceiling=risk_limit_service.max_position_size_usdt_ceiling,
             is_paused=is_paused,
+            current_leverage=current_lev,
+            leverage_ceiling=lev_ceiling,
         )
         keyboard = get_risk_limits_keyboard(
             current_positions=current_limits.max_open_positions,
             current_size_usdt=current_limits.max_position_size_usdt,
             max_open_positions_ceiling=risk_limit_service.max_open_positions_ceiling,
             max_position_size_usdt_ceiling=risk_limit_service.max_position_size_usdt_ceiling,
+            current_leverage=current_lev,
+            leverage_ceiling=lev_ceiling,
         )
         await query.edit_message_text(
             msg,
@@ -1126,6 +1163,68 @@ async def handle_callback_query(
         keyboard = get_tpsl_ratio_keyboard(
             stop_loss_pct=bot_context.stop_loss_pct,
             take_profit_pct=bot_context.take_profit_pct,
+        )
+        await query.edit_message_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=keyboard,
+        )
+    elif data == "cb_leverage_menu" or data.startswith("cb_leverage_"):
+        control = bot_context.runtime_control
+        is_paused = control.is_paused if control is not None else False
+
+        if data != "cb_leverage_menu":
+            if not is_paused:
+                try:
+                    await query.answer(
+                        "⚠️ Pause trading terlebih dahulu sebelum mengubah leverage!",
+                        show_alert=True,
+                    )
+                except Exception:
+                    pass
+            else:
+                current_lev = bot_context.leverage
+                new_lev = current_lev
+                if data == "cb_leverage_inc_1":
+                    new_lev = min(current_lev + 1, 100)
+                elif data == "cb_leverage_dec_1":
+                    new_lev = max(current_lev - 1, 1)
+                elif data == "cb_leverage_inc_5":
+                    new_lev = min(current_lev + 5, 100)
+                elif data == "cb_leverage_dec_5":
+                    new_lev = max(current_lev - 5, 1)
+                elif data.startswith("cb_leverage_set_"):
+                    try:
+                        raw_val = int(data.removeprefix("cb_leverage_set_"))
+                        new_lev = min(max(raw_val, 1), 100)
+                    except ValueError:
+                        new_lev = current_lev
+
+                if control is not None:
+                    try:
+                        control.select_leverage(new_lev)
+                    except (ValueError, RuntimeError) as error:
+                        try:
+                            await query.answer(f"⚠️ {error}", show_alert=True)
+                        except Exception:
+                            pass
+                bot_context.leverage = new_lev
+                try:
+                    await query.answer(
+                        f"✅ Leverage diatur: {new_lev}x",
+                        show_alert=False,
+                    )
+                except Exception:
+                    pass
+
+        msg = get_leverage_message(
+            current_leverage=bot_context.leverage,
+            max_leverage=100,
+            is_paused=is_paused,
+        )
+        keyboard = get_leverage_keyboard(
+            current_leverage=bot_context.leverage,
+            max_leverage=100,
         )
         await query.edit_message_text(
             msg,

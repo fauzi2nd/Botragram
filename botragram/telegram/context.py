@@ -224,6 +224,15 @@ class BotRuntimeControl(Protocol):
         """Select a strategy while paused."""
         ...
 
+    @property
+    def leverage(self) -> int:
+        """Return the leverage selected for future cycles."""
+        ...
+
+    def select_leverage(self, leverage: int) -> bool:
+        """Select leverage while paused."""
+        ...
+
     def select_interval(self, interval: Interval) -> bool:
         """Select a candle interval while paused."""
         ...
@@ -357,6 +366,8 @@ class BotContext:
     exchange_type: str = "BINANCE"
     last_price: Decimal = Decimal("0")
     positions: tuple[Position, ...] = ()
+    leverage: int = 1
+    leverage_ceiling: int = 50
     stop_loss_pct: Decimal = Decimal("0.01")
     take_profit_pct: Decimal = Decimal("0.02")
     query_provider: BotQueryProvider | None = None

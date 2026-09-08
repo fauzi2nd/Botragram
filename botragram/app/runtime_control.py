@@ -40,12 +40,14 @@ class TradingRuntimeControl:
     symbol: str = "BTCUSDT"
     interval: Interval = Interval.M15
     strategy_type: StrategyType = StrategyType.EMA_CROSS
+    leverage: int = 1
     stream_enabled: bool = False
     _exchange_confirmed: bool = field(default=False, init=False, repr=False)
     _market_type_confirmed: bool = field(default=False, init=False, repr=False)
     _symbol_confirmed: bool = field(default=False, init=False, repr=False)
     _interval_confirmed: bool = field(default=False, init=False, repr=False)
     _strategy_confirmed: bool = field(default=False, init=False, repr=False)
+    _leverage_confirmed: bool = field(default=False, init=False, repr=False)
     _position_protection_ready: bool = field(default=True, init=False, repr=False)
     _cycle_in_progress: bool = field(default=False, init=False, repr=False)
     _risk_limit_change_in_progress: bool = field(
@@ -72,6 +74,11 @@ class TradingRuntimeControl:
         repr=False,
     )
     _strategy_selector: Callable[[StrategyType], None] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _leverage_selector: Callable[[int], None] | None = field(
         default=None,
         init=False,
         repr=False,
@@ -365,6 +372,23 @@ class TradingRuntimeControl:
         self.strategy_type = strategy_type
         return True
 
+    def select_leverage(self, leverage: int) -> bool:
+        """Select and apply leverage used by future cycles while paused."""
+        if isinstance(leverage, bool) or leverage <= 0:
+            raise ValueError("Leverage must be greater than zero")
+        self._require_paused_configuration()
+        self._leverage_confirmed = True
+
+        if leverage == self.leverage:
+            return False
+
+        selector = self._leverage_selector
+        if selector is not None:
+            selector(leverage)
+
+        self.leverage = leverage
+        return True
+
     def get_missing_startup_requirements(self) -> tuple[str, ...]:
         """Return setup items that still prevent Telegram from starting trading."""
         missing = list(self.get_missing_configuration_requirements())
@@ -437,6 +461,13 @@ class TradingRuntimeControl:
     ) -> None:
         """Bind the application callback that atomically replaces a strategy."""
         self._strategy_selector = selector
+
+    def bind_leverage_selector(
+        self,
+        selector: Callable[[int], None],
+    ) -> None:
+        """Bind the application callback that persists and applies leverage."""
+        self._leverage_selector = selector
 
     def set_stream_enabled(self, enabled: bool) -> bool:
         """Record whether a real market subscription is active."""

@@ -55,6 +55,7 @@ from botragram.telegram.keyboards import (
     get_execution_authorization_keyboard,
     get_execution_policy_keyboard,
     get_interval_keyboard,
+    get_leverage_keyboard,
     get_main_menu_keyboard,
     get_market_keyboard,
     get_status_dashboard_keyboard,
@@ -66,6 +67,7 @@ from botragram.telegram.messages import (
     get_exchange_message,
     get_execution_authorization_message,
     get_interval_message,
+    get_leverage_message,
     get_market_message,
     get_orders_message,
     get_paper_entry_message,
@@ -102,6 +104,8 @@ def test_public_bot_command_registry_is_unique_and_complete() -> None:
         "closeandswitch",
         "confirmexit",
         "cancelexit",
+        "leverage",
+        "setleverage",
     } <= set(names)
 
 
@@ -615,3 +619,43 @@ def test_trading_menu_keyboard_sync_with_pause_state() -> None:
     }
     assert MENU_PAUSE in running_labels
     assert MENU_START not in running_labels
+
+
+def test_leverage_messages_and_keyboard() -> None:
+    """Verify futures leverage formatting, keyboards, and dashboard integration."""
+    paused_msg = get_leverage_message(
+        current_leverage=5, max_leverage=100, is_paused=True
+    )
+    assert "5x" in paused_msg
+    assert "PAUSED" in paused_msg
+    assert "/setleverage" in paused_msg
+
+    running_msg = get_leverage_message(
+        current_leverage=10, max_leverage=50, is_paused=False
+    )
+    assert "10x" in running_msg
+    assert "RUNNING" in running_msg
+    assert "50x" in running_msg
+
+    keyboard = get_leverage_keyboard(current_leverage=5, max_leverage=100)
+    callbacks = {
+        button.callback_data for row in keyboard.inline_keyboard for button in row
+    }
+    assert "cb_leverage_dec_1" in callbacks
+    assert "cb_leverage_inc_1" in callbacks
+    assert "cb_leverage_dec_5" in callbacks
+    assert "cb_leverage_inc_5" in callbacks
+    assert "cb_leverage_set_5" in callbacks
+    assert "cb_leverage_set_20" in callbacks
+    assert "cb_leverage_menu" in callbacks
+    assert "cb_status" in callbacks
+
+    # Verify status dashboard includes leverage button
+    dash_live = get_status_dashboard_keyboard(
+        is_paused=True,
+        execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
+    )
+    dash_callbacks = {
+        button.callback_data for row in dash_live.inline_keyboard for button in row
+    }
+    assert "cb_leverage_menu" in dash_callbacks

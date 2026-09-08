@@ -41,3 +41,11 @@ class RuntimeSettingsRepository(ABC):
     @abstractmethod
     async def save_strategy(self, *, strategy_type: StrategyType) -> None:
         """Atomically persist the active runtime strategy."""
+
+    @abstractmethod
+    async def get_leverage(self) -> int | None:
+        """Return the latest durable runtime leverage, if configured."""
+
+    @abstractmethod
+    async def save_leverage(self, *, leverage: int) -> None:
+        """Atomically persist the active runtime leverage."""

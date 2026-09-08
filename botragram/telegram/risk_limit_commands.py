@@ -18,7 +18,9 @@ from botragram.telegram.messages import get_risk_limits_message
 __all__ = ["risk_limits_command", "set_risk_limits_command"]
 
 _logger: Final = logging.getLogger(__name__)
-_USAGE: Final[str] = "/setrisklimits <max_open_positions> <max_position_size_usdt>"
+_USAGE: Final[str] = (
+    "/setrisklimits <max_open_positions> <max_position_size_usdt> [leverage]"
+)
 
 
 def _get_context(context: ContextTypes.DEFAULT_TYPE) -> BotContext:
@@ -48,17 +50,23 @@ async def risk_limits_command(
 
     limits = service.get_snapshot()
     is_paused = control.is_paused if control is not None else False
+    current_lev = control.leverage if control is not None else bot_context.leverage
+    lev_ceiling = bot_context.leverage_ceiling
     msg = get_risk_limits_message(
         limits=limits,
         max_open_positions_ceiling=service.max_open_positions_ceiling,
         max_position_size_usdt_ceiling=service.max_position_size_usdt_ceiling,
         is_paused=is_paused,
+        current_leverage=current_lev,
+        leverage_ceiling=lev_ceiling,
     )
     keyboard = get_risk_limits_keyboard(
         current_positions=limits.max_open_positions,
         current_size_usdt=limits.max_position_size_usdt,
         max_open_positions_ceiling=service.max_open_positions_ceiling,
         max_position_size_usdt_ceiling=service.max_position_size_usdt_ceiling,
+        current_leverage=current_lev,
+        leverage_ceiling=lev_ceiling,
     )
     await message.reply_text(
         msg,
@@ -88,21 +96,32 @@ async def set_risk_limits_command(
         await message.reply_text("Pause trading before changing runtime risk limits.")
         return
     args = context.args or []
-    if len(args) != 2:
+    if len(args) not in (2, 3):
         await message.reply_text(
-            "Usage: /setrisklimits <open positions> <position size USDT>"
+            "Usage: /setrisklimits <open positions> <position size USDT> [leverage]"
         )
         return
 
     try:
         max_open_positions = int(args[0])
         max_position_size_usdt = Decimal(args[1])
+        new_leverage = int(args[2]) if len(args) == 3 else None
     except ValueError, InvalidOperation:
         await message.reply_text(
             "Invalid values. Usage: /setrisklimits "
-            "<open positions> <position size USDT>"
+            "<open positions> <position size USDT> [leverage]"
         )
         return
+
+    if new_leverage is not None:
+        if new_leverage <= 0 or new_leverage > bot_context.leverage_ceiling:
+            await message.reply_text(
+                f"Invalid leverage. Must be between 1 and "
+                f"{bot_context.leverage_ceiling}x."
+            )
+            return
+        control.select_leverage(new_leverage)
+        bot_context.leverage = new_leverage
 
     user = update.effective_user
     chat = update.effective_chat
@@ -124,14 +143,17 @@ async def set_risk_limits_command(
 
     _logger.info(
         "Runtime risk limits updated via Telegram: max_open_positions=%s "
-        "max_position_size_usdt=%s by actor %s",
+        "max_position_size_usdt=%s leverage=%s by actor %s",
         limits.max_open_positions,
         limits.max_position_size_usdt,
+        control.leverage,
         actor_id,
     )
+    lev_text = f"Leverage: {control.leverage}x\n"
     await message.reply_text(
         "Runtime risk limits updated.\n"
         f"Open positions: {limits.max_open_positions}\n"
         f"Position size: {limits.max_position_size_usdt} USDT\n"
+        f"{lev_text}"
         "Resume trading when ready."
     )

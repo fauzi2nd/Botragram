@@ -50,6 +50,8 @@ def get_bot_commands() -> tuple[BotCommand, ...]:
         BotCommand("stream", "Kelola market ticker stream"),
         BotCommand("pause", "Jeda siklus trading baru"),
         BotCommand("resume", "Lanjutkan siklus trading"),
+        BotCommand("leverage", "Lihat dan atur leverage futures saat dijeda"),
+        BotCommand("setleverage", "Ubah leverage trading futures saat dijeda"),
         BotCommand("risklimits", "Lihat limit entry runtime"),
         BotCommand("setrisklimits", "Ubah limit runtime saat dijeda"),
         BotCommand("exitstatus", "Lihat status operator exit"),

@@ -54,6 +54,13 @@ class _RuntimeRiskLimitProvider(Protocol):
         ...
 
 
+class _RuntimeControlLeverageProvider(Protocol):
+    @property
+    def leverage(self) -> int:
+        """Return the active runtime leverage."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class LiveEntryRiskEvaluationService:
     """Evaluate one signal against a fresh authoritative LIVE portfolio."""
@@ -66,6 +73,7 @@ class LiveEntryRiskEvaluationService:
     drawdown_service: LiveAccountDrawdownService | None = None
     natural_exit_recovery_service: _LiveNaturalExitRecovery | None = None
     runtime_risk_limit_provider: _RuntimeRiskLimitProvider | None = None
+    runtime_control: _RuntimeControlLeverageProvider | None = None
 
     def __post_init__(self) -> None:
         """Normalize and validate the balance asset boundary."""
@@ -89,11 +97,6 @@ class LiveEntryRiskEvaluationService:
             signal=signal,
             entry_price_override=entry_price_override,
         )
-        runtime_limits = (
-            self.runtime_risk_limit_provider.get_snapshot()
-            if self.runtime_risk_limit_provider is not None
-            else None
-        )
         if self.natural_exit_recovery_service is not None:
             await self.natural_exit_recovery_service.reconcile()
 
@@ -102,6 +105,11 @@ class LiveEntryRiskEvaluationService:
             position.symbol.upper() == signal.symbol.upper()
             and position.quantity > _DECIMAL_ZERO
             for position in positions
+        )
+        runtime_limits = (
+            self.runtime_risk_limit_provider.get_snapshot()
+            if self.runtime_risk_limit_provider is not None
+            else None
         )
         balance = await self.account_service.get_free_balance(asset=self.balance_asset)
         if balance <= _DECIMAL_ZERO:
@@ -139,6 +147,11 @@ class LiveEntryRiskEvaluationService:
             max_position_size_usdt=(
                 runtime_limits.max_position_size_usdt
                 if runtime_limits is not None
+                else None
+            ),
+            leverage=(
+                self.runtime_control.leverage
+                if self.runtime_control is not None
                 else None
             ),
         )

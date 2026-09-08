@@ -33,6 +33,7 @@ __all__ = ["SQLiteRuntimeSettingsRepository"]
 # Constants
 # =============================================================================
 _STRATEGY_KEY: Final[str] = "active_strategy"
+_LEVERAGE_KEY: Final[str] = "active_leverage"
 _SELECT_SQL: Final[str] = """
 SELECT value
 FROM runtime_settings
@@ -82,4 +83,32 @@ class SQLiteRuntimeSettingsRepository(RuntimeSettingsRepository):
             await connection.execute(
                 _UPSERT_SQL,
                 (_STRATEGY_KEY, strategy_type.value, now),
+            )
+
+    async def get_leverage(self) -> int | None:
+        """Return the latest durable runtime leverage, if configured."""
+        row = await self._database.fetch_one(
+            statement=_SELECT_SQL,
+            parameters=(_LEVERAGE_KEY,),
+        )
+        if row is None:
+            return None
+        raw_value = row["value"]
+        if not isinstance(raw_value, str):
+            raise TypeError("SQLite runtime setting value must be text")
+        try:
+            val = int(raw_value)
+            return val if val > 0 else None
+        except ValueError:
+            return None
+
+    async def save_leverage(self, *, leverage: int) -> None:
+        """Atomically persist the active runtime leverage."""
+        if isinstance(leverage, bool) or leverage <= 0:
+            raise ValueError("Runtime leverage must be a positive integer")
+        now = datetime.now(UTC).isoformat()
+        async with self._database.transaction() as connection:
+            await connection.execute(
+                _UPSERT_SQL,
+                (_LEVERAGE_KEY, str(leverage), now),
             )

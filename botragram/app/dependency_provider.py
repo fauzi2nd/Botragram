@@ -488,10 +488,20 @@ class DependencyProvider:
                 self._runtime_control.interval = self._settings.market.interval
             else:
                 self._runtime_control.interval = self._settings.market.interval
+            persisted_leverage = await self.runtime_settings_repository.get_leverage()
+            if persisted_leverage is not None:
+                self._settings = replace(
+                    self._settings,
+                    risk=replace(self._settings.risk, leverage=persisted_leverage),
+                )
+                self._runtime_control.leverage = persisted_leverage
+            else:
+                self._runtime_control.leverage = self._settings.risk.leverage
             await self._initialize_runtime_risk_limit_service()
             await self._build_exchange_dependencies()
             self._build_engines()
             self.runtime_control.bind_strategy_selector(self._select_runtime_strategy)
+            self.runtime_control.bind_leverage_selector(self._select_runtime_leverage)
             self._telegram_bot = TelegramBot(settings=self._settings.telegram)
             self._build_live_account_drawdown_service()
             await self._start_live_futures_user_data_service()
@@ -634,6 +644,8 @@ class DependencyProvider:
                     strategy_name=self._settings.strategy.strategy_type.value,
                     configured_interval=self._settings.market.interval,
                     exchange_type=self._settings.exchange.exchange.value,
+                    leverage=self.runtime_control.leverage,
+                    leverage_ceiling=max(50, self.runtime_control.leverage),
                     query_provider=query_service,
                     runtime_control=self.runtime_control,
                     market_type_switcher=self.market_type_switch_service,
@@ -1128,6 +1140,19 @@ class DependencyProvider:
             )
         _LOGGER.info("Runtime strategy selected: strategy=%s", strategy_type.value)
 
+    def _select_runtime_leverage(self, leverage: int) -> None:
+        self._settings = replace(
+            self._settings,
+            risk=replace(self._settings.risk, leverage=leverage),
+        )
+        if self._runtime_settings_repository is not None:
+            asyncio.create_task(
+                self._runtime_settings_repository.save_leverage(
+                    leverage=leverage,
+                )
+            )
+        _LOGGER.info("Runtime leverage selected: leverage=%dx", leverage)
+
     def _build_services(self) -> None:
         exchange_client = self.exchange_client
         runtime_limits = self._runtime_risk_limit_service
@@ -1200,6 +1225,7 @@ class DependencyProvider:
             ),
             natural_exit_recovery_service=self.live_natural_exit_recovery_service,
             runtime_risk_limit_provider=runtime_limits,
+            runtime_control=self.runtime_control,
         )
         self._live_position_protection_service = LivePositionProtectionService(
             exchange_client=exchange_client,
