@@ -87,6 +87,7 @@ from botragram.telegram.messages import (
     get_market_message,
     get_market_search_prompt_message,
     get_orders_message,
+    get_performance_card_message,
     get_positions_message,
     get_resume_message,
     get_risk_limits_message,
@@ -960,6 +961,34 @@ async def handle_callback_query(
             reply_markup=InlineKeyboardMarkup(
                 [
                     [InlineKeyboardButton("🔄 Refresh", callback_data="cb_orders")],
+                    [
+                        InlineKeyboardButton(
+                            f"◀️ {MENU_STATUS}", callback_data="cb_status"
+                        )
+                    ],
+                ]
+            ),
+        )
+    elif data == "cb_performance":
+        snapshot = None
+        if bot_context.query_provider is not None:
+            try:
+                snapshot = await bot_context.query_provider.get_trading_performance()
+            except Exception:
+                _LOGGER.exception("Telegram callback performance query failed")
+
+        mode_str = bot_context.trade_mode
+        msg = get_performance_card_message(snapshot, mode=mode_str)
+        await query.edit_message_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Refresh", callback_data="cb_performance"
+                        )
+                    ],
                     [
                         InlineKeyboardButton(
                             f"◀️ {MENU_STATUS}", callback_data="cb_status"

@@ -257,6 +257,14 @@ class SettingsManager:
                 if raw_candle_delay
                 else DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
             ),
+            candle_retention_days=self._parse_positive_int(
+                raw_value=environment.get_candle_retention_days(),
+                setting_name="CANDLE_RETENTION_DAYS",
+            ),
+            candle_pruning_interval_hours=self._parse_positive_int(
+                raw_value=environment.get_candle_pruning_interval_hours(),
+                setting_name="CANDLE_PRUNING_INTERVAL_HOURS",
+            ),
         )
 
     def load_risk_settings(self) -> RiskSettings:
@@ -339,6 +347,15 @@ class SettingsManager:
                 raw_value=environment.get_max_spread_bps(),
                 setting_name="MAX_SPREAD_BPS",
             ),
+            partial_tp_enabled=environment.get_partial_tp_enabled(),
+            partial_tp_ratio=self._parse_decimal(
+                raw_value=environment.get_partial_tp_ratio(),
+                setting_name="PARTIAL_TP_RATIO",
+            ),
+            partial_tp_trigger_progress=self._parse_decimal(
+                raw_value=environment.get_partial_tp_trigger_progress(),
+                setting_name="PARTIAL_TP_TRIGGER_PROGRESS",
+            ),
         )
 
     @staticmethod
@@ -381,6 +398,21 @@ class SettingsManager:
             raw_value=self._environment_provider.get_min_signal_confidence(),
             setting_name="MIN_SIGNAL_CONFIDENCE",
         )
+        mtf_enabled = self._environment_provider.get_mtf_confirmation_enabled()
+        raw_mtf_interval = self._environment_provider.get_mtf_interval()
+        mtf_interval = (
+            self._parse_enum(
+                enum_type=Interval,
+                raw_value=raw_mtf_interval,
+                setting_name="MTF_TIMEFRAME",
+            )
+            if raw_mtf_interval
+            else Interval.H1
+        )
+        mtf_ema_period = self._parse_positive_int(
+            raw_value=self._environment_provider.get_mtf_ema_period(),
+            setting_name="MTF_EMA_PERIOD",
+        )
         return StrategySettings(
             strategy_type=(
                 self._parse_enum(
@@ -393,6 +425,9 @@ class SettingsManager:
             ),
             invert_signals=invert_signals,
             min_signal_confidence=min_signal_confidence,
+            mtf_confirmation_enabled=mtf_enabled,
+            mtf_interval=mtf_interval,
+            mtf_ema_period=mtf_ema_period,
         )
 
     def load_logging_settings(self) -> LoggingSettings:
@@ -550,6 +585,7 @@ class SettingsManager:
         EnumValue: (
             ExchangeType,
             ExecutionPolicy,
+            Interval,
             LogLevel,
             MarketType,
             StrategyType,

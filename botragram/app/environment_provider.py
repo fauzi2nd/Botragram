@@ -49,6 +49,8 @@ from botragram.constants.env import (
     ENV_BYBIT_DEMO,
     ENV_BYBIT_MARKET_TYPE,
     ENV_BYBIT_TESTNET,
+    ENV_CANDLE_PRUNING_INTERVAL_HOURS,
+    ENV_CANDLE_RETENTION_DAYS,
     ENV_DISCOVERY_BATCH_SIZE,
     ENV_DISCOVERY_CADENCE_SECONDS,
     ENV_DISCOVERY_CANDLE_DELAY_SECONDS,
@@ -72,12 +74,18 @@ from botragram.constants.env import (
     ENV_MAX_POSITION_SIZE_USDT,
     ENV_MAX_SPREAD_BPS,
     ENV_MIN_SIGNAL_CONFIDENCE,
+    ENV_MTF_CONFIRMATION_ENABLED,
+    ENV_MTF_EMA_PERIOD,
+    ENV_MTF_TIMEFRAME,
     ENV_OKX_API_KEY,
     ENV_OKX_API_SECRET,
     ENV_OKX_PASSPHRASE,
     ENV_OKX_TESTNET,
     ENV_OPENAI_API_KEY,
     ENV_OPENROUTER_API_KEY,
+    ENV_PARTIAL_TP_ENABLED,
+    ENV_PARTIAL_TP_RATIO,
+    ENV_PARTIAL_TP_TRIGGER_PROGRESS,
     ENV_RISK_PER_TRADE_PCT,
     ENV_SCALPING_STOP_LOSS_PCT,
     ENV_SCALPING_TAKE_PROFIT_PCT,
@@ -464,6 +472,30 @@ class EnvironmentProvider:
         """Return the minimum signal confidence threshold for entry."""
         return self._get_var(ENV_MIN_SIGNAL_CONFIDENCE, default="0.0")
 
+    def get_mtf_confirmation_enabled(self) -> bool:
+        """Return whether multi-timeframe trend confirmation is enabled."""
+        return self._get_bool(ENV_MTF_CONFIRMATION_ENABLED, default=False)
+
+    def get_mtf_interval(self) -> str:
+        """Return the higher timeframe for MTF trend confirmation."""
+        return self._get_var(ENV_MTF_TIMEFRAME, default="1h")
+
+    def get_mtf_ema_period(self) -> str:
+        """Return the lookback period for MTF trend EMA."""
+        return self._get_var(ENV_MTF_EMA_PERIOD, default="50")
+
+    def get_partial_tp_enabled(self) -> bool:
+        """Return whether partial take profit is enabled."""
+        return self._get_bool(ENV_PARTIAL_TP_ENABLED, default=False)
+
+    def get_partial_tp_ratio(self) -> str:
+        """Return the fraction of position to close at partial take profit."""
+        return self._get_var(ENV_PARTIAL_TP_RATIO, default="0.50")
+
+    def get_partial_tp_trigger_progress(self) -> str:
+        """Return the TP progress threshold that triggers partial close."""
+        return self._get_var(ENV_PARTIAL_TP_TRIGGER_PROGRESS, default="0.50")
+
     def get_scalping_stop_loss_pct(self) -> str:
         """Return the scalping stop-loss ratio."""
         return self._get_var(
@@ -593,6 +625,14 @@ class EnvironmentProvider:
     def get_discovery_candle_delay_seconds(self) -> str:
         """Return the optional pacing delay between candle requests in seconds."""
         return self._get_var(ENV_DISCOVERY_CANDLE_DELAY_SECONDS)
+
+    def get_candle_retention_days(self) -> str:
+        """Return the maximum age of stored candles before automated pruning."""
+        return self._get_var(ENV_CANDLE_RETENTION_DAYS, default="7")
+
+    def get_candle_pruning_interval_hours(self) -> str:
+        """Return the background interval between automated candle pruning runs."""
+        return self._get_var(ENV_CANDLE_PRUNING_INTERVAL_HOURS, default="6")
 
     def get_active_exchange(self) -> str:
         """Return the configured active exchange."""

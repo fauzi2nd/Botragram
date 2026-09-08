@@ -26,6 +26,9 @@ from botragram.services.live_market_stream_service import (
     LiveMarketStreamService,
     MarketTickListener,
 )
+from botragram.services.live_trading_performance_service import (
+    TradingPerformanceSnapshot,
+)
 
 __all__ = ["MarketTickListener", "TelegramQueryService"]
 
@@ -108,6 +111,14 @@ class AutonomousLiveRecoveryObservabilityProvider(Protocol):
         ...
 
 
+class LiveTradingPerformanceProvider(Protocol):
+    """Read aggregated trading performance."""
+
+    async def get_snapshot(self) -> TradingPerformanceSnapshot:
+        """Return aggregated trading performance snapshot."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True)
 class TelegramQueryService:
     """Query current paper portfolio and market state without mutation."""
@@ -120,6 +131,7 @@ class TelegramQueryService:
     order_repository: OrderRepository
     market_stream_service: LiveMarketStreamService
     live_balance_provider: LiveBalanceProvider | None = None
+    live_trading_performance_service: LiveTradingPerformanceProvider | None = None
     quote_asset: str = "USDT"
     interval: Interval = Interval.M15
     strategy_type: StrategyType = StrategyType.EMA_CROSS
@@ -160,6 +172,11 @@ class TelegramQueryService:
     ) -> AutonomousLiveRecoverySnapshot | None:
         """Return durable autonomous recovery status without reconciliation."""
         service = self.autonomous_live_recovery_observability_service
+        return await service.get_snapshot() if service is not None else None
+
+    async def get_trading_performance(self) -> TradingPerformanceSnapshot | None:
+        """Return aggregated trading performance snapshot when available."""
+        service = self.live_trading_performance_service
         return await service.get_snapshot() if service is not None else None
 
     async def get_trading_symbols(self) -> Sequence[str]:

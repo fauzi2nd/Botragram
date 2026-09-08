@@ -50,6 +50,7 @@ from botragram.constants.telegram import (
     MENU_MARKET_OVERVIEW,
     MENU_ORDERS,
     MENU_PAUSE,
+    MENU_PERFORMANCE,
     MENU_POSITIONS,
     MENU_RESUME,
     MENU_RISK_LIMITS,
@@ -97,6 +98,7 @@ from botragram.telegram.messages import (
     get_market_search_results_message,
     get_navigation_message,
     get_orders_message,
+    get_performance_card_message,
     get_positions_message,
     get_resume_message,
     get_runtime_pause_message,
@@ -128,6 +130,7 @@ _MENU_ACTIONS: Final[frozenset[str]] = frozenset(
         MENU_MARKET_OVERVIEW,
         MENU_ORDERS,
         MENU_PAUSE,
+        MENU_PERFORMANCE,
         MENU_POSITIONS,
         MENU_RESUME,
         MENU_RISK_LIMITS,
@@ -780,6 +783,42 @@ async def history_command(
         await update.message.reply_text(msg, parse_mode=DEFAULT_PARSE_MODE)
 
 
+async def performance_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /performance and /daily reporting aggregated trading metrics."""
+    if update.message is None:
+        return
+
+    if not is_authorized_update(update=update, context=context):
+        return
+
+    ctx = _get_context(context)
+    snapshot = None
+
+    if ctx.query_provider is not None:
+        try:
+            snapshot = await ctx.query_provider.get_trading_performance()
+        except Exception:
+            logger.exception("Telegram performance query failed")
+            await _reply_data_unavailable(update)
+            return
+
+    mode_str = ctx.trade_mode
+    msg = get_performance_card_message(snapshot, mode=mode_str)
+    await update.message.reply_text(
+        msg,
+        parse_mode=DEFAULT_PARSE_MODE,
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("🔄 Refresh", callback_data="cb_performance")],
+                [InlineKeyboardButton(f"◀️ {MENU_STATUS}", callback_data="cb_status")],
+            ]
+        ),
+    )
+
+
 async def strategy_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1104,6 +1143,8 @@ async def menu_message_handler(
         await balance_command(update, context)
     elif action == MENU_HISTORY:
         await history_command(update, context)
+    elif action in {MENU_PERFORMANCE, "📊 Performance", "Performance"}:
+        await performance_command(update, context)
     elif action == MENU_SETTINGS:
         await settings_command(update, context)
     elif action == MENU_EXCHANGE:

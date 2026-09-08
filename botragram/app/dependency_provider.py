@@ -108,6 +108,7 @@ from botragram.services import (
     AutonomousLiveEntryIntentService,
     AutonomousLiveRecoveryObservabilityService,
     AutonomousPaperExecutionService,
+    CandleRetentionService,
     CandleSyncService,
     ClosedPositionLifecycleService,
     ExecutionAuthorizationService,
@@ -187,6 +188,7 @@ class DependencyProvider:
         "_autonomous_live_recovery_observability_service",
         "_autonomous_paper_execution_service",
         "_candle_repository",
+        "_candle_retention_service",
         "_candle_sync_service",
         "_closed_position_lifecycle_repository",
         "_closed_position_lifecycle_service",
@@ -352,6 +354,7 @@ class DependencyProvider:
             HumanConfirmedPaperExecutionService | None
         ) = None
         self._candle_sync_service: CandleSyncService | None = None
+        self._candle_retention_service: CandleRetentionService | None = None
         self._closed_position_lifecycle_service: (
             ClosedPositionLifecycleService | None
         ) = None
@@ -573,6 +576,7 @@ class DependencyProvider:
                 autonomous_live_recovery_observability_service=(
                     self.autonomous_live_recovery_observability_service
                 ),
+                live_trading_performance_service=self.live_trading_performance_service,
             )
             self._telegram_query_service = query_service
             self._market_type_switch_service = MarketTypeSwitchService(
@@ -660,6 +664,8 @@ class DependencyProvider:
                 _LOGGER.exception(
                     "Telegram startup failed; trading will continue without it"
                 )
+            if self._candle_retention_service is not None:
+                await self._candle_retention_service.start()
             self._initialized = True
             _LOGGER.info("Dependencies initialized")
         except BaseException:
@@ -668,6 +674,7 @@ class DependencyProvider:
             raise
 
     async def close(self) -> None:
+        candle_retention_service = self._candle_retention_service
         exchange_client = self._exchange_client
         stream_client = self._stream_client
         telegram_bot = self._telegram_bot
@@ -679,35 +686,39 @@ class DependencyProvider:
         self._clear_dependencies()
         _LOGGER.debug("Dependency shutdown starting")
         try:
-            if telegram_bot is not None:
-                await telegram_bot.stop()
+            if candle_retention_service is not None:
+                await candle_retention_service.stop()
         finally:
             try:
-                if operator_exit_service is not None:
-                    await operator_exit_service.close()
+                if telegram_bot is not None:
+                    await telegram_bot.stop()
             finally:
                 try:
-                    if live_futures_user_data_service is not None:
-                        await live_futures_user_data_service.close()
+                    if operator_exit_service is not None:
+                        await operator_exit_service.close()
                 finally:
                     try:
-                        if live_protection_monitoring_service is not None:
-                            live_protection_monitoring_service.stop_all()
+                        if live_futures_user_data_service is not None:
+                            await live_futures_user_data_service.close()
                     finally:
                         try:
-                            if live_market_stream_service is not None:
-                                await live_market_stream_service.stop_all()
+                            if live_protection_monitoring_service is not None:
+                                live_protection_monitoring_service.stop_all()
                         finally:
                             try:
-                                if stream_client is not None:
-                                    await stream_client.close()
+                                if live_market_stream_service is not None:
+                                    await live_market_stream_service.stop_all()
                             finally:
                                 try:
-                                    if exchange_client is not None:
-                                        await exchange_client.close()
+                                    if stream_client is not None:
+                                        await stream_client.close()
                                 finally:
-                                    if database is not None:
-                                        await database.close()
+                                    try:
+                                        if exchange_client is not None:
+                                            await exchange_client.close()
+                                    finally:
+                                        if database is not None:
+                                            await database.close()
         _LOGGER.info("Dependencies shut down")
 
     @property
@@ -867,6 +878,10 @@ class DependencyProvider:
     @property
     def candle_sync_service(self) -> CandleSyncService:
         return self._require(self._candle_sync_service)
+
+    @property
+    def candle_retention_service(self) -> CandleRetentionService:
+        return self._require(self._candle_retention_service)
 
     @property
     def opportunity_discovery_service(self) -> OpportunityDiscoveryService:
@@ -1165,6 +1180,14 @@ class DependencyProvider:
             market_service=self.market_service,
             candle_repository=self.candle_repository,
         )
+        self._candle_retention_service = CandleRetentionService(
+            candle_repository=self.candle_repository,
+            database=self._database,
+            retention_days=self._settings.market.candle_retention_days,
+            pruning_interval_hours=(
+                self._settings.market.candle_pruning_interval_hours
+            ),
+        )
         self._strategy_service = StrategyService(
             signal_engine=self.signal_engine,
             signal_repository=self.signal_repository,
@@ -1176,6 +1199,9 @@ class DependencyProvider:
             candle_request_delay_seconds=(
                 self._settings.market.discovery_candle_delay_seconds
             ),
+            mtf_confirmation_enabled=self._settings.strategy.mtf_confirmation_enabled,
+            mtf_interval=self._settings.strategy.mtf_interval,
+            mtf_ema_period=self._settings.strategy.mtf_ema_period,
         )
         self._order_service = OrderService(
             order_engine=self.order_engine,
@@ -1495,6 +1521,9 @@ class DependencyProvider:
             position_repository=self.position_repository,
             exchange_client=self.exchange_client,
             lifecycle_coordinator=self._live_position_lifecycle_coordinator,
+            partial_tp_enabled=self._settings.risk.partial_tp_enabled,
+            partial_tp_ratio=self._settings.risk.partial_tp_ratio,
+            partial_tp_trigger_progress=self._settings.risk.partial_tp_trigger_progress,
         )
 
     @staticmethod
@@ -1577,6 +1606,7 @@ class DependencyProvider:
         self.runtime_control.set_position_protection_ready(False)
         self.runtime_control.clear_runtime_contexts()
         self._candle_repository = None
+        self._candle_retention_service = None
         self._closed_position_lifecycle_repository = None
         self._closed_position_lifecycle_service = None
         self._execution_authorization_repository = None

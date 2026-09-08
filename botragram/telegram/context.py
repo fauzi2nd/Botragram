@@ -35,6 +35,9 @@ from botragram.models import (
     RuntimeRiskLimits,
     Trade,
 )
+from botragram.services.live_trading_performance_service import (
+    TradingPerformanceSnapshot,
+)
 
 __all__ = [
     "ALLOWED_CHAT_IDS_KEY",
@@ -83,6 +86,10 @@ class BotQueryProvider(Protocol):
 
     def get_live_runtime_health(self) -> LiveRuntimeHealthSnapshot | None:
         """Return a read-only runtime health snapshot when available."""
+        ...
+
+    async def get_trading_performance(self) -> TradingPerformanceSnapshot | None:
+        """Return a read-only trading performance snapshot when available."""
         ...
 
     async def get_autonomous_live_recovery(

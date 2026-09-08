@@ -19,6 +19,8 @@ __all__ = [
     "CMD_START",
     "CMD_STATUS",
     "CMD_POSITIONS",
+    "CMD_PERFORMANCE",
+    "CMD_DAILY",
     "CMD_STOP",
     "CMD_SETTINGS",
     "MENU_ACTIVITY",
@@ -39,6 +41,7 @@ __all__ = [
     "MENU_STREAM",
     "MENU_START",
     "MENU_PAUSE",
+    "MENU_PERFORMANCE",
     "MENU_RESUME",
     "MENU_RISK_LIMITS",
     "MENU_TRADING_MODE",
@@ -69,6 +72,8 @@ OPERATOR_EXIT_STALE_CONFIRMATION_MESSAGE: str = (
 CMD_START: str = "start"
 CMD_STATUS: str = "status"
 CMD_POSITIONS: str = "positions"
+CMD_PERFORMANCE: str = "performance"
+CMD_DAILY: str = "daily"
 CMD_STOP: str = "stop"
 CMD_SETTINGS: str = "settings"
 
@@ -89,6 +94,7 @@ MENU_MARKET_OVERVIEW: str = "📈 Market Overview"
 MENU_ORDERS: str = "📑 Orders"
 MENU_BALANCE: str = "💰 Balance"
 MENU_HISTORY: str = "📜 History"
+MENU_PERFORMANCE: str = "📊 Performance"
 MENU_SETTINGS: str = "⚙️ Settings"
 MENU_EXCHANGE: str = "🔄 Exchange"
 MENU_INTERVAL: str = "⏱️ Interval"

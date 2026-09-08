@@ -46,6 +46,9 @@ from botragram.models import (
     RuntimeRiskLimits,
     Trade,
 )
+from botragram.services.live_trading_performance_service import (
+    TradingPerformanceSnapshot,
+)
 from botragram.utils.formatter import format_currency, format_price
 
 __all__ = [
@@ -68,6 +71,7 @@ __all__ = [
     "get_paper_entry_message",
     "get_paper_exit_message",
     "get_pause_message",
+    "get_performance_card_message",
     "get_positions_message",
     "get_resume_message",
     "get_risk_limits_message",
@@ -693,6 +697,36 @@ def get_trade_completed_message(
 
     formatted_closed_at = escape(lifecycle.closed_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
 
+    duration_str = "N/A"
+    if entry_fills:
+        start_time = min(f.executed_at for f in entry_fills)
+    else:
+        start_time = lifecycle.ownership.recorded_at
+
+    delta = lifecycle.closed_at - start_time
+    total_seconds = max(0, int(delta.total_seconds()))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    days, hours = divmod(hours, 24)
+    if days > 0:
+        duration_str = f"{days}d {hours}h {minutes}m"
+    elif hours > 0:
+        duration_str = f"{hours}h {minutes}m {seconds}s"
+    elif minutes > 0:
+        duration_str = f"{minutes}m {seconds}s"
+    else:
+        duration_str = f"{seconds}s"
+
+    roi_suffix = ""
+    if entry_fills:
+        total_cost = sum(
+            (f.price * f.quantity for f in entry_fills), start=Decimal("0")
+        )
+        if total_cost > Decimal("0"):
+            roi_pct = (lifecycle.net_pnl / total_cost) * Decimal("100")
+            roi_sign = "+" if roi_pct > Decimal("0") else ""
+            roi_suffix = f" ({roi_sign}{roi_pct:.2f}%)"
+
     return (
         f"{pnl_icon} <b>Trade Completed ({outcome})</b>\n\n"
         f"<b>Symbol:</b> {escape(ownership.symbol)}\n"
@@ -703,8 +737,44 @@ def get_trade_completed_message(
         f"<b>Exit Price:</b> {exit_price_str}\n"
         f"<b>Gross PnL:</b> {formatted_gross}\n"
         f"<b>Fee:</b> {formatted_fee}\n"
-        f"<b>Net Realized PnL:</b> <b>{pnl_sign}{formatted_net}</b>\n"
+        f"<b>Net Realized PnL:</b> <b>{pnl_sign}{formatted_net}</b>{roi_suffix}\n"
+        f"<b>Duration:</b> {escape(duration_str)}\n"
         f"<b>Closed At:</b> {formatted_closed_at}"
+    )
+
+
+def get_performance_card_message(
+    snapshot: TradingPerformanceSnapshot | None,
+    *,
+    mode: str = "LIVE",
+) -> str:
+    """Format trading performance metrics into an executive Telegram card."""
+    if snapshot is None:
+        return (
+            f"📊 <b>Trading Performance Card ({escape(mode.upper())})</b>\n\n"
+            "Data performa belum tersedia."
+        )
+
+    pnl = snapshot.realized_pnl
+    pnl_sign = "+" if pnl > Decimal("0") else ""
+    pnl_icon = "🟢" if pnl > Decimal("0") else ("🔴" if pnl < Decimal("0") else "⚪")
+    formatted_pnl = format_currency(pnl, symbol="USDT")
+
+    total = snapshot.closed_trade_count
+    wins = snapshot.win_count
+    losses = snapshot.loss_count
+    bes = snapshot.break_even_count
+    win_rate = snapshot.win_rate_percent
+
+    return (
+        f"📊 <b>Trading Performance Card ({escape(mode.upper())})</b>\n\n"
+        f"<b>Realized Net PnL:</b> {pnl_icon} <b>{pnl_sign}{formatted_pnl}</b>\n"
+        f"<b>Win Rate:</b> <b>{win_rate:.1f}%</b>\n"
+        f"<b>Total Closed Trades:</b> {total}\n"
+        f"  • <b>Wins:</b> {wins} 🟢\n"
+        f"  • <b>Losses:</b> {losses} 🔴\n"
+        f"  • <b>Break-Even:</b> {bes} ⚪\n\n"
+        f"<i>Dihitung dari seluruh closed position lifecycle yang tersimpan.</i>"
     )
 
 

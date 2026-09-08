@@ -55,6 +55,9 @@ from botragram.models import (
     TradingDecision,
     TradingResult,
 )
+from botragram.services.live_trading_performance_service import (
+    TradingPerformanceSnapshot,
+)
 from botragram.telegram.access import is_chat_allowed
 from botragram.telegram.callbacks import handle_callback_query
 from botragram.telegram.commands import (
@@ -225,6 +228,10 @@ class FakeQueryProvider:
     ) -> AutonomousLiveRecoverySnapshot | None:
         """Return configured durable recovery observability."""
         return self.autonomous_live_recovery
+
+    async def get_trading_performance(self) -> TradingPerformanceSnapshot | None:
+        """Return configured test trading performance."""
+        return None
 
     def is_stream_transport_connected(self) -> bool:
         """Return a ready test WebSocket transport."""

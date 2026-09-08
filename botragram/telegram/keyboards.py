@@ -30,6 +30,7 @@ from botragram.constants.telegram import (
     MENU_MARKET_OVERVIEW,
     MENU_ORDERS,
     MENU_PAUSE,
+    MENU_PERFORMANCE,
     MENU_POSITIONS,
     MENU_RESUME,
     MENU_RISK_LIMITS,
@@ -126,6 +127,7 @@ def get_status_dashboard_keyboard(
     row5 = [
         InlineKeyboardButton(MENU_HISTORY, callback_data="cb_history"),
         InlineKeyboardButton(MENU_ORDERS, callback_data="cb_orders"),
+        InlineKeyboardButton(MENU_PERFORMANCE, callback_data="cb_performance"),
     ]
     return InlineKeyboardMarkup([row1, row2, row3, row4, row5])
 
@@ -505,11 +507,11 @@ def get_configuration_menu_keyboard() -> ReplyKeyboardMarkup:
 
 
 def get_activity_menu_keyboard() -> ReplyKeyboardMarkup:
-    """Return order, history, and diagnostics navigation."""
+    """Return order, history, performance, and diagnostics navigation."""
     return _get_reply_keyboard(
         [
             [MENU_ORDERS, MENU_HISTORY],
-            [MENU_TEST],
+            [MENU_PERFORMANCE, MENU_TEST],
             [MENU_HOME],
         ]
     )

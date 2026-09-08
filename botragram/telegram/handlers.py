@@ -28,6 +28,7 @@ from botragram.telegram.commands import (
     interval_command,
     market_command,
     orders_command,
+    performance_command,
     positions_command,
     settings_command,
     start_command,
@@ -76,6 +77,8 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler(CMD_POSITIONS, positions_command))
     app.add_handler(CommandHandler("balance", balance_command))
     app.add_handler(CommandHandler("history", history_command))
+    app.add_handler(CommandHandler("performance", performance_command))
+    app.add_handler(CommandHandler("daily", performance_command))
     app.add_handler(CommandHandler("market", market_command))
     app.add_handler(CommandHandler("strategy", strategy_switch_command))
     app.add_handler(CommandHandler("interval", interval_command))
