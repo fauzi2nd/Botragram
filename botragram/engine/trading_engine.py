@@ -46,6 +46,7 @@ class TradingEngine:
         max_open_positions: int | None = None,
         max_position_size_usdt: Decimal | None = None,
         leverage: int | None = None,
+        volatility_pct: Decimal | None = None,
     ) -> TradingDecision:
         """Evaluate a signal with optional runtime limits below env ceilings."""
         self._validate_inputs(
@@ -112,6 +113,7 @@ class TradingEngine:
             current_drawdown_pct=current_drawdown_pct,
             max_position_size_usdt=max_position_size_usdt,
             leverage=leverage,
+            volatility_pct=volatility_pct,
         )
 
         if not risk_result.approved:

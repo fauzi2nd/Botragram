@@ -1123,6 +1123,8 @@ class DependencyProvider:
         self._live_account_drawdown_service = LiveAccountDrawdownService(
             repository=SQLiteLiveEquityHighWaterRepository(database=database),
             asset=self._settings.market.quote_asset,
+            notification_publisher=self.telegram_bot,
+            max_drawdown_pct=self._settings.risk.max_drawdown_pct,
         )
 
     def _build_engines(self) -> None:
@@ -1524,6 +1526,9 @@ class DependencyProvider:
             partial_tp_enabled=self._settings.risk.partial_tp_enabled,
             partial_tp_ratio=self._settings.risk.partial_tp_ratio,
             partial_tp_trigger_progress=self._settings.risk.partial_tp_trigger_progress,
+            trailing_stop_enabled=self._settings.risk.trailing_stop_enabled,
+            trailing_stop_trigger_pct=self._settings.risk.trailing_stop_trigger_pct,
+            trailing_stop_distance_pct=self._settings.risk.trailing_stop_distance_pct,
         )
 
     @staticmethod

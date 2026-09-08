@@ -72,6 +72,7 @@ class RiskEngine:
         current_drawdown_pct: Decimal = _DECIMAL_ZERO,
         max_position_size_usdt: Decimal | None = None,
         leverage: int | None = None,
+        volatility_pct: Decimal | None = None,
     ) -> RiskResult:
         """Evaluate a signal against configured and optional runtime limits."""
         self._validate_inputs(
@@ -79,6 +80,11 @@ class RiskEngine:
             account_balance=account_balance,
             current_drawdown_pct=current_drawdown_pct,
         )
+        if volatility_pct is not None and (
+            not volatility_pct.is_finite() or volatility_pct <= _DECIMAL_ZERO
+        ):
+            raise ValueError("Volatility percentage must be finite and positive")
+
         effective_max_position_size = self._resolve_max_position_size(
             runtime_limit=max_position_size_usdt,
         )
@@ -128,8 +134,20 @@ class RiskEngine:
         quantity = allowed_risk / risk_per_unit
         notional = quantity * signal.price
 
+        if self.settings.volatility_sizing_enabled and volatility_pct is not None:
+            vol_multiplier = min(
+                Decimal("1.5"),
+                max(
+                    Decimal("0.5"),
+                    self.settings.baseline_volatility_pct / volatility_pct,
+                ),
+            )
+            notional = notional * vol_multiplier
+
         if notional > effective_max_position_size:
             notional = effective_max_position_size
+            quantity = notional / signal.price
+        elif self.settings.volatility_sizing_enabled and volatility_pct is not None:
             quantity = notional / signal.price
 
         risk_amount = quantity * risk_per_unit

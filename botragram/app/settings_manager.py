@@ -356,6 +356,20 @@ class SettingsManager:
                 raw_value=environment.get_partial_tp_trigger_progress(),
                 setting_name="PARTIAL_TP_TRIGGER_PROGRESS",
             ),
+            trailing_stop_enabled=environment.get_trailing_stop_enabled(),
+            trailing_stop_trigger_pct=self._parse_decimal(
+                raw_value=environment.get_trailing_stop_trigger_pct(),
+                setting_name="TRAILING_STOP_TRIGGER_PCT",
+            ),
+            trailing_stop_distance_pct=self._parse_decimal(
+                raw_value=environment.get_trailing_stop_distance_pct(),
+                setting_name="TRAILING_STOP_DISTANCE_PCT",
+            ),
+            volatility_sizing_enabled=environment.get_volatility_sizing_enabled(),
+            baseline_volatility_pct=self._parse_decimal(
+                raw_value=environment.get_baseline_volatility_pct(),
+                setting_name="BASELINE_VOLATILITY_PCT",
+            ),
         )
 
     @staticmethod

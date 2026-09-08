@@ -54,6 +54,9 @@ from botragram.exceptions import (
     OperatorExitConfirmationUnavailableError,
 )
 from botragram.models import LiveRuntimeHealthSnapshot, Order, Trade
+from botragram.services.live_trading_performance_service import (
+    TradingPerformanceSnapshot,
+)
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import (
     BOT_CONTEXT_KEY,
@@ -970,15 +973,17 @@ async def handle_callback_query(
             ),
         )
     elif data == "cb_performance":
-        snapshot = None
+        perf_snapshot: TradingPerformanceSnapshot | None = None
         if bot_context.query_provider is not None:
             try:
-                snapshot = await bot_context.query_provider.get_trading_performance()
+                perf_snapshot = (
+                    await bot_context.query_provider.get_trading_performance()
+                )
             except Exception:
                 _LOGGER.exception("Telegram callback performance query failed")
 
         mode_str = bot_context.trade_mode
-        msg = get_performance_card_message(snapshot, mode=mode_str)
+        msg = get_performance_card_message(perf_snapshot, mode=mode_str)
         await query.edit_message_text(
             msg,
             parse_mode=DEFAULT_PARSE_MODE,

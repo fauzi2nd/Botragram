@@ -73,13 +73,13 @@ class _NullStreamClient(BaseStreamClient):
 
     async def stream_ticker(self, *, symbol: str) -> AsyncIterator[Ticker]:
         if False:
-            yield  # type: ignore[misc]
+            yield
 
     async def stream_candles(
         self, *, symbol: str, interval: Interval
     ) -> AsyncIterator[Candle]:
         if False:
-            yield  # type: ignore[misc]
+            yield
 
     async def unsubscribe(self, *, symbol: str) -> None:
         pass

@@ -20,6 +20,7 @@ from botragram.telegram.bot import TelegramBot
 from botragram.telegram.handlers import register_handlers
 from botragram.telegram.keyboards import get_main_menu_keyboard
 from botragram.telegram.messages import (
+    get_drawdown_alert_message,
     get_paper_entry_message,
     get_paper_exit_message,
     get_performance_card_message,
@@ -32,6 +33,7 @@ from botragram.telegram.messages import (
 
 __all__ = [
     "TelegramBot",
+    "get_drawdown_alert_message",
     "get_main_menu_keyboard",
     "get_paper_entry_message",
     "get_paper_exit_message",

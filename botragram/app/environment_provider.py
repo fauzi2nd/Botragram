@@ -34,6 +34,7 @@ from botragram.constants.env import (
     ENV_AUTONOMOUS_EXECUTION_ENABLED,
     ENV_AUTONOMOUS_LIVE_ENTRY_ENABLED,
     ENV_AUTONOMOUS_MAINNET_ENTRY_ENABLED,
+    ENV_BASELINE_VOLATILITY_PCT,
     ENV_BINANCE_API_KEY,
     ENV_BINANCE_API_SECRET,
     ENV_BINANCE_MARKET_TYPE,
@@ -99,8 +100,12 @@ from botragram.constants.env import (
     ENV_TELEGRAM_TOKEN_LEGACY,
     ENV_TRADE_MODE,
     ENV_TRADE_MODE_LEGACY,
+    ENV_TRAILING_STOP_DISTANCE_PCT,
+    ENV_TRAILING_STOP_ENABLED,
+    ENV_TRAILING_STOP_TRIGGER_PCT,
     ENV_TREND_STOP_LOSS_PCT,
     ENV_TREND_TAKE_PROFIT_PCT,
+    ENV_VOLATILITY_SIZING_ENABLED,
 )
 from botragram.enums import EnvironmentProfile
 
@@ -495,6 +500,26 @@ class EnvironmentProvider:
     def get_partial_tp_trigger_progress(self) -> str:
         """Return the TP progress threshold that triggers partial close."""
         return self._get_var(ENV_PARTIAL_TP_TRIGGER_PROGRESS, default="0.50")
+
+    def get_trailing_stop_enabled(self) -> bool:
+        """Return whether trailing stop loss is enabled."""
+        return self._get_bool(ENV_TRAILING_STOP_ENABLED, default=False)
+
+    def get_trailing_stop_trigger_pct(self) -> str:
+        """Return the trailing stop trigger profit threshold percentage."""
+        return self._get_var(ENV_TRAILING_STOP_TRIGGER_PCT, default="0.015")
+
+    def get_trailing_stop_distance_pct(self) -> str:
+        """Return the trailing stop trailing distance percentage."""
+        return self._get_var(ENV_TRAILING_STOP_DISTANCE_PCT, default="0.008")
+
+    def get_volatility_sizing_enabled(self) -> bool:
+        """Return whether volatility-adjusted sizing is enabled."""
+        return self._get_bool(ENV_VOLATILITY_SIZING_ENABLED, default=False)
+
+    def get_baseline_volatility_pct(self) -> str:
+        """Return the baseline volatility percentage for sizing."""
+        return self._get_var(ENV_BASELINE_VOLATILITY_PCT, default="0.02")
 
     def get_scalping_stop_loss_pct(self) -> str:
         """Return the scalping stop-loss ratio."""

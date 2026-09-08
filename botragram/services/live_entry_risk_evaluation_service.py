@@ -91,6 +91,7 @@ class LiveEntryRiskEvaluationService:
         *,
         signal: Signal,
         entry_price_override: Decimal | None = None,
+        volatility_pct: Decimal | None = None,
     ) -> LiveEntryRiskEvaluation:
         """Return a fresh portfolio-aware decision for the exact signal."""
         evaluation_signal = self._get_evaluation_signal(
@@ -154,6 +155,7 @@ class LiveEntryRiskEvaluationService:
                 if self.runtime_control is not None
                 else None
             ),
+            volatility_pct=volatility_pct,
         )
         if entry_price_override is not None:
             decision = replace(decision, signal=signal)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
@@ -65,6 +66,9 @@ class PositionProtectionManager:
     partial_tp_enabled: bool = False
     partial_tp_ratio: Decimal = Decimal("0.50")
     partial_tp_trigger_progress: Decimal = Decimal("0.50")
+    trailing_stop_enabled: bool = False
+    trailing_stop_trigger_pct: Decimal = Decimal("0.015")
+    trailing_stop_distance_pct: Decimal = Decimal("0.008")
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
         default_factory=LivePositionLifecycleCoordinator,
     )
@@ -73,6 +77,14 @@ class PositionProtectionManager:
     _cached_position_version: int = field(default=0, init=False, repr=False)
     _last_refresh_monotonic: float = field(default=0.0, init=False, repr=False)
     _retry_after_monotonic: float = field(default=0.0, init=False, repr=False)
+    _peak_prices: dict[str, Decimal] = field(
+        default_factory=dict[str, Decimal], init=False, repr=False
+    )
+
+    @property
+    def peak_prices(self) -> Mapping[str, Decimal]:
+        """Return a read-only snapshot of current tracked peak prices."""
+        return dict(self._peak_prices)
 
     def __post_init__(self) -> None:
         """Validate the bounded repository refresh cadence and thresholds."""
@@ -96,6 +108,18 @@ class PositionProtectionManager:
                 "Partial TP trigger progress must be between 0 and 1 exclusive"
             )
 
+        if self.trailing_stop_enabled:
+            if not (_DECIMAL_ZERO < self.trailing_stop_trigger_pct < Decimal("1")):
+                raise ValueError(
+                    "Trailing stop trigger pct must be between 0 and 1 exclusive"
+                )
+            if not (_DECIMAL_ZERO < self.trailing_stop_distance_pct < Decimal("1")):
+                raise ValueError(
+                    "Trailing stop distance pct must be between 0 and 1 exclusive"
+                )
+            if self.trailing_stop_distance_pct >= self.trailing_stop_trigger_pct:
+                raise ValueError("Trailing stop distance must be less than trigger pct")
+
     async def on_market_tick(self, *, ticker: Ticker) -> None:
         """Advance profit protection when a stream tick crosses a new step."""
         async with self.lifecycle_coordinator.hold(symbol=ticker.symbol):
@@ -109,6 +133,8 @@ class PositionProtectionManager:
 
             position = await self._get_position(symbol=ticker.symbol)
             if position is None or position.take_profit is None:
+                if position is None:
+                    self._clear_peak_prices(symbol=ticker.symbol)
                 return
 
             if (
@@ -147,14 +173,36 @@ class PositionProtectionManager:
                 roi=roi,
                 breakeven_roi_threshold=self.breakeven_roi_threshold,
             )
-            if step <= position.protection_step:
+
+            step_stop: Decimal | None = None
+            new_step = position.protection_step
+            if step > position.protection_step:
+                step_stop = self._calculate_stop_loss(
+                    position=position,
+                    step=step,
+                    breakeven_fee_buffer=self.breakeven_fee_buffer,
+                )
+                new_step = step
+
+            trailing_stop = self._calculate_trailing_stop(
+                position=position,
+                current_price=ticker.last_price,
+            )
+
+            candidate_stops: list[Decimal] = []
+            if step_stop is not None:
+                candidate_stops.append(step_stop)
+            if trailing_stop is not None:
+                candidate_stops.append(trailing_stop)
+
+            if not candidate_stops:
                 return
 
-            replacement_stop = self._calculate_stop_loss(
-                position=position,
-                step=step,
-                breakeven_fee_buffer=self.breakeven_fee_buffer,
-            )
+            if position.side is PositionSide.LONG:
+                replacement_stop = max(candidate_stops)
+            else:
+                replacement_stop = min(candidate_stops)
+
             final_stop = replacement_stop
 
             if self.trade_mode is TradeMode.LIVE:
@@ -182,7 +230,7 @@ class PositionProtectionManager:
                     pending_stop_loss_client_algo_id=(
                         Position.create_stop_loss_client_algo_id()
                     ),
-                    pending_protection_step=step,
+                    pending_protection_step=new_step,
                 )
                 await self.position_repository.update(position=pending)
                 self._cached_position = pending
@@ -215,15 +263,15 @@ class PositionProtectionManager:
                     position,
                     current_price=ticker.last_price,
                     stop_loss=final_stop,
-                    protection_step=step,
+                    protection_step=new_step,
                     updated_at=ticker.timestamp,
                 )
 
             await self.position_repository.update(position=protected_position)
             self._cached_position = protected_position
             locked_progress = (
-                _PROGRESS_THRESHOLDS[step - 2] - _LOCKED_PROGRESS_LAG
-                if step >= 2
+                _PROGRESS_THRESHOLDS[new_step - 2] - _LOCKED_PROGRESS_LAG
+                if new_step >= 2
                 else _DECIMAL_ZERO
             )
             _LOGGER.info(
@@ -232,7 +280,7 @@ class PositionProtectionManager:
                 self.trade_mode.value,
                 position.symbol,
                 position.side.value,
-                step,
+                new_step,
                 progress * Decimal("100"),
                 locked_progress * Decimal("100"),
                 final_stop,
@@ -839,6 +887,49 @@ class PositionProtectionManager:
             return position.entry_price + locked_distance
 
         return position.entry_price - locked_distance
+
+    def _clear_peak_prices(self, *, symbol: str) -> None:
+        """Prune peak prices for closed position symbols."""
+        prefix = f"{symbol.upper()}:"
+        to_remove = [k for k in self._peak_prices if k.upper().startswith(prefix)]
+        for k in to_remove:
+            self._peak_prices.pop(k, None)
+
+    def _calculate_trailing_stop(
+        self,
+        *,
+        position: Position,
+        current_price: Decimal,
+    ) -> Decimal | None:
+        """Calculate trailing stop price based on tracked peak market price."""
+        if not self.trailing_stop_enabled:
+            return None
+
+        pos_key = (
+            f"{position.symbol}:{position.side.value}:{position.opened_at.isoformat()}"
+        )
+        if position.side is PositionSide.LONG:
+            peak = self._peak_prices.get(
+                pos_key, max(position.entry_price, current_price)
+            )
+            peak = max(peak, current_price)
+            self._peak_prices[pos_key] = peak
+
+            profit_pct = (peak - position.entry_price) / position.entry_price
+            if profit_pct >= self.trailing_stop_trigger_pct:
+                return peak * (Decimal("1") - self.trailing_stop_distance_pct)
+        else:
+            peak = self._peak_prices.get(
+                pos_key, min(position.entry_price, current_price)
+            )
+            peak = min(peak, current_price)
+            self._peak_prices[pos_key] = peak
+
+            profit_pct = (position.entry_price - peak) / position.entry_price
+            if profit_pct >= self.trailing_stop_trigger_pct:
+                return peak * (Decimal("1") + self.trailing_stop_distance_pct)
+
+        return None
 
     @staticmethod
     def _is_tighter_stop(

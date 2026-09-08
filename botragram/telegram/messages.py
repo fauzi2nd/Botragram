@@ -54,6 +54,7 @@ from botragram.utils.formatter import format_currency, format_price
 __all__ = [
     "get_balance_message",
     "get_autonomous_live_recovery_message",
+    "get_drawdown_alert_message",
     "get_exchange_message",
     "get_exchange_switched_message",
     "get_history_message",
@@ -1206,4 +1207,39 @@ def get_leverage_message(
         "<i>Gunakan tombol di bawah untuk fine-tuning atau memilih preset leverage "
         "(saat PAUSED), atau gunakan perintah:</i>\n"
         "<code>/setleverage &lt;angka 1-100&gt;</code>"
+    )
+
+
+def get_drawdown_alert_message(
+    *,
+    current_drawdown_pct: Decimal,
+    max_drawdown_pct: Decimal,
+    current_equity: Decimal,
+    high_water_equity: Decimal,
+    asset: str,
+    level: str,
+) -> str:
+    """Return an HTML alert message for account drawdown threshold breach."""
+    is_critical = level.upper() == "CRITICAL"
+    header_icon = "🚨" if is_critical else "⚠️"
+    header_title = "CRITICAL DRAWDOWN ALERT" if is_critical else "DRAWDOWN WARNING"
+    ratio_of_limit = (
+        (current_drawdown_pct / max_drawdown_pct * Decimal("100"))
+        if max_drawdown_pct > Decimal("0")
+        else Decimal("0")
+    )
+    curr_dd_display = current_drawdown_pct * Decimal("100")
+    max_dd_display = max_drawdown_pct * Decimal("100")
+    curr_eq_display = format_currency(current_equity, asset)
+    hwm_display = format_currency(high_water_equity, asset)
+    return (
+        f"{header_icon} <b>{header_title}</b>\n\n"
+        f"• <b>Collateral Asset:</b> <code>{escape(asset)}</code>\n"
+        f"• <b>Current Drawdown:</b> <b>{curr_dd_display:.2f}%</b>\n"
+        f"• <b>Max Drawdown Limit:</b> <code>{max_dd_display:.2f}%</code> "
+        f"({ratio_of_limit:.0f}% of limit)\n"
+        f"• <b>Current Equity:</b> <code>{curr_eq_display}</code>\n"
+        f"• <b>High-Water Mark:</b> <code>{hwm_display}</code>\n\n"
+        f"<i>Perhatian: Akun mendekati batas toleransi risiko drawdown. "
+        f"Harap tinjau eksposur posisi terbuka.</i>"
     )
