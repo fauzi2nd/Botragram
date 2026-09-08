@@ -55,6 +55,8 @@ class MarketSettings:
     discovery_top_n: int = DEFAULT_DISCOVERY_TOP_N
     discovery_cadence_seconds: int | None = None
     discovery_candle_delay_seconds: float = DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
+    candle_retention_days: int = 7
+    candle_pruning_interval_hours: int = 6
 
     def __post_init__(self) -> None:
         """Validate bounded market-discovery configuration."""
@@ -89,6 +91,16 @@ class MarketSettings:
             raise ValueError(
                 "Discovery candle delay seconds must be a non-negative number"
             )
+        if (
+            isinstance(self.candle_retention_days, bool)
+            or self.candle_retention_days <= 0
+        ):
+            raise ValueError("Candle retention days must be a positive integer")
+        if (
+            isinstance(self.candle_pruning_interval_hours, bool)
+            or self.candle_pruning_interval_hours <= 0
+        ):
+            raise ValueError("Candle pruning interval hours must be a positive integer")
 
     @property
     def symbol(self) -> str:
