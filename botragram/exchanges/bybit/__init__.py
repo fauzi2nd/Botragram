@@ -22,7 +22,12 @@ from botragram.exchanges.bybit.futures_user_data_stream import (
     BybitFuturesUserDataStream,
 )
 from botragram.exchanges.bybit.mapper import BybitExchangeMapper
-from botragram.exchanges.bybit.rest import BybitRestClient, BybitRestResponseError
+from botragram.exchanges.bybit.rest import (
+    BybitRateLimitGovernor,
+    BybitRateLimitSnapshot,
+    BybitRestClient,
+    BybitRestResponseError,
+)
 from botragram.exchanges.bybit.stream import BybitStreamClient
 
 __all__ = [
@@ -30,6 +35,8 @@ __all__ = [
     "BybitExchangeMapper",
     "BybitFuturesExchangeClient",
     "BybitFuturesUserDataStream",
+    "BybitRateLimitGovernor",
+    "BybitRateLimitSnapshot",
     "BybitRestClient",
     "BybitRestResponseError",
     "BybitStreamClient",

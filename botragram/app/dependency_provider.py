@@ -1531,8 +1531,6 @@ class DependencyProvider:
                 ),
                 discovery_rate_limit_governor=(
                     exchange_client.rest_transport.rate_limit_governor
-                    if isinstance(exchange_client, BinanceFuturesExchangeClient)
-                    else None
                 ),
                 runtime_risk_limit_provider=self.runtime_risk_limit_service,
             )

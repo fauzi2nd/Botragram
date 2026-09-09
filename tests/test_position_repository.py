@@ -491,3 +491,32 @@ async def _run_sqlite_partial_tp_order_id_round_trip() -> None:
             assert loaded.partial_tp_order_id == "ptp-order-12345"
         finally:
             await database.close()
+
+
+@pytest.mark.asyncio
+async def test_position_service_sync_preserves_partial_tp_order_id() -> None:
+    """Verify position service sync preserves partial_tp_order_id."""
+    from unittest.mock import AsyncMock
+
+    from botragram.services.position_service import PositionService
+
+    stored = replace(
+        _position(),
+        partial_tp_executed=True,
+        partial_tp_order_id="ptp-order-999",
+    )
+    exchange = _position()
+
+    mock_repo = AsyncMock()
+    mock_repo.get_all.return_value = [stored]
+    mock_engine = AsyncMock()
+    mock_engine.get_positions.return_value = [exchange]
+
+    svc = PositionService(
+        position_repository=mock_repo,
+        position_engine=mock_engine,
+    )
+    synced = await svc.sync()
+    assert len(synced) == 1
+    assert synced[0].partial_tp_executed is True
+    assert synced[0].partial_tp_order_id == "ptp-order-999"

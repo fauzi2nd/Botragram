@@ -791,6 +791,20 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                                         str(item_map.get("orderId", "")).strip()
                                         == normalized_order_id
                                     ):
+                                        raw_pnl = item_map.get("closedPnl")
+                                        if (
+                                            raw_pnl is not None
+                                            and str(raw_pnl).strip() != ""
+                                        ):
+                                            net_pnl = Decimal(str(raw_pnl))
+                                            open_fee = Decimal(
+                                                str(item_map.get("openFee") or "0")
+                                            )
+                                            close_fee = Decimal(
+                                                str(item_map.get("closeFee") or "0")
+                                            )
+                                            closed_pnl = net_pnl + open_fee + close_fee
+                                            break
                                         raw_entry_val = item_map.get("cumEntryValue")
                                         raw_exit_val = item_map.get("cumExitValue")
                                         if (
@@ -811,20 +825,6 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                                                 if side_str == "SELL"
                                                 else entry_val - exit_val
                                             )
-                                            break
-                                        raw_pnl = item_map.get("closedPnl")
-                                        if (
-                                            raw_pnl is not None
-                                            and str(raw_pnl).strip() != ""
-                                        ):
-                                            net_pnl = Decimal(str(raw_pnl))
-                                            open_fee = Decimal(
-                                                str(item_map.get("openFee") or "0")
-                                            )
-                                            close_fee = Decimal(
-                                                str(item_map.get("closeFee") or "0")
-                                            )
-                                            closed_pnl = net_pnl + open_fee + close_fee
                                             break
                 if closed_pnl is not None:
                     break
