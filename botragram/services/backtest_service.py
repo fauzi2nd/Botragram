@@ -71,8 +71,16 @@ class BacktestService:
 
     async def run(self, *, request: BacktestRequest) -> BacktestResult:
         """Download the requested candle range and run the replay engine."""
-        candles = await self._load_candles(request=request)
+        candles = await self.load_candles(request=request)
         return await self.engine.run(request=request, candles=candles)
+
+    async def load_candles(
+        self,
+        *,
+        request: BacktestRequest,
+    ) -> tuple[Candle, ...]:
+        """Download and return historical candles for the given request."""
+        return await self._load_candles(request=request)
 
     async def _load_candles(
         self,

@@ -59,6 +59,8 @@ class EMAScalpingStrategy(BaseStrategy):
     fast_period: int = 5
     slow_period: int = 13
     minimum_body_ratio: Decimal = Decimal("0.25")
+    require_trend_filter: bool = False
+    trend_period: int = 200
 
     def __post_init__(self) -> None:
         """Validate strategy configuration."""
@@ -74,6 +76,12 @@ class EMAScalpingStrategy(BaseStrategy):
         if not (_DECIMAL_ZERO <= self.minimum_body_ratio <= _DECIMAL_ONE):
             raise ValueError("Minimum body ratio must be between zero and one")
 
+        if self.trend_period <= 0:
+            raise ValueError("Scalping trend period must be greater than zero")
+
+        if self.trend_period <= self.slow_period:
+            raise ValueError("Scalping trend period must be greater than slow period")
+
     @property
     def strategy_type(self) -> StrategyType:
         """Return the strategy type."""
@@ -82,7 +90,10 @@ class EMAScalpingStrategy(BaseStrategy):
     @property
     def minimum_candles(self) -> int:
         """Return the minimum candle count required."""
-        return self.slow_period + 1
+        base_required = self.slow_period + 1
+        if self.require_trend_filter:
+            return max(base_required, self.trend_period + 1)
+        return base_required
 
     def generate_signal(
         self,
@@ -119,6 +130,14 @@ class EMAScalpingStrategy(BaseStrategy):
             candle=latest_candle,
         )
 
+        trend_ema: Decimal | None = None
+        if self.require_trend_filter and len(close_prices) >= self.trend_period:
+            full_trend_ema = calculate_ema(
+                close_prices,
+                period=self.trend_period,
+            )
+            trend_ema = full_trend_ema[-1]
+
         signal_type, reason = self._resolve_signal(
             previous_fast=previous_fast,
             current_fast=current_fast,
@@ -126,6 +145,7 @@ class EMAScalpingStrategy(BaseStrategy):
             current_slow=current_slow,
             candle=latest_candle,
             body_ratio=body_ratio,
+            trend_ema=trend_ema,
         )
 
         return Signal(
@@ -152,6 +172,7 @@ class EMAScalpingStrategy(BaseStrategy):
         current_slow: Decimal,
         candle: Candle,
         body_ratio: Decimal,
+        trend_ema: Decimal | None = None,
     ) -> tuple[SignalType, str]:
         """Resolve a scalping signal."""
         bullish_crossover = (
@@ -166,6 +187,12 @@ class EMAScalpingStrategy(BaseStrategy):
             and candle.close_price > candle.open_price
             and body_ratio >= self.minimum_body_ratio
         ):
+            if self.require_trend_filter:
+                if trend_ema is None or candle.close_price < trend_ema:
+                    return (
+                        SignalType.HOLD,
+                        "Bullish EMA crossover rejected: close below trend EMA",
+                    )
             return (
                 SignalType.BUY,
                 "Bullish EMA crossover confirmed by bullish candle",
@@ -176,6 +203,12 @@ class EMAScalpingStrategy(BaseStrategy):
             and candle.close_price < candle.open_price
             and body_ratio >= self.minimum_body_ratio
         ):
+            if self.require_trend_filter:
+                if trend_ema is None or candle.close_price > trend_ema:
+                    return (
+                        SignalType.HOLD,
+                        "Bearish EMA crossover rejected: close above trend EMA",
+                    )
             return (
                 SignalType.SELL,
                 "Bearish EMA crossover confirmed by bearish candle",

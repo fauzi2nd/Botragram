@@ -106,6 +106,7 @@ def _create_strategy_settings(
         supertrend_period=2,
         scalping_fast_period=2,
         scalping_slow_period=3,
+        scalping_require_trend_filter=False,
         macd_fast_period=2,
         macd_slow_period=3,
         macd_signal_period=2,
@@ -255,6 +256,10 @@ def test_signal_engine_resolves_each_context_strategy_without_leakage() -> None:
         ),
         lambda: BollingerBreakoutStrategy(standard_deviation=Decimal("0")),
         lambda: EMAScalpingStrategy(minimum_body_ratio=Decimal("1.1")),
+        lambda: EMAScalpingStrategy(trend_period=0),
+        lambda: EMAScalpingStrategy(slow_period=15, trend_period=10),
+        lambda: StrategySettings(scalping_trend_period=0),
+        lambda: StrategySettings(scalping_fast_period=10, scalping_slow_period=5),
         lambda: IchimokuCloudStrategy(
             conversion_period=10,
             base_period=5,
@@ -1079,3 +1084,89 @@ def test_vwap_breakout_generates_signals_with_unified_confidence() -> None:
     signal = strategy.generate_signal(candles=candles)
     assert signal.signal_type is SignalType.BUY
     assert Decimal("0.60") <= signal.confidence <= Decimal("0.95")
+
+
+def test_ema_scalping_trend_filter_rejection_and_confirmation() -> None:
+    """Verify EMA scalping filters out counter-trend crossovers."""
+    strategy = EMAScalpingStrategy(
+        fast_period=2,
+        slow_period=3,
+        minimum_body_ratio=Decimal("0.50"),
+        require_trend_filter=True,
+        trend_period=5,
+    )
+    assert strategy.minimum_candles == 6
+
+    # Closes for rejection: [100, 100, 100, 80, 75, 90]
+    # Fast EMA crosses above Slow EMA on bar 5, but close (90) is below
+    # 5-period trend EMA (~90.67).
+    rejected_closes = (
+        Decimal("100"),
+        Decimal("100"),
+        Decimal("100"),
+        Decimal("80"),
+        Decimal("75"),
+        Decimal("90"),
+    )
+    candles_rejected = [
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M5,
+            open_time=_START_TIME + timedelta(minutes=5 * i),
+            close_time=_START_TIME + timedelta(minutes=5 * (i + 1)),
+            open_price=close if i < 5 else Decimal("80"),
+            high_price=close + Decimal("2") if i < 5 else Decimal("92"),
+            low_price=close - Decimal("2") if i < 5 else Decimal("78"),
+            close_price=close,
+            volume=Decimal("10"),
+        )
+        for i, close in enumerate(rejected_closes)
+    ]
+    rejected_signal = strategy.generate_signal(candles=candles_rejected)
+    assert rejected_signal.signal_type is SignalType.HOLD
+    assert rejected_signal.reason is not None
+    assert "rejected: close below trend EMA" in rejected_signal.reason
+
+    # Closes for confirmed BUY: [100, 100, 100, 80, 75, 105]
+    # Close (105) is above 5-period trend EMA.
+    confirmed_closes = (
+        Decimal("100"),
+        Decimal("100"),
+        Decimal("100"),
+        Decimal("80"),
+        Decimal("75"),
+        Decimal("105"),
+    )
+    candles_confirmed = [
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M5,
+            open_time=_START_TIME + timedelta(minutes=5 * i),
+            close_time=_START_TIME + timedelta(minutes=5 * (i + 1)),
+            open_price=close if i < 5 else Decimal("80"),
+            high_price=close + Decimal("2") if i < 5 else Decimal("106"),
+            low_price=close - Decimal("2") if i < 5 else Decimal("78"),
+            close_price=close,
+            volume=Decimal("10"),
+        )
+        for i, close in enumerate(confirmed_closes)
+    ]
+    confirmed_signal = strategy.generate_signal(candles=candles_confirmed)
+    assert confirmed_signal.signal_type is SignalType.BUY
+    assert Decimal("0.60") <= confirmed_signal.confidence <= Decimal("0.95")
+
+
+def test_strategy_factory_creates_trend_filtered_ema_scalping() -> None:
+    """Verify StrategyFactory configures trend filter on EMA scalping."""
+    settings = StrategySettings(
+        strategy_type=StrategyType.EMA_SCALPING,
+        scalping_fast_period=5,
+        scalping_slow_period=13,
+        scalping_require_trend_filter=True,
+        scalping_trend_period=200,
+    )
+    strategy = StrategyFactory.create(settings=settings)
+    assert isinstance(strategy, EMAScalpingStrategy)
+    assert strategy.require_trend_filter is True
+    assert strategy.trend_period == 200
+    assert strategy.minimum_candles == 201

@@ -95,6 +95,8 @@ class StrategySettings:
     scalping_fast_period: int = 5
     scalping_slow_period: int = 13
     scalping_minimum_body_ratio: Decimal = Decimal("0.25")
+    scalping_require_trend_filter: bool = False
+    scalping_trend_period: int = 200
 
     # =========================================================================
     # Ichimoku Cloud
@@ -332,3 +334,13 @@ class StrategySettings:
             )
         if self.discovery_min_quote_volume_usdt < Decimal("0"):
             raise ValueError("Discovery min quote volume USDT must not be negative")
+        if self.scalping_fast_period <= 0 or self.scalping_slow_period <= 0:
+            raise ValueError("Scalping EMA periods must be positive")
+        if self.scalping_fast_period >= self.scalping_slow_period:
+            raise ValueError("Scalping fast period must be less than slow period")
+        if not (Decimal("0") <= self.scalping_minimum_body_ratio <= Decimal("1")):
+            raise ValueError("Scalping minimum body ratio must be between 0 and 1")
+        if self.scalping_trend_period <= 0:
+            raise ValueError("Scalping trend period must be positive")
+        if self.scalping_trend_period <= self.scalping_slow_period:
+            raise ValueError("Scalping trend period must be greater than slow period")

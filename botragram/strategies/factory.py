@@ -195,6 +195,8 @@ class StrategyFactory:
                     fast_period=settings.scalping_fast_period,
                     slow_period=settings.scalping_slow_period,
                     minimum_body_ratio=settings.scalping_minimum_body_ratio,
+                    require_trend_filter=settings.scalping_require_trend_filter,
+                    trend_period=settings.scalping_trend_period,
                 )
 
             case StrategyType.HIGH_CONFLUENCE_EXHAUSTION:
