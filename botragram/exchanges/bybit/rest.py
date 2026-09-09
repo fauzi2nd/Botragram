@@ -509,16 +509,15 @@ class BybitRestClient(BaseRestClient):
         """Send an HTTP GET request to Bybit V5."""
         clean_params = {k: str(v) for k, v in params.items()} if params else {}
         query_string = urlencode(clean_params) if clean_params else ""
-        request_headers = self._prepare_headers(
-            authenticated=authenticated,
-            payload_str=query_string,
-            custom_headers=headers,
-        )
-
         url = f"{self._base_url}{path}"
         session = await self._get_session()
 
         for attempt in range(self._max_retries + 1):
+            request_headers = self._prepare_headers(
+                authenticated=authenticated,
+                payload_str=query_string,
+                custom_headers=headers,
+            )
             try:
                 async with session.get(
                     url,
@@ -534,13 +533,21 @@ class BybitRestClient(BaseRestClient):
             except (aiohttp.ClientError, TimeoutError) as error:
                 if attempt >= self._max_retries:
                     raise
-                _LOGGER.warning(
-                    "Bybit GET %s failed (attempt %d/%d): %s",
-                    path,
-                    attempt + 1,
-                    self._max_retries,
-                    error,
-                )
+                if attempt == 0:
+                    _LOGGER.debug(
+                        "Bybit GET %s transient failure (attempt 1/%d), retrying: %s",
+                        path,
+                        self._max_retries,
+                        error,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Bybit GET %s failed (attempt %d/%d): %s",
+                        path,
+                        attempt + 1,
+                        self._max_retries,
+                        error,
+                    )
                 await asyncio.sleep(self._retry_delay_seconds * (2**attempt))
             except BybitRestResponseError as error:
                 if (
@@ -563,16 +570,27 @@ class BybitRestClient(BaseRestClient):
                         ret_code=error.ret_code,
                         retry_after_seconds=backoff,
                     )
-                _LOGGER.warning(
-                    "Bybit GET %s returned retryable error %d (attempt %d/%d), "
-                    "backing off %.1fs: %s",
-                    path,
-                    error.ret_code,
-                    attempt + 1,
-                    self._max_retries,
-                    backoff,
-                    error.ret_msg,
-                )
+                if attempt == 0:
+                    _LOGGER.debug(
+                        "Bybit GET %s returned retryable error %d (attempt 1/%d), "
+                        "backing off %.1fs: %s",
+                        path,
+                        error.ret_code,
+                        self._max_retries,
+                        backoff,
+                        error.ret_msg,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Bybit GET %s returned retryable error %d (attempt %d/%d), "
+                        "backing off %.1fs: %s",
+                        path,
+                        error.ret_code,
+                        attempt + 1,
+                        self._max_retries,
+                        backoff,
+                        error.ret_msg,
+                    )
                 await asyncio.sleep(backoff)
 
         raise RuntimeError("Unreachable request loop termination")
@@ -593,16 +611,15 @@ class BybitRestClient(BaseRestClient):
             if data is not None
             else ""
         )
-        request_headers = self._prepare_headers(
-            authenticated=authenticated,
-            payload_str=body_str,
-            custom_headers=headers,
-        )
-
         url = f"{self._base_url}{path}"
         session = await self._get_session()
 
         for attempt in range(self._max_retries + 1):
+            request_headers = self._prepare_headers(
+                authenticated=authenticated,
+                payload_str=body_str,
+                custom_headers=headers,
+            )
             try:
                 async with session.post(
                     url,
@@ -619,13 +636,21 @@ class BybitRestClient(BaseRestClient):
             except (aiohttp.ClientError, TimeoutError) as error:
                 if attempt >= self._max_retries:
                     raise
-                _LOGGER.warning(
-                    "Bybit POST %s failed (attempt %d/%d): %s",
-                    path,
-                    attempt + 1,
-                    self._max_retries,
-                    error,
-                )
+                if attempt == 0:
+                    _LOGGER.debug(
+                        "Bybit POST %s transient failure (attempt 1/%d), retrying: %s",
+                        path,
+                        self._max_retries,
+                        error,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Bybit POST %s failed (attempt %d/%d): %s",
+                        path,
+                        attempt + 1,
+                        self._max_retries,
+                        error,
+                    )
                 await asyncio.sleep(self._retry_delay_seconds * (2**attempt))
             except BybitRestResponseError as error:
                 if (
@@ -648,16 +673,27 @@ class BybitRestClient(BaseRestClient):
                         ret_code=error.ret_code,
                         retry_after_seconds=backoff,
                     )
-                _LOGGER.warning(
-                    "Bybit POST %s returned retryable error %d (attempt %d/%d), "
-                    "backing off %.1fs: %s",
-                    path,
-                    error.ret_code,
-                    attempt + 1,
-                    self._max_retries,
-                    backoff,
-                    error.ret_msg,
-                )
+                if attempt == 0:
+                    _LOGGER.debug(
+                        "Bybit POST %s returned retryable error %d (attempt 1/%d), "
+                        "backing off %.1fs: %s",
+                        path,
+                        error.ret_code,
+                        self._max_retries,
+                        backoff,
+                        error.ret_msg,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Bybit POST %s returned retryable error %d (attempt %d/%d), "
+                        "backing off %.1fs: %s",
+                        path,
+                        error.ret_code,
+                        attempt + 1,
+                        self._max_retries,
+                        backoff,
+                        error.ret_msg,
+                    )
                 await asyncio.sleep(backoff)
 
         raise RuntimeError("Unreachable request loop termination")
@@ -673,16 +709,15 @@ class BybitRestClient(BaseRestClient):
         """Send an HTTP DELETE request to Bybit V5."""
         clean_params = {k: str(v) for k, v in params.items()} if params else {}
         query_string = urlencode(clean_params) if clean_params else ""
-        request_headers = self._prepare_headers(
-            authenticated=authenticated,
-            payload_str=query_string,
-            custom_headers=headers,
-        )
-
         url = f"{self._base_url}{path}"
         session = await self._get_session()
 
         for attempt in range(self._max_retries + 1):
+            request_headers = self._prepare_headers(
+                authenticated=authenticated,
+                payload_str=query_string,
+                custom_headers=headers,
+            )
             try:
                 async with session.delete(
                     url,
@@ -698,13 +733,22 @@ class BybitRestClient(BaseRestClient):
             except (aiohttp.ClientError, TimeoutError) as error:
                 if attempt >= self._max_retries:
                     raise
-                _LOGGER.warning(
-                    "Bybit DELETE %s failed (attempt %d/%d): %s",
-                    path,
-                    attempt + 1,
-                    self._max_retries,
-                    error,
-                )
+                if attempt == 0:
+                    _LOGGER.debug(
+                        "Bybit DELETE %s transient failure (attempt 1/%d), "
+                        "retrying: %s",
+                        path,
+                        self._max_retries,
+                        error,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Bybit DELETE %s failed (attempt %d/%d): %s",
+                        path,
+                        attempt + 1,
+                        self._max_retries,
+                        error,
+                    )
                 await asyncio.sleep(self._retry_delay_seconds * (2**attempt))
             except BybitRestResponseError as error:
                 if (
@@ -727,16 +771,27 @@ class BybitRestClient(BaseRestClient):
                         ret_code=error.ret_code,
                         retry_after_seconds=backoff,
                     )
-                _LOGGER.warning(
-                    "Bybit DELETE %s returned retryable error %d (attempt %d/%d), "
-                    "backing off %.1fs: %s",
-                    path,
-                    error.ret_code,
-                    attempt + 1,
-                    self._max_retries,
-                    backoff,
-                    error.ret_msg,
-                )
+                if attempt == 0:
+                    _LOGGER.debug(
+                        "Bybit DELETE %s returned retryable error %d (attempt 1/%d), "
+                        "backing off %.1fs: %s",
+                        path,
+                        error.ret_code,
+                        self._max_retries,
+                        backoff,
+                        error.ret_msg,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Bybit DELETE %s returned retryable error %d (attempt %d/%d), "
+                        "backing off %.1fs: %s",
+                        path,
+                        error.ret_code,
+                        attempt + 1,
+                        self._max_retries,
+                        backoff,
+                        error.ret_msg,
+                    )
                 await asyncio.sleep(backoff)
 
         raise RuntimeError("Unreachable request loop termination")

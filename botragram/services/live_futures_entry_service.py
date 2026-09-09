@@ -321,11 +321,23 @@ class LiveFuturesEntryService:
             if order.client_order_id not in (None, client_order_id):
                 raise RuntimeError("Exchange returned a mismatched client order ID")
         except ExchangeOrderRejectedError as error:
-            _LOGGER.warning(
-                "Live Futures entry order rejected by exchange: symbol=%s error=%s",
-                signal.symbol,
-                error,
-            )
+            error_text = str(error).lower()
+            if any(
+                term in error_text
+                for term in ("110007", "ab not enough", "insufficient")
+            ):
+                _LOGGER.info(
+                    "Live Futures entry skipped due to insufficient exchange margin: "
+                    "symbol=%s error=%s",
+                    signal.symbol,
+                    error,
+                )
+            else:
+                _LOGGER.warning(
+                    "Live Futures entry order rejected by exchange: symbol=%s error=%s",
+                    signal.symbol,
+                    error,
+                )
             await self._persist_attempt(
                 attempt=attempt,
                 status=SubmissionAttemptStatus.REJECTED,

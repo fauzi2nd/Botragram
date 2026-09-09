@@ -1522,12 +1522,20 @@ class TradingRunner:
         self._outage_started_monotonic = outage_started
         self._outage_reason = reason
         self._next_recovery_retry_seconds = 0.0
-        _LOGGER.critical(
-            "Autonomous LIVE runtime paused for unattended recovery: "
-            "reason=%s error_type=%s entry_enabled=false",
-            reason,
-            type(error).__name__,
-        )
+        if reason == "reconciliation_required":
+            _LOGGER.info(
+                "Autonomous LIVE runtime paused for routine exit reconciliation: "
+                "reason=%s error_type=%s entry_enabled=false",
+                reason,
+                type(error).__name__,
+            )
+        else:
+            _LOGGER.critical(
+                "Autonomous LIVE runtime paused for unattended recovery: "
+                "reason=%s error_type=%s entry_enabled=false",
+                reason,
+                type(error).__name__,
+            )
 
         retry_attempt = 0
         recovery_attempts = 0
@@ -1604,15 +1612,27 @@ class TradingRunner:
                     snapshot=health_snapshot,
                 ):
                     outage_seconds = max(0.0, monotonic() - outage_started)
-                    _LOGGER.warning(
-                        "Autonomous LIVE unattended recovery restored authoritative "
-                        "state: reason=%s attempts=%d outage_seconds=%.1f "
-                        "positions_known=%d positions_state=authoritative",
-                        reason,
-                        recovery_attempts,
-                        outage_seconds,
-                        len(health_snapshot.contexts),
-                    )
+                    if reason == "reconciliation_required":
+                        _LOGGER.info(
+                            "Autonomous LIVE routine exit reconciliation completed: "
+                            "reason=%s attempts=%d duration=%.1fs "
+                            "positions_known=%d positions_state=authoritative",
+                            reason,
+                            recovery_attempts,
+                            outage_seconds,
+                            len(health_snapshot.contexts),
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "Autonomous LIVE unattended recovery restored "
+                            "authoritative state: reason=%s attempts=%d "
+                            "outage_seconds=%.1f positions_known=%d "
+                            "positions_state=authoritative",
+                            reason,
+                            recovery_attempts,
+                            outage_seconds,
+                            len(health_snapshot.contexts),
+                        )
                     return True
 
                 self.runtime_control.set_position_protection_ready(False)
@@ -1843,7 +1863,7 @@ class TradingRunner:
         if provider is None:
             return None
 
-        _LOGGER.warning(
+        _LOGGER.info(
             "Autonomous LIVE in-process recovery started: attempt=%d error_type=%s",
             attempt,
             type(error).__name__,
@@ -1884,7 +1904,7 @@ class TradingRunner:
             )
             return False
 
-        _LOGGER.warning(
+        _LOGGER.info(
             "Autonomous LIVE in-process recovery completed safely: attempt=%d",
             attempt,
         )

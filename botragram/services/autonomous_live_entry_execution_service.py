@@ -186,11 +186,23 @@ class AutonomousLiveEntryExecutionService:
                 decision=decision,
             )
         except ExchangeOrderRejectedError as error:
-            _LOGGER.warning(
-                "Autonomous LIVE entry rejected by exchange: symbol=%s error=%s",
-                intent.symbol,
-                error,
-            )
+            error_text = str(error).lower()
+            if any(
+                term in error_text
+                for term in ("110007", "ab not enough", "insufficient")
+            ):
+                _LOGGER.info(
+                    "Autonomous LIVE entry skipped due to insufficient "
+                    "exchange margin: symbol=%s error=%s",
+                    intent.symbol,
+                    error,
+                )
+            else:
+                _LOGGER.warning(
+                    "Autonomous LIVE entry rejected by exchange: symbol=%s error=%s",
+                    intent.symbol,
+                    error,
+                )
             return AutonomousLiveEntryExecutionResult(
                 status=AutonomousLiveEntryExecutionStatus.EXCHANGE_REJECTED,
                 decision=decision,

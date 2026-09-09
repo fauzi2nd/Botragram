@@ -192,7 +192,7 @@ class CandleSyncService:
                     max_candles=max_candles_per_symbol,
                 )
                 results[sym] = count
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.10)
 
         tasks = [asyncio.create_task(_sync_worker(s)) for s in symbols]
         if tasks:

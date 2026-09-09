@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
@@ -980,6 +981,33 @@ def test_known_exchange_rejection_is_typed_without_retry() -> None:
 
     assert result.status is AutonomousLiveEntryExecutionStatus.EXCHANGE_REJECTED
     assert len(protected_entry.calls) == 1
+
+
+def test_insufficient_margin_exchange_rejection_logs_at_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Soft-log margin rejection when balance is not enough for order."""
+    protected_entry = _FakeProtectedEntryService(
+        error=ExchangeOrderRejectedError("110007: ab not enough for new order"),
+    )
+    with caplog.at_level(logging.INFO):
+        result = asyncio.run(
+            _create_service(
+                account_service=_FakeAccountService(balances=[Decimal("500")]),
+                position_service=_FakePositionService(portfolios=[()]),
+                protected_entry_service=protected_entry,
+            ).execute(
+                intent=_create_intent(),
+                authorization=_create_authorization(),
+            )
+        )
+
+    assert result.status is AutonomousLiveEntryExecutionStatus.EXCHANGE_REJECTED
+    assert any(
+        "skipped due to insufficient exchange margin" in record.message
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.WARNING for record in caplog.records)
 
 
 def test_preflight_failure_propagates_without_unsafe_result() -> None:
