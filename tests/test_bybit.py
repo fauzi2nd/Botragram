@@ -673,6 +673,37 @@ async def test_bybit_futures_client_positions_and_leverage() -> None:
     assert exit_trades[0].order_id == "exit-456"
     assert exit_trades[0].realized_pnl == Decimal("25.50")
 
+    # get_trades
+    rest.canned_response = {
+        "retCode": 0,
+        "retMsg": "OK",
+        "result": {
+            "list": [
+                {
+                    "execId": "trade-all-1",
+                    "orderId": "order-all-1",
+                    "symbol": "BTCUSDT",
+                    "side": "Buy",
+                    "execPrice": "50000",
+                    "execQty": "0.1",
+                    "execFee": "0.05",
+                    "feeCurrency": "USDT",
+                    "execTime": "1672531200000",
+                }
+            ]
+        },
+    }
+    bounded_trades = await client.get_trades(symbol="BTCUSDT", limit=10)
+    assert len(bounded_trades) == 1
+    assert bounded_trades[0].trade_id == "trade-all-1"
+    assert bounded_trades[0].order_id == "order-all-1"
+    assert rest.last_path == "/v5/execution/list"
+    assert rest.last_params == {
+        "category": "linear",
+        "symbol": "BTCUSDT",
+        "limit": 10,
+    }
+
     # verify_mainnet_readiness
     rest.canned_response = {
         "retCode": 0,

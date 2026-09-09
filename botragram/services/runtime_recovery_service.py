@@ -350,6 +350,10 @@ class RuntimeRecoveryService:
             symbol=position.symbol,
             interval=self._require_interval(position),
             strategy_type=self._require_strategy(position),
+            preserve_strategy=(
+                self.autonomous_live_entry_authorization is not None
+                or self.trade_mode is TradeMode.LIVE
+            ),
         )
         await self.stream_controller.start_market_stream()
 

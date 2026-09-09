@@ -76,7 +76,7 @@ def _current_strategy(bot_context: BotContext) -> StrategyType:
         return switcher.current_strategy_type
     control = bot_context.runtime_control
     if control is not None:
-        return control.strategy_type
+        return control.configured_strategy_type
     try:
         return StrategyType(bot_context.strategy_name)
     except ValueError:

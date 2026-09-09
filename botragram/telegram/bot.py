@@ -10,11 +10,13 @@ Python:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Final
 
 from telegram import BotCommand
 from telegram.ext import ApplicationBuilder
+from telegram.request import HTTPXRequest
 
 from botragram.config.telegram_settings import TelegramSettings
 from botragram.models import ExecutionAuthorization, Notification
@@ -34,6 +36,12 @@ __all__ = ["TelegramBot", "get_bot_commands"]
 
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _TRADING_MODE_SWITCHED_MESSAGE: Final[str] = "Trading Mode Switched"
+_CONNECT_TIMEOUT_SECONDS: Final[float] = 15.0
+_READ_TIMEOUT_SECONDS: Final[float] = 15.0
+_WRITE_TIMEOUT_SECONDS: Final[float] = 15.0
+_POOL_TIMEOUT_SECONDS: Final[float] = 5.0
+_PUBLISH_MAX_ATTEMPTS: Final[int] = 3
+_PUBLISH_RETRY_DELAY_SECONDS: Final[float] = 0.5
 
 
 def get_bot_commands() -> tuple[BotCommand, ...]:
@@ -101,7 +109,16 @@ class TelegramBot:
             )
             return
 
-        app = ApplicationBuilder().token(self._settings.bot_token).build()
+        request = HTTPXRequest(
+            connect_timeout=_CONNECT_TIMEOUT_SECONDS,
+            read_timeout=_READ_TIMEOUT_SECONDS,
+            write_timeout=_WRITE_TIMEOUT_SECONDS,
+            pool_timeout=_POOL_TIMEOUT_SECONDS,
+        )
+        builder = ApplicationBuilder().token(self._settings.bot_token)
+        if hasattr(builder, "request"):
+            builder = builder.request(request)
+        app = builder.build()
         register_handlers(app)
         app.bot_data[BOT_CONTEXT_KEY] = self._context
         app.bot_data[ALLOWED_CHAT_IDS_KEY] = frozenset(self._settings.allowed_chat_ids)
@@ -128,6 +145,30 @@ class TelegramBot:
 
         self._app = app
         _LOGGER.info("Telegram bot polling started")
+
+    async def start_with_retry(
+        self,
+        *,
+        max_attempts: int = 3,
+        delay_seconds: float = 1.0,
+    ) -> None:
+        """Attempt to start the bot with bounded retries."""
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await self.start()
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if attempt >= max_attempts:
+                    raise
+                _LOGGER.warning(
+                    "Telegram bot startup attempt %d/%d failed; retrying in %.1fs",
+                    attempt,
+                    max_attempts,
+                    delay_seconds * attempt,
+                )
+                await asyncio.sleep(delay_seconds * attempt)
 
     async def sync_context(self, *, context: BotContext) -> None:
         self._context = context
@@ -183,18 +224,33 @@ class TelegramBot:
             )
             return
         for chat_id in self._settings.allowed_chat_ids:
-            try:
-                await app.bot.send_message(
-                    chat_id=chat_id,
-                    text=notification.message,
-                    parse_mode=self._settings.parse_mode,
-                )
-            except Exception:
-                _LOGGER.exception(
-                    "Telegram notification delivery failed: title=%s chat_id=%d",
-                    notification.title,
-                    chat_id,
-                )
+            for attempt in range(1, _PUBLISH_MAX_ATTEMPTS + 1):
+                try:
+                    await app.bot.send_message(
+                        chat_id=chat_id,
+                        text=notification.message,
+                        parse_mode=self._settings.parse_mode,
+                    )
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    if attempt >= _PUBLISH_MAX_ATTEMPTS:
+                        _LOGGER.exception(
+                            "Telegram notification delivery failed: "
+                            "title=%s chat_id=%d",
+                            notification.title,
+                            chat_id,
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "Telegram notification delivery attempt %d failed, "
+                            "retrying: title=%s chat_id=%d",
+                            attempt,
+                            notification.title,
+                            chat_id,
+                        )
+                        await asyncio.sleep(_PUBLISH_RETRY_DELAY_SECONDS * attempt)
 
     async def publish_execution_authorization(
         self,
@@ -221,20 +277,34 @@ class TelegramBot:
             authorization.authorization_id,
         )
         for chat_id in self._settings.allowed_chat_ids:
-            try:
-                await app.bot.send_message(
-                    chat_id=chat_id,
-                    text=message,
-                    parse_mode=self._settings.parse_mode,
-                    reply_markup=reply_markup,
-                )
-            except Exception:
-                _LOGGER.exception(
-                    "Telegram authorization delivery failed: authorization_id=%s "
-                    "chat_id=%d",
-                    authorization.authorization_id,
-                    chat_id,
-                )
+            for attempt in range(1, _PUBLISH_MAX_ATTEMPTS + 1):
+                try:
+                    await app.bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        parse_mode=self._settings.parse_mode,
+                        reply_markup=reply_markup,
+                    )
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    if attempt >= _PUBLISH_MAX_ATTEMPTS:
+                        _LOGGER.exception(
+                            "Telegram authorization delivery failed: "
+                            "authorization_id=%s chat_id=%d",
+                            authorization.authorization_id,
+                            chat_id,
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "Telegram authorization delivery attempt %d failed, "
+                            "retrying: authorization_id=%s chat_id=%d",
+                            attempt,
+                            authorization.authorization_id,
+                            chat_id,
+                        )
+                        await asyncio.sleep(_PUBLISH_RETRY_DELAY_SECONDS * attempt)
 
     async def stop(self) -> None:
         app = self._app

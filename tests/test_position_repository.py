@@ -437,3 +437,57 @@ async def _run_sqlite_partial_tp_executed_round_trip() -> None:
             assert loaded.partial_tp_executed is True
         finally:
             await database.close()
+
+
+def test_sqlite_v20_to_v21_adds_partial_tp_order_id_column() -> None:
+    """Upgrade existing schema to v21 adding partial_tp_order_id column."""
+    asyncio.run(_run_v20_to_v21_partial_tp_order_id_migration())
+
+
+async def _run_v20_to_v21_partial_tp_order_id_migration() -> None:
+    with TemporaryDirectory() as temporary_directory:
+        database = SQLiteDatabase(
+            database_path=Path(temporary_directory) / "migration-v20-v21.db",
+        )
+        await database.connect()
+        try:
+            manager = SQLiteMigrationManager(database=database)
+            assert await manager.initialize(target_version=20) == 20
+            columns_before = await database.fetch_all(
+                statement="PRAGMA table_info(positions)",
+            )
+            names_before = {str(row["name"]) for row in columns_before}
+            assert "partial_tp_order_id" not in names_before
+
+            assert await manager.initialize(target_version=21) == 21
+            columns_after = await database.fetch_all(
+                statement="PRAGMA table_info(positions)",
+            )
+            names_after = {str(row["name"]) for row in columns_after}
+            assert "partial_tp_order_id" in names_after
+        finally:
+            await database.close()
+
+
+def test_sqlite_position_partial_tp_order_id_round_trips() -> None:
+    """Persist and restore a position with partial_tp_order_id."""
+    asyncio.run(_run_sqlite_partial_tp_order_id_round_trip())
+
+
+async def _run_sqlite_partial_tp_order_id_round_trip() -> None:
+    with TemporaryDirectory() as temporary_directory:
+        database = SQLiteDatabase(
+            database_path=Path(temporary_directory) / "positions-ptp-order-id.db",
+        )
+        await database.connect()
+        try:
+            await SQLiteMigrationManager(database=database).initialize()
+            repository = SQLitePositionRepository(database=database)
+            pos = replace(_position(), partial_tp_order_id="ptp-order-12345")
+            await repository.save(position=pos)
+
+            loaded = await repository.get_by_symbol(symbol=pos.symbol)
+            assert loaded is not None
+            assert loaded.partial_tp_order_id == "ptp-order-12345"
+        finally:
+            await database.close()

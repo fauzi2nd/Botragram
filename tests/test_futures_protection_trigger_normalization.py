@@ -610,3 +610,44 @@ async def test_restart_rejects_mismatched_normalized_protection_without_post() -
         await service.ensure(position=position)
 
     assert not any(event.startswith("post:") for event in exchange.events)
+
+
+@pytest.mark.asyncio
+async def test_restart_reconciles_missing_stop_crossed_by_mark_price_by_clamping() -> (
+    None
+):
+    """Clamp missing stop trigger below mark price when crossed during downtime."""
+    position = _recovered_position()
+    # Mark price fell below durable stop_loss (0.0022490)
+    exchange = ProtectionPlanExchange(rules=_rules(), mark_price=Decimal("0.0022400"))
+    # The TP is active on exchange, but stop loss is canceled on exchange
+    exchange.orders.append(
+        _recovered_order(
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            trigger_price=Decimal("0.0023850"),
+            client_order_id=position.take_profit_client_algo_id or "",
+        )
+    )
+    exchange.orders.append(
+        replace(
+            _recovered_order(
+                order_type=OrderType.STOP_MARKET,
+                trigger_price=Decimal("0.0022490"),
+                client_order_id=position.stop_loss_client_algo_id or "",
+            ),
+            status=OrderStatus.CANCELED,
+        )
+    )
+    repository = RecordingPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+
+    protected = await service.ensure(position=position)
+
+    # 1 tick below mark_price (0.0022400 - 0.0000010 = 0.0022390)
+    assert protected.stop_loss == Decimal("0.0022390")
+    assert protected.take_profit == Decimal("0.0023850")
+    assert any(event.startswith("post:stop_market") for event in exchange.events)

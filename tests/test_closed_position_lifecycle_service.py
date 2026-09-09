@@ -23,6 +23,7 @@ from botragram.models import (
     ClosedPositionLifecycle,
     Notification,
     Order,
+    PendingClosedPositionLifecycle,
     Position,
     SubmissionAttempt,
     Trade,
@@ -126,16 +127,20 @@ def _fill(
     fee_asset: str = "USDT",
     realized_pnl: str | None,
     seconds: int,
+    price: str = "100",
+    quantity: str = "0.5",
 ) -> Trade:
     """Build one exact exchange fill."""
+    price_dec = Decimal(price)
+    quantity_dec = Decimal(quantity)
     return Trade(
         trade_id=trade_id,
         order_id=order_id,
         symbol="BTCUSDT",
         side=side,
-        price=Decimal("100"),
-        quantity=Decimal("0.5"),
-        quote_quantity=Decimal("50"),
+        price=price_dec,
+        quantity=quantity_dec,
+        quote_quantity=price_dec * quantity_dec,
         fee=Decimal(fee),
         fee_asset=fee_asset,
         realized_pnl=(Decimal(realized_pnl) if realized_pnl is not None else None),
@@ -329,19 +334,19 @@ async def test_incompatible_fee_asset_keeps_lifecycle_pending() -> None:
     assert snapshot.realized_pnl == Decimal("0")
 
 
+@dataclass(slots=True, kw_only=True)
+class _RecordingPublisher:
+    notifications: list[Notification] = field(
+        default_factory=list[Notification],
+    )
+
+    async def publish(self, *, notification: Notification) -> None:
+        self.notifications.append(notification)
+
+
 @pytest.mark.asyncio
 async def test_closed_lifecycle_service_publishes_completion_notification() -> None:
     """Deliver a rich Trade Completed notification upon completion."""
-
-    @dataclass(slots=True, kw_only=True)
-    class _RecordingPublisher:
-        notifications: list[Notification] = field(
-            default_factory=list[Notification],
-        )
-
-        async def publish(self, *, notification: Notification) -> None:
-            self.notifications.append(notification)
-
     publisher = _RecordingPublisher()
     repository = MemoryClosedPositionLifecycleRepository()
     history = ExactTradeHistory(
@@ -389,7 +394,316 @@ async def test_closed_lifecycle_service_publishes_completion_notification() -> N
     assert len(publisher.notifications) == 1
     notification = publisher.notifications[0]
     assert "Trade Completed (WIN)" in notification.message
-    assert "Symbol:</b> BTCUSDT" in notification.message
+    assert "BTCUSDT" in notification.message
     assert "Side:</b> LONG" in notification.message
     assert "Close Reason:</b> TAKE_PROFIT" in notification.message
     assert "Net Realized PnL:</b> <b>+1.98 USDT" in notification.message
+
+
+@pytest.mark.asyncio
+async def test_closed_lifecycle_fallback_pnl_when_fill_lacks_realized_pnl() -> None:
+    """
+    Resolve deterministic fallback PnL and publish notification
+    when exchange lacks PnL.
+    """
+    repository = MemoryClosedPositionLifecycleRepository()
+    publisher = _RecordingPublisher()
+    history = ExactTradeHistory(
+        fills_by_order_id={
+            "entry-1": (
+                _fill(
+                    trade_id="entry",
+                    order_id="entry-1",
+                    side=OrderSide.BUY,
+                    price="100",
+                    quantity="1",
+                    fee="0.01",
+                    fee_asset="USDT",
+                    realized_pnl="0",
+                    seconds=1,
+                ),
+            ),
+            "exit-1": (
+                _fill(
+                    trade_id="exit",
+                    order_id="exit-1",
+                    side=OrderSide.SELL,
+                    price="105",
+                    quantity="1",
+                    fee="0.01",
+                    fee_asset="USDT",
+                    realized_pnl=None,  # Exchange returned None
+                    seconds=2,
+                ),
+            ),
+        }
+    )
+    lifecycle_service = ClosedPositionLifecycleService(
+        repository=repository,
+        trade_history=history,
+        notification_publisher=publisher,
+        pnl_asset="USDT",
+    )
+    await lifecycle_service.stage(
+        position=_position(),
+        attempt=_attempt(),
+        exit_order=_exit_order(),
+        close_reason=ClosedPositionReason.TAKE_PROFIT,
+        provenance=ClosedPositionProvenance.PROTECTION_ORDER,
+    )
+
+    await lifecycle_service.complete(entry_client_order_id=_ENTRY_CLIENT_ID)
+
+    # Completed with fallback: 105 - 100 = 5 gross, minus 0.02 fee = 4.98 net
+    completed = await repository.get_by_entry_client_order_id(
+        entry_client_order_id=_ENTRY_CLIENT_ID,
+    )
+    assert isinstance(completed, ClosedPositionLifecycle)
+    assert completed.gross_realized_pnl == Decimal("5")
+    assert completed.net_pnl == Decimal("4.98")
+
+    assert len(publisher.notifications) == 1
+    notification = publisher.notifications[0]
+    assert "Trade Completed (WIN)" in notification.message
+    assert "Net Realized PnL:</b> <b>+4.98 USDT" in notification.message
+
+
+@pytest.mark.asyncio
+async def test_closed_lifecycle_short_fallback_pnl_when_fill_lacks_pnl() -> None:
+    """
+    Resolve deterministic fallback PnL for SHORT positions
+    when exit fill lacks PnL.
+    """
+    repository = MemoryClosedPositionLifecycleRepository()
+    publisher = _RecordingPublisher()
+    history = ExactTradeHistory(
+        fills_by_order_id={
+            "entry-1": (
+                _fill(
+                    trade_id="entry",
+                    order_id="entry-1",
+                    side=OrderSide.SELL,
+                    price="100",
+                    quantity="1",
+                    fee="0.01",
+                    fee_asset="USDT",
+                    realized_pnl="0",
+                    seconds=1,
+                ),
+            ),
+            "exit-1": (
+                _fill(
+                    trade_id="exit",
+                    order_id="exit-1",
+                    side=OrderSide.BUY,
+                    price="95",
+                    quantity="1",
+                    fee="0.01",
+                    fee_asset="USDT",
+                    realized_pnl=None,  # Exchange returned None
+                    seconds=2,
+                ),
+            ),
+        }
+    )
+    lifecycle_service = ClosedPositionLifecycleService(
+        repository=repository,
+        trade_history=history,
+        notification_publisher=publisher,
+        pnl_asset="USDT",
+    )
+    short_pos = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("95"),
+        unrealized_pnl=Decimal("5"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        interval=Interval.M15,
+        strategy_type=StrategyType.EMA_CROSS,
+        stop_loss=Decimal("102"),
+        take_profit=Decimal("95"),
+        stop_loss_client_algo_id="bsl-33333333333333333333333333333333",
+        take_profit_client_algo_id=_EXIT_CLIENT_ID,
+        entry_client_order_id=_ENTRY_CLIENT_ID,
+    )
+    short_attempt = SubmissionAttempt(
+        client_order_id=_ENTRY_CLIENT_ID,
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("1"),
+        signal_generated_at=_NOW,
+        interval=Interval.M15,
+        strategy_type=StrategyType.EMA_CROSS,
+        status=SubmissionAttemptStatus.COMPLETED,
+        created_at=_NOW,
+        updated_at=_NOW,
+        exchange_order_id="entry-1",
+    )
+    short_exit = Order(
+        order_id="exit-1",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.TAKE_PROFIT_MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("1"),
+        executed_quantity=Decimal("1"),
+        price=Decimal("95"),
+        client_order_id=_EXIT_CLIENT_ID,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    await lifecycle_service.stage(
+        position=short_pos,
+        attempt=short_attempt,
+        exit_order=short_exit,
+        close_reason=ClosedPositionReason.TAKE_PROFIT,
+        provenance=ClosedPositionProvenance.PROTECTION_ORDER,
+    )
+
+    await lifecycle_service.complete(entry_client_order_id=_ENTRY_CLIENT_ID)
+
+    # For SHORT: 100 - 95 = 5 gross, minus 0.02 fee = 4.98 net
+    completed = await repository.get_by_entry_client_order_id(
+        entry_client_order_id=_ENTRY_CLIENT_ID,
+    )
+    assert isinstance(completed, ClosedPositionLifecycle)
+    assert completed.gross_realized_pnl == Decimal("5")
+    assert completed.net_pnl == Decimal("4.98")
+
+    assert len(publisher.notifications) == 1
+    notification = publisher.notifications[0]
+    assert "Trade Completed (WIN)" in notification.message
+    assert "Side:</b> SHORT" in notification.message
+    assert "Net Realized PnL:</b> <b>+4.98 USDT" in notification.message
+
+
+@pytest.mark.asyncio
+async def test_closed_position_lifecycle_aggregates_partial_tp_and_final_exit() -> None:
+    """Aggregate fills from both partial TP and final stepped stop exit orders."""
+    repository = MemoryClosedPositionLifecycleRepository()
+    publisher = _RecordingPublisher()
+    history = ExactTradeHistory(
+        fills_by_order_id={
+            "entry-1": (
+                Trade(
+                    trade_id="fill-entry",
+                    order_id="entry-1",
+                    symbol="BTCUSDT",
+                    side=OrderSide.BUY,
+                    price=Decimal("100"),
+                    quantity=Decimal("2"),
+                    quote_quantity=Decimal("200"),
+                    fee=Decimal("0.02"),
+                    fee_asset="USDT",
+                    realized_pnl=Decimal("0"),
+                    executed_at=_NOW,
+                ),
+            ),
+            "exit-ptp": (
+                Trade(
+                    trade_id="fill-ptp",
+                    order_id="exit-ptp",
+                    symbol="BTCUSDT",
+                    side=OrderSide.SELL,
+                    price=Decimal("105"),
+                    quantity=Decimal("1"),
+                    quote_quantity=Decimal("105"),
+                    fee=Decimal("0.01"),
+                    fee_asset="USDT",
+                    realized_pnl=Decimal("5"),
+                    executed_at=_NOW + timedelta(seconds=1),
+                ),
+            ),
+            "exit-final": (
+                Trade(
+                    trade_id="fill-final",
+                    order_id="exit-final",
+                    symbol="BTCUSDT",
+                    side=OrderSide.SELL,
+                    price=Decimal("103"),
+                    quantity=Decimal("1"),
+                    quote_quantity=Decimal("103"),
+                    fee=Decimal("0.01"),
+                    fee_asset="USDT",
+                    realized_pnl=Decimal("3"),
+                    executed_at=_NOW + timedelta(seconds=2),
+                ),
+            ),
+        }
+    )
+    lifecycle_service = ClosedPositionLifecycleService(
+        repository=repository,
+        trade_history=history,
+        notification_publisher=publisher,
+        pnl_asset="USDT",
+    )
+    pos = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),  # Remaining quantity before final exit
+        entry_price=Decimal("100"),
+        current_price=Decimal("103"),
+        unrealized_pnl=Decimal("3"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        interval=Interval.M15,
+        strategy_type=StrategyType.EMA_CROSS,
+        stop_loss=Decimal("101"),
+        take_profit=Decimal("105"),
+        stop_loss_client_algo_id="bsl-33333333333333333333333333333333",
+        take_profit_client_algo_id=_EXIT_CLIENT_ID,
+        entry_client_order_id=_ENTRY_CLIENT_ID,
+        partial_tp_executed=True,
+        partial_tp_order_id="exit-ptp",
+    )
+    attempt = _attempt()
+    final_exit = Order(
+        order_id="exit-final",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("1"),
+        executed_quantity=Decimal("1"),
+        price=Decimal("103"),
+        client_order_id=_EXIT_CLIENT_ID,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    await lifecycle_service.stage(
+        position=pos,
+        attempt=attempt,
+        exit_order=final_exit,
+        close_reason=ClosedPositionReason.STEPPED_STOP,
+        provenance=ClosedPositionProvenance.PROTECTION_ORDER,
+    )
+
+    pending = await repository.get_by_entry_client_order_id(
+        entry_client_order_id=_ENTRY_CLIENT_ID,
+    )
+    assert isinstance(pending, PendingClosedPositionLifecycle)
+    assert pending.exit_order_id == "exit-ptp,exit-final"
+
+    await lifecycle_service.complete(entry_client_order_id=_ENTRY_CLIENT_ID)
+
+    completed = await repository.get_by_entry_client_order_id(
+        entry_client_order_id=_ENTRY_CLIENT_ID,
+    )
+    assert isinstance(completed, ClosedPositionLifecycle)
+    # Gross PnL: 5 (from exit-ptp) + 3 (from exit-final) = 8
+    assert completed.gross_realized_pnl == Decimal("8")
+    # Total fees: 0.02 (entry) + 0.01 (ptp) + 0.01 (final) = 0.04
+    assert completed.fee == Decimal("0.04")
+    # Net PnL: 8 - 0.04 = 7.96
+    assert completed.net_pnl == Decimal("7.96")
+
+    assert len(publisher.notifications) == 1
+    notification = publisher.notifications[0]
+    assert "Trade Completed (WIN)" in notification.message
+    assert "Net Realized PnL:</b> <b>+7.96 USDT" in notification.message

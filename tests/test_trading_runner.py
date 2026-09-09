@@ -1554,6 +1554,45 @@ def test_runtime_selection_is_rejected_while_trading_is_active() -> None:
         control.select_symbol("ETHUSDT")
 
 
+def test_select_strategy_updates_singular_runtime_context() -> None:
+    """Update singular runtime context so TerminalMonitor and runner pick up changes."""
+    control = TradingRuntimeControl()
+    control.set_runtime_contexts(
+        contexts=(
+            LiveRuntimePositionContext(
+                symbol="BTCUSDT",
+                interval=Interval.M15,
+                strategy_type=StrategyType.EMA_CROSS,
+            ),
+        )
+    )
+    assert control.strategy_type is StrategyType.EMA_CROSS
+    assert control.select_strategy(StrategyType.SUPERTREND)
+    assert control.strategy_type is StrategyType.SUPERTREND
+    assert control.runtime_contexts[0].strategy_type is StrategyType.SUPERTREND
+
+
+def test_select_strategy_allowed_while_stream_is_active() -> None:
+    """Strategy can be updated without stopping the market stream."""
+    control = TradingRuntimeControl()
+    control.set_stream_enabled(True)
+    control.record_stream_tick(price=Decimal("100"))
+
+    assert control.select_strategy(StrategyType.SUPERTREND)
+    assert control.strategy_type is StrategyType.SUPERTREND
+
+
+def test_select_strategy_rejected_when_cycle_in_progress() -> None:
+    """Strategy update is rejected while a cycle calculation is actively running."""
+    control = TradingRuntimeControl()
+    control.begin_cycle()
+    with pytest.raises(
+        RuntimeError, match="Wait for the active trading cycle to finish"
+    ):
+        control.select_strategy(StrategyType.SUPERTREND)
+    control.end_cycle()
+
+
 def test_runtime_start_requires_complete_telegram_configuration() -> None:
     """Reject startup until selections, subscription, and first tick are ready."""
     control = TradingRuntimeControl()

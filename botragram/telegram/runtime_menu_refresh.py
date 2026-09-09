@@ -62,7 +62,7 @@ def _get_runtime_startup_checklist(bot_context: BotContext) -> str:
         market_type=control.market_type.value,
         symbol=control.symbol,
         interval=control.interval.value,
-        strategy=control.strategy_type.value,
+        strategy=control.configured_strategy_type.value,
         missing_requirements=control.get_missing_startup_requirements(),
     )
 
@@ -130,8 +130,10 @@ async def start_bot_command_with_menu_refresh(
             if bot_context.is_autonomous_live
             else control.resume()
         )
+        logger.info("Telegram operator requested resume: changed=%s", changed)
         message = get_resume_message(changed=changed)
     except RuntimeError as error:
+        logger.warning("Telegram operator resume failed: %s", error)
         if bot_context.is_autonomous_live:
             message = (
                 "⚠️ <b>Autonomous LIVE belum dapat dilanjutkan.</b>\n"
@@ -170,7 +172,9 @@ async def pause_bot_command_with_menu_refresh(
         await _reply_data_unavailable(update)
         return
 
-    message = get_runtime_pause_message(changed=control.pause())
+    changed = control.pause()
+    logger.info("Telegram operator requested pause: changed=%s", changed)
+    message = get_runtime_pause_message(changed=changed)
     await update.message.reply_text(
         message,
         parse_mode=DEFAULT_PARSE_MODE,

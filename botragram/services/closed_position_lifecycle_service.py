@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Final, Protocol
@@ -111,6 +111,9 @@ class ClosedPositionLifecycleService:
         if execution_order_id is None or not execution_order_id.strip():
             execution_order_id = exit_order.order_id
 
+        if position.partial_tp_executed and position.partial_tp_order_id:
+            execution_order_id = f"{position.partial_tp_order_id},{execution_order_id}"
+
         lifecycle = PendingClosedPositionLifecycle(
             entry_client_order_id=entry_identity,
             symbol=position.symbol.upper(),
@@ -152,22 +155,68 @@ class ClosedPositionLifecycleService:
                 order_id=record.entry_order_id,
             )
         )
-        exit_fills = tuple(
-            await self.trade_history.get_trades_for_order(
-                symbol=record.symbol,
-                order_id=record.exit_order_id,
-            )
-        )
         self._require_exact_fills(
             fills=entry_fills,
             order_id=record.entry_order_id,
             label="entry",
         )
-        self._require_exact_fills(
-            fills=exit_fills,
-            order_id=record.exit_order_id,
-            label="exit",
+
+        exit_order_ids = tuple(
+            oid.strip() for oid in record.exit_order_id.split(",") if oid.strip()
         )
+        exit_fills_list: list[Trade] = []
+        for exit_oid in exit_order_ids:
+            order_fills = tuple(
+                await self.trade_history.get_trades_for_order(
+                    symbol=record.symbol,
+                    order_id=exit_oid,
+                )
+            )
+            self._require_exact_fills(
+                fills=order_fills,
+                order_id=exit_oid,
+                label="exit",
+            )
+            exit_fills_list.extend(order_fills)
+        exit_fills = tuple(exit_fills_list)
+        if any(fill.realized_pnl is None for fill in exit_fills):
+            total_entry_qty = sum(
+                (fill.quantity for fill in entry_fills), start=_DECIMAL_ZERO
+            )
+            total_exit_qty = sum(
+                (fill.quantity for fill in exit_fills), start=_DECIMAL_ZERO
+            )
+            if total_entry_qty > _DECIMAL_ZERO and total_entry_qty == total_exit_qty:
+                entry_notional = sum(
+                    (fill.price * fill.quantity for fill in entry_fills),
+                    start=_DECIMAL_ZERO,
+                )
+                exit_notional = sum(
+                    (fill.price * fill.quantity for fill in exit_fills),
+                    start=_DECIMAL_ZERO,
+                )
+                fallback_gross_pnl = (
+                    exit_notional - entry_notional
+                    if record.position_side is PositionSide.LONG
+                    else entry_notional - exit_notional
+                )
+                exit_fills = tuple(
+                    replace(
+                        fill,
+                        realized_pnl=fallback_gross_pnl
+                        * (fill.quantity / total_exit_qty),
+                    )
+                    if fill.realized_pnl is None
+                    else fill
+                    for fill in exit_fills
+                )
+                _LOGGER.info(
+                    "Resolved fallback realized PnL from execution fills: "
+                    "symbol=%s gross_pnl=%s",
+                    record.symbol,
+                    fallback_gross_pnl,
+                )
+
         if any(fill.realized_pnl is None for fill in exit_fills):
             raise RuntimeError("Closed lifecycle exit fill lacks realized PnL")
 

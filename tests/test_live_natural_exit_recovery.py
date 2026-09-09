@@ -1083,6 +1083,50 @@ async def test_restart_recovers_filled_stop_replacement_lost_before_commit() -> 
 
 
 @pytest.mark.asyncio
+async def test_restart_recovers_stepped_stop_without_execution_order_id() -> None:
+    # SHORT position where stop_loss stepped to 0.01115, but 0.01120 filled
+    position = replace(
+        _position(),
+        stop_loss=Decimal("0.01115"),
+    )
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    replacement = replace(
+        _protection(
+            order_type=OrderType.STOP_MARKET,
+            client_id="bsl-33333333333333333333333333333333",
+            trigger="0.01120",
+        ),
+        order_id="filled-exit",
+        execution_order_id=None,
+        status=OrderStatus.FILLED,
+        executed_quantity=position.quantity,
+    )
+    exchange = FakeNaturalExitExchange(protection_history=(replacement,))
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=_ExactLifecycleTradeHistory(),
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    assert completed[0].ownership.exit_client_order_id == replacement.client_order_id
+    assert completed[0].ownership.close_reason is ClosedPositionReason.STEPPED_STOP
+    assert completed[0].ownership.exit_order_id == "filled-exit"
+
+
+@pytest.mark.asyncio
 async def test_restart_keeps_identity_when_filled_replacement_is_ambiguous() -> None:
     """Never guess lifecycle ownership from multiple matching historical exits."""
     position = _position()

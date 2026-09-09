@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Final, cast
 
 # =============================================================================
@@ -56,6 +56,7 @@ __all__ = [
 # Constants
 # =============================================================================
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+_DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 
 BYBIT_INTERVAL_MAP: Final[dict[Interval, str]] = {
     Interval.M1: "1",
@@ -180,6 +181,28 @@ class BybitExchangeClient(BaseExchangeClient):
 
     async def get_mark_price(self, *, symbol: str) -> Decimal:
         """Return the current mark price for a symbol."""
+        payload = await self._rest.get(
+            _TICKERS_ENDPOINT,
+            params={"category": "linear", "symbol": symbol.strip().upper()},
+            authenticated=False,
+        )
+        if isinstance(payload, dict):
+            raw_result = payload.get("result")
+            if isinstance(raw_result, dict):
+                result_map = cast(ExchangePayload, raw_result)
+                ticker_list = result_map.get("list")
+                if isinstance(ticker_list, list) and ticker_list:
+                    raw_first = cast(list[object], ticker_list)[0]
+                    if isinstance(raw_first, dict):
+                        first_item = cast(ExchangePayload, raw_first)
+                        mark_val = first_item.get("markPrice")
+                        if isinstance(mark_val, (str, int, float, Decimal)):
+                            try:
+                                mark_price = Decimal(str(mark_val))
+                                if mark_price > _DECIMAL_ZERO:
+                                    return mark_price
+                            except InvalidOperation, ValueError:
+                                pass
         ticker = await self.get_ticker(symbol=symbol)
         return ticker.last_price
 

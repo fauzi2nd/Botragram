@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import replace
@@ -51,6 +52,7 @@ _ORDER_CREATE_ENDPOINT: Final[str] = "/v5/order/create"
 _ORDER_CANCEL_ENDPOINT: Final[str] = "/v5/order/cancel"
 _ORDER_CANCEL_ALL_ENDPOINT: Final[str] = "/v5/order/cancel-all"
 _ORDER_REALTIME_ENDPOINT: Final[str] = "/v5/order/realtime"
+_ORDER_HISTORY_ENDPOINT: Final[str] = "/v5/order/history"
 _POSITION_LIST_ENDPOINT: Final[str] = "/v5/position/list"
 _SET_LEVERAGE_ENDPOINT: Final[str] = "/v5/position/set-leverage"
 _EXECUTION_LIST_ENDPOINT: Final[str] = "/v5/execution/list"
@@ -474,22 +476,11 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
 
         return tuple(orders)
 
-    async def get_protection_order_by_client_id(
-        self, *, symbol: str, client_id: str
-    ) -> Order:
-        """Return one conditional protection order by client identity."""
-        payload = await self._rest.get(
-            _ORDER_REALTIME_ENDPOINT,
-            params={
-                "category": "linear",
-                "symbol": symbol.strip().upper(),
-                "orderLinkId": client_id,
-                "orderFilter": "StopOrder",
-            },
-            authenticated=True,
-        )
+    def _extract_order_from_list_payload(self, *, payload: object) -> Order | None:
+        """Extract the first mapped Order from a standard Bybit list response."""
         if isinstance(payload, dict):
-            raw_result = payload.get("result")
+            payload_map = cast(ExchangePayload, payload)
+            raw_result = payload_map.get("result")
             if isinstance(raw_result, dict):
                 result_map = cast(ExchangePayload, raw_result)
                 order_list = result_map.get("list")
@@ -497,10 +488,80 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                     first = cast(list[object], order_list)[0]
                     if isinstance(first, dict):
                         return self._mapper.map_order(cast(ExchangePayload, first))
+        return None
+
+    async def get_protection_order_by_client_id(
+        self, *, symbol: str, client_id: str
+    ) -> Order:
+        """Return one conditional protection order by client identity."""
+        normalized_symbol = symbol.strip().upper()
+        normalized_client_id = client_id.strip()
+        params: dict[str, str] = {
+            "category": "linear",
+            "symbol": normalized_symbol,
+            "orderLinkId": normalized_client_id,
+            "orderFilter": "StopOrder",
+        }
+        payload = await self._rest.get(
+            _ORDER_REALTIME_ENDPOINT,
+            params=params,
+            authenticated=True,
+        )
+        order = self._extract_order_from_list_payload(payload=payload)
+        if order is not None:
+            return order
+
+        history_payload = await self._rest.get(
+            _ORDER_HISTORY_ENDPOINT,
+            params=params,
+            authenticated=True,
+        )
+        order = self._extract_order_from_list_payload(payload=history_payload)
+        if order is not None:
+            return order
 
         raise ExchangeOrderNotFoundError(
             f"Protection order {client_id!r} not found for symbol {symbol!r}"
         )
+
+    async def get_protection_order_history(
+        self,
+        *,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime | None = None,
+    ) -> Sequence[Order]:
+        """Return bounded conditional protection order history for one symbol."""
+        normalized_symbol = symbol.strip().upper()
+        start_ms = int(start_time.timestamp() * 1000)
+        params: dict[str, str | int] = {
+            "category": "linear",
+            "symbol": normalized_symbol,
+            "orderFilter": "StopOrder",
+            "startTime": start_ms,
+            "limit": 100,
+        }
+        if end_time is not None:
+            params["endTime"] = int(end_time.timestamp() * 1000)
+
+        payload = await self._rest.get(
+            _ORDER_HISTORY_ENDPOINT,
+            params=params,
+            authenticated=True,
+        )
+        orders: list[Order] = []
+        if isinstance(payload, dict):
+            raw_result = payload.get("result")
+            if isinstance(raw_result, dict):
+                result_map = cast(ExchangePayload, raw_result)
+                order_list = result_map.get("list")
+                if isinstance(order_list, list):
+                    for item in cast(list[object], order_list):
+                        if isinstance(item, dict):
+                            orders.append(
+                                self._mapper.map_order(cast(ExchangePayload, item))
+                            )
+        return tuple(orders)
 
     async def cancel_protection_order(
         self,
@@ -639,6 +700,40 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                 return
             raise
 
+    async def get_trades(
+        self,
+        *,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> Sequence[Trade]:
+        """Return bounded executed Futures account trades."""
+        if limit <= 0:
+            raise ValueError("Trade limit must be greater than zero")
+        params: dict[str, str | int] = {
+            "category": "linear",
+            "limit": min(limit, 100),
+        }
+        if symbol is not None:
+            params["symbol"] = symbol.strip().upper()
+        payload = await self._rest.get(
+            _EXECUTION_LIST_ENDPOINT,
+            params=params,
+            authenticated=True,
+        )
+        trades: list[Trade] = []
+        if isinstance(payload, dict):
+            raw_result = payload.get("result")
+            if isinstance(raw_result, dict):
+                result_map = cast(ExchangePayload, raw_result)
+                trade_list = result_map.get("list")
+                if isinstance(trade_list, list):
+                    for item in cast(list[object], trade_list):
+                        if isinstance(item, dict):
+                            trades.append(
+                                self._mapper.map_trade(cast(ExchangePayload, item))
+                            )
+        return tuple(trades)
+
     async def get_trades_for_order(
         self,
         *,
@@ -673,33 +768,68 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                                 trades.append(trade)
 
         if trades and any(trade.realized_pnl is None for trade in trades):
-            closed_pnl_payload = await self._rest.get(
-                _CLOSED_PNL_ENDPOINT,
-                params={
-                    "category": "linear",
-                    "symbol": normalized_symbol,
-                    "orderId": normalized_order_id,
-                    "limit": 10,
-                },
-                authenticated=True,
-            )
             closed_pnl: Decimal | None = None
-            if isinstance(closed_pnl_payload, dict):
-                pnl_result = closed_pnl_payload.get("result")
-                if isinstance(pnl_result, dict):
-                    pnl_list = cast(ExchangePayload, pnl_result).get("list")
-                    if isinstance(pnl_list, list):
-                        for item in cast(list[object], pnl_list):
-                            if isinstance(item, dict):
-                                item_map = cast(ExchangePayload, item)
-                                if (
-                                    str(item_map.get("orderId", "")).strip()
-                                    == normalized_order_id
-                                ):
-                                    raw_pnl = item_map.get("closedPnl")
-                                    if raw_pnl is not None and raw_pnl != "":
-                                        closed_pnl = Decimal(str(raw_pnl))
-                                        break
+            for attempt in range(1, 4):
+                closed_pnl_payload = await self._rest.get(
+                    _CLOSED_PNL_ENDPOINT,
+                    params={
+                        "category": "linear",
+                        "symbol": normalized_symbol,
+                        "limit": 50,
+                    },
+                    authenticated=True,
+                )
+                if isinstance(closed_pnl_payload, dict):
+                    pnl_result = closed_pnl_payload.get("result")
+                    if isinstance(pnl_result, dict):
+                        pnl_list = cast(ExchangePayload, pnl_result).get("list")
+                        if isinstance(pnl_list, list):
+                            for item in cast(list[object], pnl_list):
+                                if isinstance(item, dict):
+                                    item_map = cast(ExchangePayload, item)
+                                    if (
+                                        str(item_map.get("orderId", "")).strip()
+                                        == normalized_order_id
+                                    ):
+                                        raw_entry_val = item_map.get("cumEntryValue")
+                                        raw_exit_val = item_map.get("cumExitValue")
+                                        if (
+                                            raw_entry_val is not None
+                                            and str(raw_entry_val).strip() != ""
+                                            and raw_exit_val is not None
+                                            and str(raw_exit_val).strip() != ""
+                                        ):
+                                            entry_val = Decimal(str(raw_entry_val))
+                                            exit_val = Decimal(str(raw_exit_val))
+                                            side_str = (
+                                                str(item_map.get("side", ""))
+                                                .strip()
+                                                .upper()
+                                            )
+                                            closed_pnl = (
+                                                exit_val - entry_val
+                                                if side_str == "SELL"
+                                                else entry_val - exit_val
+                                            )
+                                            break
+                                        raw_pnl = item_map.get("closedPnl")
+                                        if (
+                                            raw_pnl is not None
+                                            and str(raw_pnl).strip() != ""
+                                        ):
+                                            net_pnl = Decimal(str(raw_pnl))
+                                            open_fee = Decimal(
+                                                str(item_map.get("openFee") or "0")
+                                            )
+                                            close_fee = Decimal(
+                                                str(item_map.get("closeFee") or "0")
+                                            )
+                                            closed_pnl = net_pnl + open_fee + close_fee
+                                            break
+                if closed_pnl is not None:
+                    break
+                if attempt < 3:
+                    await asyncio.sleep(0.5 * attempt)
             if closed_pnl is not None:
                 total_qty = sum((trade.quantity for trade in trades), Decimal("0"))
                 if total_qty > Decimal("0") and len(trades) > 1:

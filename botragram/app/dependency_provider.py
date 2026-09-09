@@ -245,6 +245,7 @@ class DependencyProvider:
         "_stream_client",
         "_submission_attempt_repository",
         "_telegram_bot",
+        "_telegram_reconnect_task",
         "_telegram_query_service",
         "_trade_repository",
         "_trading_cycle_executor",
@@ -302,6 +303,7 @@ class DependencyProvider:
         self._exchange_client: BaseExchangeClient | None = None
         self._stream_client: BaseStreamClient | None = None
         self._telegram_bot: TelegramBot | None = None
+        self._telegram_reconnect_task: asyncio.Task[None] | None = None
         self._telegram_query_service: TelegramQueryService | None = None
         self._health_service: HealthService | None = None
         self._runtime_reporter: RuntimeReporter | None = None
@@ -699,11 +701,15 @@ class DependencyProvider:
                 )
             )
             try:
-                await self.telegram_bot.start()
+                await self.telegram_bot.start_with_retry(
+                    max_attempts=3, delay_seconds=1.0
+                )
             except Exception:
                 _LOGGER.exception(
-                    "Telegram startup failed; trading will continue without it"
+                    "Telegram startup failed; trading will continue while background "
+                    "reconnection attempts run"
                 )
+                self._start_telegram_reconnect_task()
             if self._candle_retention_service is not None:
                 await self._candle_retention_service.start()
             self._initialized = True
@@ -714,6 +720,14 @@ class DependencyProvider:
             raise
 
     async def close(self) -> None:
+        reconnect_task = self._telegram_reconnect_task
+        if reconnect_task is not None:
+            self._telegram_reconnect_task = None
+            reconnect_task.cancel()
+            try:
+                await reconnect_task
+            except asyncio.CancelledError:
+                pass
         candle_retention_service = self._candle_retention_service
         exchange_client = self._exchange_client
         stream_client = self._stream_client
@@ -1713,6 +1727,7 @@ class DependencyProvider:
         self._exchange_client = None
         self._stream_client = None
         self._telegram_bot = None
+        self._telegram_reconnect_task = None
         self._telegram_query_service = None
         self._health_service = None
         self._live_futures_entry_service = None
@@ -1756,6 +1771,44 @@ class DependencyProvider:
         self._trading_cycle_executor = None
         self._database = None
         self._initialized = False
+
+    def _start_telegram_reconnect_task(self) -> None:
+        """Start a background task to connect Telegram if startup failed."""
+        if (
+            self._telegram_reconnect_task is None
+            or self._telegram_reconnect_task.done()
+        ):
+            self._telegram_reconnect_task = asyncio.create_task(
+                self._reconnect_telegram_loop(),
+                name="telegram-reconnect-loop",
+            )
+
+    async def _reconnect_telegram_loop(self) -> None:
+        """Periodically retry starting TelegramBot until connected or stopped."""
+        backoff = 5.0
+        max_backoff = 60.0
+        while self._initialized:
+            try:
+                await asyncio.sleep(backoff)
+                if not self._initialized:
+                    break
+                telegram_bot = self._telegram_bot
+                if telegram_bot is None or telegram_bot.is_running:
+                    break
+                await telegram_bot.start()
+                _LOGGER.info(
+                    "Telegram bot successfully connected and started in background"
+                )
+                await telegram_bot.publish_home_menu_refresh()
+                break
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                _LOGGER.warning(
+                    "Background Telegram reconnection failed; will retry in %.1fs",
+                    backoff,
+                )
+                backoff = min(backoff * 1.5, max_backoff)
 
     async def __aenter__(self) -> DependencyProvider:
         await self.initialize()

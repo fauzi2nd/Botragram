@@ -1934,12 +1934,27 @@ class TradingRunner:
                     )
                     continue
 
-                if not contexts and self._is_global_cycle_executor():
+                if self._is_global_cycle_executor():
+                    configured_strategy = (
+                        self.runtime_control.configured_strategy_type.value
+                    )
+                    if not contexts:
+                        _LOGGER.info(
+                            "Runtime heartbeat: state=%s symbol=DISCOVERY "
+                            "strategy=%s stream=IDLE",
+                            state,
+                            configured_strategy,
+                        )
+                        continue
+
                     _LOGGER.info(
-                        "Runtime heartbeat: state=%s symbol=DISCOVERY "
-                        "strategy=%s stream=IDLE",
+                        "Runtime heartbeat: state=%s symbol=%s strategy=%s "
+                        "discovery_strategy=%s stream=%s",
                         state,
+                        self.runtime_control.symbol,
                         self.runtime_control.strategy_type.value,
+                        configured_strategy,
+                        "ON" if self.runtime_control.stream_enabled else "OFF",
                     )
                     continue
 

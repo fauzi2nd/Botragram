@@ -516,6 +516,13 @@ _MIGRATIONS: Final[tuple[_Migration, ...]] = (
         ADD COLUMN partial_tp_executed INTEGER NOT NULL DEFAULT 0;
         """,
     ),
+    _Migration(
+        version=21,
+        script="""
+        ALTER TABLE positions
+        ADD COLUMN partial_tp_order_id TEXT;
+        """,
+    ),
 )
 
 

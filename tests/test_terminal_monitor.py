@@ -1454,3 +1454,45 @@ def test_terminal_live_performance_and_full_width_positions_render() -> None:
     assert rendered.index("Managed LIVE Positions") < rendered.index(
         "Runtime Events | Log Messages"
     )
+
+
+def test_terminal_strategy_display_reflects_configured_strategy() -> None:
+    """Verify terminal displays discovery strategy, not position legacy strategy."""
+    control = TradingRuntimeControl(strategy_type=StrategyType.EMA_SCALPING)
+    control.restore_configuration(
+        symbol="XLVUSDT",
+        interval=Interval.M15,
+        strategy_type=StrategyType.CHOCH_FVG,
+        preserve_strategy=True,
+    )
+    assert control.configured_strategy_type is StrategyType.EMA_SCALPING
+    assert control.runtime_contexts[0].strategy_type is StrategyType.CHOCH_FVG
+
+    position = _live_position(
+        "XLVUSDT", side=PositionSide.SHORT, entry="166.926", current="167.47"
+    )
+    health = _live_health(
+        control.runtime_contexts,
+        stream_states=(_live_stream("XLVUSDT", "167.47"),),
+        monitor_states=(
+            LiveProtectionMonitorState(
+                context=control.runtime_contexts[0], is_active=True
+            ),
+        ),
+    )
+    monitor = _create_monitor(
+        runtime_control=control,
+        positions=(position,),
+        trade_mode=TradeMode.LIVE,
+        configured_strategy_type=StrategyType.EMA_SCALPING,
+        live_runtime_health=health,
+    )
+
+    status = asyncio.run(monitor.collect_status())
+    dashboard = monitor.render_dashboard(status)
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=170, height=50).print(dashboard)
+    rendered = output.getvalue()
+
+    assert "EMA_SCALPING" in rendered
+    assert "XLVUSDT" in rendered

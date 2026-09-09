@@ -14,6 +14,7 @@ from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
 from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
+    ExchangeOrderRejectedError,
 )
 from botragram.exchanges.base import BaseExchangeClient
 from botragram.models import Order, Position
@@ -23,6 +24,7 @@ __all__ = ["LivePositionProtectionService"]
 
 
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+_DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _RECONCILIATION_MAX_ATTEMPTS: Final[int] = 2
 _RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
 _PROTECTION_VISIBILITY_ATTEMPTS: Final[int] = 5
@@ -119,18 +121,38 @@ class LivePositionProtectionService:
                 persisted_stop is not None
                 and persisted_stop.status is OrderStatus.CANCELED
             ):
-                position, stop_order = await self._adopt_canceled_stop_replacement(
+                adopted = await self._adopt_canceled_stop_replacement(
                     position=position,
                     canceled_order=persisted_stop,
                 )
+                if adopted is not None:
+                    position, stop_order = adopted
+                else:
+                    position = replace(
+                        position,
+                        stop_loss_client_algo_id=None,
+                        pending_stop_loss=None,
+                        pending_stop_loss_client_algo_id=None,
+                        pending_protection_step=0,
+                    )
+                    stop_order = None
             else:
                 stop_order = persisted_stop
         if position.take_profit_client_algo_id is not None:
-            take_profit_order = await self._recover_persisted_leg(
+            persisted_tp = await self._recover_persisted_leg(
                 position=position,
                 order_type=OrderType.TAKE_PROFIT_MARKET,
                 client_id=position.take_profit_client_algo_id,
+                allow_canceled=True,
             )
+            if persisted_tp is not None and persisted_tp.status is OrderStatus.CANCELED:
+                position = replace(
+                    position,
+                    take_profit_client_algo_id=None,
+                )
+                take_profit_order = None
+            else:
+                take_profit_order = persisted_tp
 
         if stop_order is None or take_profit_order is None:
             (
@@ -157,14 +179,58 @@ class LivePositionProtectionService:
                     needs_take_profit=False,
                 )
                 await self.position_repository.save(position=position)
-                await self._submit_missing_leg(
-                    position=position,
-                    order_type=OrderType.STOP_MARKET,
-                    trigger_price=normalized_stop,
-                    client_id=self._require_client_id(
-                        position.stop_loss_client_algo_id
-                    ),
-                )
+                try:
+                    await self._submit_missing_leg(
+                        position=position,
+                        order_type=OrderType.STOP_MARKET,
+                        trigger_price=normalized_stop,
+                        client_id=self._require_client_id(
+                            position.stop_loss_client_algo_id
+                        ),
+                    )
+                except ExchangeOrderRejectedError as error:
+                    _LOGGER.warning(
+                        "Stop order rejected by venue (%s); refreshing mark "
+                        "price and retrying",
+                        error,
+                    )
+                    fresh_rules = await self.exchange_client.get_market_entry_rules(
+                        symbol=position.symbol
+                    )
+                    fresh_mark = await self.exchange_client.get_mark_price(
+                        symbol=position.symbol
+                    )
+                    clamped_stop = (
+                        max(
+                            fresh_rules.minimum_price,
+                            fresh_mark - fresh_rules.price_tick_size * 2,
+                        )
+                        if position.side is PositionSide.LONG
+                        else (
+                            min(
+                                fresh_rules.maximum_price,
+                                fresh_mark + fresh_rules.price_tick_size * 2,
+                            )
+                            if fresh_rules.maximum_price > _DECIMAL_ZERO
+                            else fresh_mark + fresh_rules.price_tick_size * 2
+                        )
+                    )
+                    fresh_stop = fresh_rules.normalize_protection_trigger(
+                        raw_trigger_price=clamped_stop,
+                        position_side=position.side,
+                        order_type=OrderType.STOP_MARKET,
+                        mark_price=fresh_mark,
+                    )
+                    position = replace(position, stop_loss=fresh_stop)
+                    await self.position_repository.save(position=position)
+                    await self._submit_missing_leg(
+                        position=position,
+                        order_type=OrderType.STOP_MARKET,
+                        trigger_price=fresh_stop,
+                        client_id=self._require_client_id(
+                            position.stop_loss_client_algo_id
+                        ),
+                    )
                 stop_order = await self._get_verified_submitted_leg(
                     position=position,
                     order_type=OrderType.STOP_MARKET,
@@ -361,6 +427,18 @@ class LivePositionProtectionService:
                 raise RuntimeError(
                     "Persisted LIVE STOP identity is missing its durable trigger"
                 )
+            if position.stop_loss is not None:
+                if position.side is PositionSide.LONG and stop_source >= mark_price:
+                    stop_source = max(
+                        rules.minimum_price,
+                        mark_price - rules.price_tick_size,
+                    )
+                elif position.side is PositionSide.SHORT and stop_source <= mark_price:
+                    stop_source = (
+                        min(rules.maximum_price, mark_price + rules.price_tick_size)
+                        if rules.maximum_price > _DECIMAL_ZERO
+                        else mark_price + rules.price_tick_size
+                    )
             normalized_stop = rules.normalize_protection_trigger(
                 raw_trigger_price=stop_source,
                 position_side=position.side,
@@ -379,6 +457,24 @@ class LivePositionProtectionService:
                 raise RuntimeError(
                     "Persisted LIVE TAKE_PROFIT identity is missing its durable trigger"
                 )
+            if position.take_profit is not None:
+                if (
+                    position.side is PositionSide.LONG
+                    and take_profit_source <= mark_price
+                ):
+                    take_profit_source = (
+                        min(rules.maximum_price, mark_price + rules.price_tick_size)
+                        if rules.maximum_price > _DECIMAL_ZERO
+                        else mark_price + rules.price_tick_size
+                    )
+                elif (
+                    position.side is PositionSide.SHORT
+                    and take_profit_source >= mark_price
+                ):
+                    take_profit_source = max(
+                        rules.minimum_price,
+                        mark_price - rules.price_tick_size,
+                    )
             normalized_take_profit = rules.normalize_protection_trigger(
                 raw_trigger_price=take_profit_source,
                 position_side=position.side,
@@ -574,7 +670,7 @@ class LivePositionProtectionService:
         *,
         position: Position,
         canceled_order: Order,
-    ) -> tuple[Position, Order]:
+    ) -> tuple[Position, Order] | None:
         """Persist one uniquely proven Botragram stepped STOP replacement.
 
         The predecessor's exact durable identity must already be proven
@@ -592,6 +688,9 @@ class LivePositionProtectionService:
             position=position,
             canceled_client_id=canceled_order.client_order_id,
         )
+        if replacement is None:
+            return None
+
         replacement_id = replacement.client_order_id
         replacement_stop = replacement.stop_price
         if replacement_id is None or replacement_stop is None:
@@ -839,7 +938,7 @@ class LivePositionProtectionService:
         orders: Sequence[Order],
         position: Position,
         canceled_client_id: str | None,
-    ) -> Order:
+    ) -> Order | None:
         """Return one authoritative Botragram stepped STOP or fail closed."""
         candidates = tuple(
             order
@@ -856,11 +955,13 @@ class LivePositionProtectionService:
                 stop_price=order.stop_price,
             )
         )
-        if len(candidates) != 1:
+        if len(candidates) > 1:
             raise RuntimeError(
                 "Canceled persisted LIVE STOP has no unique active Botragram "
                 "replacement"
             )
+        if not candidates:
+            return None
         return candidates[0]
 
     @staticmethod

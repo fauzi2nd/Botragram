@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from typing import Final, Protocol
@@ -434,11 +434,11 @@ class LiveNaturalExitRecoveryService:
             and order.symbol.upper() == position.symbol.upper()
             and order.created_at >= position.opened_at
             and order.side is closing_side
-            and order.order_type is OrderType.STOP_MARKET
+            and order.order_type in {OrderType.STOP_MARKET, OrderType.STOP}
             and order.status is OrderStatus.FILLED
             and order.quantity == position.quantity
             and order.executed_quantity == position.quantity
-            and order.execution_order_id is not None
+            and (order.execution_order_id is not None or bool(order.order_id))
             and self._is_tighter_stepped_stop(
                 position=position,
                 stop_price=order.stop_price,
@@ -505,6 +505,11 @@ class LiveNaturalExitRecoveryService:
             symbol=position.symbol,
             order_id=order_id,
         )
+        if recovered.client_order_id is None or not recovered.client_order_id.strip():
+            recovered = replace(
+                recovered,
+                client_order_id=f"manual-{recovered.order_id}",
+            )
         self._validate_manual_close_order(
             order=recovered,
             order_id=order_id,
@@ -587,12 +592,12 @@ class LiveNaturalExitRecoveryService:
         if stop_price is None or current_stop is None or take_profit is None:
             return False
         if position.side is PositionSide.LONG:
-            return current_stop < stop_price and (
-                position.entry_price < stop_price < take_profit
-            )
-        return stop_price < current_stop and (
-            take_profit < stop_price < position.entry_price
-        )
+            return (
+                current_stop < stop_price or position.entry_price < stop_price
+            ) and stop_price < take_profit
+        return (
+            stop_price < current_stop or stop_price < position.entry_price
+        ) and take_profit < stop_price
 
     @staticmethod
     def _portfolio_snapshots_match(

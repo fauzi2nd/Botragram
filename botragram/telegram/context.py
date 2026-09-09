@@ -205,6 +205,11 @@ class BotRuntimeControl(Protocol):
         ...
 
     @property
+    def configured_strategy_type(self) -> StrategyType:
+        """Return the process-configured strategy without position context override."""
+        ...
+
+    @property
     def stream_enabled(self) -> bool:
         """Return whether a market subscription is active."""
         ...

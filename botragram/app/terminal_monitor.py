@@ -680,7 +680,7 @@ class TerminalMonitor:
         return (
             f"[{timestamp}Z] BOTRAGRAM | state={state}/{cycle} "
             f"mode={self.trade_mode.value} symbol={self.runtime_control.symbol} "
-            f"strategy={self.runtime_control.strategy_type.value} | "
+            f"strategy={self._resolve_display_strategy_type().lower()} | "
             f"balance={status.balance:,.2f} {self.quote_asset} "
             f"positions={status.position_count} "
             f"pnl={status.unrealized_pnl:+,.2f} {self.quote_asset} "
@@ -692,16 +692,7 @@ class TerminalMonitor:
 
     def _resolve_display_strategy_type(self) -> str:
         """Return active strategy name, safely resolving multi-context portfolios."""
-        try:
-            return self.runtime_control.strategy_type.value.upper()
-        except RuntimeError:
-            raw_strategy: object = object.__getattribute__(
-                self.runtime_control,
-                "strategy_type",
-            )
-            if isinstance(raw_strategy, StrategyType):
-                return raw_strategy.value.upper()
-            return self.configured_strategy_type.value.upper()
+        return self.runtime_control.configured_strategy_type.value.upper()
 
     def _build_status_panel(self, status: TerminalStatus) -> Panel:
         """Build aggregate runtime and safety information without symbol duplication."""

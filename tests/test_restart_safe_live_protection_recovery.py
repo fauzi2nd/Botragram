@@ -300,6 +300,52 @@ async def test_restart_adopts_unique_active_stop_after_canceled_predecessor() ->
 
 
 @pytest.mark.asyncio
+async def test_restart_reconciles_missing_stop_when_canceled_has_no_peer() -> None:
+    """Reconcile with a new stop when canceled stop has no exchange peer."""
+    old_id = "bsl-11111111111111111111111111111111"
+    exchange = RestartProtectionExchange()
+    exchange.orders.extend(
+        [
+            _order(
+                order_id="stop-canceled",
+                client_id=old_id,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("98"),
+                status=OrderStatus.CANCELED,
+            ),
+            _order(
+                order_id="tp-existing",
+                client_id="btp-existing",
+                side=OrderSide.SELL,
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                trigger=Decimal("104"),
+            ),
+        ]
+    )
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+    stale = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id=old_id,
+        tp_id="btp-existing",
+    )
+
+    recovered = await service.ensure(position=stale)
+
+    assert recovered.stop_loss_client_algo_id is not None
+    assert recovered.stop_loss_client_algo_id != old_id
+    assert recovered.stop_loss == Decimal("98")
+    assert recovered.take_profit == Decimal("104")
+    assert exchange.posts == [recovered.stop_loss_client_algo_id]
+
+
+@pytest.mark.asyncio
 async def test_restart_rejects_ambiguous_active_stop_replacements() -> None:
     """Remain fail-closed when more than one owned replacement is active."""
     old_id = "bsl-11111111111111111111111111111111"
@@ -1178,3 +1224,52 @@ async def test_restart_promotes_active_pending_stop_and_retires_current() -> Non
     assert protected.pending_stop_loss_client_algo_id is None
     assert current_id in exchange.cancelled
     assert pending_id not in exchange.cancelled
+
+
+@pytest.mark.asyncio
+async def test_ensure_recovers_when_persisted_take_profit_is_canceled() -> None:
+    """Recreate take profit protection when persisted leg was canceled on venue."""
+    stop_id = "bsl-11111111111111111111111111111111"
+    tp_id = "btp-22222222222222222222222222222222"
+    exchange = RestartProtectionExchange()
+    exchange.orders.extend(
+        [
+            _order(
+                order_id="stop-active",
+                client_id=stop_id,
+                side=OrderSide.SELL,
+                order_type=OrderType.STOP_MARKET,
+                trigger=Decimal("98"),
+            ),
+            replace(
+                _order(
+                    order_id="tp-canceled",
+                    client_id=tp_id,
+                    side=OrderSide.SELL,
+                    order_type=OrderType.TAKE_PROFIT_MARKET,
+                    trigger=Decimal("104"),
+                ),
+                status=OrderStatus.CANCELED,
+            ),
+        ]
+    )
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+    position = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id=stop_id,
+        tp_id=tp_id,
+    )
+
+    protected = await service.ensure(position=position)
+
+    assert protected.stop_loss == Decimal("98")
+    assert protected.stop_loss_client_algo_id == stop_id
+    assert protected.take_profit == Decimal("104")
+    assert protected.take_profit_client_algo_id is not None
+    assert protected.take_profit_client_algo_id != tp_id

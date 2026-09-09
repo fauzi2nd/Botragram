@@ -140,7 +140,7 @@ async def _run_trading(
         trade_mode=active_settings.app.trade_mode,
         quote_asset=active_settings.market.quote_asset,
         exchange_name=active_settings.exchange.exchange.value.upper(),
-        configured_strategy_type=dependency_provider.runtime_control.strategy_type,
+        configured_strategy_type=active_settings.strategy.strategy_type,
         live_runtime_health_service=dependency_provider.live_runtime_health_service,
         live_trading_performance_service=(
             dependency_provider.live_trading_performance_service

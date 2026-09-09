@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from time import monotonic
+from typing import Final
 
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.models import (
@@ -19,6 +21,8 @@ __all__ = [
     "MarketStreamTelemetry",
     "TradingRuntimeControl",
 ]
+
+_LOGGER: Final[logging.Logger] = logging.getLogger("botragram.app.runtime_control")
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -112,15 +116,19 @@ class TradingRuntimeControl:
     def __getattribute__(self, name: str) -> object:
         """Reject ambiguous legacy runtime access when multiple contexts exist."""
         if name in {"symbol", "interval", "strategy_type"}:
-            contexts = object.__getattribute__(self, "_runtime_contexts")
+            contexts: tuple[LiveRuntimePositionContext, ...] = object.__getattribute__(
+                self, "_runtime_contexts"
+            )
             if len(contexts) > 1:
                 raise RuntimeError(
                     "Singular runtime configuration is unavailable for multiple "
                     "runtime contexts"
                 )
             if len(contexts) == 1:
-                return getattr(contexts[0], name)
-        return object.__getattribute__(self, name)
+                resolved: object = getattr(contexts[0], name)
+                return resolved
+        fallback: object = object.__getattribute__(self, name)
+        return fallback
 
     @property
     def runtime_contexts(self) -> tuple[LiveRuntimePositionContext, ...]:
@@ -138,6 +146,14 @@ class TradingRuntimeControl:
     def reconciliation_required_context(self) -> LiveRuntimePositionContext | None:
         """Return the exact recovered context requiring portfolio reconciliation."""
         return self._reconciliation_required_context
+
+    @property
+    def configured_strategy_type(self) -> StrategyType:
+        """Return the process-configured strategy without position context override."""
+        raw_strategy: object = object.__getattribute__(self, "strategy_type")
+        if isinstance(raw_strategy, StrategyType):
+            return raw_strategy
+        return StrategyType.EMA_CROSS
 
     def set_runtime_contexts(
         self,
@@ -215,6 +231,7 @@ class TradingRuntimeControl:
             return False
 
         self._active_event.clear()
+        _LOGGER.info("Trading runtime paused (active=False)")
         return True
 
     def resume(self) -> bool:
@@ -240,6 +257,7 @@ class TradingRuntimeControl:
                 )
 
             self._active_event.set()
+            _LOGGER.info("Trading runtime resumed for managed portfolio (active=True)")
             return True
 
         missing = self.get_missing_startup_requirements()
@@ -250,6 +268,7 @@ class TradingRuntimeControl:
             )
 
         self._active_event.set()
+        _LOGGER.info("Trading runtime resumed (active=True)")
         return True
 
     def resume_global_cycle(self) -> bool:
@@ -268,6 +287,7 @@ class TradingRuntimeControl:
             raise RuntimeError("Global runtime requires verified position protection")
 
         self._active_event.set()
+        _LOGGER.info("Trading runtime resumed for global discovery (active=True)")
         return True
 
     def begin_risk_limit_change(self) -> None:
@@ -348,10 +368,21 @@ class TradingRuntimeControl:
         normalized = self._normalize_symbol(symbol)
         self._symbol_confirmed = True
 
-        if normalized == self.symbol:
+        contexts: tuple[LiveRuntimePositionContext, ...] = object.__getattribute__(
+            self, "_runtime_contexts"
+        )
+        current_symbol: object = (
+            contexts[0].symbol
+            if len(contexts) == 1
+            else object.__getattribute__(self, "symbol")
+        )
+
+        if normalized == current_symbol:
             return False
 
         self.symbol = normalized
+        if len(contexts) == 1:
+            self._runtime_contexts = (replace(contexts[0], symbol=normalized),)
         return True
 
     def select_interval(self, interval: Interval) -> bool:
@@ -359,18 +390,41 @@ class TradingRuntimeControl:
         self._require_paused_configuration()
         self._interval_confirmed = True
 
-        if interval is self.interval:
+        contexts: tuple[LiveRuntimePositionContext, ...] = object.__getattribute__(
+            self, "_runtime_contexts"
+        )
+        current_interval: object = (
+            contexts[0].interval
+            if len(contexts) == 1
+            else object.__getattribute__(self, "interval")
+        )
+
+        if interval is current_interval:
             return False
 
         self.interval = interval
+        if len(contexts) == 1:
+            self._runtime_contexts = (replace(contexts[0], interval=interval),)
         return True
 
     def select_strategy(self, strategy_type: StrategyType) -> bool:
-        """Select and apply the strategy used by future cycles while paused."""
-        self._require_paused_configuration()
+        """Select and apply the strategy used by future cycles."""
+        if self._cycle_in_progress:
+            raise RuntimeError("Wait for the active trading cycle to finish")
+        self._require_no_risk_limit_change()
+        self._require_no_operator_exit()
         self._strategy_confirmed = True
 
-        if strategy_type is self.strategy_type:
+        contexts: tuple[LiveRuntimePositionContext, ...] = object.__getattribute__(
+            self, "_runtime_contexts"
+        )
+        current_strategy: object = (
+            contexts[0].strategy_type
+            if len(contexts) == 1
+            else object.__getattribute__(self, "strategy_type")
+        )
+
+        if strategy_type is current_strategy:
             return False
 
         selector = self._strategy_selector
@@ -378,6 +432,14 @@ class TradingRuntimeControl:
             selector(strategy_type)
 
         self.strategy_type = strategy_type
+        if len(contexts) == 1:
+            self._runtime_contexts = (
+                replace(contexts[0], strategy_type=strategy_type),
+            )
+        elif len(contexts) > 1:
+            self._runtime_contexts = tuple(
+                replace(context, strategy_type=strategy_type) for context in contexts
+            )
         return True
 
     def select_leverage(self, leverage: int) -> bool:
@@ -452,13 +514,17 @@ class TradingRuntimeControl:
         symbol: str,
         interval: Interval,
         strategy_type: StrategyType,
+        preserve_strategy: bool = False,
     ) -> None:
         """Restore a persisted position configuration while startup is paused."""
         self.confirm_exchange(self.exchange_type)
         self.confirm_market_type(self.market_type)
         self.select_symbol(symbol)
         self.select_interval(interval)
-        self.select_strategy(strategy_type)
+        if preserve_strategy:
+            self._strategy_confirmed = True
+        else:
+            self.select_strategy(strategy_type)
         self.set_runtime_contexts(
             contexts=(
                 LiveRuntimePositionContext(

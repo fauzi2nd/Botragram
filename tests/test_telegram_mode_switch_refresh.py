@@ -125,6 +125,11 @@ class _FakeApplicationBuilder:
         self.token_value = token
         return self
 
+    def request(self, request: object) -> Self:
+        """Capture optional custom request configuration."""
+        del request
+        return self
+
     def build(self) -> _FakeTelegramApplication:
         """Return the configured fake application."""
         return self.application

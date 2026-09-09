@@ -174,7 +174,11 @@ def _get_runtime_symbol(context: BotContext) -> str:
 def _get_runtime_strategy(context: BotContext) -> str:
     """Return the actively selected runtime strategy name."""
     control = context.runtime_control
-    return control.strategy_type.value if control is not None else context.strategy_name
+    return (
+        control.configured_strategy_type.value
+        if control is not None
+        else context.strategy_name
+    )
 
 
 def _uses_multi_context_runtime(
@@ -214,7 +218,7 @@ def _get_startup_configuration_message(context: BotContext) -> str:
         market_type=control.market_type.value,
         symbol=control.symbol,
         interval=control.interval.value,
-        strategy=control.strategy_type.value,
+        strategy=control.configured_strategy_type.value,
         missing_requirements=control.get_missing_startup_requirements(),
     )
 

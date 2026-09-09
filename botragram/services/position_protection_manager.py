@@ -328,7 +328,7 @@ class PositionProtectionManager:
 
             client_order_id = f"ptp-{Position.create_stop_loss_client_algo_id()}"
             try:
-                await self.exchange_client.create_order(
+                ptp_order = await self.exchange_client.create_order(
                     symbol=position.symbol,
                     side=closing_side,
                     order_type=OrderType.MARKET,
@@ -389,6 +389,7 @@ class PositionProtectionManager:
                 stop_loss_client_algo_id=new_stop_id,
                 protection_step=max(position.protection_step, 1),
                 partial_tp_executed=True,
+                partial_tp_order_id=ptp_order.order_id,
                 updated_at=ticker.timestamp,
             )
         else:
