@@ -597,6 +597,10 @@ def test_new_strategy_messages_and_keyboard() -> None:
     assert "CHoCH + FVG" in choch_msg
     assert "Swing Window" in choch_msg
 
+    pier_msg = get_strategy_message("pinbar_engulfing_ema_rsi", confirmed=True)
+    assert "Pinbar + Engulfing" in pier_msg
+    assert "EMA 200 Macro" in pier_msg
+
     keyboard = get_strategy_keyboard("rsi_bb_scalping", confirmed=True)
     callbacks = {
         button.callback_data for row in keyboard.inline_keyboard for button in row
@@ -604,6 +608,7 @@ def test_new_strategy_messages_and_keyboard() -> None:
     assert "cb_strategy_rsi_bb_scalping" in callbacks
     assert "cb_strategy_vwap_breakout" in callbacks
     assert "cb_strategy_choch_fvg" in callbacks
+    assert "cb_strategy_pinbar_engulfing_ema_rsi" in callbacks
 
 
 def test_trading_menu_keyboard_sync_with_pause_state() -> None:

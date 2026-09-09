@@ -755,6 +755,7 @@ def get_strategy_keyboard(
         ("Liquidity Sweep (LSE)", "liquidity_sweep_exhaustion"),
         ("High Confluence", "high_confluence_exhaustion"),
         ("Quad-Confluence", "quad_confluence"),
+        ("Pinbar + Engulfing", "pinbar_engulfing_ema_rsi"),
         ("MACD Swing", "macd_swing"),
         ("Supertrend", "supertrend"),
         ("Bollinger Breakout", "bollinger_breakout"),
