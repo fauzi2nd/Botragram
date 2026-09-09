@@ -47,6 +47,10 @@ class StrategySettings:
     mtf_confirmation_enabled: bool = False
     mtf_interval: Interval = Interval.H1
     mtf_ema_period: int = 50
+    discovery_filter_extreme_volatility: bool = True
+    discovery_max_candle_volatility_pct: Decimal = Decimal("0.15")
+    discovery_filter_min_liquidity: bool = True
+    discovery_min_quote_volume_usdt: Decimal = Decimal("1000")
 
     @property
     def default_interval(self) -> Interval:
@@ -320,3 +324,11 @@ class StrategySettings:
             raise ValueError("LSE max hold bars must be positive")
         if self.lse_short_bias_multiplier < Decimal("1.0"):
             raise ValueError("LSE short bias multiplier must be at least 1.0")
+        if not (
+            Decimal("0") < self.discovery_max_candle_volatility_pct <= Decimal("1")
+        ):
+            raise ValueError(
+                "Discovery max candle volatility pct must be between 0 and 1"
+            )
+        if self.discovery_min_quote_volume_usdt < Decimal("0"):
+            raise ValueError("Discovery min quote volume USDT must not be negative")

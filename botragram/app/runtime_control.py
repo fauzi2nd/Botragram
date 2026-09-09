@@ -83,6 +83,14 @@ class TradingRuntimeControl:
         init=False,
         repr=False,
     )
+    trailing_stop_enabled: bool = False
+    trailing_stop_trigger_pct: Decimal = Decimal("0.015")
+    trailing_stop_distance_pct: Decimal = Decimal("0.008")
+    _trailing_stop_selector: Callable[[bool, Decimal, Decimal], None] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     _runtime_contexts: tuple[LiveRuntimePositionContext, ...] = field(
         default=(),
         init=False,
@@ -389,6 +397,41 @@ class TradingRuntimeControl:
         self.leverage = leverage
         return True
 
+    def select_trailing_stop(
+        self,
+        *,
+        enabled: bool,
+        trigger_pct: Decimal,
+        distance_pct: Decimal,
+    ) -> bool:
+        """Select and apply trailing stop used by future cycles while paused."""
+        if not (Decimal("0") < trigger_pct < Decimal("1")):
+            raise ValueError("Trailing stop trigger must be between 0 and 1 exclusive")
+        if not (Decimal("0") < distance_pct < Decimal("1")):
+            raise ValueError("Trailing stop distance must be between 0 and 1 exclusive")
+        if distance_pct >= trigger_pct:
+            raise ValueError(
+                "Trailing stop distance must be strictly less than trigger"
+            )
+        self._require_paused_configuration()
+
+        changed = (
+            self.trailing_stop_enabled != enabled
+            or self.trailing_stop_trigger_pct != trigger_pct
+            or self.trailing_stop_distance_pct != distance_pct
+        )
+        if not changed:
+            return False
+
+        selector = self._trailing_stop_selector
+        if selector is not None:
+            selector(enabled, trigger_pct, distance_pct)
+
+        self.trailing_stop_enabled = enabled
+        self.trailing_stop_trigger_pct = trigger_pct
+        self.trailing_stop_distance_pct = distance_pct
+        return True
+
     def get_missing_startup_requirements(self) -> tuple[str, ...]:
         """Return setup items that still prevent Telegram from starting trading."""
         missing = list(self.get_missing_configuration_requirements())
@@ -468,6 +511,13 @@ class TradingRuntimeControl:
     ) -> None:
         """Bind the application callback that persists and applies leverage."""
         self._leverage_selector = selector
+
+    def bind_trailing_stop_selector(
+        self,
+        selector: Callable[[bool, Decimal, Decimal], None],
+    ) -> None:
+        """Bind the application callback that persists and applies trailing stop."""
+        self._trailing_stop_selector = selector
 
     def set_stream_enabled(self, enabled: bool) -> bool:
         """Record whether a real market subscription is active."""

@@ -427,6 +427,24 @@ class SettingsManager:
             raw_value=self._environment_provider.get_mtf_ema_period(),
             setting_name="MTF_EMA_PERIOD",
         )
+        discovery_filter_extreme_volatility = (
+            self._environment_provider.get_discovery_filter_extreme_volatility()
+        )
+        discovery_max_candle_volatility_pct = self._parse_decimal(
+            raw_value=(
+                self._environment_provider.get_discovery_max_candle_volatility_pct()
+            ),
+            setting_name="DISCOVERY_MAX_CANDLE_VOLATILITY_PCT",
+        )
+        discovery_filter_min_liquidity = (
+            self._environment_provider.get_discovery_filter_min_liquidity()
+        )
+        discovery_min_quote_volume_usdt = self._parse_decimal(
+            raw_value=(
+                self._environment_provider.get_discovery_min_quote_volume_usdt()
+            ),
+            setting_name="DISCOVERY_MIN_QUOTE_VOLUME_USDT",
+        )
         return StrategySettings(
             strategy_type=(
                 self._parse_enum(
@@ -442,6 +460,10 @@ class SettingsManager:
             mtf_confirmation_enabled=mtf_enabled,
             mtf_interval=mtf_interval,
             mtf_ema_period=mtf_ema_period,
+            discovery_filter_extreme_volatility=(discovery_filter_extreme_volatility),
+            discovery_max_candle_volatility_pct=(discovery_max_candle_volatility_pct),
+            discovery_filter_min_liquidity=discovery_filter_min_liquidity,
+            discovery_min_quote_volume_usdt=discovery_min_quote_volume_usdt,
         )
 
     def load_logging_settings(self) -> LoggingSettings:

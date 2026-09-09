@@ -121,6 +121,10 @@ class OpportunityDiscoveryService:
     mtf_confirmation_enabled: bool = False
     mtf_interval: Interval = Interval.H1
     mtf_ema_period: int = 50
+    filter_extreme_volatility: bool = False
+    max_candle_volatility_pct: Decimal = Decimal("0.15")
+    filter_min_liquidity: bool = False
+    min_quote_volume_usdt: Decimal = Decimal("0")
 
     async def discover(
         self,
@@ -301,6 +305,38 @@ class OpportunityDiscoveryService:
                     interval=interval,
                     as_of=as_of,
                 )
+
+            latest_closed_candle = closed_candles[-1]
+
+            if self.filter_min_liquidity:
+                quote_volume = (
+                    latest_closed_candle.volume * latest_closed_candle.close_price
+                )
+                if quote_volume < self.min_quote_volume_usdt:
+                    _LOGGER.info(
+                        "Discovery liquidity filter rejected %s: "
+                        "quote volume %s USDT < min %s USDT",
+                        symbol,
+                        quote_volume,
+                        self.min_quote_volume_usdt,
+                    )
+                    continue
+
+            if self.filter_extreme_volatility:
+                candle_range = (
+                    latest_closed_candle.high_price - latest_closed_candle.low_price
+                )
+                if latest_closed_candle.close_price > Decimal("0"):
+                    volatility_pct = candle_range / latest_closed_candle.close_price
+                    if volatility_pct > self.max_candle_volatility_pct:
+                        _LOGGER.info(
+                            "Discovery extreme volatility filter rejected %s: "
+                            "candle volatility %s > max %s",
+                            symbol,
+                            volatility_pct,
+                            self.max_candle_volatility_pct,
+                        )
+                        continue
 
             try:
                 if strategy_type is None:

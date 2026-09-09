@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
@@ -281,7 +282,12 @@ class DependencyProvider:
             symbol=self._settings.market.symbol,
             interval=self._settings.market.interval,
             strategy_type=self._settings.strategy.strategy_type,
+            leverage=self._settings.risk.leverage,
+            trailing_stop_enabled=self._settings.risk.trailing_stop_enabled,
+            trailing_stop_trigger_pct=self._settings.risk.trailing_stop_trigger_pct,
+            trailing_stop_distance_pct=self._settings.risk.trailing_stop_distance_pct,
         )
+
         if market_type_confirmed:
             self._runtime_control.confirm_market_type(
                 self._settings.exchange.market_type
@@ -500,12 +506,43 @@ class DependencyProvider:
                 self._runtime_control.leverage = persisted_leverage
             else:
                 self._runtime_control.leverage = self._settings.risk.leverage
+            persisted_trailing = (
+                await self.runtime_settings_repository.get_trailing_stop()
+            )
+            if persisted_trailing is not None:
+                t_enabled, t_trigger, t_dist = persisted_trailing
+                self._settings = replace(
+                    self._settings,
+                    risk=replace(
+                        self._settings.risk,
+                        trailing_stop_enabled=t_enabled,
+                        trailing_stop_trigger_pct=t_trigger,
+                        trailing_stop_distance_pct=t_dist,
+                    ),
+                )
+                self._runtime_control.trailing_stop_enabled = t_enabled
+                self._runtime_control.trailing_stop_trigger_pct = t_trigger
+                self._runtime_control.trailing_stop_distance_pct = t_dist
+            else:
+                self._runtime_control.trailing_stop_enabled = (
+                    self._settings.risk.trailing_stop_enabled
+                )
+                self._runtime_control.trailing_stop_trigger_pct = (
+                    self._settings.risk.trailing_stop_trigger_pct
+                )
+                self._runtime_control.trailing_stop_distance_pct = (
+                    self._settings.risk.trailing_stop_distance_pct
+                )
             await self._initialize_runtime_risk_limit_service()
             await self._build_exchange_dependencies()
             self._build_engines()
             self.runtime_control.bind_strategy_selector(self._select_runtime_strategy)
             self.runtime_control.bind_leverage_selector(self._select_runtime_leverage)
+            self.runtime_control.bind_trailing_stop_selector(
+                self._select_runtime_trailing_stop
+            )
             self._telegram_bot = TelegramBot(settings=self._settings.telegram)
+
             self._build_live_account_drawdown_service()
             await self._start_live_futures_user_data_service()
             self._build_services()
@@ -650,6 +687,9 @@ class DependencyProvider:
                     exchange_type=self._settings.exchange.exchange.value,
                     leverage=self.runtime_control.leverage,
                     leverage_ceiling=max(50, self.runtime_control.leverage),
+                    trailing_stop_enabled=self.runtime_control.trailing_stop_enabled,
+                    trailing_stop_trigger_pct=self.runtime_control.trailing_stop_trigger_pct,
+                    trailing_stop_distance_pct=self.runtime_control.trailing_stop_distance_pct,
                     query_provider=query_service,
                     runtime_control=self.runtime_control,
                     market_type_switcher=self.market_type_switch_service,
@@ -1170,6 +1210,36 @@ class DependencyProvider:
             )
         _LOGGER.info("Runtime leverage selected: leverage=%dx", leverage)
 
+    def _select_runtime_trailing_stop(
+        self,
+        enabled: bool,
+        trigger_pct: Decimal,
+        distance_pct: Decimal,
+    ) -> None:
+        self._settings = replace(
+            self._settings,
+            risk=replace(
+                self._settings.risk,
+                trailing_stop_enabled=enabled,
+                trailing_stop_trigger_pct=trigger_pct,
+                trailing_stop_distance_pct=distance_pct,
+            ),
+        )
+        if self._runtime_settings_repository is not None:
+            asyncio.create_task(
+                self._runtime_settings_repository.save_trailing_stop(
+                    enabled=enabled,
+                    trigger_pct=trigger_pct,
+                    distance_pct=distance_pct,
+                )
+            )
+        _LOGGER.info(
+            "Runtime trailing stop updated: enabled=%s trigger=%s distance=%s",
+            enabled,
+            trigger_pct,
+            distance_pct,
+        )
+
     def _build_services(self) -> None:
         exchange_client = self.exchange_client
         runtime_limits = self._runtime_risk_limit_service
@@ -1204,6 +1274,18 @@ class DependencyProvider:
             mtf_confirmation_enabled=self._settings.strategy.mtf_confirmation_enabled,
             mtf_interval=self._settings.strategy.mtf_interval,
             mtf_ema_period=self._settings.strategy.mtf_ema_period,
+            filter_extreme_volatility=(
+                self._settings.strategy.discovery_filter_extreme_volatility
+            ),
+            max_candle_volatility_pct=(
+                self._settings.strategy.discovery_max_candle_volatility_pct
+            ),
+            filter_min_liquidity=(
+                self._settings.strategy.discovery_filter_min_liquidity
+            ),
+            min_quote_volume_usdt=(
+                self._settings.strategy.discovery_min_quote_volume_usdt
+            ),
         )
         self._order_service = OrderService(
             order_engine=self.order_engine,

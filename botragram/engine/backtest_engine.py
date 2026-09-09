@@ -148,11 +148,18 @@ class BacktestEngine:
                 await position_repository.get_by_symbol(symbol=request.symbol)
                 is not None
             )
+            volatility_pct = (
+                (candle.high_price - candle.low_price) / candle.close_price
+                if candle.close_price > _DECIMAL_ZERO
+                else None
+            )
             execution = await paper_service.execute(
                 signal=signal,
                 current_drawdown_pct=current_drawdown,
                 interval=request.interval,
+                volatility_pct=volatility_pct,
             )
+
             has_position = (
                 await position_repository.get_by_symbol(symbol=request.symbol)
                 is not None
@@ -265,69 +272,106 @@ class BacktestEngine:
         still_open = await position_repository.get_by_symbol(symbol=candle.symbol)
         return reason if still_open is None else None
 
-    @staticmethod
     async def _advance_stepped_protection(
+        self,
         *,
         candle: Candle,
         position_repository: MemoryPositionRepository,
     ) -> None:
-        """Arm stepped SL from this candle for use starting with the next candle."""
+        """Arm stepped SL & trailing stop from this candle for next candle."""
         position = await position_repository.get_by_symbol(symbol=candle.symbol)
         if position is None or position.take_profit is None:
             return
 
+        candidate_stops: list[Decimal] = []
         tp_distance = abs(position.take_profit - position.entry_price)
-        if tp_distance <= _DECIMAL_ZERO:
+        step = position.protection_step
+
+        if tp_distance > _DECIMAL_ZERO:
+            if position.side is PositionSide.LONG:
+                progress = (candle.high_price - position.entry_price) / tp_distance
+                pnl_pct = (
+                    (candle.high_price - position.entry_price) / position.entry_price
+                    if position.entry_price > _DECIMAL_ZERO
+                    else _DECIMAL_ZERO
+                )
+            else:
+                progress = (position.entry_price - candle.low_price) / tp_distance
+                pnl_pct = (
+                    (position.entry_price - candle.low_price) / position.entry_price
+                    if position.entry_price > _DECIMAL_ZERO
+                    else _DECIMAL_ZERO
+                )
+
+            roi = pnl_pct * Decimal(position.leverage)
+
+            tp_steps = sum(
+                1 for threshold in _PROGRESS_THRESHOLDS if progress >= threshold
+            )
+            if tp_steps > 0:
+                resolved_step = tp_steps + 1
+            elif roi >= _BREAKEVEN_ROI_THRESHOLD:
+                resolved_step = 1
+            else:
+                resolved_step = 0
+
+            if resolved_step > position.protection_step:
+                step = resolved_step
+                if step == 1:
+                    buffer = position.entry_price * _BREAKEVEN_FEE_BUFFER
+                    if position.side is PositionSide.LONG:
+                        candidate_stops.append(position.entry_price + buffer)
+                    else:
+                        candidate_stops.append(position.entry_price - buffer)
+                else:
+                    locked_progress = (
+                        _PROGRESS_THRESHOLDS[step - 2] - _LOCKED_PROGRESS_LAG
+                    )
+                    if position.side is PositionSide.LONG:
+                        candidate_stops.append(
+                            position.entry_price + tp_distance * locked_progress
+                        )
+                    else:
+                        candidate_stops.append(
+                            position.entry_price - tp_distance * locked_progress
+                        )
+
+        if self.risk_settings.trailing_stop_enabled:
+            if position.side is PositionSide.LONG:
+                pnl_pct = (
+                    (candle.high_price - position.entry_price) / position.entry_price
+                    if position.entry_price > _DECIMAL_ZERO
+                    else _DECIMAL_ZERO
+                )
+                if pnl_pct >= self.risk_settings.trailing_stop_trigger_pct:
+                    trailing_stop = candle.high_price * (
+                        Decimal("1") - self.risk_settings.trailing_stop_distance_pct
+                    )
+                    candidate_stops.append(trailing_stop)
+            else:
+                pnl_pct = (
+                    (position.entry_price - candle.low_price) / position.entry_price
+                    if position.entry_price > _DECIMAL_ZERO
+                    else _DECIMAL_ZERO
+                )
+                if pnl_pct >= self.risk_settings.trailing_stop_trigger_pct:
+                    trailing_stop = candle.low_price * (
+                        Decimal("1") + self.risk_settings.trailing_stop_distance_pct
+                    )
+                    candidate_stops.append(trailing_stop)
+
+        if not candidate_stops:
             return
 
         if position.side is PositionSide.LONG:
-            progress = (candle.high_price - position.entry_price) / tp_distance
-            pnl_pct = (
-                (candle.high_price - position.entry_price) / position.entry_price
-                if position.entry_price > _DECIMAL_ZERO
-                else _DECIMAL_ZERO
-            )
-        else:
-            progress = (position.entry_price - candle.low_price) / tp_distance
-            pnl_pct = (
-                (position.entry_price - candle.low_price) / position.entry_price
-                if position.entry_price > _DECIMAL_ZERO
-                else _DECIMAL_ZERO
-            )
-
-        roi = pnl_pct * Decimal(position.leverage)
-
-        tp_steps = sum(1 for threshold in _PROGRESS_THRESHOLDS if progress >= threshold)
-        if tp_steps > 0:
-            step = tp_steps + 1
-        elif roi >= _BREAKEVEN_ROI_THRESHOLD:
-            step = 1
-        else:
-            step = 0
-
-        if step <= position.protection_step:
-            return
-
-        if step == 1:
-            buffer = position.entry_price * _BREAKEVEN_FEE_BUFFER
-            if position.side is PositionSide.LONG:
-                replacement_stop = position.entry_price + buffer
-            else:
-                replacement_stop = position.entry_price - buffer
-        else:
-            locked_progress = _PROGRESS_THRESHOLDS[step - 2] - _LOCKED_PROGRESS_LAG
-            if position.side is PositionSide.LONG:
-                replacement_stop = position.entry_price + tp_distance * locked_progress
-            else:
-                replacement_stop = position.entry_price - tp_distance * locked_progress
-
-        if position.side is PositionSide.LONG:
+            replacement_stop = max(candidate_stops)
             if (
                 position.stop_loss is not None
                 and replacement_stop <= position.stop_loss
             ):
                 return
         else:
+            replacement_stop = min(candidate_stops)
             if (
                 position.stop_loss is not None
                 and replacement_stop >= position.stop_loss

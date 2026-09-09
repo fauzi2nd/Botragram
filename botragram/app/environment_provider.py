@@ -55,6 +55,10 @@ from botragram.constants.env import (
     ENV_DISCOVERY_BATCH_SIZE,
     ENV_DISCOVERY_CADENCE_SECONDS,
     ENV_DISCOVERY_CANDLE_DELAY_SECONDS,
+    ENV_DISCOVERY_FILTER_EXTREME_VOLATILITY,
+    ENV_DISCOVERY_FILTER_MIN_LIQUIDITY,
+    ENV_DISCOVERY_MAX_CANDLE_VOLATILITY_PCT,
+    ENV_DISCOVERY_MIN_QUOTE_VOLUME_USDT,
     ENV_DISCOVERY_UNIVERSE_LIMIT,
     ENV_EMA_CROSS_STOP_LOSS_PCT,
     ENV_EMA_CROSS_TAKE_PROFIT_PCT,
@@ -488,6 +492,22 @@ class EnvironmentProvider:
     def get_mtf_ema_period(self) -> str:
         """Return the lookback period for MTF trend EMA."""
         return self._get_var(ENV_MTF_EMA_PERIOD, default="50")
+
+    def get_discovery_filter_extreme_volatility(self) -> bool:
+        """Return whether extreme volatility filter is enabled in discovery."""
+        return self._get_bool(ENV_DISCOVERY_FILTER_EXTREME_VOLATILITY, default=True)
+
+    def get_discovery_max_candle_volatility_pct(self) -> str:
+        """Return max candle volatility threshold percentage for discovery."""
+        return self._get_var(ENV_DISCOVERY_MAX_CANDLE_VOLATILITY_PCT, default="0.15")
+
+    def get_discovery_filter_min_liquidity(self) -> bool:
+        """Return whether minimum liquidity filter is enabled in discovery."""
+        return self._get_bool(ENV_DISCOVERY_FILTER_MIN_LIQUIDITY, default=True)
+
+    def get_discovery_min_quote_volume_usdt(self) -> str:
+        """Return minimum quote volume in USDT for discovery filtering."""
+        return self._get_var(ENV_DISCOVERY_MIN_QUOTE_VOLUME_USDT, default="1000")
 
     def get_partial_tp_enabled(self) -> bool:
         """Return whether partial take profit is enabled."""

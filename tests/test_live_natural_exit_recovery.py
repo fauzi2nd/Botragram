@@ -209,6 +209,7 @@ def _protection(
     order_type: OrderType,
     client_id: str,
     trigger: str,
+    quantity: str = "885",
 ) -> Order:
     return Order(
         order_id=f"order-{order_type.value}",
@@ -216,7 +217,7 @@ def _protection(
         side=OrderSide.BUY,
         order_type=order_type,
         status=OrderStatus.NEW,
-        quantity=Decimal("885"),
+        quantity=Decimal(quantity),
         executed_quantity=Decimal("0"),
         price=None,
         stop_price=Decimal(trigger),
@@ -1397,3 +1398,37 @@ async def test_performance_ownership_failure_preserves_durable_identity() -> Non
         await service.reconcile()
 
     assert await repository.get_by_symbol(symbol=_SYMBOL) is not None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_cancels_partial_tp_orphan_and_deletes_legacy_pos() -> None:
+    """Allow orphan cancellation and stale deletion for legacy partial-TP positions."""
+    repository = MemoryPositionRepository()
+    legacy_pos = replace(
+        _position(),
+        quantity=Decimal("140"),
+        partial_tp_executed=True,
+        entry_client_order_id=None,
+    )
+    await repository.save(position=legacy_pos)
+    exchange = FakeNaturalExitExchange(
+        protections=(
+            _protection(
+                order_type=OrderType.TAKE_PROFIT,
+                client_id=_TP_ID,
+                trigger="0.01084",
+                quantity="280",
+            ),
+        )
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    await service.reconcile()
+
+    assert exchange.cancel_calls == [(_SYMBOL, _TP_ID)]
+    assert exchange.protections == []
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None

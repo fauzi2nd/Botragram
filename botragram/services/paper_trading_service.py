@@ -129,6 +129,7 @@ class PaperTradingService:
         order_type: OrderType = OrderType.MARKET,
         price: Decimal | None = None,
         interval: Interval | None = None,
+        volatility_pct: Decimal | None = None,
     ) -> TradingResult:
         """Evaluate and simulate one signal against the persisted portfolio."""
         async with self._execution_lock:
@@ -139,6 +140,7 @@ class PaperTradingService:
                 order_type=order_type,
                 price=price,
                 interval=interval,
+                volatility_pct=volatility_pct,
             )
 
     async def on_market_tick(self, *, ticker: Ticker) -> None:
@@ -261,6 +263,7 @@ class PaperTradingService:
         order_type: OrderType,
         price: Decimal | None,
         interval: Interval | None,
+        volatility_pct: Decimal | None = None,
     ) -> TradingResult:
         """Execute one paper action while the caller owns the execution lock."""
         starting_balance = (
@@ -309,6 +312,7 @@ class PaperTradingService:
             has_open_position=False,
             open_positions=await self.position_repository.get_open_positions(),
             current_drawdown_pct=current_drawdown_pct,
+            volatility_pct=volatility_pct,
         )
 
         if not decision.should_execute:

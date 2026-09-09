@@ -70,7 +70,9 @@ __all__ = [
     "get_stream_keyboard",
     "get_tpsl_ratio_keyboard",
     "get_trading_menu_keyboard",
+    "get_trailing_stop_keyboard",
 ]
+
 
 _MARKET_PAGE_SIZE: Final[int] = 10
 
@@ -156,6 +158,65 @@ def get_tpsl_ratio_keyboard(
         InlineKeyboardButton(f"◀️ {MENU_STATUS}", callback_data="cb_status"),
     ]
     return InlineKeyboardMarkup([row_sl, row_tp, row_presets, row_nav])
+
+
+def get_trailing_stop_keyboard(
+    *,
+    enabled: bool,
+    trigger_pct: Decimal,
+    distance_pct: Decimal,
+) -> InlineKeyboardMarkup:
+    """Return interactive buttons for tuning Trailing Stop parameters."""
+    status_text = (
+        "🟢 Status: ACTIVE (Tap to Disable)"
+        if enabled
+        else "🔴 Status: DISABLED (Tap to Enable)"
+    )
+    row_toggle = [
+        InlineKeyboardButton(status_text, callback_data="cb_tstop_toggle"),
+    ]
+
+    trigger_presets = (
+        Decimal("0.010"),
+        Decimal("0.015"),
+        Decimal("0.020"),
+        Decimal("0.025"),
+        Decimal("0.030"),
+    )
+    row_trigger = [
+        InlineKeyboardButton(
+            f"🎯 {p * Decimal('100'):.1f}%"
+            if p == trigger_pct
+            else f"{p * Decimal('100'):.1f}%",
+            callback_data=f"cb_tstop_trig_{p}",
+        )
+        for p in trigger_presets
+    ]
+
+    distance_presets = (
+        Decimal("0.005"),
+        Decimal("0.008"),
+        Decimal("0.010"),
+        Decimal("0.012"),
+        Decimal("0.015"),
+    )
+    row_distance = [
+        InlineKeyboardButton(
+            f"📏 {d * Decimal('100'):.1f}%"
+            if d == distance_pct
+            else f"{d * Decimal('100'):.1f}%",
+            callback_data=f"cb_tstop_dist_{d}",
+        )
+        for d in distance_presets
+    ]
+
+    row_nav = [
+        InlineKeyboardButton("🔄 Refresh", callback_data="cb_trailing_stop"),
+        InlineKeyboardButton("⚙️ Risk Limits", callback_data="cb_risk_limits"),
+        InlineKeyboardButton(f"◀️ {MENU_STATUS}", callback_data="cb_status"),
+    ]
+
+    return InlineKeyboardMarkup([row_toggle, row_trigger, row_distance, row_nav])
 
 
 def get_leverage_keyboard(
@@ -300,6 +361,9 @@ def get_risk_limits_keyboard(
         rows.append(row_preset_size)
     if row_preset_lev:
         rows.append(row_preset_lev)
+    rows.append(
+        [InlineKeyboardButton("🎯 Trailing Stop", callback_data="cb_trailing_stop")]
+    )
     rows.append(row_nav)
     return InlineKeyboardMarkup(rows)
 

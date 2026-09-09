@@ -88,6 +88,7 @@ __all__ = [
     "get_test_message",
     "get_tpsl_ratio_message",
     "get_trade_completed_message",
+    "get_trailing_stop_message",
     "get_welcome_message",
 ]
 
@@ -1184,6 +1185,35 @@ def get_tpsl_ratio_message(
         f"• <b>Risk : Reward Ratio:</b> <b>1 : {rr_ratio:.2f}</b>\n\n"
         "<i>Gunakan tombol di bawah untuk fine-tuning atau memilih preset RR "
         "(saat PAUSED).</i>"
+    )
+
+
+def get_trailing_stop_message(
+    *,
+    enabled: bool,
+    trigger_pct: Decimal,
+    distance_pct: Decimal,
+    is_paused: bool,
+) -> str:
+    """Return formatted Trailing Stop configuration message."""
+    pause_status = (
+        "🟢 <b>PAUSED (Bisa diubah)</b>"
+        if is_paused
+        else "🔴 <b>RUNNING (Jeda bot untuk mengubah)</b>"
+    )
+    status_label = "🟢 <b>ACTIVE</b>" if enabled else "🔴 <b>DISABLED</b>"
+    trigger_display = trigger_pct * Decimal("100")
+    distance_display = distance_pct * Decimal("100")
+
+    return (
+        "🎯 <b>Konfigurasi Trailing Stop</b>\n\n"
+        f"• <b>Status Bot:</b> {pause_status}\n"
+        f"• <b>Trailing Stop:</b> {status_label}\n"
+        f"• <b>Trigger:</b> <b>+{trigger_display:.2f}%</b> (Minimal profit aktivasi)\n"
+        f"• <b>Distance:</b> <b>{distance_display:.2f}%</b> (Jarak trailing stop)\n\n"
+        "<i>Trailing Stop otomatis mengunci profit dinamis saat harga bergerak "
+        "searah dan berbalik sejauh jarak Distance. Parameter hanya dapat "
+        "diubah saat bot di-PAUSE.</i>"
     )
 
 

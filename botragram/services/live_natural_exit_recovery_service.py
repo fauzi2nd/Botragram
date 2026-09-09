@@ -352,12 +352,8 @@ class LiveNaturalExitRecoveryService:
         """Require durable ownership before deleting the local position identity."""
         service = self.closed_lifecycle_service
         entry_identity = position.entry_client_order_id
-        if service is None:
+        if service is None or entry_identity is None:
             return None
-        if entry_identity is None:
-            raise RuntimeError(
-                "Natural exit cannot delete a position without lifecycle identity"
-            )
         if await service.has_durable_ownership(
             entry_client_order_id=entry_identity,
         ):
@@ -904,13 +900,21 @@ class LiveNaturalExitRecoveryService:
         expected_side = (
             OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
+        expected_types = (
+            {OrderType.STOP_MARKET, OrderType.STOP}
+            if order_type in (OrderType.STOP_MARKET, OrderType.STOP)
+            else {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
+        )
+        valid_quantity = order.quantity == position.quantity or (
+            position.partial_tp_executed and order.quantity >= position.quantity
+        )
         if (
             trigger is None
             or order.client_order_id != client_id
             or order.symbol.upper() != position.symbol.upper()
             or order.side is not expected_side
-            or order.order_type is not order_type
-            or order.quantity != position.quantity
+            or order.order_type not in expected_types
+            or not valid_quantity
             or order.stop_price is None
             or order.stop_price != trigger
         ):
@@ -977,20 +981,20 @@ class LiveNaturalExitRecoveryService:
     def _validate_owned_orphan(*, order: Order, position: Position) -> None:
         """Require an exact persisted protection identity before cancellation."""
         client_id = order.client_order_id
-        expected_type: OrderType | None = None
+        expected_types: set[OrderType] | None = None
         expected_trigger = None
 
         if client_id == position.stop_loss_client_algo_id:
-            expected_type = OrderType.STOP_MARKET
+            expected_types = {OrderType.STOP_MARKET, OrderType.STOP}
             expected_trigger = position.stop_loss
         elif client_id == position.take_profit_client_algo_id:
-            expected_type = OrderType.TAKE_PROFIT_MARKET
+            expected_types = {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
             expected_trigger = position.take_profit
         elif client_id == position.pending_stop_loss_client_algo_id:
-            expected_type = OrderType.STOP_MARKET
+            expected_types = {OrderType.STOP_MARKET, OrderType.STOP}
             expected_trigger = position.pending_stop_loss
 
-        if expected_type is None:
+        if expected_types is None:
             raise RuntimeError(
                 "LIVE orphan protection does not match a durable client identity"
             )
@@ -998,13 +1002,16 @@ class LiveNaturalExitRecoveryService:
         expected_side = (
             OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
+        valid_quantity = order.quantity == position.quantity or (
+            position.partial_tp_executed and order.quantity >= position.quantity
+        )
 
         if (
             order.symbol.upper() != position.symbol.upper()
             or order.side is not expected_side
-            or order.order_type is not expected_type
+            or order.order_type not in expected_types
             or order.status is not OrderStatus.NEW
-            or order.quantity != position.quantity
+            or not valid_quantity
             or order.stop_price is None
             or expected_trigger is None
             or order.stop_price != expected_trigger

@@ -80,6 +80,7 @@ from botragram.telegram.keyboards import (
     get_strategy_keyboard,
     get_stream_keyboard,
     get_tpsl_ratio_keyboard,
+    get_trailing_stop_keyboard,
 )
 from botragram.telegram.messages import (
     get_exchange_message,
@@ -100,6 +101,7 @@ from botragram.telegram.messages import (
     get_strategy_message,
     get_stream_message,
     get_tpsl_ratio_message,
+    get_trailing_stop_message,
 )
 from botragram.telegram.operator_exit_commands import (
     format_operator_exit_confirmation,
@@ -1265,6 +1267,122 @@ async def handle_callback_query(
             parse_mode=DEFAULT_PARSE_MODE,
             reply_markup=keyboard,
         )
+    elif data == "cb_trailing_stop" or data.startswith("cb_tstop_"):
+        control = bot_context.runtime_control
+        is_paused = control.is_paused if control is not None else False
+
+        t_enabled = (
+            control.trailing_stop_enabled
+            if control is not None
+            else bot_context.trailing_stop_enabled
+        )
+        t_trigger = (
+            control.trailing_stop_trigger_pct
+            if control is not None
+            else bot_context.trailing_stop_trigger_pct
+        )
+        t_dist = (
+            control.trailing_stop_distance_pct
+            if control is not None
+            else bot_context.trailing_stop_distance_pct
+        )
+
+        if data != "cb_trailing_stop":
+            if not is_paused:
+                try:
+                    await query.answer(
+                        "⚠️ Pause trading terlebih dahulu "
+                        "sebelum mengubah trailing stop!",
+                        show_alert=True,
+                    )
+                except Exception:
+                    pass
+            else:
+                new_enabled = t_enabled
+                new_trigger = t_trigger
+                new_dist = t_dist
+
+                if data == "cb_tstop_toggle":
+                    new_enabled = not t_enabled
+                elif data.startswith("cb_tstop_trig_"):
+                    try:
+                        raw_trig = Decimal(data.removeprefix("cb_tstop_trig_"))
+                        if raw_trig > new_dist:
+                            new_trigger = raw_trig
+                        else:
+                            try:
+                                await query.answer(
+                                    "⚠️ Trigger harus lebih besar dari distance!",
+                                    show_alert=True,
+                                )
+                            except Exception:
+                                pass
+                    except ValueError, InvalidOperation:
+                        pass
+                elif data.startswith("cb_tstop_dist_"):
+                    try:
+                        raw_dist = Decimal(data.removeprefix("cb_tstop_dist_"))
+                        if raw_dist < new_trigger:
+                            new_dist = raw_dist
+                        else:
+                            try:
+                                await query.answer(
+                                    "⚠️ Distance harus lebih kecil dari trigger!",
+                                    show_alert=True,
+                                )
+                            except Exception:
+                                pass
+                    except ValueError, InvalidOperation:
+                        pass
+
+                if control is not None:
+                    try:
+                        control.select_trailing_stop(
+                            enabled=new_enabled,
+                            trigger_pct=new_trigger,
+                            distance_pct=new_dist,
+                        )
+                    except (ValueError, RuntimeError) as error:
+                        try:
+                            await query.answer(f"⚠️ {error}", show_alert=True)
+                        except Exception:
+                            pass
+                bot_context.trailing_stop_enabled = new_enabled
+                bot_context.trailing_stop_trigger_pct = new_trigger
+                bot_context.trailing_stop_distance_pct = new_dist
+                t_enabled = new_enabled
+                t_trigger = new_trigger
+                t_dist = new_dist
+
+                try:
+                    state_lbl = "ACTIVE" if t_enabled else "DISABLED"
+                    trig_pct_val = t_trigger * Decimal("100")
+                    dist_pct_val = t_dist * Decimal("100")
+                    await query.answer(
+                        f"✅ Trailing Stop {state_lbl} | "
+                        f"Trig: {trig_pct_val:.1f}% | "
+                        f"Dist: {dist_pct_val:.1f}%",
+                        show_alert=False,
+                    )
+                except Exception:
+                    pass
+
+        msg = get_trailing_stop_message(
+            enabled=t_enabled,
+            trigger_pct=t_trigger,
+            distance_pct=t_dist,
+            is_paused=is_paused,
+        )
+        keyboard = get_trailing_stop_keyboard(
+            enabled=t_enabled,
+            trigger_pct=t_trigger,
+            distance_pct=t_dist,
+        )
+        await query.edit_message_text(
+            msg,
+            parse_mode=DEFAULT_PARSE_MODE,
+            reply_markup=keyboard,
+        )
     elif data == "cb_config_menu":
         config_markup = InlineKeyboardMarkup(
             [
@@ -1276,9 +1394,18 @@ async def handle_callback_query(
                     InlineKeyboardButton("🪙 Market", callback_data="cb_market"),
                     InlineKeyboardButton("🏢 Exchange", callback_data="cb_exchange"),
                 ],
+                [
+                    InlineKeyboardButton(
+                        "🎯 Trailing Stop", callback_data="cb_trailing_stop"
+                    ),
+                    InlineKeyboardButton(
+                        "⚡ Leverage", callback_data="cb_leverage_menu"
+                    ),
+                ],
                 [InlineKeyboardButton(f"◀️ {MENU_STATUS}", callback_data="cb_status")],
             ]
         )
+
         await query.edit_message_text(
             "⚙️ <b>Menu Konfigurasi Runtime</b>\n\n"
             "Pilih parameter runtime yang ingin Anda tinjau atau sesuaikan:",
