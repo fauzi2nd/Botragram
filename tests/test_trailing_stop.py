@@ -257,3 +257,92 @@ async def test_trailing_stop_cleared_on_position_close() -> None:
         ticker=_create_ticker(symbol="SOLUSDT", price=Decimal("103.0"))
     )
     assert len(manager.peak_prices) == 0
+
+
+def test_position_pending_stop_allows_same_step_when_tightened() -> None:
+    """Verify Position permits pending stop replacement at same step if tightened."""
+    # LONG position tightening stop loss from 98.0 to 99.0 at step 2
+    pos_long = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1.0"),
+        entry_price=Decimal("100.0"),
+        current_price=Decimal("102.0"),
+        stop_loss=Decimal("98.0"),
+        take_profit=Decimal("110.0"),
+        unrealized_pnl=Decimal("2.0"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        protection_step=2,
+        pending_stop_loss=Decimal("99.0"),
+        pending_stop_loss_client_algo_id="bsl-123456",
+        pending_protection_step=2,
+    )
+    assert pos_long.pending_stop_loss == Decimal("99.0")
+    assert pos_long.pending_protection_step == 2
+
+    # SHORT position tightening stop loss from 102.0 to 101.0 at step 1
+    pos_short = Position(
+        symbol="ETHUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("1.0"),
+        entry_price=Decimal("100.0"),
+        current_price=Decimal("98.0"),
+        stop_loss=Decimal("102.0"),
+        take_profit=Decimal("90.0"),
+        unrealized_pnl=Decimal("2.0"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        protection_step=1,
+        pending_stop_loss=Decimal("101.0"),
+        pending_stop_loss_client_algo_id="bsl-123456",
+        pending_protection_step=1,
+    )
+    assert pos_short.pending_stop_loss == Decimal("101.0")
+
+
+def test_position_pending_stop_rejects_loosened_or_regressed_step() -> None:
+    """Verify Position rejects pending replacements that regress step or loosen stop."""
+    import pytest
+
+    # Rejection 1: Regressing protection step from 2 to 1
+    with pytest.raises(ValueError, match="must not regress current protection"):
+        Position(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            quantity=Decimal("1.0"),
+            entry_price=Decimal("100.0"),
+            current_price=Decimal("102.0"),
+            stop_loss=Decimal("98.0"),
+            take_profit=Decimal("110.0"),
+            unrealized_pnl=Decimal("2.0"),
+            leverage=1,
+            opened_at=_NOW,
+            updated_at=_NOW,
+            protection_step=2,
+            pending_stop_loss=Decimal("99.0"),
+            pending_stop_loss_client_algo_id="bsl-123456",
+            pending_protection_step=1,
+        )
+
+    # Rejection 2: Same step 2, but stop loss is loosened (97.0 <= 98.0 for LONG)
+    with pytest.raises(ValueError, match="must tighten stop loss"):
+        Position(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            quantity=Decimal("1.0"),
+            entry_price=Decimal("100.0"),
+            current_price=Decimal("102.0"),
+            stop_loss=Decimal("98.0"),
+            take_profit=Decimal("110.0"),
+            unrealized_pnl=Decimal("2.0"),
+            leverage=1,
+            opened_at=_NOW,
+            updated_at=_NOW,
+            protection_step=2,
+            pending_stop_loss=Decimal("97.0"),
+            pending_stop_loss_client_algo_id="bsl-123456",
+            pending_protection_step=2,
+        )

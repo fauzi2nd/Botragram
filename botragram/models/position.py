@@ -95,10 +95,23 @@ class Position:
             raise ValueError(
                 "Pending STOP replacement requires both trigger and client identity"
             )
-        if self.pending_protection_step <= self.protection_step:
+        if self.pending_protection_step < self.protection_step:
             raise ValueError(
-                "Pending STOP replacement step must advance current protection"
+                "Pending STOP replacement step must not regress current protection"
             )
+        if (
+            self.pending_protection_step == self.protection_step
+            and self.stop_loss is not None
+        ):
+            is_advancing = (
+                self.pending_stop_loss > self.stop_loss
+                if self.side is PositionSide.LONG
+                else self.pending_stop_loss < self.stop_loss
+            )
+            if not is_advancing:
+                raise ValueError(
+                    "Pending STOP replacement at same step must tighten stop loss"
+                )
         if pending_id in {
             self.stop_loss_client_algo_id,
             self.take_profit_client_algo_id,
