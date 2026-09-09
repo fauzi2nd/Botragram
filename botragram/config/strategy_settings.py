@@ -215,6 +215,26 @@ class StrategySettings:
     quad_macd_slow_period: int = 26
     quad_macd_signal_period: int = 9
 
+    # =========================================================================
+    # Pinbar + Engulfing EMA-RSI Pullback (PIER)
+    # =========================================================================
+    pier_trend_period: int = 200
+    pier_pullback_period: int = 21
+    pier_rsi_period: int = 14
+    pier_rsi_long_min: Decimal = Decimal("35.0")
+    pier_rsi_long_max: Decimal = Decimal("52.0")
+    pier_rsi_short_min: Decimal = Decimal("48.0")
+    pier_rsi_short_max: Decimal = Decimal("65.0")
+    pier_volume_period: int = 20
+    pier_volume_multiplier: Decimal = Decimal("1.10")
+    pier_min_wick_ratio: Decimal = Decimal("0.60")
+    pier_max_opposite_wick_ratio: Decimal = Decimal("0.20")
+    pier_min_engulfing_body_ratio: Decimal = Decimal("1.05")
+    pier_atr_period: int = 14
+    pier_atr_sl_multiplier: Decimal = Decimal("0.5")
+    pier_risk_reward_ratio: Decimal = Decimal("2.0")
+    pier_min_confidence: Decimal = Decimal("0.65")
+
     def __post_init__(self) -> None:
         """Validate bounded strategy settings."""
         if not self.min_signal_confidence.is_finite():
@@ -399,3 +419,39 @@ class StrategySettings:
             raise ValueError(
                 "Quad-Confluence MACD fast period must be less than slow period"
             )
+        if self.pier_trend_period <= 0 or self.pier_pullback_period <= 0:
+            raise ValueError("PIER EMA periods must be positive")
+        if self.pier_pullback_period >= self.pier_trend_period:
+            raise ValueError("PIER pullback period must be less than trend period")
+        if self.pier_rsi_period <= 0 or self.pier_atr_period <= 0:
+            raise ValueError("PIER RSI and ATR periods must be positive")
+        if not (
+            Decimal("0")
+            <= self.pier_rsi_long_min
+            < self.pier_rsi_long_max
+            <= Decimal("100")
+        ):
+            raise ValueError("PIER RSI long thresholds must be bounded within [0, 100]")
+        if not (
+            Decimal("0")
+            <= self.pier_rsi_short_min
+            < self.pier_rsi_short_max
+            <= Decimal("100")
+        ):
+            raise ValueError(
+                "PIER RSI short thresholds must be bounded within [0, 100]"
+            )
+        if self.pier_volume_period <= 0 or self.pier_volume_multiplier <= Decimal("0"):
+            raise ValueError("PIER volume parameters must be positive")
+        if not (Decimal("0") < self.pier_min_wick_ratio <= Decimal("1")):
+            raise ValueError("PIER min wick ratio must be between 0 and 1")
+        if not (Decimal("0") <= self.pier_max_opposite_wick_ratio <= Decimal("1")):
+            raise ValueError("PIER max opposite wick ratio must be between 0 and 1")
+        if self.pier_min_engulfing_body_ratio <= Decimal("0"):
+            raise ValueError("PIER min engulfing body ratio must be positive")
+        if self.pier_atr_sl_multiplier <= Decimal(
+            "0"
+        ) or self.pier_risk_reward_ratio <= Decimal("0"):
+            raise ValueError("PIER ATR multiplier and RR ratio must be positive")
+        if not (Decimal("0.0") <= self.pier_min_confidence <= Decimal("1.0")):
+            raise ValueError("PIER minimum confidence must be between 0.0 and 1.0")

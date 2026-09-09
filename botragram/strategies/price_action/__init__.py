@@ -28,6 +28,9 @@ from botragram.strategies.price_action.high_confluence_exhaustion import (
 from botragram.strategies.price_action.liquidity_sweep_exhaustion import (
     LiquiditySweepExhaustionStrategy,
 )
+from botragram.strategies.price_action.pinbar_engulfing_ema_rsi import (
+    PinbarEngulfingEmaRsiStrategy,
+)
 
 __all__ = [
     "ChochFvgStrategy",
@@ -36,4 +39,5 @@ __all__ = [
     "HighConfluenceExhaustionStrategy",
     "HybridStructureMeanReversionStrategy",
     "LiquiditySweepExhaustionStrategy",
+    "PinbarEngulfingEmaRsiStrategy",
 ]

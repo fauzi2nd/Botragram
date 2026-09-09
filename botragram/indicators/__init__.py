@@ -12,9 +12,12 @@ from botragram.indicators.overlap import (
     calculate_psar,
 )
 from botragram.indicators.price_action import (
+    CandlestickMatch,
     ChochFvgResult,
     FvgZone,
     calculate_choch_fvg,
+    detect_engulfing,
+    detect_pinbar,
 )
 from botragram.indicators.trend import (
     ADXResult,
@@ -37,6 +40,7 @@ from botragram.indicators.volume import (
 __all__ = [
     "ADXResult",
     "BollingerBandsResult",
+    "CandlestickMatch",
     "ChochFvgResult",
     "FvgZone",
     "IchimokuResult",
@@ -58,4 +62,6 @@ __all__ = [
     "calculate_stoch_rsi",
     "calculate_supertrend",
     "calculate_vwap",
+    "detect_engulfing",
+    "detect_pinbar",
 ]

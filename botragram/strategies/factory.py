@@ -32,6 +32,7 @@ from botragram.strategies.price_action import (
     ChochRsiBbHybridStrategy,
     HighConfluenceExhaustionStrategy,
     LiquiditySweepExhaustionStrategy,
+    PinbarEngulfingEmaRsiStrategy,
 )
 from botragram.strategies.scalping import (
     EMAScalpingStrategy,
@@ -251,6 +252,23 @@ class StrategyFactory:
                     fast_period=settings.macd_fast_period,
                     slow_period=settings.macd_slow_period,
                     signal_period=settings.macd_signal_period,
+                )
+
+            case StrategyType.PINBAR_ENGULFING_EMA_RSI:
+                return PinbarEngulfingEmaRsiStrategy(
+                    trend_period=settings.pier_trend_period,
+                    pullback_period=settings.pier_pullback_period,
+                    rsi_period=settings.pier_rsi_period,
+                    rsi_long_min=settings.pier_rsi_long_min,
+                    rsi_long_max=settings.pier_rsi_long_max,
+                    rsi_short_min=settings.pier_rsi_short_min,
+                    rsi_short_max=settings.pier_rsi_short_max,
+                    volume_period=settings.pier_volume_period,
+                    volume_multiplier=settings.pier_volume_multiplier,
+                    min_wick_ratio=settings.pier_min_wick_ratio,
+                    max_opposite_wick_ratio=settings.pier_max_opposite_wick_ratio,
+                    min_engulfing_body_ratio=settings.pier_min_engulfing_body_ratio,
+                    min_confidence=settings.pier_min_confidence,
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

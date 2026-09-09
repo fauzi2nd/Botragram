@@ -68,6 +68,7 @@ def get_strategy_default_interval(strategy_type: StrategyType) -> Interval:
             | StrategyType.SUPERTREND
             | StrategyType.ADX_TREND
             | StrategyType.BOLLINGER_BREAKOUT
+            | StrategyType.PINBAR_ENGULFING_EMA_RSI
             | StrategyType.QUAD_CONFLUENCE
             | _
         ):
@@ -79,6 +80,8 @@ def get_strategy_default_exit_rates(
 ) -> tuple[Decimal, Decimal]:
     """Return the default (stop_loss_pct, take_profit_pct) for a strategy."""
     match strategy_type:
+        case StrategyType.PINBAR_ENGULFING_EMA_RSI:
+            return (Decimal("0.012"), Decimal("0.024"))
         case StrategyType.QUAD_CONFLUENCE:
             return (Decimal("0.01"), Decimal("0.02"))
         case (

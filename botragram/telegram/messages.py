@@ -972,6 +972,14 @@ def get_strategy_message(
             lines.append("<b>Bollinger Bands:</b> 20 (StdDev: 2.0)")
             lines.append("<b>Parabolic SAR:</b> Step 0.02 / Max 0.20")
             lines.append("<b>MACD:</b> 12 / 26 / 9")
+        case StrategyType.PINBAR_ENGULFING_EMA_RSI:
+            lines.append(
+                "<b>Concept:</b> Pinbar + Engulfing Candlestick EMA-RSI Pullback"
+            )
+            lines.append("<b>Trend Filter:</b> EMA 200 Macro Direction")
+            lines.append("<b>Value Zone:</b> Dynamic Pullback to EMA 21")
+            lines.append("<b>Trigger:</b> Rejection Pinbar (60% wick) or Engulfing")
+            lines.append("<b>Filters:</b> RSI Pullback Zone + Volume Spike")
         case _:
             lines.append(f"<b>Fast EMA period:</b> {fast_period}")
             lines.append(f"<b>Slow EMA period:</b> {slow_period}")
