@@ -964,6 +964,14 @@ def get_strategy_message(
             lines.append("<b>BB:</b> 20 (StdDev: 2.5)")
             lines.append("<b>RSI Extremes:</b> 20 / 80")
             lines.append("<b>Volume:</b> &gt;1.3x SMA20 | <b>ADX Max:</b> 35")
+        case StrategyType.QUAD_CONFLUENCE:
+            lines.append(
+                "<b>Concept:</b> Quad-Confluence (Stoch RSI + BB + SAR + MACD)"
+            )
+            lines.append("<b>Stoch RSI:</b> 14 (Oversold 20 / Overbought 80)")
+            lines.append("<b>Bollinger Bands:</b> 20 (StdDev: 2.0)")
+            lines.append("<b>Parabolic SAR:</b> Step 0.02 / Max 0.20")
+            lines.append("<b>MACD:</b> 12 / 26 / 9")
         case _:
             lines.append(f"<b>Fast EMA period:</b> {fast_period}")
             lines.append(f"<b>Slow EMA period:</b> {slow_period}")

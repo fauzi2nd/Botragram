@@ -44,6 +44,7 @@ class StrategyType(BaseEnum):
     ICHIMOKU_CLOUD = "ichimoku_cloud"
     LIQUIDITY_SWEEP_EXHAUSTION = "liquidity_sweep_exhaustion"
     MACD_SWING = "macd_swing"
+    QUAD_CONFLUENCE = "quad_confluence"
     RSI_BB_SCALPING = "rsi_bb_scalping"
     SUPERTREND = "supertrend"
     VWAP_BREAKOUT = "vwap_breakout"

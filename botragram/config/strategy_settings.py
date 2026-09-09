@@ -198,6 +198,23 @@ class StrategySettings:
     lse_max_hold_bars: int = 24
     lse_short_bias_multiplier: Decimal = Decimal("1.06")
 
+    # =========================================================================
+    # Quad-Confluence (Stoch RSI + Bollinger Bands + Parabolic SAR + MACD)
+    # =========================================================================
+    quad_rsi_period: int = 14
+    quad_stoch_period: int = 14
+    quad_k_period: int = 3
+    quad_d_period: int = 3
+    quad_stoch_oversold: Decimal = Decimal("20.0")
+    quad_stoch_overbought: Decimal = Decimal("80.0")
+    quad_bb_period: int = 20
+    quad_bb_std_dev: Decimal = Decimal("2.0")
+    quad_sar_step: Decimal = Decimal("0.02")
+    quad_sar_max_step: Decimal = Decimal("0.20")
+    quad_macd_fast_period: int = 12
+    quad_macd_slow_period: int = 26
+    quad_macd_signal_period: int = 9
+
     def __post_init__(self) -> None:
         """Validate bounded strategy settings."""
         if not self.min_signal_confidence.is_finite():
@@ -344,3 +361,41 @@ class StrategySettings:
             raise ValueError("Scalping trend period must be positive")
         if self.scalping_trend_period <= self.scalping_slow_period:
             raise ValueError("Scalping trend period must be greater than slow period")
+        if (
+            self.quad_rsi_period <= 0
+            or self.quad_stoch_period <= 0
+            or self.quad_k_period <= 0
+            or self.quad_d_period <= 0
+        ):
+            raise ValueError("Quad-Confluence oscillator periods must be positive")
+        if not (
+            Decimal("0")
+            <= self.quad_stoch_oversold
+            < self.quad_stoch_overbought
+            <= Decimal("100")
+        ):
+            raise ValueError(
+                "Quad-Confluence Stoch RSI thresholds must be bounded within [0, 100]"
+            )
+        if self.quad_bb_period <= 0 or self.quad_bb_std_dev <= Decimal("0"):
+            raise ValueError(
+                "Quad-Confluence Bollinger Bands parameters must be positive"
+            )
+        if self.quad_sar_step <= Decimal("0") or self.quad_sar_max_step <= Decimal("0"):
+            raise ValueError(
+                "Quad-Confluence Parabolic SAR step parameters must be positive"
+            )
+        if self.quad_sar_step > self.quad_sar_max_step:
+            raise ValueError(
+                "Quad-Confluence Parabolic SAR step must not exceed maximum step"
+            )
+        if (
+            self.quad_macd_fast_period <= 0
+            or self.quad_macd_slow_period <= 0
+            or self.quad_macd_signal_period <= 0
+        ):
+            raise ValueError("Quad-Confluence MACD periods must be positive")
+        if self.quad_macd_fast_period >= self.quad_macd_slow_period:
+            raise ValueError(
+                "Quad-Confluence MACD fast period must be less than slow period"
+            )

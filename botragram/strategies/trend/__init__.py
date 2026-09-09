@@ -20,6 +20,7 @@ from botragram.strategies.trend.adx_trend import ADXTrendStrategy
 from botragram.strategies.trend.ema_cross import EMACrossStrategy
 from botragram.strategies.trend.ema_rsi import EMARsiStrategy
 from botragram.strategies.trend.ichimoku_cloud import IchimokuCloudStrategy
+from botragram.strategies.trend.quad_confluence import QuadConfluenceStrategy
 from botragram.strategies.trend.supertrend import SupertrendStrategy
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     "EMACrossStrategy",
     "EMARsiStrategy",
     "IchimokuCloudStrategy",
+    "QuadConfluenceStrategy",
     "SupertrendStrategy",
 ]

@@ -51,6 +51,7 @@ from botragram.strategies.trend import (
     EMACrossStrategy,
     EMARsiStrategy,
     IchimokuCloudStrategy,
+    QuadConfluenceStrategy,
     SupertrendStrategy,
 )
 
@@ -145,6 +146,14 @@ def _create_strategy_settings(
         lse_volume_period=2,
         lse_rsi_period=2,
         lse_atr_period=2,
+        quad_rsi_period=2,
+        quad_stoch_period=2,
+        quad_k_period=2,
+        quad_d_period=2,
+        quad_bb_period=2,
+        quad_macd_fast_period=2,
+        quad_macd_slow_period=3,
+        quad_macd_signal_period=2,
     )
 
 
@@ -171,6 +180,7 @@ def _create_strategy_settings(
             LiquiditySweepExhaustionStrategy,
         ),
         (StrategyType.MACD_SWING, MACDSwingStrategy),
+        (StrategyType.QUAD_CONFLUENCE, QuadConfluenceStrategy),
         (StrategyType.RSI_BB_SCALPING, RSIBBScalpingStrategy),
         (StrategyType.SUPERTREND, SupertrendStrategy),
         (StrategyType.VWAP_BREAKOUT, VWAPBreakoutStrategy),
@@ -260,6 +270,11 @@ def test_signal_engine_resolves_each_context_strategy_without_leakage() -> None:
         lambda: EMAScalpingStrategy(slow_period=15, trend_period=10),
         lambda: StrategySettings(scalping_trend_period=0),
         lambda: StrategySettings(scalping_fast_period=10, scalping_slow_period=5),
+        lambda: StrategySettings(quad_rsi_period=0),
+        lambda: StrategySettings(
+            quad_stoch_oversold=Decimal("90"), quad_stoch_overbought=Decimal("10")
+        ),
+        lambda: StrategySettings(quad_macd_fast_period=20, quad_macd_slow_period=10),
         lambda: IchimokuCloudStrategy(
             conversion_period=10,
             base_period=5,
@@ -731,6 +746,14 @@ def test_strategy_settings_default_interval() -> None:
     )
     assert settings_hce.default_interval is Interval.M5
 
+    settings_quad = StrategySettings(strategy_type=StrategyType.QUAD_CONFLUENCE)
+    assert settings_quad.default_interval is Interval.M15
+    from botragram.constants.strategy import get_strategy_default_exit_rates
+
+    sl, tp = get_strategy_default_exit_rates(StrategyType.QUAD_CONFLUENCE)
+    assert sl == Decimal("0.01")
+    assert tp == Decimal("0.02")
+
 
 def test_choch_fvg_strategy_signal_generation() -> None:
     """Verify ChochFvgStrategy generates valid signals and respects minimum candles."""
@@ -1170,3 +1193,42 @@ def test_strategy_factory_creates_trend_filtered_ema_scalping() -> None:
     assert strategy.require_trend_filter is True
     assert strategy.trend_period == 200
     assert strategy.minimum_candles == 201
+
+
+def test_quad_confluence_strategy_validates_parameters() -> None:
+    """Verify QuadConfluenceStrategy validates parameters on initialization."""
+    with pytest.raises(ValueError, match="oscillator periods must be positive"):
+        QuadConfluenceStrategy(rsi_period=0)
+
+    with pytest.raises(ValueError, match="Stoch RSI thresholds must satisfy"):
+        QuadConfluenceStrategy(
+            stoch_oversold=Decimal("80"), stoch_overbought=Decimal("20")
+        )
+
+    with pytest.raises(ValueError, match="Bollinger Bands parameters must be positive"):
+        QuadConfluenceStrategy(bb_period=0)
+
+    with pytest.raises(ValueError, match="Parabolic SAR step must not exceed"):
+        QuadConfluenceStrategy(sar_step=Decimal("0.5"), sar_max_step=Decimal("0.2"))
+
+    with pytest.raises(
+        ValueError, match="MACD fast period must be less than slow period"
+    ):
+        QuadConfluenceStrategy(macd_fast_period=10, macd_slow_period=10)
+
+
+def test_quad_confluence_strategy_rejects_insufficient_candles() -> None:
+    """Verify QuadConfluenceStrategy raises ValueError when candles are insufficient."""
+    strategy = QuadConfluenceStrategy()
+    candles = _create_candles(("100",) * 10)
+    with pytest.raises(ValueError, match="requires at least"):
+        strategy.generate_signal(candles=candles)
+
+
+def test_quad_confluence_strategy_generates_hold_when_no_setup() -> None:
+    """Verify QuadConfluenceStrategy returns HOLD when setup is absent."""
+    strategy = QuadConfluenceStrategy()
+    candles = _create_candles(("100",) * 45)
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.reason == "Quad-Confluence setup absent"

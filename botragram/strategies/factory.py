@@ -46,6 +46,7 @@ from botragram.strategies.trend import (
     EMACrossStrategy,
     EMARsiStrategy,
     IchimokuCloudStrategy,
+    QuadConfluenceStrategy,
     SupertrendStrategy,
 )
 
@@ -250,6 +251,23 @@ class StrategyFactory:
                     fast_period=settings.macd_fast_period,
                     slow_period=settings.macd_slow_period,
                     signal_period=settings.macd_signal_period,
+                )
+
+            case StrategyType.QUAD_CONFLUENCE:
+                return QuadConfluenceStrategy(
+                    rsi_period=settings.quad_rsi_period,
+                    stoch_period=settings.quad_stoch_period,
+                    k_period=settings.quad_k_period,
+                    d_period=settings.quad_d_period,
+                    stoch_oversold=settings.quad_stoch_oversold,
+                    stoch_overbought=settings.quad_stoch_overbought,
+                    bb_period=settings.quad_bb_period,
+                    bb_std_dev=settings.quad_bb_std_dev,
+                    sar_step=settings.quad_sar_step,
+                    sar_max_step=settings.quad_sar_max_step,
+                    macd_fast_period=settings.quad_macd_fast_period,
+                    macd_slow_period=settings.quad_macd_slow_period,
+                    macd_signal_period=settings.quad_macd_signal_period,
                 )
 
             case StrategyType.RSI_BB_SCALPING:

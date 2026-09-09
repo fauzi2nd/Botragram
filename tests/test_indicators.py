@@ -27,6 +27,7 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.indicators import (
+    StochRSIResult,
     calculate_adx,
     calculate_atr,
     calculate_bollinger_bands,
@@ -38,6 +39,7 @@ from botragram.indicators import (
     calculate_psar,
     calculate_rsi,
     calculate_sma,
+    calculate_stoch_rsi,
     calculate_supertrend,
     calculate_vwap,
 )
@@ -110,6 +112,67 @@ def test_macd_aligns_line_signal_and_histogram() -> None:
     assert result.macd == _decimal_series("0.5", "0.5", "0.5")
     assert result.signal == _decimal_series("0.5", "0.5", "0.5")
     assert result.histogram == _decimal_series(0, 0, 0)
+
+
+def test_stoch_rsi_validates_input_bounds_and_minimum_values() -> None:
+    """Verify StochRSI validates period bounds and series minimum length."""
+    series = _decimal_series(10, 11, 12, 13, 14, 15)
+
+    with pytest.raises(ValueError, match="RSI period must be greater than zero"):
+        calculate_stoch_rsi(series, rsi_period=0)
+
+    with pytest.raises(ValueError, match="Stoch period must be greater than zero"):
+        calculate_stoch_rsi(series, stoch_period=0)
+
+    with pytest.raises(ValueError, match="K period must be greater than zero"):
+        calculate_stoch_rsi(series, k_period=0)
+
+    with pytest.raises(ValueError, match="D period must be greater than zero"):
+        calculate_stoch_rsi(series, d_period=0)
+
+    with pytest.raises(ValueError, match="requires at least"):
+        calculate_stoch_rsi(
+            series,
+            rsi_period=14,
+            stoch_period=14,
+            k_period=3,
+            d_period=3,
+        )
+
+
+def test_stoch_rsi_calculates_bounded_k_and_d() -> None:
+    """Verify StochRSI produces aligned, 0-100 bounded %K and %D lines."""
+    prices = tuple(Decimal(str(100 + (i % 5) * 2 - (i % 3))) for i in range(30))
+    result = calculate_stoch_rsi(
+        prices,
+        rsi_period=5,
+        stoch_period=5,
+        k_period=3,
+        d_period=3,
+    )
+
+    assert isinstance(result, StochRSIResult)
+    assert len(result.k) > 0
+    assert len(result.k) == len(result.d)
+    for k_val, d_val in zip(result.k, result.d, strict=True):
+        assert Decimal("0") <= k_val <= Decimal("100")
+        assert Decimal("0") <= d_val <= Decimal("100")
+
+
+def test_stoch_rsi_handles_flat_prices_gracefully() -> None:
+    """Verify constant prices do not raise division-by-zero errors."""
+    flat_prices = tuple(Decimal("100.0") for _ in range(25))
+    result = calculate_stoch_rsi(
+        flat_prices,
+        rsi_period=5,
+        stoch_period=5,
+        k_period=3,
+        d_period=3,
+    )
+
+    assert len(result.k) == len(result.d)
+    assert all(val == Decimal("50") for val in result.k)
+    assert all(val == Decimal("50") for val in result.d)
 
 
 # =============================================================================

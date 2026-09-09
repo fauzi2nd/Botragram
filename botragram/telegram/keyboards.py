@@ -754,6 +754,7 @@ def get_strategy_keyboard(
         ("Choch + RSI/BB", "choch_rsi_bb_hybrid"),
         ("Liquidity Sweep (LSE)", "liquidity_sweep_exhaustion"),
         ("High Confluence", "high_confluence_exhaustion"),
+        ("Quad-Confluence", "quad_confluence"),
         ("MACD Swing", "macd_swing"),
         ("Supertrend", "supertrend"),
         ("Bollinger Breakout", "bollinger_breakout"),
