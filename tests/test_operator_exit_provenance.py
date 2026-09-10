@@ -441,3 +441,101 @@ async def test_operator_exit_ledger_ownership_survives_canonical_cleanup_once() 
     assert runtime_control.is_position_protection_ready
     assert reconciler.calls == 2
     assert stream_owner.stop_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_operator_exit_mainnet_accepts_inline_confirm_token() -> None:
+    """Verify MAINNET typed challenge accepts button token CONFIRM."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    submissions = MemorySubmissionAttemptRepository()
+    await submissions.save(
+        attempt=SubmissionAttempt(
+            client_order_id=_ENTRY_CLIENT_ID,
+            symbol=_SYMBOL,
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=position.quantity,
+            signal_generated_at=_NOW,
+            interval=Interval.M15,
+            strategy_type=StrategyType.EMA_CROSS,
+            status=SubmissionAttemptStatus.COMPLETED,
+            exchange_order_id=_ENTRY_ORDER_ID,
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+    )
+    operator_repository = MemoryOperatorExitRepository()
+    lifecycle_repository = _CountingLifecycleRepository()
+    exchange = _OperatorExchange(
+        position=position,
+        protections={
+            _STOP_CLIENT_ID: _protection(
+                order_type=OrderType.STOP_MARKET,
+                client_order_id=_STOP_CLIENT_ID,
+                stop_price=Decimal("90"),
+            ),
+            _TAKE_PROFIT_CLIENT_ID: _protection(
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                client_order_id=_TAKE_PROFIT_CLIENT_ID,
+                stop_price=Decimal("110"),
+            ),
+        },
+    )
+    lifecycle_service = ClosedPositionLifecycleService(
+        repository=lifecycle_repository,
+        trade_history=exchange,
+    )
+    coordinator = LivePositionLifecycleCoordinator()
+    runtime_control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    runtime_control.set_runtime_contexts(
+        contexts=(
+            LiveRuntimePositionContext(
+                symbol=_SYMBOL,
+                interval=Interval.M15,
+                strategy_type=StrategyType.EMA_CROSS,
+            ),
+        )
+    )
+    natural_exit_service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=submissions,
+        operator_exit_repository=operator_repository,
+        closed_lifecycle_service=lifecycle_service,
+        lifecycle_coordinator=coordinator,
+    )
+    reconciler = _CanonicalReconciler(
+        natural_exit_service=natural_exit_service,
+        runtime_control=runtime_control,
+    )
+    stream_owner = _StreamOwner()
+    service = OperatorExitService(
+        trade_mode=TradeMode.LIVE,
+        market_type=MarketType.FUTURES,
+        exchange_environment=ExchangeEnvironment.MAINNET,
+        runtime_control=runtime_control,
+        operator_exit_repository=operator_repository,
+        position_repository=positions,
+        market_stream_owner=stream_owner,
+        live_position_service=exchange,
+        live_exchange=exchange,
+        submission_attempt_repository=submissions,
+        closed_lifecycle_service=lifecycle_service,
+        live_runtime_reconciler=reconciler,
+        lifecycle_coordinator=coordinator,
+    )
+
+    confirmation = await service.request_close_all(requested_by="telegram:7")
+    assert confirmation.requires_typed_confirmation
+    assert confirmation.required_token == "FLATTEN 1"
+
+    # Button click sends token="CONFIRM"
+    snapshot = await service.confirm(
+        confirmation_id=confirmation.confirmation_id,
+        requested_by="telegram:7",
+        token="CONFIRM",
+    )
+    assert snapshot.status is OperatorExitStatus.COMPLETE
+    assert exchange.close_calls == 1

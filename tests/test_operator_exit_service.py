@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -45,6 +46,13 @@ class _PaperExit:
         self.close_calls += 1
         await self.repository.delete(symbol=symbol)
         return None
+
+    async def get_all(self, *, synchronize: bool = False) -> Sequence[Position]:
+        del synchronize
+        return await self.repository.get_open_positions()
+
+    async def observe(self, *, symbol: str) -> Position | None:
+        return await self.repository.get_by_symbol(symbol=symbol)
 
 
 @dataclass(slots=True)

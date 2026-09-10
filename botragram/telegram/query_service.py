@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from time import monotonic
 from typing import Final, Protocol
 
-from botragram.enums import Interval, StrategyType
+from botragram.engine.pnl_engine import PnLEngine
+from botragram.enums import (
+    Interval,
+    LiveFuturesUserDataStatus,
+    LiveMarketStreamLifecycleStatus,
+    PositionSide,
+    StrategyType,
+)
 from botragram.models import (
     AutonomousLiveRecoverySnapshot,
     LiveMarketStreamIdentity,
@@ -22,6 +29,7 @@ from botragram.models import (
     Trade,
 )
 from botragram.repositories import OrderRepository, PositionRepository, TradeRepository
+from botragram.services.live_futures_user_data_cache import LiveFuturesUserDataSnapshot
 from botragram.services.live_market_stream_service import (
     LiveMarketStreamService,
     MarketTickListener,
@@ -30,7 +38,11 @@ from botragram.services.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
 
-__all__ = ["MarketTickListener", "TelegramQueryService"]
+__all__ = [
+    "LiveFuturesUserDataSnapshotProvider",
+    "MarketTickListener",
+    "TelegramQueryService",
+]
 
 
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
@@ -119,6 +131,14 @@ class LiveTradingPerformanceProvider(Protocol):
         ...
 
 
+class LiveFuturesUserDataSnapshotProvider(Protocol):
+    """Read private Futures account events for dashboard presentation."""
+
+    async def get_snapshot(self) -> LiveFuturesUserDataSnapshot:
+        """Return the current user data snapshot."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True)
 class TelegramQueryService:
     """Query current paper portfolio and market state without mutation."""
@@ -140,6 +160,8 @@ class TelegramQueryService:
     autonomous_live_recovery_observability_service: (
         AutonomousLiveRecoveryObservabilityProvider | None
     ) = None
+    pnl_engine: PnLEngine | None = None
+    live_futures_user_data_service: LiveFuturesUserDataSnapshotProvider | None = None
     _trading_symbols: tuple[str, ...] = field(default=(), init=False, repr=False)
     _symbols_expire_monotonic: float = field(default=0.0, init=False, repr=False)
 
@@ -159,8 +181,97 @@ class TelegramQueryService:
         self.quote_asset = normalized_quote_asset
 
     async def get_positions(self) -> Sequence[Position]:
-        """Return all persisted active paper positions."""
-        return await self.position_repository.get_open_positions()
+        """Return all active positions with dynamic market/user-data refresh."""
+        positions = tuple(await self.position_repository.get_open_positions())
+        if not positions:
+            return positions
+
+        if self.live_futures_user_data_service is not None:
+            snapshot = await self.live_futures_user_data_service.get_snapshot()
+            if snapshot.status is LiveFuturesUserDataStatus.READY:
+                updates = {
+                    update.symbol.upper(): update
+                    for update in snapshot.position_updates
+                }
+                merged: list[Position] = []
+                for pos in positions:
+                    upd = updates.get(pos.symbol.upper())
+                    if upd is not None:
+                        merged.append(
+                            replace(
+                                pos,
+                                side=(
+                                    PositionSide.LONG
+                                    if upd.quantity >= _DECIMAL_ZERO
+                                    else PositionSide.SHORT
+                                ),
+                                quantity=abs(upd.quantity),
+                                entry_price=upd.entry_price,
+                                unrealized_pnl=upd.unrealized_pnl,
+                                updated_at=snapshot.last_event_at or pos.updated_at,
+                            )
+                        )
+                    else:
+                        merged.append(pos)
+                positions = tuple(merged)
+
+        pnl_engine = self.pnl_engine
+        if pnl_engine is not None:
+            health = (
+                self.live_runtime_health_service.get_snapshot()
+                if self.live_runtime_health_service is not None
+                else None
+            )
+            stream_states = (
+                health.stream_states
+                if health is not None
+                else self.market_stream_service.stream_states
+            )
+            refreshed: list[Position] = []
+            for pos in positions:
+                stream_price: Decimal | None = None
+                for state in stream_states:
+                    if (
+                        state.identity.symbol == pos.symbol
+                        and state.lifecycle_status
+                        is LiveMarketStreamLifecycleStatus.RUNNING
+                        and state.first_tick_received
+                        and state.last_price is not None
+                    ):
+                        stream_price = state.last_price
+                        break
+
+                if stream_price is not None:
+                    live_pnl = pnl_engine.calculate_unrealized(
+                        position=pos,
+                        current_price=stream_price,
+                    )
+                    refreshed.append(
+                        replace(
+                            pos,
+                            current_price=stream_price,
+                            unrealized_pnl=live_pnl,
+                        )
+                    )
+                elif (
+                    pos.unrealized_pnl.is_zero()
+                    and pos.current_price != pos.entry_price
+                ):
+                    live_pnl = pnl_engine.calculate_unrealized(
+                        position=pos,
+                        current_price=pos.current_price,
+                    )
+                    refreshed.append(
+                        replace(
+                            pos,
+                            unrealized_pnl=live_pnl,
+                        )
+                    )
+                else:
+                    refreshed.append(pos)
+            positions = tuple(refreshed)
+
+        return positions
 
     def get_live_runtime_health(self) -> LiveRuntimeHealthSnapshot | None:
         """Return the read-only recovered LIVE runtime health when configured."""

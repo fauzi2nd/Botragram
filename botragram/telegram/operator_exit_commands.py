@@ -64,15 +64,11 @@ def format_operator_exit_confirmation(
         f"target_execution_policy={target}\n"
         f"expires_at={challenge.expires_at.isoformat()}\n"
         "No close order has been sent yet.\n"
-        + (
-            "MAINNET requires typed confirmation exactly with:\n"
-            if challenge.requires_typed_confirmation
-            else "Confirm with the button below or exactly with:\n"
-        )
-        + f"/confirmexit {challenge.confirmation_id} "
+        "Confirm with the button below or with:\n"
+        f"/confirmexit {challenge.confirmation_id} "
         f"{challenge.required_token}\n"
-        + "Cancel with:\n"
-        + f"/cancelexit {challenge.confirmation_id}"
+        "Cancel with:\n"
+        f"/cancelexit {challenge.confirmation_id}"
     )
 
 

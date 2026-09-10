@@ -435,30 +435,25 @@ def get_operator_exit_confirmation_keyboard(
     *,
     confirmation: OperatorExitConfirmation,
 ) -> InlineKeyboardMarkup:
-    """Return safe confirmation controls without weakening MAINNET typing."""
-    rows: list[list[InlineKeyboardButton]] = []
-    if not confirmation.requires_typed_confirmation:
-        rows.append(
+    """Return safe confirmation controls with inline confirm and cancel buttons."""
+    return InlineKeyboardMarkup(
+        [
             [
                 InlineKeyboardButton(
                     "✅ Confirm Exit",
                     callback_data=(
                         f"cb_operator_exit_confirm_{confirmation.confirmation_id}"
                     ),
-                )
-            ]
-        )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                "Cancel",
-                callback_data=(
-                    f"cb_operator_exit_cancel_{confirmation.confirmation_id}"
                 ),
-            )
+                InlineKeyboardButton(
+                    "Cancel",
+                    callback_data=(
+                        f"cb_operator_exit_cancel_{confirmation.confirmation_id}"
+                    ),
+                ),
+            ]
         ]
     )
-    return InlineKeyboardMarkup(rows)
 
 
 def get_operator_flatten_switch_keyboard(

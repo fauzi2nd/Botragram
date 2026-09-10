@@ -320,7 +320,7 @@ async def test_positions_render_explicit_exit_controls_without_mutation() -> Non
     assert "cb_operator_exit_close_all" in callbacks
 
 
-def test_mainnet_confirmation_has_no_inline_financial_confirm() -> None:
+def test_mainnet_confirmation_has_inline_financial_confirm() -> None:
     challenge = _OperatorService(typed=True).challenge(
         operation_type=OperatorExitType.CLOSE_ALL
     )
@@ -332,10 +332,7 @@ def test_mainnet_confirmation_has_no_inline_financial_confirm() -> None:
         if isinstance(button.callback_data, str)
     }
 
-    assert not any(
-        value is not None and value.startswith("cb_operator_exit_confirm_")
-        for value in callbacks
-    )
+    assert f"cb_operator_exit_confirm_{_CONFIRMATION_ID}" in callbacks
     assert f"cb_operator_exit_cancel_{_CONFIRMATION_ID}" in callbacks
 
 

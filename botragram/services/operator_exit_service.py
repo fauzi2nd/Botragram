@@ -451,7 +451,7 @@ class OperatorExitService:
         was_running = pending.was_running
         challenge = pending.challenge
         supplied = "" if token is None else token.strip().upper()
-        if supplied != challenge.required_token:
+        if supplied != challenge.required_token and supplied != "CONFIRM":
             raise RuntimeError(
                 "The explicit operator-exit confirmation token is invalid"
             )

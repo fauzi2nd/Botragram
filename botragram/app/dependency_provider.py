@@ -616,6 +616,8 @@ class DependencyProvider:
                     self.autonomous_live_recovery_observability_service
                 ),
                 live_trading_performance_service=self.live_trading_performance_service,
+                pnl_engine=self.pnl_engine,
+                live_futures_user_data_service=self._live_futures_user_data_service,
             )
             self._telegram_query_service = query_service
             self._market_type_switch_service = MarketTypeSwitchService(

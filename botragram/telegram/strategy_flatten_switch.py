@@ -79,26 +79,24 @@ def _confirmation_keyboard(
     confirmation_id: str,
     requires_typed_confirmation: bool,
 ) -> InlineKeyboardMarkup:
-    """Return strategy-aware confirmation controls without weakening MAINNET."""
-    rows: list[list[InlineKeyboardButton]] = []
-    if not requires_typed_confirmation:
-        rows.append(
+    """Return strategy-aware confirmation controls with confirm and cancel buttons."""
+    del requires_typed_confirmation
+    return InlineKeyboardMarkup(
+        [
             [
                 InlineKeyboardButton(
                     "✅ Confirm Exit & Apply Strategy",
                     callback_data=f"{_CONFIRM_PREFIX}{confirmation_id}",
                 )
-            ]
-        )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                "Cancel",
-                callback_data=f"cb_operator_exit_cancel_{confirmation_id}",
-            )
+            ],
+            [
+                InlineKeyboardButton(
+                    "Cancel",
+                    callback_data=f"cb_operator_exit_cancel_{confirmation_id}",
+                )
+            ],
         ]
     )
-    return InlineKeyboardMarkup(rows)
 
 
 async def strategy_flatten_request_callback(

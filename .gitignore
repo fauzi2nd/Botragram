@@ -13,7 +13,7 @@ __pycache__/
 htmlcov/
 *.log
 /logs/
-/botragram.db
+/botragram.db*
 /data/*
 !/data/.gitkeep
 test_binance_mainnet_key.py
