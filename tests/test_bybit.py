@@ -56,7 +56,7 @@ from botragram.exchanges.bybit.rest import (
 )
 from botragram.exchanges.bybit.stream import BybitStreamClient
 from botragram.exchanges.factory import ExchangeFactory
-from botragram.models import Candle, MarketUniverseEntry, Ticker
+from botragram.models import Candle, MarketUniverseEntry, Position, Ticker
 
 
 # =============================================================================
@@ -1134,3 +1134,71 @@ def test_bybit_mapper_stream_ticker_fallback() -> None:
     }
     ticker = mapper.map_stream_ticker(payload)
     assert ticker.last_price == Decimal("50000.0")
+
+
+@pytest.mark.asyncio
+async def test_bybit_futures_client_close_position_exact() -> None:
+    """BybitFuturesExchangeClient close_position_exact creates reduce-only order."""
+    rest = MockBybitRestClient()
+    mapper = BybitExchangeMapper()
+    client = BybitFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    rest.canned_response = {
+        "retCode": 0,
+        "retMsg": "OK",
+        "result": {"orderId": "bybit-close-001"},
+    }
+    now = datetime.now(UTC)
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("0.5"),
+        entry_price=Decimal("50000"),
+        current_price=Decimal("51000"),
+        unrealized_pnl=Decimal("500"),
+        leverage=10,
+        opened_at=now,
+        updated_at=now,
+    )
+    order = await client.close_position_exact(
+        position=position,
+        client_order_id="bop-test-123",
+    )
+    assert ("POST", "/v5/order/create") in rest.history
+    assert rest.last_data == {
+        "category": "linear",
+        "symbol": "BTCUSDT",
+        "side": "Sell",
+        "orderType": "Market",
+        "qty": "0.5",
+        "timeInForce": "GTC",
+        "reduceOnly": True,
+        "orderLinkId": "bop-test-123",
+    }
+    assert order.symbol == "BTCUSDT"
+    assert order.side is OrderSide.SELL
+
+
+@pytest.mark.asyncio
+async def test_bybit_base_client_close_position_exact_raises() -> None:
+    """Base BybitExchangeClient raises NotImplementedError for close_position_exact."""
+    rest = MockBybitRestClient()
+    mapper = BybitExchangeMapper()
+    client = BybitExchangeClient(rest=rest, mapper=mapper)
+    now = datetime.now(UTC)
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("0.5"),
+        entry_price=Decimal("50000"),
+        current_price=Decimal("51000"),
+        unrealized_pnl=Decimal("500"),
+        leverage=10,
+        opened_at=now,
+        updated_at=now,
+    )
+    with pytest.raises(NotImplementedError, match="Use BybitFuturesExchangeClient"):
+        await client.close_position_exact(
+            position=position,
+            client_order_id="bop-test-123",
+        )

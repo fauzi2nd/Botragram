@@ -93,6 +93,14 @@ async def operator_exit_confirm_callback_with_progress(
             "🔄 <b>Portfolio sudah flat.</b>\n\n"
             "Perpindahan runtime sedang diserahkan ke soft-restart coordinator."
         )
+    elif snapshot.status is OperatorExitStatus.FAILED:
+        reason = snapshot.failure_reason or "permintaan gagal dieksekusi"
+        message = (
+            "❌ <b>Operator Exit gagal.</b>\n\n"
+            f"Alasan: <code>{escape(reason)}</code>\n\n"
+            f"Posisi saat ini: <code>{escape(remaining)}</code>\n\n"
+            "Bot tetap <b>PAUSED</b> demi keamanan dana."
+        )
     else:
         message = (
             "⏳ <b>Operator Exit masih diproses.</b>\n\n"

@@ -672,6 +672,26 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
             reduce_only=True,
         )
 
+    async def close_position_exact(
+        self,
+        *,
+        position: Position,
+        client_order_id: str,
+    ) -> Order:
+        """Submit one reduce-only close from an authoritative snapshot."""
+        normalized_symbol = position.symbol.strip().upper()
+        close_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+        )
+        return await self.create_order(
+            symbol=normalized_symbol,
+            side=close_side,
+            order_type=OrderType.MARKET,
+            quantity=position.quantity,
+            client_order_id=client_order_id,
+            reduce_only=True,
+        )
+
     async def close_all_positions(self) -> Sequence[Order]:
         """Close all active open positions."""
         positions = await self.get_positions()

@@ -545,6 +545,17 @@ class BybitExchangeClient(BaseExchangeClient):
         _ = (symbol, client_order_id)
         raise NotImplementedError("Use BybitFuturesExchangeClient for close_position")
 
+    async def close_position_exact(
+        self,
+        *,
+        position: Position,
+        client_order_id: str,
+    ) -> Order:
+        _ = (position, client_order_id)
+        raise NotImplementedError(
+            "Use BybitFuturesExchangeClient for close_position_exact"
+        )
+
     async def close_all_positions(self) -> Sequence[Order]:
         raise NotImplementedError(
             "Use BybitFuturesExchangeClient for close_all_positions"

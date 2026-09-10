@@ -366,6 +366,49 @@ async def test_testnet_inline_confirm_uses_chat_bound_confirmation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_operator_exit_confirm_callback_progress_handles_failed_status() -> None:
+    from botragram.telegram.operator_exit_progress import (
+        operator_exit_confirm_callback_with_progress,
+    )
+
+    class _FailedOperatorService(_OperatorService):
+        async def confirm(
+            self,
+            *,
+            confirmation_id: str,
+            requested_by: str,
+            token: str | None = None,
+        ) -> OperatorExitSnapshot:
+            self.confirm_calls.append(f"{confirmation_id}:{requested_by}:{token}")
+            return OperatorExitSnapshot(
+                status=OperatorExitStatus.FAILED,
+                trade_mode=TradeMode.LIVE,
+                exchange_environment=ExchangeEnvironment.MAINNET,
+                positions=(_position(),),
+                failure_reason="Exact operator close was not found on exchange",
+            )
+
+    service = _FailedOperatorService()
+    query = _Query(data=f"cb_operator_exit_confirm_{_CONFIRMATION_ID}")
+    update = cast(
+        Update,
+        _Update(
+            message=_Message(),
+            effective_chat=_Chat(id=_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+
+    await operator_exit_confirm_callback_with_progress(
+        update, _context(service=service)
+    )
+
+    assert "Operator Exit gagal" in query.replies[-1]
+    assert "Exact operator close was not found on exchange" in query.replies[-1]
+    assert "PAUSED" in query.replies[-1]
+
+
+@pytest.mark.asyncio
 async def test_mode_switch_with_position_offers_guarded_flatten_transition(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
