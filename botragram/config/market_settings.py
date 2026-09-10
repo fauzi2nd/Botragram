@@ -51,6 +51,7 @@ class MarketSettings:
     interval: Interval = Interval.M15
     discovery_max_symbols: int = DEFAULT_DISCOVERY_MAX_SYMBOLS
     discovery_universe_limit: int = DEFAULT_DISCOVERY_UNIVERSE_LIMIT
+    discovery_max_universe_symbols: int | None = None
     discovery_batch_size: int = DEFAULT_DISCOVERY_BATCH_SIZE
     discovery_top_n: int = DEFAULT_DISCOVERY_TOP_N
     discovery_cadence_seconds: int | None = None
@@ -79,6 +80,18 @@ class MarketSettings:
             raise ValueError("Discovery top N must be a positive integer")
         if self.discovery_batch_size > self.discovery_universe_limit:
             raise ValueError("Discovery batch size must not exceed universe limit")
+        if self.discovery_max_universe_symbols is not None:
+            if (
+                isinstance(self.discovery_max_universe_symbols, bool)
+                or self.discovery_max_universe_symbols <= 0
+            ):
+                raise ValueError(
+                    "Discovery max universe symbols must be a positive integer"
+                )
+            if self.discovery_batch_size > self.discovery_max_universe_symbols:
+                raise ValueError(
+                    "Discovery batch size must not exceed max universe symbols"
+                )
         if self.discovery_cadence_seconds is not None and (
             isinstance(self.discovery_cadence_seconds, bool)
             or self.discovery_cadence_seconds <= 0

@@ -1,6 +1,6 @@
 # Botragram
 
-Botragram adalah sistem trading algoritmik otomatis berbasis Python (3.14+) dengan arsitektur async-first, dirancang khusus untuk pasar cryptocurrency (Binance USD(S)-M Futures & Spot). Sistem ini menggabungkan *autonomous market-wide discovery*, multi-strategi (*Smart Money Concepts / Price Action, Scalping, Trend Following, Swing*), *stepped profit protection (SL+)* dinamis, *fail-closed recovery* tahan crash, antarmuka terminal *Rich* responsif dengan kalkulasi ROI *real-time*, serta kendali jarak jauh melalui Telegram Bot yang interaktif dan aman.
+Botragram adalah sistem trading algoritmik otomatis berbasis Python (3.14+) dengan arsitektur async-first, dirancang khusus untuk pasar cryptocurrency (**Binance USD(S)-M Futures & Spot** serta **Bybit Linear Perpetual Futures & Spot**). Sistem ini menggabungkan *autonomous market-wide discovery*, multi-strategi (*Smart Money Concepts, Candlestick Price Action, Scalping, Trend Following, Swing*), *stepped profit protection (SL+)* dinamis, *fail-closed recovery* tahan crash, antarmuka terminal *Rich* responsif dengan kalkulasi ROI *real-time*, serta kendali jarak jauh melalui Telegram Bot yang interaktif dan aman.
 
 ---
 
@@ -22,8 +22,9 @@ Botragram adalah sistem trading algoritmik otomatis berbasis Python (3.14+) deng
 ## Fitur Utama
 
 - 🛡️ **Capital Safety & Risk First**: Manajemen risiko berbasis stop-loss distance, validasi ukuran lot exchange, batasan drawdown akun, dan pencegahan submission ganda (idempotency).
-- 🧠 **Smart Money Concepts & Multi-Strategy**: Dilengkapi strategi canggih `CHoCH + FVG Retest` dengan konfirmasi displacement & liquidity sweep, serta 9+ strategi indikator scalping, trend, dan swing.
-- ⚡ **Autonomous Market-Wide Discovery**: Memindai dan meranking 100+ pair USDT perpetual teratas berdasarkan volume 24 jam secara berurutan (*sequential batch scanning*).
+- 🌐 **Multi-Exchange Support**: Mendukung **Binance** (Spot & USD(S)-M Futures) dan **Bybit** (Spot, Linear USDT Perpetual Futures, Demo Trading `api-demo.bybit.com`, Testnet, dan Mainnet).
+- 🧠 **Smart Money Concepts & 16 Multi-Strategy Engine**: Dilengkapi 16 strategi bawaan mulai dari Smart Money Concepts (CHoCH + FVG), Candlestick Price Action (Pinbar & Engulfing + EMA/RSI), Confluence Multi-Indikator, Scalping, Trend Following, hingga Swing Trading.
+- ⚡ **Autonomous Market-Wide Discovery**: Memindai dan meranking seluruh universe koin USDT perpetual aktif berdasarkan volume 24 jam dengan rotasi batch bertahap, filter likuiditas/ekstrem volatilitas, serta batas plafon (`DISCOVERY_MAX_UNIVERSE_SYMBOLS`).
 - 🔄 **Stepped Trailing Profit Protection (SL+)**: Mengunci profit bertahap (30% → 90% progress target) secara otomatis via real-time WebSocket market stream.
 - 📊 **Real-Time ROI & Responsive Terminal**: Dashboard terminal interaktif (Rich) dengan kalkulasi persentase ROI presisi terhadap margin, mendukung tampilan compact/portrait.
 - 📱 **Telegram Control Plane**: Navigasi menu modern, notifikasi instan eksekusi & trailing SL, penggantian strategi dinamis, pengaturan risk limit, dan operator close position.
@@ -41,7 +42,7 @@ main.py (Composition Bootstrap)
   └── botragram.app (Composition Root & Lifecycle)
       ├── config / constants / enums / models (Domain Core - Immutable)
       ├── storage (SQLite / Memory) ──> repositories (Interfaces)
-      ├── exchanges (Binance REST/Stream) ──> exchange abstractions
+      ├── exchanges (Binance & Bybit REST/Stream) ──> exchange abstractions
       ├── indicators & strategies (Pure Math & Signal Generation)
       ├── engine (Decision & Calculation Logic)
       └── services (Use-case Orchestration & Async I/O)
@@ -55,20 +56,25 @@ main.py (Composition Bootstrap)
 
 ## Daftar Strategi & Risk-Reward Ratio (RRR)
 
-Botragram mendukung berbagai strategi trading yang secara otomatis menerapkan Timeframe optimal dan profil *Risk-Reward Ratio* (SL/TP):
+Botragram mendukung 16 strategi trading yang secara otomatis menerapkan Timeframe optimal dan profil *Risk-Reward Ratio* (SL/TP):
 
 | Kategori | Strategi (`STRATEGY_TYPE`) | Auto Timeframe | Default SL / TP | Rasio RRR | Deskripsi & Indikator |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| **Price Action (SMC)** | `choch_fvg` *(Rekomendasi)* | **5m** | **1.0% / 2.5%** | **1 : 2.5** | **Smart Money Concepts**: Change of Character (CHoCH), Liquidity Sweep, Displacement Candle, dan FVG Imbalance Retest. |
+| **Price Action** | `choch_fvg` *(Rekomendasi)* | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **Smart Money Concepts**: Change of Character (CHoCH), Liquidity Sweep, Displacement Candle, dan FVG Imbalance Retest. |
+| **Price Action** | `pinbar_engulfing_ema_rsi` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **Price Action Confluence**: Pinbar (Hammer/Star) & Engulfing pada EMA 21 Pullback, EMA 200 Trend Filter, dan RSI Momentum. |
+| **Price Action** | `choch_rsi_bb_hybrid` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **SMC + Mean Reversion**: CHoCH structural breakout terkonfirmasi RSI oversold/overbought dan Bollinger Bands boundary bounce. |
+| **Price Action** | `liquidity_sweep_exhaustion` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **Liquidity Grab**: Sweep swing high/low palsu diikuti penolakan cepat (exhaustion wick), volume spike, dan ATR risk levels. |
+| **Price Action** | `high_confluence_exhaustion` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **Exhaustion Mean Reversion**: Konvergensi ekstrem Bollinger Bands, RSI threshold, low ADX trendiness, dan volume spike. |
 | **Scalping** | `rsi_bb_scalping` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Mean reversion oversold/overbought pada Bollinger Bands & RSI. |
-| **Scalping** | `ema_scalping` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Fast EMA momentum scalping dengan proteksi dynamic ATR. |
-| **Scalping** | `vwap_breakout` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Breakout intraday di atas/bawah volume weighted average price. |
+| **Scalping** | `ema_scalping` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Fast EMA momentum scalping dengan konfirmasi body ratio candle dan dynamic ATR. |
+| **Scalping** | `vwap_breakout` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Breakout intraday di atas/bawah Volume Weighted Average Price (VWAP). |
 | **Trend Following** | `ema_cross` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Perpotongan garis Fast EMA dan Slow EMA (Trend Golden/Death Cross). |
 | **Trend Following** | `ema_rsi` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Konfirmasi trend EMA dikombinasikan dengan momentum filter RSI. |
 | **Trend Following** | `supertrend` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Indikator volatilitas Supertrend berbasis Average True Range (ATR). |
 | **Trend Following** | `ichimoku_cloud` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Tenkan/Kijun cross terkonfirmasi Kumo Cloud & Chikou Span. |
 | **Trend Following** | `adx_trend` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Filter kekuatan trend ADX dengan konfirmasi arah pergerakan DMI (+DI/-DI). |
 | **Trend Following** | `bollinger_breakout`| **15m** | **1.5% / 3.0%** | **1 : 2.0** | Breakout volatilitas dari fase konsolidasi/squeeze Bollinger Bands. |
+| **Trend Following** | `quad_confluence` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Konvergensi 4 indikator teknikal (Stochastic RSI, Bollinger Bands, Parabolic SAR, dan MACD). |
 | **Swing Trading** | `macd_swing` | **1h** | **2.5% / 5.0%** | **1 : 2.0** | Swing trading multi-day berdasarkan MACD histogram & zero-line crossover. |
 
 ---
@@ -120,8 +126,10 @@ Berikut contoh parameter utama pada `.env`:
 # =============================================================================
 
 BOTRAGRAM_PROFILE=TESTNET         # Pilihan: TESTNET, MAINNET
-ACTIVE_EXCHANGE=BINANCE
+ACTIVE_EXCHANGE=BINANCE           # Pilihan: BINANCE, BYBIT
 BINANCE_MARKET_TYPE=FUTURES       # Pilihan: FUTURES, SPOT
+BYBIT_MARKET_TYPE=FUTURES         # Pilihan: FUTURES (Linear USDT), SPOT
+# BYBIT_DEMO=true                 # Aktifkan jika memakai Bybit Demo Trading (api-demo.bybit.com)
 
 # Kredensial Telegram
 TELEGRAM_TOKEN=your_telegram_bot_token_here
@@ -134,7 +142,7 @@ AUTONOMOUS_EXECUTION_ENABLED=true
 AUTONOMOUS_LIVE_ENTRY_ENABLED=false
 AUTONOMOUS_MAINNET_ENTRY_ENABLED=false
 
-# Pilihan Strategi (Default: choch_fvg atau rsi_bb_scalping)
+# Pilihan Strategi (Default: choch_fvg atau pinbar_engulfing_ema_rsi)
 STRATEGY_TYPE=choch_fvg
 LOG_LEVEL=INFO
 
@@ -150,9 +158,11 @@ MAX_EXECUTABLE_QUOTE_AGE_MS=1000  # Umur maksimal harga orderbook (1 detik)
 MAX_SPREAD_BPS=20                 # Batas maksimal spread bid-ask (20 bps)
 
 # Konfigurasi Autonomous Discovery
-DISCOVERY_UNIVERSE_LIMIT=100      # Memindai 100 pair USDT volume terbesar
-DISCOVERY_BATCH_SIZE=20           # Scanning 20 pair per siklus candle
+DISCOVERY_UNIVERSE_LIMIT=150      # Metrik batasan universe discovery
+DISCOVERY_BATCH_SIZE=150          # Scanning batch per siklus candle
+DISCOVERY_MAX_UNIVERSE_SYMBOLS=150 # Plafon maksimal universe (fokus koin top-volume)
 DISCOVERY_CADENCE_SECONDS=        # Interval jeda scanning (opsional)
+DISCOVERY_CANDLE_DELAY_SECONDS=0.05 # Pacing jeda antar fetch candle (rate limit safety)
 
 # Parameter Khusus SMC / Price Action (choch_fvg)
 # CHOCH_SWING_WINDOW=5            # Window bar swing high/low lookback (default: 5)

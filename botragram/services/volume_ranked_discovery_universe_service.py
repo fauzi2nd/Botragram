@@ -44,6 +44,7 @@ class VolumeRankedDiscoveryUniverseService:
     quote_asset: str
     universe_limit: int
     batch_size: int
+    max_universe_symbols: int | None = None
     _snapshot: tuple[MarketUniverseEntry, ...] | None = field(
         default=None,
         init=False,
@@ -65,6 +66,18 @@ class VolumeRankedDiscoveryUniverseService:
             raise ValueError("Discovery universe limit must be a positive integer")
         if isinstance(self.batch_size, bool) or self.batch_size <= 0:
             raise ValueError("Discovery batch size must be a positive integer")
+        if self.max_universe_symbols is not None:
+            if (
+                isinstance(self.max_universe_symbols, bool)
+                or self.max_universe_symbols <= 0
+            ):
+                raise ValueError(
+                    "Discovery max universe symbols must be a positive integer"
+                )
+            if self.max_universe_symbols < self.batch_size:
+                raise ValueError(
+                    "Discovery max universe symbols cannot be smaller than batch size"
+                )
         self.quote_asset = normalized_quote_asset
 
     async def get_current_batch(self) -> DiscoveryUniverseBatch:
@@ -79,6 +92,8 @@ class VolumeRankedDiscoveryUniverseService:
             raw_entries = tuple(ranked_entries)
             if not raw_entries:
                 raise RuntimeError("Ranked discovery universe must not be empty")
+            if self.max_universe_symbols is not None:
+                raw_entries = raw_entries[: self.max_universe_symbols]
             full_batch_count = len(raw_entries) // self.batch_size
             usable_count = (
                 full_batch_count * self.batch_size

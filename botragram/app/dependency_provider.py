@@ -1513,6 +1513,7 @@ class DependencyProvider:
                     quote_asset=market.quote_asset,
                     universe_limit=market.discovery_universe_limit,
                     batch_size=market.discovery_batch_size,
+                    max_universe_symbols=market.discovery_max_universe_symbols,
                 ),
                 risk_evaluation_service=self.live_entry_risk_evaluation_service,
                 intent_service=intent_service,

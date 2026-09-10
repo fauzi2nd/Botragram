@@ -220,6 +220,7 @@ class SettingsManager:
         """Load market settings while preserving the strategy's optimal interval."""
         environment = self._environment_provider
         raw_interval = environment.get_market_interval()
+        raw_max_universe_symbols = environment.get_discovery_max_universe_symbols()
         raw_discovery_cadence = environment.get_discovery_cadence_seconds()
         raw_candle_delay = environment.get_discovery_candle_delay_seconds()
         default_interval = (
@@ -236,6 +237,14 @@ class SettingsManager:
             discovery_universe_limit=self._parse_positive_int(
                 raw_value=environment.get_discovery_universe_limit(),
                 setting_name="DISCOVERY_UNIVERSE_LIMIT",
+            ),
+            discovery_max_universe_symbols=(
+                self._parse_positive_int(
+                    raw_value=raw_max_universe_symbols,
+                    setting_name="DISCOVERY_MAX_UNIVERSE_SYMBOLS",
+                )
+                if raw_max_universe_symbols
+                else None
             ),
             discovery_batch_size=self._parse_positive_int(
                 raw_value=environment.get_discovery_batch_size(),

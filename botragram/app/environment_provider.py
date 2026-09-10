@@ -58,6 +58,7 @@ from botragram.constants.env import (
     ENV_DISCOVERY_FILTER_EXTREME_VOLATILITY,
     ENV_DISCOVERY_FILTER_MIN_LIQUIDITY,
     ENV_DISCOVERY_MAX_CANDLE_VOLATILITY_PCT,
+    ENV_DISCOVERY_MAX_UNIVERSE_SYMBOLS,
     ENV_DISCOVERY_MIN_QUOTE_VOLUME_USDT,
     ENV_DISCOVERY_UNIVERSE_LIMIT,
     ENV_EMA_CROSS_STOP_LOSS_PCT,
@@ -654,6 +655,10 @@ class EnvironmentProvider:
     def get_market_interval(self) -> str:
         """Return the optional configured candle interval."""
         return self._get_var(ENV_MARKET_INTERVAL)
+
+    def get_discovery_max_universe_symbols(self) -> str:
+        """Return the optional ceiling on the rotated ranked discovery universe."""
+        return self._get_var(ENV_DISCOVERY_MAX_UNIVERSE_SYMBOLS)
 
     def get_discovery_universe_limit(self) -> str:
         """Return the maximum ranked symbols retained in one sweep."""

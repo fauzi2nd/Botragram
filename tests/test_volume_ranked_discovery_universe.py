@@ -349,3 +349,61 @@ def test_batch_may_exceed_legacy_universe_limit_without_truncating_coverage() ->
         batch_size=20,
     )
     assert service.batch_size == 20
+
+
+def test_sweep_bounds_to_max_universe_symbols() -> None:
+    asyncio.run(_run_max_universe_symbols_test())
+
+
+async def _run_max_universe_symbols_test() -> None:
+    first_snapshot = _entries(prefix="A", count=500)
+    second_snapshot = _entries(prefix="B", count=500)
+    provider = _RankedUniverseProvider(outcomes=[first_snapshot, second_snapshot])
+    service = VolumeRankedDiscoveryUniverseService(
+        market_service=provider,
+        quote_asset="USDT",
+        universe_limit=100,
+        batch_size=20,
+        max_universe_symbols=60,
+    )
+
+    for batch_number in range(3):
+        batch = await service.get_current_batch()
+        assert batch.universe_size == 60
+        assert batch.rank_start == batch_number * 20 + 1
+        assert batch.rank_end == (batch_number + 1) * 20
+        assert (
+            batch.entries == first_snapshot[batch_number * 20 : (batch_number + 1) * 20]
+        )
+        service.complete_batch(batch=batch)
+
+    assert provider.calls == 1
+    refreshed = await service.get_current_batch()
+    assert provider.calls == 2
+    assert refreshed.universe_size == 60
+    assert refreshed.rank_start == 1
+    assert refreshed.rank_end == 20
+    assert refreshed.entries == second_snapshot[:20]
+
+
+@pytest.mark.parametrize(
+    ("max_universe_symbols", "batch_size", "message"),
+    (
+        (0, 10, "Discovery max universe symbols must be a positive integer"),
+        (-5, 10, "Discovery max universe symbols must be a positive integer"),
+        (5, 10, "Discovery max universe symbols cannot be smaller than batch size"),
+    ),
+)
+def test_rotation_service_rejects_invalid_max_universe_symbols(
+    max_universe_symbols: int,
+    batch_size: int,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        VolumeRankedDiscoveryUniverseService(
+            market_service=_RankedUniverseProvider(outcomes=[]),
+            quote_asset="USDT",
+            universe_limit=100,
+            batch_size=batch_size,
+            max_universe_symbols=max_universe_symbols,
+        )
