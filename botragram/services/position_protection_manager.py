@@ -318,13 +318,22 @@ class PositionProtectionManager:
             if close_qty <= _DECIMAL_ZERO or remaining_qty < rules.market_min_quantity:
                 _LOGGER.warning(
                     "Partial TP skipped: quantity %s cannot split with ratio %s "
-                    "(min_qty=%s, step=%s)",
+                    "(min_qty=%s, step=%s). Marking partial TP completed for "
+                    "position %s.",
                     position.quantity,
                     self.partial_tp_ratio,
                     rules.market_min_quantity,
                     rules.market_quantity_step,
+                    position.symbol,
                 )
-                return position
+                updated_position = replace(
+                    position,
+                    partial_tp_executed=True,
+                    updated_at=ticker.timestamp,
+                )
+                await self.position_repository.update(position=updated_position)
+                self._cached_position = updated_position
+                return updated_position
 
             client_order_id = f"ptp-{Position.create_stop_loss_client_algo_id()}"
             try:

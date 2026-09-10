@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -1198,4 +1199,61 @@ async def test_partial_take_profit_live_execution() -> None:
     pos = await repository.get_by_symbol(symbol="BTCUSDT")
     assert pos is not None
     assert pos.quantity == Decimal("5")
+    assert pos.partial_tp_executed is True
+
+
+@pytest.mark.asyncio
+async def test_partial_take_profit_skipped_when_quantity_cannot_split_marks_executed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Mark partial_tp_executed=True and avoid log spam when quantity cannot split."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        stop_loss_client_algo_id="bsl-initial00000000000000000000000",
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = RecordingProtectionExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        # Price moves to 105.00 -> Progress = 50%
+        await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=1))
+        # Subsequent ticks at or above 50% progress
+        await manager.on_market_tick(ticker=_ticker(price="105.10", seconds=2))
+        await manager.on_market_tick(ticker=_ticker(price="105.20", seconds=3))
+
+    # No order should be created since quantity cannot split
+    assert len(exchange.created_orders) == 0
+
+    # Warning should only be logged ONCE instead of on every tick
+    skip_warnings = [
+        r
+        for r in caplog.records
+        if "Partial TP skipped: quantity 1 cannot split" in r.message
+    ]
+    assert len(skip_warnings) == 1
+
+    # Position must be marked as partial_tp_executed=True
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.quantity == Decimal("1")
     assert pos.partial_tp_executed is True
