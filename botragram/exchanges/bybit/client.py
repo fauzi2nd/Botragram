@@ -18,7 +18,7 @@ from __future__ import annotations
 # =============================================================================
 import logging
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Final, cast
 
@@ -74,10 +74,21 @@ BYBIT_INTERVAL_MAP: Final[dict[Interval, str]] = {
     Interval.MN1: "M",
 }
 
+BYBIT_OPEN_INTEREST_INTERVAL_MAP: Final[dict[Interval, str]] = {
+    Interval.M5: "5min",
+    Interval.M15: "15min",
+    Interval.M30: "30min",
+    Interval.H1: "1h",
+    Interval.H2: "1h",
+    Interval.H4: "4h",
+    Interval.D1: "1d",
+}
+
 _PING_ENDPOINT: Final[str] = "/v5/market/time"
 _WALLET_BALANCE_ENDPOINT: Final[str] = "/v5/account/wallet-balance"
 _TICKERS_ENDPOINT: Final[str] = "/v5/market/tickers"
 _KLINE_ENDPOINT: Final[str] = "/v5/market/kline"
+_OPEN_INTEREST_ENDPOINT: Final[str] = "/v5/market/open-interest"
 _TRADES_ENDPOINT: Final[str] = "/v5/market/recent-trade"
 _INSTRUMENTS_INFO_ENDPOINT: Final[str] = "/v5/market/instruments-info"
 
@@ -385,6 +396,64 @@ class BybitExchangeClient(BaseExchangeClient):
 
         candles.sort(key=lambda c: c.open_time)
         return tuple(candles[-limit:])
+
+    async def get_open_interest(
+        self,
+        *,
+        symbol: str,
+        interval: Interval | None = None,
+        limit: int = 50,
+    ) -> Sequence[tuple[datetime, Decimal]]:
+        """Return historical Open Interest points (timestamp, open_interest)."""
+        if limit <= 0:
+            return ()
+
+        params: dict[str, str | int] = {
+            "category": "linear",
+            "symbol": symbol.strip().upper(),
+            "limit": min(limit, 200),
+        }
+        if interval is not None:
+            interval_str = BYBIT_OPEN_INTEREST_INTERVAL_MAP.get(interval, "15min")
+            params["intervalTime"] = interval_str
+
+        payload = await self._rest.get(
+            _OPEN_INTEREST_ENDPOINT,
+            params=params,
+            authenticated=False,
+        )
+        if not isinstance(payload, dict):
+            return ()
+
+        raw_result = payload.get("result")
+        if not isinstance(raw_result, dict):
+            return ()
+
+        result_map = cast(ExchangePayload, raw_result)
+        oi_list = result_map.get("list")
+        if not isinstance(oi_list, list):
+            return ()
+
+        points: list[tuple[datetime, Decimal]] = []
+        for item in cast(list[object], oi_list):
+            if not isinstance(item, dict):
+                continue
+            item_map = cast(ExchangePayload, item)
+            ts_val = item_map.get("timestamp")
+            oi_val = item_map.get("openInterest")
+            if ts_val is None or oi_val is None:
+                continue
+            try:
+                timestamp = datetime.fromtimestamp(
+                    float(str(ts_val)) / 1000.0, tz=timezone.utc
+                )
+                oi_decimal = Decimal(str(oi_val))
+                points.append((timestamp, oi_decimal))
+            except ValueError, TypeError, OverflowError:
+                continue
+
+        points.sort(key=lambda x: x[0])
+        return tuple(points)
 
     async def get_trades(
         self,

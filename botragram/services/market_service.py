@@ -17,8 +17,9 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from decimal import Decimal
 
 # =============================================================================
 # Local Imports
@@ -164,6 +165,84 @@ class MarketService:
             )
 
         return candles
+
+    async def get_open_interest(
+        self,
+        *,
+        symbol: str,
+        interval: Interval | None = None,
+        limit: int = 50,
+    ) -> Sequence[tuple[datetime, Decimal]]:
+        """Return historical Open Interest points from the exchange client.
+
+        Args:
+            symbol: Trading pair symbol.
+            interval: Candlestick interval.
+            limit: Maximum number of points to fetch.
+
+        Returns:
+            Sequence of (timestamp, open_interest) tuples ordered oldest to newest.
+        """
+        return await self.exchange_client.get_open_interest(
+            symbol=self._normalize_symbol(symbol),
+            interval=interval,
+            limit=limit,
+        )
+
+    async def enrich_candles_with_open_interest(
+        self,
+        *,
+        candles: Sequence[Candle],
+        interval: Interval | None = None,
+    ) -> Sequence[Candle]:
+        """Enrich a sequence of candles with Open Interest data if available.
+
+        Args:
+            candles: Candles ordered from oldest to newest.
+            interval: Optional explicit interval to query OI.
+
+        Returns:
+            New sequence of candles with open_interest field populated where matched.
+        """
+        if not candles:
+            return candles
+
+        symbol = candles[0].symbol
+        resolved_interval = interval or candles[0].interval
+        oi_points = await self.get_open_interest(
+            symbol=symbol,
+            interval=resolved_interval,
+            limit=len(candles) + 5,
+        )
+        if not oi_points:
+            return candles
+
+        oi_by_time: dict[int, Decimal] = {
+            int(pt[0].timestamp()): pt[1] for pt in oi_points
+        }
+
+        enriched: list[Candle] = []
+        for candle in candles:
+            open_ts = int(candle.open_time.timestamp())
+            close_ts = int(candle.close_time.timestamp())
+            oi_val = oi_by_time.get(open_ts) or oi_by_time.get(close_ts)
+            if oi_val is None:
+                closest = min(
+                    oi_points,
+                    key=lambda pt: abs(int(pt[0].timestamp()) - open_ts),
+                )
+                if (
+                    abs(int(closest[0].timestamp()) - open_ts)
+                    <= resolved_interval.seconds
+                ):
+                    oi_val = closest[1]
+
+            if oi_val is not None:
+                enriched.append(replace(candle, open_interest=oi_val))
+            else:
+                enriched.append(candle)
+
+        return tuple(enriched)
 
     async def _get_fresh_stored_candles(
         self,

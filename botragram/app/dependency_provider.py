@@ -1191,6 +1191,9 @@ class DependencyProvider:
             ),
             default_strategy_type=self._settings.strategy.strategy_type,
             invert_signals=self._settings.strategy.invert_signals,
+            use_open_interest=self._settings.strategy.use_open_interest,
+            min_oi_change_pct=self._settings.strategy.min_oi_change_pct,
+            require_oi_confluence=self._settings.strategy.require_oi_confluence,
         )
         self._risk_engine = RiskEngine(settings=self._settings.risk)
         self._pnl_engine = PnLEngine()
@@ -1302,6 +1305,7 @@ class DependencyProvider:
             min_quote_volume_usdt=(
                 self._settings.strategy.discovery_min_quote_volume_usdt
             ),
+            use_open_interest=self._settings.strategy.use_open_interest,
         )
         self._order_service = OrderService(
             order_engine=self.order_engine,

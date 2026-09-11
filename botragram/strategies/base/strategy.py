@@ -18,11 +18,14 @@ from __future__ import annotations
 # =============================================================================
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from dataclasses import replace
+from decimal import Decimal
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import StrategyType
+from botragram.enums import SignalType, StrategyType
+from botragram.indicators import evaluate_oi_confluence
 from botragram.models import Candle, Signal
 
 __all__ = [
@@ -100,3 +103,63 @@ class BaseStrategy(ABC):
             )
         ):
             raise ValueError("Strategy candles must be ordered from oldest to newest")
+
+    def apply_open_interest_confluence(
+        self,
+        *,
+        signal: Signal,
+        candles: Sequence[Candle],
+        min_change_pct: Decimal = Decimal("0.0"),
+        confidence_bonus: Decimal = Decimal("0.05"),
+        strict: bool = False,
+    ) -> Signal:
+        """Apply Open Interest confluence evaluation to a generated signal.
+
+        Args:
+            signal: Generated candidate signal.
+            candles: Candle sequence used for evaluation.
+            min_change_pct: Minimum positive OI change percentage for confirmation.
+            confidence_bonus: Confidence bonus to add when confirmed.
+            strict: When True, transforms warning or contradictory signals to HOLD.
+
+        Returns:
+            Enhanced or filtered Signal.
+        """
+        if signal.signal_type is SignalType.HOLD:
+            return signal
+
+        confluence = evaluate_oi_confluence(
+            signal_type=signal.signal_type,
+            candles=candles,
+            min_change_pct=min_change_pct,
+        )
+        if confluence is None:
+            return signal
+
+        if confluence.is_confirmed:
+            new_confidence = min(Decimal("0.95"), signal.confidence + confidence_bonus)
+            return replace(
+                signal,
+                confidence=new_confidence,
+                reason=f"{signal.reason} [{confluence.reason}]",
+            )
+
+        if confluence.is_warning:
+            if strict:
+                return replace(
+                    signal,
+                    signal_type=SignalType.HOLD,
+                    confidence=Decimal("0.0"),
+                    reason=(
+                        f"[REJECTED_OI] {confluence.reason} "
+                        f"(originally {signal.signal_type.value})"
+                    ),
+                )
+            new_confidence = max(Decimal("0.10"), signal.confidence - confidence_bonus)
+            return replace(
+                signal,
+                confidence=new_confidence,
+                reason=f"{signal.reason} [{confluence.reason}]",
+            )
+
+        return signal

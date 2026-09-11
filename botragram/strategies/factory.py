@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from types import MappingProxyType
 
 # =============================================================================
@@ -269,6 +270,16 @@ class StrategyFactory:
                     max_opposite_wick_ratio=settings.pier_max_opposite_wick_ratio,
                     min_engulfing_body_ratio=settings.pier_min_engulfing_body_ratio,
                     min_confidence=settings.pier_min_confidence,
+                    use_open_interest=settings.pier_use_open_interest
+                    or settings.use_open_interest,
+                    min_oi_change_pct=(
+                        settings.pier_min_oi_change_pct
+                        if settings.pier_min_oi_change_pct > Decimal("0")
+                        else settings.min_oi_change_pct
+                    ),
+                    oi_confidence_bonus=settings.pier_oi_confidence_bonus,
+                    require_oi_confluence=settings.pier_require_oi_confluence
+                    or settings.require_oi_confluence,
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

@@ -454,6 +454,12 @@ class SettingsManager:
             ),
             setting_name="DISCOVERY_MIN_QUOTE_VOLUME_USDT",
         )
+        use_open_interest = self._environment_provider.get_use_open_interest()
+        min_oi_change_pct = self._parse_decimal(
+            raw_value=self._environment_provider.get_min_oi_change_pct(),
+            setting_name="MIN_OI_CHANGE_PCT",
+        )
+        require_oi_confluence = self._environment_provider.get_require_oi_confluence()
         return StrategySettings(
             strategy_type=(
                 self._parse_enum(
@@ -473,6 +479,9 @@ class SettingsManager:
             discovery_max_candle_volatility_pct=(discovery_max_candle_volatility_pct),
             discovery_filter_min_liquidity=discovery_filter_min_liquidity,
             discovery_min_quote_volume_usdt=discovery_min_quote_volume_usdt,
+            use_open_interest=use_open_interest,
+            min_oi_change_pct=min_oi_change_pct,
+            require_oi_confluence=require_oi_confluence,
         )
 
     def load_logging_settings(self) -> LoggingSettings:

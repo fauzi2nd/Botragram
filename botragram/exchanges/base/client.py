@@ -145,6 +145,20 @@ class BaseExchangeClient(ABC):
     ) -> Sequence[Candle]:
         """Return candlestick market data."""
 
+    async def get_open_interest(
+        self,
+        *,
+        symbol: str,
+        interval: Interval | None = None,
+        limit: int = 50,
+    ) -> Sequence[tuple[datetime, Decimal]]:
+        """Return historical Open Interest points (timestamp, open_interest).
+
+        Spot or non-derivatives exchanges return an empty sequence.
+        """
+        del symbol, interval, limit
+        return ()
+
     @abstractmethod
     async def get_trades(
         self,

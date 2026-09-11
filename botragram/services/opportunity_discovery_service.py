@@ -22,7 +22,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Final, Protocol
+from typing import Final, Protocol, runtime_checkable
 
 # =============================================================================
 # Local Imports
@@ -76,6 +76,20 @@ class DiscoveryMarketDataProvider(Protocol):
         ...
 
 
+@runtime_checkable
+class OpenInterestCandleEnricher(Protocol):
+    """Optionally enrich candlestick sequences with Open Interest."""
+
+    async def enrich_candles_with_open_interest(
+        self,
+        *,
+        candles: Sequence[Candle],
+        interval: Interval | None = None,
+    ) -> Sequence[Candle]:
+        """Enrich a sequence of candles with Open Interest data if available."""
+        ...
+
+
 class DiscoveryStrategyProvider(Protocol):
     """Generate and persist strategy signals for discovery."""
 
@@ -125,6 +139,7 @@ class OpportunityDiscoveryService:
     max_candle_volatility_pct: Decimal = Decimal("0.15")
     filter_min_liquidity: bool = False
     min_quote_volume_usdt: Decimal = Decimal("0")
+    use_open_interest: bool = False
 
     async def discover(
         self,
@@ -338,15 +353,26 @@ class OpportunityDiscoveryService:
                         )
                         continue
 
+            eval_candles: Sequence[Candle] = closed_candles
+            if self.use_open_interest and isinstance(
+                self.market_service, OpenInterestCandleEnricher
+            ):
+                eval_candles = (
+                    await self.market_service.enrich_candles_with_open_interest(
+                        candles=closed_candles,
+                        interval=interval,
+                    )
+                )
+
             try:
                 if strategy_type is None:
                     signal = await self.strategy_service.generate_and_save(
-                        candles=closed_candles,
+                        candles=eval_candles,
                         strategy_type=None,
                     )
                 else:
                     signal = self.strategy_service.generate_signal(
-                        candles=closed_candles,
+                        candles=eval_candles,
                         strategy_type=strategy_type,
                     )
             except ValueError as error:

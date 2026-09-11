@@ -60,6 +60,7 @@ from botragram.enums.log_level import LogLevel
 from botragram.enums.margin_mode import MarginMode
 from botragram.enums.market_type import MarketType
 from botragram.enums.notification_type import NotificationType
+from botragram.enums.open_interest_regime import OpenInterestRegime
 from botragram.enums.operator_exit_attempt_status import OperatorExitAttemptStatus
 from botragram.enums.operator_exit_status import OperatorExitStatus
 from botragram.enums.operator_exit_type import OperatorExitType
@@ -117,6 +118,7 @@ __all__ = [
     "Interval",
     "TrendType",
     "IndicatorType",
+    "OpenInterestRegime",
     # Trading
     "OrderType",
     "OrderSide",

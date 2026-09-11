@@ -74,6 +74,10 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     max_opposite_wick_ratio: Decimal = Decimal("0.20")
     min_engulfing_body_ratio: Decimal = Decimal("1.05")
     min_confidence: Decimal = _DEFAULT_MIN_CONFIDENCE
+    use_open_interest: bool = False
+    min_oi_change_pct: Decimal = _DECIMAL_ZERO
+    oi_confidence_bonus: Decimal = _CONFIDENCE_STEP_BONUS
+    require_oi_confluence: bool = False
 
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
@@ -101,6 +105,10 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             raise ValueError("Minimum engulfing body ratio must be positive")
         if not (_DECIMAL_ZERO <= self.min_confidence <= _DECIMAL_ONE):
             raise ValueError("Minimum confidence must be between 0.0 and 1.0")
+        if self.min_oi_change_pct < _DECIMAL_ZERO:
+            raise ValueError("Minimum OI change percentage must be non-negative")
+        if self.oi_confidence_bonus < _DECIMAL_ZERO:
+            raise ValueError("OI confidence bonus must be non-negative")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -225,7 +233,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     f"in EMA{self.trend_period} downtrend (RSI={current_rsi:.1f})"
                 )
 
-        return Signal(
+        signal = Signal(
             symbol=curr_candle.symbol,
             signal_type=signal_type,
             price=curr_candle.close_price,
@@ -234,6 +242,17 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             generated_at=curr_candle.close_time,
             reason=reason,
         )
+
+        if self.use_open_interest and signal_type is not SignalType.HOLD:
+            return self.apply_open_interest_confluence(
+                signal=signal,
+                candles=candles,
+                min_change_pct=self.min_oi_change_pct,
+                confidence_bonus=self.oi_confidence_bonus,
+                strict=self.require_oi_confluence,
+            )
+
+        return signal
 
     def _compute_confidence(
         self,

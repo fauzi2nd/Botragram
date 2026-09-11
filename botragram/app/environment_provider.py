@@ -79,6 +79,7 @@ from botragram.constants.env import (
     ENV_MAX_OPEN_POSITIONS,
     ENV_MAX_POSITION_SIZE_USDT,
     ENV_MAX_SPREAD_BPS,
+    ENV_MIN_OI_CHANGE_PCT,
     ENV_MIN_SIGNAL_CONFIDENCE,
     ENV_MTF_CONFIRMATION_ENABLED,
     ENV_MTF_EMA_PERIOD,
@@ -92,6 +93,7 @@ from botragram.constants.env import (
     ENV_PARTIAL_TP_ENABLED,
     ENV_PARTIAL_TP_RATIO,
     ENV_PARTIAL_TP_TRIGGER_PROGRESS,
+    ENV_REQUIRE_OI_CONFLUENCE,
     ENV_RISK_PER_TRADE_PCT,
     ENV_SCALPING_STOP_LOSS_PCT,
     ENV_SCALPING_TAKE_PROFIT_PCT,
@@ -110,6 +112,7 @@ from botragram.constants.env import (
     ENV_TRAILING_STOP_TRIGGER_PCT,
     ENV_TREND_STOP_LOSS_PCT,
     ENV_TREND_TAKE_PROFIT_PCT,
+    ENV_USE_OPEN_INTEREST,
     ENV_VOLATILITY_SIZING_ENABLED,
 )
 from botragram.enums import EnvironmentProfile
@@ -509,6 +512,18 @@ class EnvironmentProvider:
     def get_discovery_min_quote_volume_usdt(self) -> str:
         """Return minimum quote volume in USDT for discovery filtering."""
         return self._get_var(ENV_DISCOVERY_MIN_QUOTE_VOLUME_USDT, default="1000")
+
+    def get_use_open_interest(self) -> bool:
+        """Return whether Open Interest confluence evaluation is enabled."""
+        return self._get_bool(ENV_USE_OPEN_INTEREST, default=False)
+
+    def get_min_oi_change_pct(self) -> str:
+        """Return the minimum Open Interest percentage change for confirmation."""
+        return self._get_var(ENV_MIN_OI_CHANGE_PCT, default="0.0")
+
+    def get_require_oi_confluence(self) -> bool:
+        """Return whether strict Open Interest confluence is required."""
+        return self._get_bool(ENV_REQUIRE_OI_CONFLUENCE, default=False)
 
     def get_partial_tp_enabled(self) -> bool:
         """Return whether partial take profit is enabled."""

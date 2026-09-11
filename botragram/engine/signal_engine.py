@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from decimal import Decimal
 
 # =============================================================================
 # Local Imports
@@ -41,6 +42,10 @@ class SignalEngine:
     strategy_resolver: StrategyResolver
     default_strategy_type: StrategyType
     invert_signals: bool = False
+    use_open_interest: bool = False
+    min_oi_change_pct: Decimal = Decimal("0.0")
+    oi_confidence_bonus: Decimal = Decimal("0.05")
+    require_oi_confluence: bool = False
 
     def generate(
         self,
@@ -64,27 +69,43 @@ class SignalEngine:
         resolved_strategy_type = (
             strategy_type if strategy_type is not None else self.default_strategy_type
         )
-        raw_signal = self.strategy_resolver.resolve(
+        strategy = self.strategy_resolver.resolve(
             strategy_type=resolved_strategy_type,
-        ).generate_signal(
+        )
+        signal = strategy.generate_signal(
             candles=candles,
         )
-        if not self.invert_signals:
-            return raw_signal
 
-        if raw_signal.signal_type is SignalType.BUY:
-            return replace(
-                raw_signal,
-                signal_type=SignalType.SELL,
-                reason=f"[INVERTED] {raw_signal.reason}",
-            )
-        if raw_signal.signal_type is SignalType.SELL:
-            return replace(
-                raw_signal,
-                signal_type=SignalType.BUY,
-                reason=f"[INVERTED] {raw_signal.reason}",
-            )
-        return raw_signal
+        if self.invert_signals:
+            if signal.signal_type is SignalType.BUY:
+                signal = replace(
+                    signal,
+                    signal_type=SignalType.SELL,
+                    reason=f"[INVERTED] {signal.reason}",
+                )
+            elif signal.signal_type is SignalType.SELL:
+                signal = replace(
+                    signal,
+                    signal_type=SignalType.BUY,
+                    reason=f"[INVERTED] {signal.reason}",
+                )
+
+        if self.use_open_interest and signal.signal_type is not SignalType.HOLD:
+            reason = signal.reason or ""
+            if (
+                "[REJECTED_OI]" not in reason
+                and "OI expanded" not in reason
+                and "OI flow" not in reason
+            ):
+                signal = strategy.apply_open_interest_confluence(
+                    signal=signal,
+                    candles=candles,
+                    min_change_pct=self.min_oi_change_pct,
+                    confidence_bonus=self.oi_confidence_bonus,
+                    strict=self.require_oi_confluence,
+                )
+
+        return signal
 
     def get_minimum_candles(self, *, strategy_type: StrategyType) -> int:
         """Return the requirement for one explicit strategy type."""

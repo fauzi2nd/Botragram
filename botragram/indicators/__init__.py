@@ -1,3 +1,10 @@
+from botragram.indicators.derivatives import (
+    OpenInterestConfluence,
+    calculate_oi_change,
+    calculate_oi_sma,
+    classify_oi_regime,
+    evaluate_oi_confluence,
+)
 from botragram.indicators.momentum import (
     MACDResult,
     StochRSIResult,
@@ -45,6 +52,7 @@ __all__ = [
     "FvgZone",
     "IchimokuResult",
     "MACDResult",
+    "OpenInterestConfluence",
     "PSARResult",
     "StochRSIResult",
     "SupertrendResult",
@@ -56,12 +64,16 @@ __all__ = [
     "calculate_ichimoku",
     "calculate_macd",
     "calculate_obv",
+    "calculate_oi_change",
+    "calculate_oi_sma",
     "calculate_psar",
     "calculate_rsi",
     "calculate_sma",
     "calculate_stoch_rsi",
     "calculate_supertrend",
     "calculate_vwap",
+    "classify_oi_regime",
     "detect_engulfing",
     "detect_pinbar",
+    "evaluate_oi_confluence",
 ]

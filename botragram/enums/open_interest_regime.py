@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Candlestick market data model.
+    Derivatives Open Interest market regimes.
 
 Python:
     3.14+
@@ -16,42 +16,25 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-from dataclasses import dataclass
-from datetime import datetime
-from decimal import Decimal
+from enum import unique
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import Interval
+from botragram.enums.base import BaseEnum
 
-__all__ = [
-    "Candle",
-]
+__all__ = ["OpenInterestRegime"]
 
 
 # =============================================================================
-# Domain Models
+# Enums
 # =============================================================================
-@dataclass(
-    slots=True,
-    kw_only=True,
-    frozen=True,
-)
-class Candle:
-    """Immutable candlestick market data."""
+@unique
+class OpenInterestRegime(BaseEnum):
+    """Derivatives Open Interest market regimes."""
 
-    symbol: str
-    interval: Interval
-
-    open_time: datetime
-    close_time: datetime
-
-    open_price: Decimal
-    high_price: Decimal
-    low_price: Decimal
-    close_price: Decimal
-
-    volume: Decimal
-
-    open_interest: Decimal | None = None
+    LONG_BUILDUP = "long_buildup"
+    SHORT_COVERING = "short_covering"
+    SHORT_BUILDUP = "short_buildup"
+    LONG_LIQUIDATION = "long_liquidation"
+    NEUTRAL = "neutral"

@@ -51,6 +51,9 @@ class StrategySettings:
     discovery_max_candle_volatility_pct: Decimal = Decimal("0.15")
     discovery_filter_min_liquidity: bool = True
     discovery_min_quote_volume_usdt: Decimal = Decimal("1000")
+    use_open_interest: bool = False
+    min_oi_change_pct: Decimal = Decimal("0.0")
+    require_oi_confluence: bool = False
 
     @property
     def default_interval(self) -> Interval:
@@ -234,6 +237,10 @@ class StrategySettings:
     pier_atr_sl_multiplier: Decimal = Decimal("0.5")
     pier_risk_reward_ratio: Decimal = Decimal("2.0")
     pier_min_confidence: Decimal = Decimal("0.65")
+    pier_use_open_interest: bool = False
+    pier_min_oi_change_pct: Decimal = Decimal("0.0")
+    pier_oi_confidence_bonus: Decimal = Decimal("0.05")
+    pier_require_oi_confluence: bool = False
 
     def __post_init__(self) -> None:
         """Validate bounded strategy settings."""
@@ -455,3 +462,9 @@ class StrategySettings:
             raise ValueError("PIER ATR multiplier and RR ratio must be positive")
         if not (Decimal("0.0") <= self.pier_min_confidence <= Decimal("1.0")):
             raise ValueError("PIER minimum confidence must be between 0.0 and 1.0")
+        if self.min_oi_change_pct < Decimal("0.0"):
+            raise ValueError("Minimum OI change percentage must be non-negative")
+        if self.pier_min_oi_change_pct < Decimal("0.0"):
+            raise ValueError("PIER minimum OI change percentage must be non-negative")
+        if self.pier_oi_confidence_bonus < Decimal("0.0"):
+            raise ValueError("PIER OI confidence bonus must be non-negative")
