@@ -92,11 +92,14 @@ class SignalEngine:
 
         if self.use_open_interest and signal.signal_type is not SignalType.HOLD:
             reason = signal.reason or ""
-            if (
-                "[REJECTED_OI]" not in reason
-                and "OI expanded" not in reason
-                and "OI flow" not in reason
-            ):
+            has_oi_evaluated = (
+                "[REJECTED_OI]" in reason
+                or "OI" in reason
+                or "Short Covering" in reason
+                or "Long Liquidation" in reason
+                or "Contradictory" in reason
+            )
+            if not has_oi_evaluated:
                 signal = strategy.apply_open_interest_confluence(
                     signal=signal,
                     candles=candles,
