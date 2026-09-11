@@ -244,6 +244,36 @@ class MarketService:
 
         return tuple(enriched)
 
+    async def enrich_candles_with_funding_rate(
+        self,
+        *,
+        candles: Sequence[Candle],
+    ) -> Sequence[Candle]:
+        """Enrich the latest candle with current funding rate from ticker.
+
+        Args:
+            candles: Candles ordered from oldest to newest.
+
+        Returns:
+            New sequence with funding_rate on latest candle if available.
+        """
+        if not candles:
+            return candles
+
+        try:
+            ticker = await self.get_ticker(symbol=candles[-1].symbol)
+            if ticker.funding_rate is not None:
+                enriched = list(candles)
+                enriched[-1] = replace(
+                    enriched[-1],
+                    funding_rate=ticker.funding_rate,
+                )
+                return tuple(enriched)
+        except Exception:
+            return candles
+
+        return candles
+
     async def _get_fresh_stored_candles(
         self,
         *,

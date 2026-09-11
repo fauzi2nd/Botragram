@@ -65,6 +65,7 @@ def get_strategy_default_interval(strategy_type: StrategyType) -> Interval:
             StrategyType.EMA_CROSS
             | StrategyType.EMA_RSI
             | StrategyType.ICHIMOKU_CLOUD
+            | StrategyType.MORPH
             | StrategyType.SUPERTREND
             | StrategyType.ADX_TREND
             | StrategyType.BOLLINGER_BREAKOUT
@@ -82,6 +83,8 @@ def get_strategy_default_exit_rates(
     match strategy_type:
         case StrategyType.PINBAR_ENGULFING_EMA_RSI:
             return (Decimal("0.012"), Decimal("0.024"))
+        case StrategyType.MORPH:
+            return (Decimal("0.010"), Decimal("0.020"))
         case StrategyType.QUAD_CONFLUENCE:
             return (Decimal("0.01"), Decimal("0.02"))
         case (

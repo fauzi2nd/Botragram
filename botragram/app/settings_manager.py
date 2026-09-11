@@ -374,6 +374,17 @@ class SettingsManager:
                 raw_value=environment.get_trailing_stop_distance_pct(),
                 setting_name="TRAILING_STOP_DISTANCE_PCT",
             ),
+            enable_early_position_exit=environment.get_enable_early_position_exit(),
+            early_exit_min_confidence=self._parse_non_negative_float(
+                raw_value=environment.get_early_exit_min_confidence(),
+                setting_name="EARLY_EXIT_MIN_CONFIDENCE",
+            ),
+            early_exit_check_candlestick_reversal=(
+                environment.get_early_exit_check_candlestick_reversal()
+            ),
+            early_exit_check_opposite_signal=(
+                environment.get_early_exit_check_opposite_signal()
+            ),
             volatility_sizing_enabled=environment.get_volatility_sizing_enabled(),
             baseline_volatility_pct=self._parse_decimal(
                 raw_value=environment.get_baseline_volatility_pct(),
@@ -460,6 +471,20 @@ class SettingsManager:
             setting_name="MIN_OI_CHANGE_PCT",
         )
         require_oi_confluence = self._environment_provider.get_require_oi_confluence()
+        filter_funding_sentiment = (
+            self._environment_provider.get_filter_funding_sentiment()
+        )
+        max_long_funding_rate = self._parse_decimal(
+            raw_value=self._environment_provider.get_max_long_funding_rate(),
+            setting_name="MAX_LONG_FUNDING_RATE",
+        )
+        min_short_funding_rate = self._parse_decimal(
+            raw_value=self._environment_provider.get_min_short_funding_rate(),
+            setting_name="MIN_SHORT_FUNDING_RATE",
+        )
+        require_funding_sentiment = (
+            self._environment_provider.get_require_funding_sentiment()
+        )
         return StrategySettings(
             strategy_type=(
                 self._parse_enum(
@@ -482,6 +507,10 @@ class SettingsManager:
             use_open_interest=use_open_interest,
             min_oi_change_pct=min_oi_change_pct,
             require_oi_confluence=require_oi_confluence,
+            filter_funding_sentiment=filter_funding_sentiment,
+            max_long_funding_rate=max_long_funding_rate,
+            min_short_funding_rate=min_short_funding_rate,
+            require_funding_sentiment=require_funding_sentiment,
         )
 
     def load_logging_settings(self) -> LoggingSettings:

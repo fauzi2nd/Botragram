@@ -7,6 +7,7 @@ from botragram.strategies.price_action import (
     DailyHybridScalpingStrategy,
     HybridStructureMeanReversionStrategy,
     LiquiditySweepExhaustionStrategy,
+    MorphStrategy,
 )
 from botragram.strategies.scalping import EMAScalpingStrategy
 from botragram.strategies.swing import (
@@ -34,6 +35,7 @@ __all__ = [
     "IchimokuCloudStrategy",
     "LiquiditySweepExhaustionStrategy",
     "MACDSwingStrategy",
+    "MorphStrategy",
     "StrategyFactory",
     "StrategyResolver",
     "SupertrendStrategy",

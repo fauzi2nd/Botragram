@@ -25,6 +25,8 @@ from botragram.indicators.price_action.choch_fvg import (
     ChochFvgResult,
     FvgZone,
     calculate_choch_fvg,
+    detect_fvg_zones,
+    find_swing_levels,
 )
 
 __all__ = [
@@ -33,5 +35,7 @@ __all__ = [
     "FvgZone",
     "calculate_choch_fvg",
     "detect_engulfing",
+    "detect_fvg_zones",
     "detect_pinbar",
+    "find_swing_levels",
 ]

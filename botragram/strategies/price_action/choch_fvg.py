@@ -61,6 +61,10 @@ class ChochFvgStrategy(BaseStrategy):
     intermediate_trend_period: int = 50
     require_trend_filter: bool = True
     min_confidence: Decimal = Decimal("0.75")
+    use_open_interest: bool = True
+    min_oi_change_pct: Decimal = Decimal("0.0")
+    oi_confidence_bonus: Decimal = Decimal("0.05")
+    require_oi_confluence: bool = False
 
     def __post_init__(self) -> None:
         """Validate strategy configuration."""
@@ -93,6 +97,12 @@ class ChochFvgStrategy(BaseStrategy):
 
         if not (_DECIMAL_ZERO <= self.min_confidence <= Decimal("1")):
             raise ValueError("Minimum confidence must be between 0.0 and 1.0")
+
+        if self.min_oi_change_pct < _DECIMAL_ZERO:
+            raise ValueError("Minimum OI change percentage must be non-negative")
+
+        if self.oi_confidence_bonus < _DECIMAL_ZERO:
+            raise ValueError("OI confidence bonus must be non-negative")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -149,7 +159,7 @@ class ChochFvgStrategy(BaseStrategy):
             result.confidence if signal_type is not SignalType.HOLD else _DECIMAL_ZERO
         )
 
-        return Signal(
+        candidate_signal = Signal(
             symbol=latest_candle.symbol,
             signal_type=signal_type,
             price=latest_candle.close_price,
@@ -158,6 +168,17 @@ class ChochFvgStrategy(BaseStrategy):
             generated_at=latest_candle.close_time,
             reason=reason,
         )
+
+        if self.use_open_interest and signal_type is not SignalType.HOLD:
+            return self.apply_open_interest_confluence(
+                signal=candidate_signal,
+                candles=candles,
+                min_change_pct=self.min_oi_change_pct,
+                confidence_bonus=self.oi_confidence_bonus,
+                strict=self.require_oi_confluence,
+            )
+
+        return candidate_signal
 
     def _resolve_signal(
         self,

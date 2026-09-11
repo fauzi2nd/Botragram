@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Market ticker model.
+    Position exit action enumeration.
 
 Python:
     3.14+
@@ -16,32 +16,23 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-from dataclasses import dataclass
-from datetime import datetime
-from decimal import Decimal
+from enum import unique
 
-__all__ = [
-    "Ticker",
-]
+# =============================================================================
+# Local Imports
+# =============================================================================
+from botragram.enums.base import BaseEnum
+
+__all__ = ["PositionExitAction"]
 
 
 # =============================================================================
-# Domain Models
+# Enums
 # =============================================================================
-@dataclass(
-    slots=True,
-    kw_only=True,
-    frozen=True,
-)
-class Ticker:
-    """Immutable market ticker."""
+@unique
+class PositionExitAction(BaseEnum):
+    """Supported position exit actions."""
 
-    symbol: str
-
-    bid_price: Decimal
-    ask_price: Decimal
-    last_price: Decimal
-
-    timestamp: datetime
-
-    funding_rate: Decimal | None = None
+    HOLD = "hold"
+    EARLY_CUT_LOSS = "early_cut_loss"
+    EARLY_TAKE_PROFIT = "early_take_profit"

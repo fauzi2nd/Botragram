@@ -292,10 +292,16 @@ class RiskEngine:
                     self.settings.swing_stop_loss_pct,
                     self.settings.swing_take_profit_pct,
                 )
-            case StrategyType.HIGH_CONFLUENCE_EXHAUSTION:
-                return get_strategy_default_exit_rates(
-                    StrategyType.HIGH_CONFLUENCE_EXHAUSTION
-                )
+            case (
+                StrategyType.HIGH_CONFLUENCE_EXHAUSTION
+                | StrategyType.PINBAR_ENGULFING_EMA_RSI
+                | StrategyType.CHOCH_FVG
+                | StrategyType.LIQUIDITY_SWEEP_EXHAUSTION
+                | StrategyType.CHOCH_RSI_BB_HYBRID
+                | StrategyType.MORPH
+                | StrategyType.QUAD_CONFLUENCE
+            ):
+                return get_strategy_default_exit_rates(strategy_type)
             case _:
                 return self.settings.stop_loss_pct, self.settings.take_profit_pct
 

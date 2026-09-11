@@ -46,6 +46,10 @@ class SignalEngine:
     min_oi_change_pct: Decimal = Decimal("0.0")
     oi_confidence_bonus: Decimal = Decimal("0.05")
     require_oi_confluence: bool = False
+    filter_funding_sentiment: bool = False
+    max_long_funding_rate: Decimal = Decimal("0.0005")
+    min_short_funding_rate: Decimal = Decimal("-0.0005")
+    require_funding_sentiment: bool = True
 
     def generate(
         self,
@@ -106,6 +110,17 @@ class SignalEngine:
                     min_change_pct=self.min_oi_change_pct,
                     confidence_bonus=self.oi_confidence_bonus,
                     strict=self.require_oi_confluence,
+                )
+
+        if self.filter_funding_sentiment and signal.signal_type is not SignalType.HOLD:
+            reason = signal.reason or ""
+            if "[REJECTED_FUNDING_CROWDED]" not in reason and "CROWDED_" not in reason:
+                signal = strategy.apply_funding_sentiment_filter(
+                    signal=signal,
+                    candles=candles,
+                    max_long_funding=self.max_long_funding_rate,
+                    min_short_funding=self.min_short_funding_rate,
+                    strict=self.require_funding_sentiment,
                 )
 
         return signal

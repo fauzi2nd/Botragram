@@ -25,6 +25,8 @@ __all__ = [
     "ChochFvgResult",
     "FvgZone",
     "calculate_choch_fvg",
+    "detect_fvg_zones",
+    "find_swing_levels",
 ]
 
 # =============================================================================
@@ -74,7 +76,7 @@ class ChochFvgResult:
 # =============================================================================
 # Calculation Functions
 # =============================================================================
-def _find_swing_levels(
+def find_swing_levels(
     high_prices: Sequence[Decimal],
     low_prices: Sequence[Decimal],
     swing_window: int,
@@ -101,7 +103,10 @@ def _find_swing_levels(
     return last_high, last_low
 
 
-def _detect_fvg_zones(
+_find_swing_levels = find_swing_levels
+
+
+def detect_fvg_zones(
     high_prices: Sequence[Decimal],
     low_prices: Sequence[Decimal],
     close_prices: Sequence[Decimal],
@@ -161,6 +166,9 @@ def _detect_fvg_zones(
             )
 
     return fvg_zones
+
+
+_detect_fvg_zones = detect_fvg_zones
 
 
 def calculate_choch_fvg(

@@ -949,6 +949,12 @@ def get_strategy_message(
             lines.append("<b>Concept:</b> Smart Money (CHoCH + FVG)")
             lines.append("<b>Swing Window:</b> 5")
             lines.append("<b>Volume Multiplier:</b> 1.2x")
+        case StrategyType.MORPH:
+            lines.append("<b>Concept:</b> Market Orderflow Regime & Price-Hunt (MORPH)")
+            lines.append("<b>Structure:</b> Swing Liquidity Sweep & FVG Retest")
+            lines.append("<b>Trigger:</b> Pinbar / Engulfing Rejection")
+            lines.append("<b>Flow & Volatility:</b> Volume SMA + Open Interest Buildup")
+            lines.append("<b>Filters:</b> Macro Trend (EMA 200/50) + NATR Gate")
         case StrategyType.CHOCH_RSI_BB_HYBRID:
             lines.append("<b>Concept:</b> SMC Structure + RSI/BB Hybrid")
             lines.append("<b>Structure:</b> CHoCH + FVG Context")

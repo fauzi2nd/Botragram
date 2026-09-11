@@ -20,3 +20,5 @@ class ClosedPositionReason(BaseEnum):
     EMERGENCY_CLOSE = "emergency_close"
     RECOVERY_CLOSE = "recovery_close"
     OPERATOR_EXIT = "operator_exit"
+    EARLY_CUT_LOSS = "early_cut_loss"
+    EARLY_TAKE_PROFIT = "early_take_profit"

@@ -26,12 +26,14 @@ from typing import Final
 # =============================================================================
 from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.indicators import (
+    calculate_atr,
     calculate_ema,
     calculate_rsi,
     calculate_sma,
     detect_engulfing,
     detect_pinbar,
 )
+from botragram.indicators.price_action import find_swing_levels
 from botragram.models import Candle, Signal
 from botragram.strategies.base import BaseStrategy
 
@@ -78,6 +80,16 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     min_oi_change_pct: Decimal = _DECIMAL_ZERO
     oi_confidence_bonus: Decimal = _CONFIDENCE_STEP_BONUS
     require_oi_confluence: bool = False
+    require_key_level_location: bool = True
+    swing_lookback: int = 15
+    location_tolerance_pct: Decimal = Decimal("0.030")
+
+    # Structural SL/TP & Volatility/Trend Gates
+    atr_period: int = 14
+    atr_multiplier_sl: Decimal = Decimal("0.5")
+    risk_reward_ratio: Decimal = Decimal("2.0")
+    require_trend_filter: bool = True
+    min_natr_threshold: Decimal = Decimal("0.0020")
 
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
@@ -109,6 +121,16 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             raise ValueError("Minimum OI change percentage must be non-negative")
         if self.oi_confidence_bonus < _DECIMAL_ZERO:
             raise ValueError("OI confidence bonus must be non-negative")
+        if self.swing_lookback <= 2:
+            raise ValueError("Swing lookback must be greater than 2")
+        if self.location_tolerance_pct < _DECIMAL_ZERO:
+            raise ValueError("Location tolerance percentage must not be negative")
+        if self.atr_period <= 2 or self.atr_multiplier_sl <= _DECIMAL_ZERO:
+            raise ValueError("ATR parameters must be positive")
+        if self.risk_reward_ratio <= _DECIMAL_ZERO:
+            raise ValueError("Risk reward ratio must be positive")
+        if self.min_natr_threshold < _DECIMAL_ZERO:
+            raise ValueError("Minimum NATR threshold must not be negative")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -123,6 +145,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             self.pullback_period + 2,
             self.rsi_period + 5,
             self.volume_period + 5,
+            self.atr_period + 5,
+            (self.swing_lookback * 2 + 1) if self.require_key_level_location else 1,
         )
 
     def generate_signal(
@@ -133,6 +157,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         """Generate a trading signal from candlestick price action and indicators."""
         self.validate_candles(candles=candles)
 
+        high_prices = tuple(candle.high_price for candle in candles)
+        low_prices = tuple(candle.low_price for candle in candles)
         close_prices = tuple(candle.close_price for candle in candles)
         volumes = tuple(candle.volume for candle in candles)
 
@@ -140,6 +166,18 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         ema_pullback = calculate_ema(close_prices, period=self.pullback_period)
         rsi_series = calculate_rsi(close_prices, period=self.rsi_period)
         volume_sma = calculate_sma(volumes, period=self.volume_period)
+        atr_series = calculate_atr(
+            high_prices, low_prices, close_prices, period=self.atr_period
+        )
+
+        if self.require_key_level_location:
+            last_swing_high, last_swing_low = find_swing_levels(
+                high_prices=high_prices[:-1],
+                low_prices=low_prices[:-1],
+                swing_window=self.swing_lookback,
+            )
+        else:
+            last_swing_high, last_swing_low = None, None
 
         curr_candle = candles[-1]
         prev_candle = candles[-2]
@@ -149,6 +187,26 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         current_pullback = ema_pullback[-1]
         current_rsi = rsi_series[-1]
         current_vol_sma = volume_sma[-1]
+        current_atr = atr_series[-1]
+
+        # Check NATR Dead Market Volatility Gate
+        if (
+            current_close > _DECIMAL_ZERO
+            and (current_atr / current_close) < self.min_natr_threshold
+        ):
+            return Signal(
+                symbol=curr_candle.symbol,
+                signal_type=SignalType.HOLD,
+                price=curr_candle.close_price,
+                confidence=_DECIMAL_ZERO,
+                strategy_name=self.strategy_type.value,
+                generated_at=curr_candle.close_time,
+                reason=(
+                    "Dead market volatility rejected (NATR="
+                    f"{current_atr / current_close:.4f} < "
+                    f"{self.min_natr_threshold:.4f})"
+                ),
+            )
 
         # Volume threshold
         volume_ok = curr_candle.volume >= (self.volume_multiplier * current_vol_sma)
@@ -169,8 +227,11 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         confidence = _DECIMAL_ZERO
         reason = "No candlestick confluence pattern matched"
 
-        # Check BUY (Long) Setup
-        if current_close > current_trend:
+        # Check BUY (Long) Setup with Dual EMA Alignment
+        uptrend_aligned = current_close > current_trend and (
+            not self.require_trend_filter or current_pullback >= current_trend
+        )
+        if uptrend_aligned:
             pullback_proximity = current_pullback * (
                 _DECIMAL_ONE + _PULLBACK_PROXIMITY_PCT
             )
@@ -180,7 +241,31 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 engulfing.matched and engulfing.side is PositionSide.LONG
             )
 
-            if near_pullback and rsi_in_zone and volume_ok and candle_trigger:
+            # Key level location check: Dynamic EMA Support or Swing Low Support
+            tolerance = current_pullback * self.location_tolerance_pct
+            at_ema_support = (
+                (curr_candle.low_price - tolerance)
+                <= current_pullback
+                <= (curr_candle.high_price + tolerance)
+            )
+            at_swing_support = last_swing_low is not None and (
+                (curr_candle.low_price - tolerance)
+                <= last_swing_low
+                <= (curr_candle.high_price + tolerance)
+            )
+            location_ok = (
+                not self.require_key_level_location
+                or at_ema_support
+                or at_swing_support
+            )
+
+            if (
+                near_pullback
+                and rsi_in_zone
+                and volume_ok
+                and candle_trigger
+                and location_ok
+            ):
                 pattern_label = (
                     "Bullish Pinbar"
                     if pinbar.matched and pinbar.side is PositionSide.LONG
@@ -196,13 +281,27 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     volume=curr_candle.volume,
                     volume_sma=current_vol_sma,
                 )
+                pattern_low = min(curr_candle.low_price, prev_candle.low_price)
+                stop_loss = pattern_low - (self.atr_multiplier_sl * current_atr)
+                risk_dist = current_close - stop_loss
+                if risk_dist <= _DECIMAL_ZERO:
+                    stop_loss = current_close - (self.atr_multiplier_sl * current_atr)
+                    risk_dist = self.atr_multiplier_sl * current_atr
+                take_profit = current_close + (risk_dist * self.risk_reward_ratio)
+
                 reason = (
-                    f"{pattern_label} bounce at EMA{self.pullback_period} "
-                    f"in EMA{self.trend_period} uptrend (RSI={current_rsi:.1f})"
+                    f"{pattern_label} bounce at key location "
+                    f"(EMA{self.pullback_period} or Swing Low) "
+                    f"in EMA{self.trend_period} uptrend "
+                    f"(RSI={current_rsi:.1f}) | "
+                    f"SL: {stop_loss:.5f} | TP: {take_profit:.5f}"
                 )
 
-        # Check SELL (Short) Setup
-        elif current_close < current_trend:
+        # Check SELL (Short) Setup with Dual EMA Alignment
+        downtrend_aligned = current_close < current_trend and (
+            not self.require_trend_filter or current_pullback <= current_trend
+        )
+        if signal_type is SignalType.HOLD and downtrend_aligned:
             pullback_proximity = current_pullback * (
                 _DECIMAL_ONE - _PULLBACK_PROXIMITY_PCT
             )
@@ -212,7 +311,31 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 engulfing.matched and engulfing.side is PositionSide.SHORT
             )
 
-            if near_pullback and rsi_in_zone and volume_ok and candle_trigger:
+            # Key level location check: Dynamic EMA Resistance or Swing High Resistance
+            tolerance = current_pullback * self.location_tolerance_pct
+            at_ema_resistance = (
+                (curr_candle.low_price - tolerance)
+                <= current_pullback
+                <= (curr_candle.high_price + tolerance)
+            )
+            at_swing_resistance = last_swing_high is not None and (
+                (curr_candle.low_price - tolerance)
+                <= last_swing_high
+                <= (curr_candle.high_price + tolerance)
+            )
+            location_ok = (
+                not self.require_key_level_location
+                or at_ema_resistance
+                or at_swing_resistance
+            )
+
+            if (
+                near_pullback
+                and rsi_in_zone
+                and volume_ok
+                and candle_trigger
+                and location_ok
+            ):
                 pattern_label = (
                     "Bearish Pinbar"
                     if pinbar.matched and pinbar.side is PositionSide.SHORT
@@ -228,9 +351,20 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     volume=curr_candle.volume,
                     volume_sma=current_vol_sma,
                 )
+                pattern_high = max(curr_candle.high_price, prev_candle.high_price)
+                stop_loss = pattern_high + (self.atr_multiplier_sl * current_atr)
+                risk_dist = stop_loss - current_close
+                if risk_dist <= _DECIMAL_ZERO:
+                    stop_loss = current_close + (self.atr_multiplier_sl * current_atr)
+                    risk_dist = self.atr_multiplier_sl * current_atr
+                take_profit = current_close - (risk_dist * self.risk_reward_ratio)
+
                 reason = (
-                    f"{pattern_label} rejection at EMA{self.pullback_period} "
-                    f"in EMA{self.trend_period} downtrend (RSI={current_rsi:.1f})"
+                    f"{pattern_label} rejection at key location "
+                    f"(EMA{self.pullback_period} or Swing High) "
+                    f"in EMA{self.trend_period} downtrend "
+                    f"(RSI={current_rsi:.1f}) | "
+                    f"SL: {stop_loss:.5f} | TP: {take_profit:.5f}"
                 )
 
         signal = Signal(

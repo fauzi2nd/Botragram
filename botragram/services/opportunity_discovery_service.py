@@ -90,6 +90,19 @@ class OpenInterestCandleEnricher(Protocol):
         ...
 
 
+@runtime_checkable
+class FundingRateCandleEnricher(Protocol):
+    """Optionally enrich candlestick sequences with Funding Rate."""
+
+    async def enrich_candles_with_funding_rate(
+        self,
+        *,
+        candles: Sequence[Candle],
+    ) -> Sequence[Candle]:
+        """Enrich a sequence of candles with Funding Rate if available."""
+        ...
+
+
 class DiscoveryStrategyProvider(Protocol):
     """Generate and persist strategy signals for discovery."""
 
@@ -354,14 +367,18 @@ class OpportunityDiscoveryService:
                         continue
 
             eval_candles: Sequence[Candle] = closed_candles
+            market_service = self.market_service
             if self.use_open_interest and isinstance(
-                self.market_service, OpenInterestCandleEnricher
+                market_service, OpenInterestCandleEnricher
             ):
-                eval_candles = (
-                    await self.market_service.enrich_candles_with_open_interest(
-                        candles=closed_candles,
-                        interval=interval,
-                    )
+                eval_candles = await market_service.enrich_candles_with_open_interest(
+                    candles=closed_candles,
+                    interval=interval,
+                )
+
+            if isinstance(market_service, FundingRateCandleEnricher):
+                eval_candles = await market_service.enrich_candles_with_funding_rate(
+                    candles=eval_candles,
                 )
 
             try:

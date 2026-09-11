@@ -248,6 +248,19 @@ class _GlobalDiscoveryCycleReportingExecutor(Protocol):
         ...
 
 
+class _AutonomousLivePositionExitProvider(Protocol):
+    """Evaluate in-flight positions upon candle close for early exit."""
+
+    async def evaluate_active_positions(
+        self,
+        *,
+        interval: Interval,
+        candle_limit: int = ...,
+    ) -> Sequence[object]:
+        """Evaluate active open positions for early exit."""
+        ...
+
+
 class SingleSymbolExecutionProvider(Protocol):
     """Execute the existing single-symbol trading workflow."""
 
@@ -680,6 +693,7 @@ class AutonomousLiveTradingCycleExecutor:
     strategy_type: StrategyType
     live_runtime_portfolio_reconciler: _LiveRuntimePortfolioReconciler
     discovery_rate_limit_governor: _DiscoveryRateLimitGovernor | None = None
+    position_exit_service: _AutonomousLivePositionExitProvider | None = None
 
     def __post_init__(self) -> None:
         """Validate the static network-scoped discovery composition."""
@@ -723,6 +737,17 @@ class AutonomousLiveTradingCycleExecutor:
             raise AutonomousLiveCycleUnsafeError(
                 "Autonomous LIVE portfolio reconciliation failed before discovery"
             )
+
+        if self.position_exit_service is not None and portfolio.contexts:
+            exit_decisions = await self.position_exit_service.evaluate_active_positions(
+                interval=interval,
+                candle_limit=candle_limit,
+            )
+            if any(getattr(d, "should_exit", False) for d in exit_decisions):
+                reconciled = await self._reconcile_live_runtime_portfolio()
+                if reconciled is not None:
+                    portfolio = reconciled
+
         if self._portfolio_is_full(portfolio=portfolio):
             return GlobalDiscoveryCycleReport(skipped_capacity=True)
         if self._optional_entry_is_rate_limited():

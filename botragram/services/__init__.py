@@ -83,6 +83,7 @@ from botragram.services.paper_trading_service import (
     PaperPortfolioSnapshot,
     PaperTradingService,
 )
+from botragram.services.position_exit_service import PositionExitService
 from botragram.services.position_protection_manager import PositionProtectionManager
 from botragram.services.position_service import PositionService
 from botragram.services.runtime_recovery_service import RuntimeRecoveryService
@@ -141,6 +142,7 @@ __all__ = [
     "PaperPortfolioSnapshot",
     "PaperTradingService",
     "PositionService",
+    "PositionExitService",
     "PositionProtectionManager",
     "RuntimeReporter",
     "RuntimeRecoveryService",

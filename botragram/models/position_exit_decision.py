@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Market ticker model.
+    Position exit evaluation and decision domain models.
 
 Python:
     3.14+
@@ -17,11 +17,15 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 
+# =============================================================================
+# Local Imports
+# =============================================================================
+from botragram.enums import PositionExitAction
+
 __all__ = [
-    "Ticker",
+    "PositionExitDecision",
 ]
 
 
@@ -33,15 +37,18 @@ __all__ = [
     kw_only=True,
     frozen=True,
 )
-class Ticker:
-    """Immutable market ticker."""
+class PositionExitDecision:
+    """Immutable decision for in-flight position exit monitoring."""
 
+    action: PositionExitAction
     symbol: str
+    reason: str
+    confidence: float = 0.0
+    trigger_price: Decimal | None = None
+    current_price: Decimal | None = None
+    unrealized_pnl: Decimal | None = None
 
-    bid_price: Decimal
-    ask_price: Decimal
-    last_price: Decimal
-
-    timestamp: datetime
-
-    funding_rate: Decimal | None = None
+    @property
+    def should_exit(self) -> bool:
+        """Return True when an early exit action is decided."""
+        return self.action is not PositionExitAction.HOLD

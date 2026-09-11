@@ -54,6 +54,10 @@ class StrategySettings:
     use_open_interest: bool = False
     min_oi_change_pct: Decimal = Decimal("0.0")
     require_oi_confluence: bool = False
+    filter_funding_sentiment: bool = True
+    max_long_funding_rate: Decimal = Decimal("0.0005")
+    min_short_funding_rate: Decimal = Decimal("-0.0005")
+    require_funding_sentiment: bool = True
 
     @property
     def default_interval(self) -> Interval:
@@ -135,6 +139,10 @@ class StrategySettings:
     choch_trend_period: int = 200
     choch_intermediate_trend_period: int = 50
     choch_min_confidence: Decimal = Decimal("0.75")
+    choch_use_open_interest: bool = True
+    choch_min_oi_change_pct: Decimal = Decimal("0.0")
+    choch_oi_confidence_bonus: Decimal = Decimal("0.05")
+    choch_require_oi_confluence: bool = False
 
     # =========================================================================
     # High Confluence Exhaustion
@@ -179,9 +187,9 @@ class StrategySettings:
     crbb_short_bias_multiplier: Decimal = Decimal("1.06")
 
     # =========================================================================
-    # Liquidity Sweep Exhaustion (LSE Price Action Scalping)
+    # Liquidity Sweep + Exhaustion (LSE)
     # =========================================================================
-    lse_swing_lookback: int = 15
+    lse_swing_lookback: int = 10
     lse_min_wick_ratio: Decimal = Decimal("0.50")
     lse_volume_period: int = 20
     lse_volume_multiplier: Decimal = Decimal("1.30")
@@ -200,6 +208,10 @@ class StrategySettings:
     lse_cooldown_bars: int = 2
     lse_max_hold_bars: int = 24
     lse_short_bias_multiplier: Decimal = Decimal("1.06")
+    lse_use_open_interest: bool = True
+    lse_min_oi_change_pct: Decimal = Decimal("0.0")
+    lse_oi_confidence_bonus: Decimal = Decimal("0.05")
+    lse_require_oi_confluence: bool = False
 
     # =========================================================================
     # Quad-Confluence (Stoch RSI + Bollinger Bands + Parabolic SAR + MACD)
@@ -219,7 +231,7 @@ class StrategySettings:
     quad_macd_signal_period: int = 9
 
     # =========================================================================
-    # Pinbar + Engulfing EMA-RSI Pullback (PIER)
+    # Pinbar + Engulfing Candlestick EMA-RSI Pullback (PIER)
     # =========================================================================
     pier_trend_period: int = 200
     pier_pullback_period: int = 21
@@ -237,10 +249,40 @@ class StrategySettings:
     pier_atr_sl_multiplier: Decimal = Decimal("0.5")
     pier_risk_reward_ratio: Decimal = Decimal("2.0")
     pier_min_confidence: Decimal = Decimal("0.65")
-    pier_use_open_interest: bool = False
+    pier_use_open_interest: bool = True
     pier_min_oi_change_pct: Decimal = Decimal("0.0")
     pier_oi_confidence_bonus: Decimal = Decimal("0.05")
     pier_require_oi_confluence: bool = False
+    pier_require_key_level_location: bool = True
+    pier_swing_lookback: int = 15
+    pier_require_trend_filter: bool = True
+    pier_min_natr_threshold: Decimal = Decimal("0.0020")
+
+    # =========================================================================
+    # Market Orderflow Regime & Price-Hunt (MORPH)
+    # =========================================================================
+    morph_swing_lookback: int = 15
+    morph_fvg_lookback: int = 20
+    morph_min_wick_ratio: Decimal = Decimal("0.50")
+    morph_volume_period: int = 20
+    morph_volume_multiplier: Decimal = Decimal("1.15")
+    morph_atr_period: int = 14
+    morph_atr_multiplier_sl: Decimal = Decimal("0.8")
+    morph_risk_reward_ratio: Decimal = Decimal("2.0")
+    morph_min_confidence: Decimal = Decimal("0.65")
+    morph_trend_period: int = 200
+    morph_intermediate_trend_period: int = 50
+    morph_require_trend_filter: bool = True
+    morph_min_natr_threshold: Decimal = Decimal("0.0020")
+    morph_use_fvg: bool = True
+    morph_use_open_interest: bool = True
+    morph_min_oi_change_pct: Decimal = Decimal("0.0")
+    morph_oi_confidence_bonus: Decimal = Decimal("0.05")
+    morph_require_oi_confluence: bool = False
+    morph_filter_funding_sentiment: bool = True
+    morph_max_long_funding_rate: Decimal = Decimal("0.0005")
+    morph_min_short_funding_rate: Decimal = Decimal("-0.0005")
+    morph_require_funding_sentiment: bool = True
 
     def __post_init__(self) -> None:
         """Validate bounded strategy settings."""
@@ -468,3 +510,29 @@ class StrategySettings:
             raise ValueError("PIER minimum OI change percentage must be non-negative")
         if self.pier_oi_confidence_bonus < Decimal("0.0"):
             raise ValueError("PIER OI confidence bonus must be non-negative")
+        if self.pier_min_natr_threshold < Decimal("0"):
+            raise ValueError("pier_min_natr_threshold must not be negative")
+        if self.morph_swing_lookback <= 2 or self.morph_fvg_lookback <= 2:
+            raise ValueError("MORPH swing and FVG lookback must be greater than 2")
+        if self.morph_volume_period <= 2 or self.morph_volume_multiplier <= Decimal(
+            "0"
+        ):
+            raise ValueError("MORPH volume parameters must be positive")
+        if self.morph_atr_period <= 2 or self.morph_atr_multiplier_sl <= Decimal("0"):
+            raise ValueError("MORPH ATR parameters must be positive")
+        if self.morph_trend_period <= 0 or self.morph_intermediate_trend_period <= 0:
+            raise ValueError("MORPH trend periods must be positive")
+        if self.morph_intermediate_trend_period >= self.morph_trend_period:
+            raise ValueError(
+                "morph_intermediate_trend_period must be less than morph_trend_period"
+            )
+        if self.morph_min_natr_threshold < Decimal("0"):
+            raise ValueError("morph_min_natr_threshold must not be negative")
+        if self.min_short_funding_rate > self.max_long_funding_rate:
+            raise ValueError(
+                "min_short_funding_rate cannot exceed max_long_funding_rate"
+            )
+        if self.morph_min_short_funding_rate > self.morph_max_long_funding_rate:
+            raise ValueError(
+                "morph_min_short_funding_rate cannot exceed morph_max_long_funding_rate"
+            )

@@ -61,13 +61,18 @@ from botragram.constants.env import (
     ENV_DISCOVERY_MAX_UNIVERSE_SYMBOLS,
     ENV_DISCOVERY_MIN_QUOTE_VOLUME_USDT,
     ENV_DISCOVERY_UNIVERSE_LIMIT,
+    ENV_EARLY_EXIT_CHECK_CANDLESTICK_REVERSAL,
+    ENV_EARLY_EXIT_CHECK_OPPOSITE_SIGNAL,
+    ENV_EARLY_EXIT_MIN_CONFIDENCE,
     ENV_EMA_CROSS_STOP_LOSS_PCT,
     ENV_EMA_CROSS_TAKE_PROFIT_PCT,
     ENV_EMA_SCALPING_STOP_LOSS_PCT,
     ENV_EMA_SCALPING_TAKE_PROFIT_PCT,
+    ENV_ENABLE_EARLY_POSITION_EXIT,
     ENV_EXCHANGE_API_KEY_LEGACY,
     ENV_EXCHANGE_API_SECRET_LEGACY,
     ENV_EXECUTION_POLICY,
+    ENV_FILTER_FUNDING_SENTIMENT,
     ENV_GEMINI_API_KEY,
     ENV_INVERT_SIGNALS,
     ENV_LEVERAGE,
@@ -76,10 +81,12 @@ from botragram.constants.env import (
     ENV_MARKET_INTERVAL,
     ENV_MAX_DRAWDOWN_PCT,
     ENV_MAX_EXECUTABLE_QUOTE_AGE_MS,
+    ENV_MAX_LONG_FUNDING_RATE,
     ENV_MAX_OPEN_POSITIONS,
     ENV_MAX_POSITION_SIZE_USDT,
     ENV_MAX_SPREAD_BPS,
     ENV_MIN_OI_CHANGE_PCT,
+    ENV_MIN_SHORT_FUNDING_RATE,
     ENV_MIN_SIGNAL_CONFIDENCE,
     ENV_MTF_CONFIRMATION_ENABLED,
     ENV_MTF_EMA_PERIOD,
@@ -93,6 +100,7 @@ from botragram.constants.env import (
     ENV_PARTIAL_TP_ENABLED,
     ENV_PARTIAL_TP_RATIO,
     ENV_PARTIAL_TP_TRIGGER_PROGRESS,
+    ENV_REQUIRE_FUNDING_SENTIMENT,
     ENV_REQUIRE_OI_CONFLUENCE,
     ENV_RISK_PER_TRADE_PCT,
     ENV_SCALPING_STOP_LOSS_PCT,
@@ -525,6 +533,22 @@ class EnvironmentProvider:
         """Return whether strict Open Interest confluence is required."""
         return self._get_bool(ENV_REQUIRE_OI_CONFLUENCE, default=False)
 
+    def get_filter_funding_sentiment(self) -> bool:
+        """Return whether Funding Rate crowding sentiment filter is enabled."""
+        return self._get_bool(ENV_FILTER_FUNDING_SENTIMENT, default=True)
+
+    def get_max_long_funding_rate(self) -> str:
+        """Return the maximum funding rate allowed for BUY signals."""
+        return self._get_var(ENV_MAX_LONG_FUNDING_RATE, default="0.0005")
+
+    def get_min_short_funding_rate(self) -> str:
+        """Return the minimum funding rate allowed for SELL signals."""
+        return self._get_var(ENV_MIN_SHORT_FUNDING_RATE, default="-0.0005")
+
+    def get_require_funding_sentiment(self) -> bool:
+        """Return whether crowded funding rate strictly forces HOLD."""
+        return self._get_bool(ENV_REQUIRE_FUNDING_SENTIMENT, default=True)
+
     def get_partial_tp_enabled(self) -> bool:
         """Return whether partial take profit is enabled."""
         return self._get_bool(ENV_PARTIAL_TP_ENABLED, default=False)
@@ -548,6 +572,22 @@ class EnvironmentProvider:
     def get_trailing_stop_distance_pct(self) -> str:
         """Return the trailing stop trailing distance percentage."""
         return self._get_var(ENV_TRAILING_STOP_DISTANCE_PCT, default="0.008")
+
+    def get_enable_early_position_exit(self) -> bool:
+        """Return whether early in-flight position exit monitoring is enabled."""
+        return self._get_bool(ENV_ENABLE_EARLY_POSITION_EXIT, default=False)
+
+    def get_early_exit_min_confidence(self) -> str:
+        """Return the minimum confidence threshold for early position exit."""
+        return self._get_var(ENV_EARLY_EXIT_MIN_CONFIDENCE, default="0.75")
+
+    def get_early_exit_check_candlestick_reversal(self) -> bool:
+        """Return whether candlestick reversal patterns trigger early exit."""
+        return self._get_bool(ENV_EARLY_EXIT_CHECK_CANDLESTICK_REVERSAL, default=True)
+
+    def get_early_exit_check_opposite_signal(self) -> bool:
+        """Return whether confirmed opposite signals trigger early exit."""
+        return self._get_bool(ENV_EARLY_EXIT_CHECK_OPPOSITE_SIGNAL, default=True)
 
     def get_volatility_sizing_enabled(self) -> bool:
         """Return whether volatility-adjusted sizing is enabled."""

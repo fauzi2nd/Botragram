@@ -103,6 +103,12 @@ class LiquiditySweepExhaustionStrategy(BaseStrategy):
     max_hold_bars: int = 24
     short_bias_multiplier: Decimal = Decimal("1.06")
 
+    # Open Interest Integration
+    use_open_interest: bool = True
+    min_oi_change_pct: Decimal = Decimal("0.0")
+    oi_confidence_bonus: Decimal = Decimal("0.05")
+    require_oi_confluence: bool = False
+
     def __post_init__(self) -> None:
         """Validate strategy configuration parameters."""
         if self.swing_lookback <= 0:
@@ -138,6 +144,10 @@ class LiquiditySweepExhaustionStrategy(BaseStrategy):
             raise ValueError("Cooldown bars must not be negative")
         if self.max_hold_bars <= 0:
             raise ValueError("Maximum hold bars must be positive")
+        if self.min_oi_change_pct < _DECIMAL_ZERO:
+            raise ValueError("Minimum OI change percentage must be non-negative")
+        if self.oi_confidence_bonus < _DECIMAL_ZERO:
+            raise ValueError("OI confidence bonus must be non-negative")
         if self.short_bias_multiplier < _DECIMAL_ONE:
             raise ValueError("Short bias multiplier must be at least 1.0")
 
@@ -267,7 +277,7 @@ class LiquiditySweepExhaustionStrategy(BaseStrategy):
                 confidence=confidence,
             )
 
-        return Signal(
+        candidate_signal = Signal(
             symbol=latest_candle.symbol,
             signal_type=signal_type,
             price=latest_candle.close_price,
@@ -276,6 +286,17 @@ class LiquiditySweepExhaustionStrategy(BaseStrategy):
             generated_at=latest_candle.close_time,
             reason=reason,
         )
+
+        if self.use_open_interest:
+            return self.apply_open_interest_confluence(
+                signal=candidate_signal,
+                candles=candles,
+                min_change_pct=self.min_oi_change_pct,
+                confidence_bonus=self.oi_confidence_bonus,
+                strict=self.require_oi_confluence,
+            )
+
+        return candidate_signal
 
     def _evaluate_setup(
         self,

@@ -163,3 +163,72 @@ class BaseStrategy(ABC):
             )
 
         return signal
+
+    def apply_funding_sentiment_filter(
+        self,
+        *,
+        signal: Signal,
+        candles: Sequence[Candle],
+        max_long_funding: Decimal = Decimal("0.0005"),
+        min_short_funding: Decimal = Decimal("-0.0005"),
+        strict: bool = True,
+    ) -> Signal:
+        """Apply Funding Rate crowding sentiment filter to a generated signal.
+
+        Args:
+            signal: Generated candidate signal.
+            candles: Candle sequence containing latest funding rate.
+            max_long_funding: Maximum funding rate allowed for BUY signals
+                (default +0.05% / +0.0005 per 8h, excessive long crowding).
+            min_short_funding: Minimum funding rate allowed for SELL signals
+                (default -0.05% / -0.0005 per 8h, excessive short crowding).
+            strict: If True, transforms signal into HOLD. If False, reduces confidence.
+
+        Returns:
+            Filtered or confidence-adjusted Signal.
+        """
+        if signal.signal_type is SignalType.HOLD or not candles:
+            return signal
+
+        latest_candle = candles[-1]
+        funding_rate = latest_candle.funding_rate
+        if funding_rate is None:
+            return signal
+
+        if signal.signal_type is SignalType.BUY and funding_rate > max_long_funding:
+            if strict:
+                return replace(
+                    signal,
+                    signal_type=SignalType.HOLD,
+                    confidence=Decimal("0.0"),
+                    reason=(
+                        f"[REJECTED_FUNDING_CROWDED] Excessive long funding "
+                        f"({funding_rate:.4%}>{max_long_funding:.4%}) "
+                        f"(originally {signal.signal_type.value})"
+                    ),
+                )
+            return replace(
+                signal,
+                confidence=max(Decimal("0.10"), signal.confidence - Decimal("0.15")),
+                reason=f"{signal.reason} [CROWDED_LONG: funding {funding_rate:.4%}]",
+            )
+
+        if signal.signal_type is SignalType.SELL and funding_rate < min_short_funding:
+            if strict:
+                return replace(
+                    signal,
+                    signal_type=SignalType.HOLD,
+                    confidence=Decimal("0.0"),
+                    reason=(
+                        f"[REJECTED_FUNDING_CROWDED] Excessive short funding "
+                        f"({funding_rate:.4%}<{min_short_funding:.4%}) "
+                        f"(originally {signal.signal_type.value})"
+                    ),
+                )
+            return replace(
+                signal,
+                confidence=max(Decimal("0.10"), signal.confidence - Decimal("0.15")),
+                reason=f"{signal.reason} [CROWDED_SHORT: funding {funding_rate:.4%}]",
+            )
+
+        return signal

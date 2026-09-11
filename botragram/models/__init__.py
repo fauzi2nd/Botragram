@@ -83,6 +83,7 @@ from botragram.models.operator_exit import (
 )
 from botragram.models.order import Order
 from botragram.models.position import Position
+from botragram.models.position_exit_decision import PositionExitDecision
 from botragram.models.risk import (
     PositionSize,
     RiskMetrics,
@@ -144,6 +145,7 @@ __all__ = [
     "OperatorExitOperation",
     "OperatorExitSnapshot",
     "Position",
+    "PositionExitDecision",
     "PositionSize",
     "RiskMetrics",
     "RiskResult",

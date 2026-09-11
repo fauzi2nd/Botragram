@@ -253,3 +253,75 @@ def test_hold_when_pattern_is_counter_trend() -> None:
 
     assert signal.signal_type is SignalType.HOLD
     assert signal.confidence == Decimal("0")
+
+
+def test_hold_when_pattern_floats_mid_range() -> None:
+    """Reject setup when candlestick pattern floats far from key levels."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        require_key_level_location=True,
+        location_tolerance_pct=Decimal("0.01"),  # Tight 1% tolerance
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(54):
+        price = base + Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    # Trigger candle that is far above EMA10 (floating mid-air in range gap)
+    last_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=54,
+            open_price=last_close + Decimal("15.0"),
+            high_price=last_close + Decimal("16.0"),
+            low_price=last_close + Decimal("8.0"),  # Low is 8 points above EMA
+            close_price=last_close + Decimal("15.5"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.confidence == Decimal("0")
+
+
+def test_hold_when_natr_below_threshold() -> None:
+    """Reject setup when volatility NATR is below minimum threshold."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        min_natr_threshold=Decimal("0.05"),  # high threshold to force rejection
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(60):
+        price = base + Decimal(str(i * 0.1))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("0.05"),
+                low_price=price - Decimal("0.05"),
+                close_price=price,
+                volume=Decimal("100.0"),
+            )
+        )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+    assert "Dead market volatility rejected" in (signal.reason or "")

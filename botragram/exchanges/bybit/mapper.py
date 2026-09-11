@@ -187,6 +187,12 @@ class BybitExchangeMapper(BaseExchangeMapper):
             ask_price = last_price
 
         timestamp = self._to_datetime(payload.get("time"))
+        raw_funding = payload.get("fundingRate")
+        funding_rate = (
+            self._to_decimal(raw_funding)
+            if raw_funding is not None and raw_funding != ""
+            else None
+        )
 
         return Ticker(
             symbol=symbol,
@@ -194,6 +200,7 @@ class BybitExchangeMapper(BaseExchangeMapper):
             ask_price=ask_price,
             last_price=last_price,
             timestamp=timestamp,
+            funding_rate=funding_rate,
         )
 
     def map_stream_ticker(self, payload: ExchangePayload) -> Ticker:
@@ -213,6 +220,12 @@ class BybitExchangeMapper(BaseExchangeMapper):
             ask_price = last_price
 
         timestamp = self._to_datetime(payload.get("time"))
+        raw_funding = payload.get("fundingRate")
+        funding_rate = (
+            self._to_decimal(raw_funding)
+            if raw_funding is not None and raw_funding != ""
+            else None
+        )
 
         return Ticker(
             symbol=symbol,
@@ -220,6 +233,7 @@ class BybitExchangeMapper(BaseExchangeMapper):
             ask_price=ask_price,
             last_price=last_price,
             timestamp=timestamp,
+            funding_rate=funding_rate,
         )
 
     def map_candle(

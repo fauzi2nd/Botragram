@@ -74,6 +74,12 @@ class RiskSettings:
     trailing_stop_trigger_pct: Decimal = Decimal("0.015")
     trailing_stop_distance_pct: Decimal = Decimal("0.008")
 
+    # Early In-Flight Position Exit
+    enable_early_position_exit: bool = False
+    early_exit_min_confidence: float = 0.75
+    early_exit_check_candlestick_reversal: bool = True
+    early_exit_check_opposite_signal: bool = True
+
     # Volatility Sizing
     volatility_sizing_enabled: bool = False
     baseline_volatility_pct: Decimal = Decimal("0.02")
@@ -179,3 +185,8 @@ class RiskSettings:
                 raise ValueError(
                     "Baseline volatility percentage must be strictly between 0 and 1"
                 )
+
+        if not (0.0 <= self.early_exit_min_confidence <= 1.0):
+            raise ValueError(
+                "Early exit minimum confidence must be between 0.0 and 1.0"
+            )

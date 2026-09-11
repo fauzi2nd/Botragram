@@ -33,6 +33,7 @@ from botragram.strategies.price_action import (
     ChochRsiBbHybridStrategy,
     HighConfluenceExhaustionStrategy,
     LiquiditySweepExhaustionStrategy,
+    MorphStrategy,
     PinbarEngulfingEmaRsiStrategy,
 )
 from botragram.strategies.scalping import (
@@ -150,6 +151,16 @@ class StrategyFactory:
                     trend_period=settings.choch_trend_period,
                     intermediate_trend_period=settings.choch_intermediate_trend_period,
                     min_confidence=settings.choch_min_confidence,
+                    use_open_interest=settings.choch_use_open_interest
+                    or settings.use_open_interest,
+                    min_oi_change_pct=(
+                        settings.choch_min_oi_change_pct
+                        if settings.choch_min_oi_change_pct > Decimal("0")
+                        else settings.min_oi_change_pct
+                    ),
+                    oi_confidence_bonus=settings.choch_oi_confidence_bonus,
+                    require_oi_confluence=settings.choch_require_oi_confluence
+                    or settings.require_oi_confluence,
                 )
 
             case StrategyType.CHOCH_RSI_BB_HYBRID:
@@ -246,6 +257,16 @@ class StrategyFactory:
                     cooldown_bars=settings.lse_cooldown_bars,
                     max_hold_bars=settings.lse_max_hold_bars,
                     short_bias_multiplier=settings.lse_short_bias_multiplier,
+                    use_open_interest=settings.lse_use_open_interest
+                    or settings.use_open_interest,
+                    min_oi_change_pct=(
+                        settings.lse_min_oi_change_pct
+                        if settings.lse_min_oi_change_pct > Decimal("0")
+                        else settings.min_oi_change_pct
+                    ),
+                    oi_confidence_bonus=settings.lse_oi_confidence_bonus,
+                    require_oi_confluence=settings.lse_require_oi_confluence
+                    or settings.require_oi_confluence,
                 )
 
             case StrategyType.MACD_SWING:
@@ -253,6 +274,44 @@ class StrategyFactory:
                     fast_period=settings.macd_fast_period,
                     slow_period=settings.macd_slow_period,
                     signal_period=settings.macd_signal_period,
+                )
+
+            case StrategyType.MORPH:
+                return MorphStrategy(
+                    swing_lookback=settings.morph_swing_lookback,
+                    fvg_lookback=settings.morph_fvg_lookback,
+                    use_fvg=settings.morph_use_fvg,
+                    min_wick_ratio=settings.morph_min_wick_ratio,
+                    volume_period=settings.morph_volume_period,
+                    volume_multiplier=settings.morph_volume_multiplier,
+                    atr_period=settings.morph_atr_period,
+                    atr_multiplier_sl=settings.morph_atr_multiplier_sl,
+                    risk_reward_ratio=settings.morph_risk_reward_ratio,
+                    min_confidence=settings.morph_min_confidence,
+                    trend_period=settings.morph_trend_period,
+                    intermediate_trend_period=settings.morph_intermediate_trend_period,
+                    require_trend_filter=settings.morph_require_trend_filter,
+                    min_natr_threshold=settings.morph_min_natr_threshold,
+                    use_open_interest=settings.morph_use_open_interest
+                    or settings.use_open_interest,
+                    min_oi_change_pct=(
+                        settings.morph_min_oi_change_pct
+                        if settings.morph_min_oi_change_pct > Decimal("0")
+                        else settings.min_oi_change_pct
+                    ),
+                    oi_confidence_bonus=settings.morph_oi_confidence_bonus,
+                    require_oi_confluence=settings.morph_require_oi_confluence
+                    or settings.require_oi_confluence,
+                    filter_funding_sentiment=(
+                        settings.morph_filter_funding_sentiment
+                        and settings.filter_funding_sentiment
+                    ),
+                    max_long_funding_rate=settings.morph_max_long_funding_rate,
+                    min_short_funding_rate=settings.morph_min_short_funding_rate,
+                    require_funding_sentiment=(
+                        settings.morph_require_funding_sentiment
+                        and settings.require_funding_sentiment
+                    ),
                 )
 
             case StrategyType.PINBAR_ENGULFING_EMA_RSI:
@@ -280,6 +339,13 @@ class StrategyFactory:
                     oi_confidence_bonus=settings.pier_oi_confidence_bonus,
                     require_oi_confluence=settings.pier_require_oi_confluence
                     or settings.require_oi_confluence,
+                    require_key_level_location=settings.pier_require_key_level_location,
+                    swing_lookback=settings.pier_swing_lookback,
+                    atr_period=settings.pier_atr_period,
+                    atr_multiplier_sl=settings.pier_atr_sl_multiplier,
+                    risk_reward_ratio=settings.pier_risk_reward_ratio,
+                    require_trend_filter=settings.pier_require_trend_filter,
+                    min_natr_threshold=settings.pier_min_natr_threshold,
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

@@ -62,6 +62,7 @@ from botragram.engine import (
     PnLEngine,
     PortfolioEngine,
     PositionEngine,
+    PositionExitEngine,
     RiskEngine,
     SignalEngine,
     TradingEngine,
@@ -134,6 +135,7 @@ from botragram.services import (
     OpportunityDiscoveryService,
     OrderService,
     PaperTradingService,
+    PositionExitService,
     PositionProtectionManager,
     PositionService,
     RuntimeRecoveryService,
@@ -228,6 +230,8 @@ class DependencyProvider:
         "_pnl_engine",
         "_portfolio_engine",
         "_position_engine",
+        "_position_exit_engine",
+        "_position_exit_service",
         "_position_repository",
         "_position_service",
         "_restart_coordinator",
@@ -401,6 +405,8 @@ class DependencyProvider:
         )
         self._market_type_switch_service: MarketTypeSwitchService | None = None
         self._operator_exit_service: OperatorExitService | None = None
+        self._position_exit_engine: PositionExitEngine | None = None
+        self._position_exit_service: PositionExitService | None = None
         self._initialized = False
 
     @property
@@ -928,6 +934,14 @@ class DependencyProvider:
         return self._require(self._position_engine)
 
     @property
+    def position_exit_engine(self) -> PositionExitEngine:
+        return self._require(self._position_exit_engine)
+
+    @property
+    def position_exit_service(self) -> PositionExitService:
+        return self._require(self._position_exit_service)
+
+    @property
     def market_service(self) -> MarketService:
         return self._require(self._market_service)
 
@@ -1194,6 +1208,12 @@ class DependencyProvider:
             use_open_interest=self._settings.strategy.use_open_interest,
             min_oi_change_pct=self._settings.strategy.min_oi_change_pct,
             require_oi_confluence=self._settings.strategy.require_oi_confluence,
+            filter_funding_sentiment=(self._settings.strategy.filter_funding_sentiment),
+            max_long_funding_rate=self._settings.strategy.max_long_funding_rate,
+            min_short_funding_rate=(self._settings.strategy.min_short_funding_rate),
+            require_funding_sentiment=(
+                self._settings.strategy.require_funding_sentiment
+            ),
         )
         self._risk_engine = RiskEngine(settings=self._settings.risk)
         self._pnl_engine = PnLEngine()
@@ -1205,6 +1225,16 @@ class DependencyProvider:
         )
         self._order_engine = OrderEngine(exchange_client=exchange_client)
         self._position_engine = PositionEngine(exchange_client=exchange_client)
+        self._position_exit_engine = PositionExitEngine(
+            enabled=self._settings.risk.enable_early_position_exit,
+            min_confidence=self._settings.risk.early_exit_min_confidence,
+            check_candlestick_reversal=(
+                self._settings.risk.early_exit_check_candlestick_reversal
+            ),
+            check_opposite_signal=(
+                self._settings.risk.early_exit_check_opposite_signal
+            ),
+        )
 
     def _select_runtime_strategy(self, strategy_type: StrategyType) -> None:
         self.signal_engine.get_minimum_candles(strategy_type=strategy_type)
@@ -1468,6 +1498,17 @@ class DependencyProvider:
         self._autonomous_live_entry_execution_service = (
             self._build_autonomous_live_entry_execution_service()
         )
+        self._position_exit_service = PositionExitService(
+            engine=self.position_exit_engine,
+            market_service=self.market_service,
+            strategy_service=self.strategy_service,
+            live_exchange=self.exchange_client,
+            paper_trading_service=self.paper_trading_service,
+            lifecycle_coordinator=self._live_position_lifecycle_coordinator,
+            notification_publisher=self.telegram_bot,
+            position_repository=self.position_repository,
+            trade_mode=self._settings.app.trade_mode,
+        )
         if self._settings.app.trade_mode is TradeMode.PAPER:
             self._execution_authorization_repository = (
                 MemoryExecutionAuthorizationRepository()
@@ -1539,6 +1580,7 @@ class DependencyProvider:
                 discovery_rate_limit_governor=(
                     exchange_client.rest_transport.rate_limit_governor
                 ),
+                position_exit_service=self.position_exit_service,
                 runtime_risk_limit_provider=self.runtime_risk_limit_service,
             )
         if self._settings.app.trade_mode is not TradeMode.PAPER:
