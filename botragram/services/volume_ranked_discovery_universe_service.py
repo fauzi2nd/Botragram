@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Protocol
 
 from botragram.models import DiscoveryUniverseBatch, MarketUniverseEntry
@@ -45,6 +46,7 @@ class VolumeRankedDiscoveryUniverseService:
     universe_limit: int
     batch_size: int
     max_universe_symbols: int | None = None
+    max_spread_bps: Decimal | None = None
     _snapshot: tuple[MarketUniverseEntry, ...] | None = field(
         default=None,
         init=False,
@@ -78,6 +80,11 @@ class VolumeRankedDiscoveryUniverseService:
                 raise ValueError(
                     "Discovery max universe symbols cannot be smaller than batch size"
                 )
+        if self.max_spread_bps is not None:
+            if not self.max_spread_bps.is_finite() or self.max_spread_bps <= Decimal(
+                "0"
+            ):
+                raise ValueError("Discovery max spread bps must be positive and finite")
         self.quote_asset = normalized_quote_asset
 
     async def get_current_batch(self) -> DiscoveryUniverseBatch:
@@ -92,6 +99,17 @@ class VolumeRankedDiscoveryUniverseService:
             raw_entries = tuple(ranked_entries)
             if not raw_entries:
                 raise RuntimeError("Ranked discovery universe must not be empty")
+            if self.max_spread_bps is not None:
+                raw_entries = tuple(
+                    entry
+                    for entry in raw_entries
+                    if entry.spread_bps is None
+                    or entry.spread_bps <= self.max_spread_bps
+                )
+                if not raw_entries:
+                    raise RuntimeError(
+                        "Ranked discovery universe has no symbols within max spread"
+                    )
             if self.max_universe_symbols is not None:
                 raw_entries = raw_entries[: self.max_universe_symbols]
             full_batch_count = len(raw_entries) // self.batch_size

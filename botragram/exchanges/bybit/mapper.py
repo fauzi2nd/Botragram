@@ -115,6 +115,17 @@ class BybitExchangeMapper(BaseExchangeMapper):
             return default
 
     @staticmethod
+    def _to_optional_decimal(value: object) -> Decimal | None:
+        """Safely parse an optional Decimal from an object."""
+        if value is None or value == "":
+            return None
+        try:
+            parsed = Decimal(str(value))
+            return parsed if parsed.is_finite() and parsed > _DECIMAL_ZERO else None
+        except InvalidOperation, TypeError, ValueError:
+            return None
+
+    @staticmethod
     def _to_datetime(timestamp_ms: object) -> datetime:
         """Parse a millisecond integer timestamp into a UTC datetime."""
         if isinstance(timestamp_ms, (int, float)):
@@ -497,10 +508,14 @@ class BybitExchangeMapper(BaseExchangeMapper):
         turnover = self._to_decimal(payload.get("turnover24h"))
         volume = self._to_decimal(payload.get("volume24h"))
         quote_volume = turnover if turnover > _DECIMAL_ZERO else volume
+        bid_price = self._to_optional_decimal(payload.get("bid1Price"))
+        ask_price = self._to_optional_decimal(payload.get("ask1Price"))
 
         return MarketUniverseEntry(
             symbol=symbol,
             quote_volume=quote_volume,
+            bid_price=bid_price,
+            ask_price=ask_price,
         )
 
     def map_account_ratio(

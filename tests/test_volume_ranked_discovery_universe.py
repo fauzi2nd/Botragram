@@ -407,3 +407,114 @@ def test_rotation_service_rejects_invalid_max_universe_symbols(
             batch_size=batch_size,
             max_universe_symbols=max_universe_symbols,
         )
+
+
+@pytest.mark.parametrize(
+    "max_spread_bps",
+    (
+        Decimal("0"),
+        Decimal("-1"),
+        Decimal("NaN"),
+        Decimal("Infinity"),
+    ),
+)
+def test_rotation_service_rejects_invalid_max_spread_bps(
+    max_spread_bps: Decimal,
+) -> None:
+    """Reject non-positive or non-finite max_spread_bps."""
+    with pytest.raises(ValueError, match="Discovery max spread bps must be positive"):
+        VolumeRankedDiscoveryUniverseService(
+            market_service=_RankedUniverseProvider(outcomes=[]),
+            quote_asset="USDT",
+            universe_limit=100,
+            batch_size=10,
+            max_spread_bps=max_spread_bps,
+        )
+
+
+@pytest.mark.asyncio
+async def test_rotation_service_filters_symbols_by_max_spread_bps() -> None:
+    """Filter out entries whose spread_bps exceeds max_spread_bps."""
+    entries = (
+        MarketUniverseEntry(
+            symbol="LOWSPREAD1USDT",
+            quote_volume=Decimal("1000"),
+            spread_bps=Decimal("5.0"),
+        ),
+        MarketUniverseEntry(
+            symbol="WIDESPREAD1USDT",
+            quote_volume=Decimal("900"),
+            spread_bps=Decimal("25.0"),  # Exceeds 20.0
+        ),
+        MarketUniverseEntry(
+            symbol="LOWSPREAD2USDT",
+            quote_volume=Decimal("800"),
+            spread_bps=Decimal("12.0"),
+        ),
+        MarketUniverseEntry(
+            symbol="NOSPREADFACTUSDT",
+            quote_volume=Decimal("700"),
+            spread_bps=None,  # Kept (no spread fact)
+        ),
+        MarketUniverseEntry(
+            symbol="WIDESPREAD2USDT",
+            quote_volume=Decimal("600"),
+            spread_bps=Decimal("50.0"),  # Exceeds 20.0
+        ),
+        MarketUniverseEntry(
+            symbol="LOWSPREAD3USDT",
+            quote_volume=Decimal("500"),
+            spread_bps=Decimal("8.0"),
+        ),
+    )
+    provider = _RankedUniverseProvider(outcomes=[entries])
+    service = VolumeRankedDiscoveryUniverseService(
+        market_service=provider,
+        quote_asset="USDT",
+        universe_limit=100,
+        batch_size=2,
+        max_spread_bps=Decimal("20.0"),
+    )
+
+    batch1 = await service.get_current_batch()
+    # Kept: LOWSPREAD1 (5.0), LOWSPREAD2 (12.0), NOSPREADFACT (None), LOWSPREAD3 (8.0)
+    assert batch1.universe_size == 4
+    assert len(batch1.entries) == 2
+    assert batch1.entries[0].symbol == "LOWSPREAD1USDT"
+    assert batch1.entries[1].symbol == "LOWSPREAD2USDT"
+
+    service.complete_batch(batch=batch1)
+    batch2 = await service.get_current_batch()
+    assert len(batch2.entries) == 2
+    assert batch2.entries[0].symbol == "NOSPREADFACTUSDT"
+    assert batch2.entries[1].symbol == "LOWSPREAD3USDT"
+
+
+@pytest.mark.asyncio
+async def test_rotation_service_raises_when_no_symbols_within_max_spread() -> None:
+    """Raise RuntimeError when all symbols exceed max_spread_bps."""
+    entries = (
+        MarketUniverseEntry(
+            symbol="WIDE1USDT",
+            quote_volume=Decimal("1000"),
+            spread_bps=Decimal("30.0"),
+        ),
+        MarketUniverseEntry(
+            symbol="WIDE2USDT",
+            quote_volume=Decimal("900"),
+            spread_bps=Decimal("45.0"),
+        ),
+    )
+    provider = _RankedUniverseProvider(outcomes=[entries])
+    service = VolumeRankedDiscoveryUniverseService(
+        market_service=provider,
+        quote_asset="USDT",
+        universe_limit=100,
+        batch_size=2,
+        max_spread_bps=Decimal("20.0"),
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Ranked discovery universe has no symbols within max spread"
+    ):
+        await service.get_current_batch()

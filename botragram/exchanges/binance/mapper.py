@@ -141,6 +141,8 @@ class BinanceExchangeMapper(BaseExchangeMapper):
         return MarketUniverseEntry(
             symbol=self._to_string(payload.get("symbol")),
             quote_volume=self._to_required_decimal(payload, key="quoteVolume"),
+            bid_price=self._to_optional_decimal(payload.get("bidPrice")),
+            ask_price=self._to_optional_decimal(payload.get("askPrice")),
         )
 
     def map_market_entry_rules(self, payload: ExchangePayload) -> ExchangeSymbolRules:

@@ -495,6 +495,29 @@ def test_bybit_mapper_market_universe_entry() -> None:
     entry = mapper.map_market_universe_entry(raw_payload)
     assert entry.symbol == "BTCUSDT"
     assert entry.quote_volume == Decimal("1500000000.50")
+    assert entry.bid_price is None
+    assert entry.ask_price is None
+    assert entry.spread_bps is None
+
+
+def test_bybit_mapper_market_universe_entry_with_bid_ask_spread() -> None:
+    """Map ticker with bid1Price and ask1Price into MarketUniverseEntry."""
+    mapper = BybitExchangeMapper()
+    raw_payload: ExchangePayload = {
+        "symbol": "BTCUSDT",
+        "turnover24h": "1500000000.50",
+        "bid1Price": "50000.0",
+        "ask1Price": "50010.0",
+    }
+    entry = mapper.map_market_universe_entry(raw_payload)
+    assert entry.symbol == "BTCUSDT"
+    assert entry.quote_volume == Decimal("1500000000.50")
+    assert entry.bid_price == Decimal("50000.0")
+    assert entry.ask_price == Decimal("50010.0")
+    assert entry.spread_bps is not None
+    # midpoint = 50005.0, diff = 10.0 -> spread_bps = 10 / 50005 * 10000 ~ 1.9998
+    expected_spread = Decimal("10.0") / Decimal("50005.0") * Decimal("10000")
+    assert entry.spread_bps == expected_spread
 
 
 # =============================================================================

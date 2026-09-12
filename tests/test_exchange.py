@@ -119,8 +119,58 @@ def test_market_universe_entry_rejects_invalid_quote_volume(
     quote_volume: Decimal,
 ) -> None:
     """Reject non-finite and negative quote-volume facts."""
-    with pytest.raises(ValueError):
-        MarketUniverseEntry(symbol="BTCUSDT", quote_volume=quote_volume)
+
+
+def test_market_universe_entry_calculates_spread_from_bid_and_ask() -> None:
+    """Calculate spread_bps automatically when valid bid and ask are provided."""
+    entry = MarketUniverseEntry(
+        symbol="BTCUSDT",
+        quote_volume=Decimal("1000"),
+        bid_price=Decimal("100.0"),
+        ask_price=Decimal("100.2"),
+    )
+    assert entry.bid_price == Decimal("100.0")
+    assert entry.ask_price == Decimal("100.2")
+    assert entry.spread_bps is not None
+    expected_spread = Decimal("0.2") / Decimal("100.1") * Decimal("10000")
+    assert entry.spread_bps == expected_spread
+
+
+def test_market_universe_entry_rejects_invalid_bid_ask() -> None:
+    """Reject non-positive prices or inverted books (ask < bid)."""
+    with pytest.raises(ValueError, match="ask price cannot be less than bid price"):
+        MarketUniverseEntry(
+            symbol="BTCUSDT",
+            quote_volume=Decimal("1000"),
+            bid_price=Decimal("100.0"),
+            ask_price=Decimal("99.0"),
+        )
+
+    with pytest.raises(ValueError, match="bid price must be positive"):
+        MarketUniverseEntry(
+            symbol="BTCUSDT",
+            quote_volume=Decimal("1000"),
+            bid_price=Decimal("-1.0"),
+            ask_price=Decimal("100.0"),
+        )
+
+    with pytest.raises(ValueError, match="ask price must be positive"):
+        MarketUniverseEntry(
+            symbol="BTCUSDT",
+            quote_volume=Decimal("1000"),
+            bid_price=Decimal("100.0"),
+            ask_price=Decimal("0"),
+        )
+
+
+def test_market_universe_entry_rejects_negative_spread_bps() -> None:
+    """Reject explicit negative or non-finite spread_bps."""
+    with pytest.raises(ValueError, match="spread_bps must be finite and non-negative"):
+        MarketUniverseEntry(
+            symbol="BTCUSDT",
+            quote_volume=Decimal("1000"),
+            spread_bps=Decimal("-5.0"),
+        )
 
 
 # =============================================================================
