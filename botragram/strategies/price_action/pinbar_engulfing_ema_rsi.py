@@ -92,6 +92,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     min_natr_threshold: Decimal = Decimal("0.0020")
     min_sl_distance_pct: Decimal = Decimal("0.0080")
 
+    # Account Long-Short Ratio Sentiment Filter
+    filter_account_ratio: bool = False
+    max_long_account_ratio: Decimal = Decimal("0.75")
+    min_short_account_ratio: Decimal = Decimal("0.25")
+    require_account_ratio_confluence: bool = False
+
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
         if self.trend_period <= 0 or self.pullback_period <= 0:
@@ -393,12 +399,21 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         )
 
         if self.use_open_interest and signal_type is not SignalType.HOLD:
-            return self.apply_open_interest_confluence(
+            signal = self.apply_open_interest_confluence(
                 signal=signal,
                 candles=candles,
                 min_change_pct=self.min_oi_change_pct,
                 confidence_bonus=self.oi_confidence_bonus,
                 strict=self.require_oi_confluence,
+            )
+
+        if self.filter_account_ratio and signal.signal_type is not SignalType.HOLD:
+            signal = self.apply_account_ratio_filter(
+                signal=signal,
+                candles=candles,
+                max_long_ratio=self.max_long_account_ratio,
+                min_short_ratio=self.min_short_account_ratio,
+                strict=self.require_account_ratio_confluence,
             )
 
         return signal

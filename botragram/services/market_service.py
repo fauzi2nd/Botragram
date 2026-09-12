@@ -274,6 +274,66 @@ class MarketService:
 
         return candles
 
+    async def get_account_ratio(
+        self,
+        *,
+        symbol: str,
+        period: str = "15min",
+        limit: int = 50,
+    ) -> Sequence[tuple[datetime, Decimal, Decimal]]:
+        """Return historical Long-Short Account Ratio points from the exchange client.
+
+        Args:
+            symbol: Trading pair symbol.
+            period: Candlestick interval / period (e.g. '5min', '15min', '1h').
+            limit: Maximum number of points to fetch.
+
+        Returns:
+            Sequence of (timestamp, buy_ratio, sell_ratio) tuples.
+        """
+        return await self.exchange_client.get_account_ratio(
+            symbol=self._normalize_symbol(symbol),
+            period=period,
+            limit=limit,
+        )
+
+    async def enrich_candles_with_account_ratio(
+        self,
+        *,
+        candles: Sequence[Candle],
+        period: str = "15min",
+    ) -> Sequence[Candle]:
+        """Enrich the latest candle with current long-short account ratio.
+
+        Args:
+            candles: Candles ordered from oldest to newest.
+            period: Query period (default '15min').
+
+        Returns:
+            New sequence with buy_ratio on latest candle if available.
+        """
+        if not candles:
+            return candles
+
+        try:
+            ratios = await self.get_account_ratio(
+                symbol=candles[-1].symbol,
+                period=period,
+                limit=1,
+            )
+            if ratios:
+                latest_buy_ratio = ratios[-1][1]
+                enriched = list(candles)
+                enriched[-1] = replace(
+                    enriched[-1],
+                    buy_ratio=latest_buy_ratio,
+                )
+                return tuple(enriched)
+        except Exception:
+            return candles
+
+        return candles
+
     async def _get_fresh_stored_candles(
         self,
         *,

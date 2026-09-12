@@ -50,6 +50,10 @@ class SignalEngine:
     max_long_funding_rate: Decimal = Decimal("0.0005")
     min_short_funding_rate: Decimal = Decimal("-0.0005")
     require_funding_sentiment: bool = True
+    filter_account_ratio: bool = False
+    max_long_account_ratio: Decimal = Decimal("0.75")
+    min_short_account_ratio: Decimal = Decimal("0.25")
+    require_account_ratio_confluence: bool = True
 
     def generate(
         self,
@@ -121,6 +125,17 @@ class SignalEngine:
                     max_long_funding=self.max_long_funding_rate,
                     min_short_funding=self.min_short_funding_rate,
                     strict=self.require_funding_sentiment,
+                )
+
+        if self.filter_account_ratio and signal.signal_type is not SignalType.HOLD:
+            reason = signal.reason or ""
+            if "[REJECTED_LS_RATIO]" not in reason and "CROWDED_" not in reason:
+                signal = strategy.apply_account_ratio_filter(
+                    signal=signal,
+                    candles=candles,
+                    max_long_ratio=self.max_long_account_ratio,
+                    min_short_ratio=self.min_short_account_ratio,
+                    strict=self.require_account_ratio_confluence,
                 )
 
         return signal

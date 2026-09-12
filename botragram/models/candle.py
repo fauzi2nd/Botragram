@@ -56,3 +56,4 @@ class Candle:
 
     open_interest: Decimal | None = None
     funding_rate: Decimal | None = None
+    buy_ratio: Decimal | None = None

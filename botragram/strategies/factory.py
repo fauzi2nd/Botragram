@@ -347,6 +347,14 @@ class StrategyFactory:
                     require_trend_filter=settings.pier_require_trend_filter,
                     min_natr_threshold=settings.pier_min_natr_threshold,
                     min_sl_distance_pct=settings.pier_min_sl_distance_pct,
+                    filter_account_ratio=settings.pier_filter_account_ratio
+                    or settings.filter_account_ratio,
+                    max_long_account_ratio=settings.pier_max_long_account_ratio,
+                    min_short_account_ratio=settings.pier_min_short_account_ratio,
+                    require_account_ratio_confluence=(
+                        settings.pier_require_account_ratio_confluence
+                        or settings.require_account_ratio_confluence
+                    ),
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

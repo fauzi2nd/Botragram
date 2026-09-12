@@ -1214,6 +1214,12 @@ class DependencyProvider:
             require_funding_sentiment=(
                 self._settings.strategy.require_funding_sentiment
             ),
+            filter_account_ratio=self._settings.strategy.filter_account_ratio,
+            max_long_account_ratio=self._settings.strategy.max_long_account_ratio,
+            min_short_account_ratio=self._settings.strategy.min_short_account_ratio,
+            require_account_ratio_confluence=(
+                self._settings.strategy.require_account_ratio_confluence
+            ),
         )
         self._risk_engine = RiskEngine(settings=self._settings.risk)
         self._pnl_engine = PnLEngine()

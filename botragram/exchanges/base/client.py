@@ -159,6 +159,21 @@ class BaseExchangeClient(ABC):
         del symbol, interval, limit
         return ()
 
+    async def get_account_ratio(
+        self,
+        *,
+        symbol: str,
+        period: str = "15min",
+        limit: int = 50,
+    ) -> Sequence[tuple[datetime, Decimal, Decimal]]:
+        """Return historical Long-Short Account Ratio points.
+
+        Each item is (timestamp, buy_ratio, sell_ratio).
+        Spot or non-derivatives exchanges return an empty sequence.
+        """
+        del symbol, period, limit
+        return ()
+
     @abstractmethod
     async def get_trades(
         self,

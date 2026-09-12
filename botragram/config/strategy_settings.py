@@ -58,6 +58,10 @@ class StrategySettings:
     max_long_funding_rate: Decimal = Decimal("0.0005")
     min_short_funding_rate: Decimal = Decimal("-0.0005")
     require_funding_sentiment: bool = True
+    filter_account_ratio: bool = True
+    max_long_account_ratio: Decimal = Decimal("0.75")
+    min_short_account_ratio: Decimal = Decimal("0.25")
+    require_account_ratio_confluence: bool = True
 
     @property
     def default_interval(self) -> Interval:
@@ -258,6 +262,10 @@ class StrategySettings:
     pier_require_trend_filter: bool = True
     pier_min_natr_threshold: Decimal = Decimal("0.0020")
     pier_min_sl_distance_pct: Decimal = Decimal("0.0080")
+    pier_filter_account_ratio: bool = True
+    pier_max_long_account_ratio: Decimal = Decimal("0.75")
+    pier_min_short_account_ratio: Decimal = Decimal("0.25")
+    pier_require_account_ratio_confluence: bool = False
 
     # =========================================================================
     # Market Orderflow Regime & Price-Hunt (MORPH)

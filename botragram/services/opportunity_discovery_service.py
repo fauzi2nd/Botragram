@@ -103,6 +103,20 @@ class FundingRateCandleEnricher(Protocol):
         ...
 
 
+@runtime_checkable
+class AccountRatioCandleEnricher(Protocol):
+    """Optionally enrich candlestick sequences with Account Long-Short Ratio."""
+
+    async def enrich_candles_with_account_ratio(
+        self,
+        *,
+        candles: Sequence[Candle],
+        period: str = "15min",
+    ) -> Sequence[Candle]:
+        """Enrich a sequence of candles with Account Ratio if available."""
+        ...
+
+
 class DiscoveryStrategyProvider(Protocol):
     """Generate and persist strategy signals for discovery."""
 
@@ -378,6 +392,11 @@ class OpportunityDiscoveryService:
 
             if isinstance(market_service, FundingRateCandleEnricher):
                 eval_candles = await market_service.enrich_candles_with_funding_rate(
+                    candles=eval_candles,
+                )
+
+            if isinstance(market_service, AccountRatioCandleEnricher):
+                eval_candles = await market_service.enrich_candles_with_account_ratio(
                     candles=eval_candles,
                 )
 

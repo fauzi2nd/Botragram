@@ -72,6 +72,7 @@ from botragram.constants.env import (
     ENV_EXCHANGE_API_KEY_LEGACY,
     ENV_EXCHANGE_API_SECRET_LEGACY,
     ENV_EXECUTION_POLICY,
+    ENV_FILTER_ACCOUNT_RATIO,
     ENV_FILTER_FUNDING_SENTIMENT,
     ENV_GEMINI_API_KEY,
     ENV_INVERT_SIGNALS,
@@ -81,11 +82,13 @@ from botragram.constants.env import (
     ENV_MARKET_INTERVAL,
     ENV_MAX_DRAWDOWN_PCT,
     ENV_MAX_EXECUTABLE_QUOTE_AGE_MS,
+    ENV_MAX_LONG_ACCOUNT_RATIO,
     ENV_MAX_LONG_FUNDING_RATE,
     ENV_MAX_OPEN_POSITIONS,
     ENV_MAX_POSITION_SIZE_USDT,
     ENV_MAX_SPREAD_BPS,
     ENV_MIN_OI_CHANGE_PCT,
+    ENV_MIN_SHORT_ACCOUNT_RATIO,
     ENV_MIN_SHORT_FUNDING_RATE,
     ENV_MIN_SIGNAL_CONFIDENCE,
     ENV_MTF_CONFIRMATION_ENABLED,
@@ -100,6 +103,7 @@ from botragram.constants.env import (
     ENV_PARTIAL_TP_ENABLED,
     ENV_PARTIAL_TP_RATIO,
     ENV_PARTIAL_TP_TRIGGER_PROGRESS,
+    ENV_REQUIRE_ACCOUNT_RATIO_CONFLUENCE,
     ENV_REQUIRE_FUNDING_SENTIMENT,
     ENV_REQUIRE_OI_CONFLUENCE,
     ENV_RISK_PER_TRADE_PCT,
@@ -548,6 +552,22 @@ class EnvironmentProvider:
     def get_require_funding_sentiment(self) -> bool:
         """Return whether crowded funding rate strictly forces HOLD."""
         return self._get_bool(ENV_REQUIRE_FUNDING_SENTIMENT, default=True)
+
+    def get_filter_account_ratio(self) -> bool:
+        """Return whether Account Long-Short Ratio sentiment filter is enabled."""
+        return self._get_bool(ENV_FILTER_ACCOUNT_RATIO, default=True)
+
+    def get_max_long_account_ratio(self) -> str:
+        """Return the maximum long account ratio allowed for BUY signals."""
+        return self._get_var(ENV_MAX_LONG_ACCOUNT_RATIO, default="0.75")
+
+    def get_min_short_account_ratio(self) -> str:
+        """Return the minimum long account ratio allowed for SELL signals."""
+        return self._get_var(ENV_MIN_SHORT_ACCOUNT_RATIO, default="0.25")
+
+    def get_require_account_ratio_confluence(self) -> bool:
+        """Return whether crowded account ratio strictly forces HOLD."""
+        return self._get_bool(ENV_REQUIRE_ACCOUNT_RATIO_CONFLUENCE, default=True)
 
     def get_partial_tp_enabled(self) -> bool:
         """Return whether partial take profit is enabled."""

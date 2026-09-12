@@ -502,3 +502,17 @@ class BybitExchangeMapper(BaseExchangeMapper):
             symbol=symbol,
             quote_volume=quote_volume,
         )
+
+    def map_account_ratio(
+        self,
+        payload: ExchangePayload,
+    ) -> tuple[datetime, Decimal, Decimal]:
+        """Map Bybit account-ratio payload item into a 3-tuple.
+
+        Returns:
+            Tuple of (timestamp, buy_ratio, sell_ratio).
+        """
+        timestamp = self._to_datetime(payload.get("timestamp"))
+        buy_ratio = self._to_decimal(payload.get("buyRatio"))
+        sell_ratio = self._to_decimal(payload.get("sellRatio"))
+        return (timestamp, buy_ratio, sell_ratio)

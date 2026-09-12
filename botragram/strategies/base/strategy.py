@@ -25,7 +25,10 @@ from decimal import Decimal
 # Local Imports
 # =============================================================================
 from botragram.enums import SignalType, StrategyType
-from botragram.indicators import evaluate_oi_confluence
+from botragram.indicators import (
+    evaluate_account_ratio_sentiment,
+    evaluate_oi_confluence,
+)
 from botragram.models import Candle, Signal
 
 __all__ = [
@@ -229,6 +232,78 @@ class BaseStrategy(ABC):
                 signal,
                 confidence=max(Decimal("0.10"), signal.confidence - Decimal("0.15")),
                 reason=f"{signal.reason} [CROWDED_SHORT: funding {funding_rate:.4%}]",
+            )
+
+        return signal
+
+    def apply_account_ratio_filter(
+        self,
+        *,
+        signal: Signal,
+        candles: Sequence[Candle],
+        max_long_ratio: Decimal = Decimal("0.75"),
+        min_short_ratio: Decimal = Decimal("0.25"),
+        strict: bool = True,
+    ) -> Signal:
+        """Apply Account Long-Short Ratio crowd sentiment filter to a signal.
+
+        Args:
+            signal: Generated candidate signal.
+            candles: Candle sequence containing latest candle with buy_ratio.
+            max_long_ratio: Upper threshold above which market is crowded long.
+            min_short_ratio: Lower threshold below which market is crowded short.
+            strict: If True, transforms contradictory signal to HOLD. If False,
+                reduces confidence.
+
+        Returns:
+            Filtered or confidence-adjusted Signal.
+        """
+        if signal.signal_type is SignalType.HOLD or not candles:
+            return signal
+
+        latest_candle = candles[-1]
+        buy_ratio = latest_candle.buy_ratio
+        if buy_ratio is None:
+            return signal
+
+        sentiment = evaluate_account_ratio_sentiment(
+            buy_ratio=buy_ratio,
+            max_long_ratio=max_long_ratio,
+            min_short_ratio=min_short_ratio,
+        )
+
+        if signal.signal_type is SignalType.BUY and sentiment.is_crowded_long:
+            if strict:
+                return replace(
+                    signal,
+                    signal_type=SignalType.HOLD,
+                    confidence=Decimal("0.0"),
+                    reason=(
+                        f"[REJECTED_LS_RATIO] {sentiment.reason} "
+                        f"(originally {signal.signal_type.value})"
+                    ),
+                )
+            return replace(
+                signal,
+                confidence=max(Decimal("0.10"), signal.confidence - Decimal("0.15")),
+                reason=f"{signal.reason} [{sentiment.reason}]",
+            )
+
+        if signal.signal_type is SignalType.SELL and sentiment.is_crowded_short:
+            if strict:
+                return replace(
+                    signal,
+                    signal_type=SignalType.HOLD,
+                    confidence=Decimal("0.0"),
+                    reason=(
+                        f"[REJECTED_LS_RATIO] {sentiment.reason} "
+                        f"(originally {signal.signal_type.value})"
+                    ),
+                )
+            return replace(
+                signal,
+                confidence=max(Decimal("0.10"), signal.confidence - Decimal("0.15")),
+                reason=f"{signal.reason} [{sentiment.reason}]",
             )
 
         return signal

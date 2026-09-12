@@ -485,6 +485,18 @@ class SettingsManager:
         require_funding_sentiment = (
             self._environment_provider.get_require_funding_sentiment()
         )
+        filter_account_ratio = self._environment_provider.get_filter_account_ratio()
+        max_long_account_ratio = self._parse_decimal(
+            raw_value=self._environment_provider.get_max_long_account_ratio(),
+            setting_name="MAX_LONG_ACCOUNT_RATIO",
+        )
+        min_short_account_ratio = self._parse_decimal(
+            raw_value=self._environment_provider.get_min_short_account_ratio(),
+            setting_name="MIN_SHORT_ACCOUNT_RATIO",
+        )
+        require_account_ratio_confluence = (
+            self._environment_provider.get_require_account_ratio_confluence()
+        )
         return StrategySettings(
             strategy_type=(
                 self._parse_enum(
@@ -511,6 +523,10 @@ class SettingsManager:
             max_long_funding_rate=max_long_funding_rate,
             min_short_funding_rate=min_short_funding_rate,
             require_funding_sentiment=require_funding_sentiment,
+            filter_account_ratio=filter_account_ratio,
+            max_long_account_ratio=max_long_account_ratio,
+            min_short_account_ratio=min_short_account_ratio,
+            require_account_ratio_confluence=require_account_ratio_confluence,
         )
 
     def load_logging_settings(self) -> LoggingSettings:

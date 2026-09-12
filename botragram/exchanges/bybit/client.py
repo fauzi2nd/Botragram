@@ -89,6 +89,7 @@ _WALLET_BALANCE_ENDPOINT: Final[str] = "/v5/account/wallet-balance"
 _TICKERS_ENDPOINT: Final[str] = "/v5/market/tickers"
 _KLINE_ENDPOINT: Final[str] = "/v5/market/kline"
 _OPEN_INTEREST_ENDPOINT: Final[str] = "/v5/market/open-interest"
+_ACCOUNT_RATIO_ENDPOINT: Final[str] = "/v5/market/account-ratio"
 _TRADES_ENDPOINT: Final[str] = "/v5/market/recent-trade"
 _INSTRUMENTS_INFO_ENDPOINT: Final[str] = "/v5/market/instruments-info"
 
@@ -451,6 +452,55 @@ class BybitExchangeClient(BaseExchangeClient):
                 points.append((timestamp, oi_decimal))
             except ValueError, TypeError, OverflowError:
                 continue
+
+        points.sort(key=lambda x: x[0])
+        return tuple(points)
+
+    async def get_account_ratio(
+        self,
+        *,
+        symbol: str,
+        period: str = "15min",
+        limit: int = 50,
+    ) -> Sequence[tuple[datetime, Decimal, Decimal]]:
+        """Return historical Long-Short Account Ratio points.
+
+        Each point is a tuple of (timestamp, buy_ratio, sell_ratio).
+        """
+        if limit <= 0:
+            return ()
+
+        params: dict[str, str | int] = {
+            "category": "linear",
+            "symbol": symbol.strip().upper(),
+            "period": period,
+            "limit": min(limit, 500),
+        }
+
+        payload = await self._rest.get(
+            _ACCOUNT_RATIO_ENDPOINT,
+            params=params,
+            authenticated=False,
+        )
+        if not isinstance(payload, dict):
+            return ()
+
+        raw_result = payload.get("result")
+        if not isinstance(raw_result, dict):
+            return ()
+
+        result_map = cast(ExchangePayload, raw_result)
+        ratio_list = result_map.get("list")
+        if not isinstance(ratio_list, list):
+            return ()
+
+        points: list[tuple[datetime, Decimal, Decimal]] = []
+        for item in cast(list[object], ratio_list):
+            if not isinstance(item, dict):
+                continue
+            item_map = cast(ExchangePayload, item)
+            mapped = self._mapper.map_account_ratio(item_map)
+            points.append(mapped)
 
         points.sort(key=lambda x: x[0])
         return tuple(points)
