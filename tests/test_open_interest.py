@@ -487,3 +487,125 @@ async def test_market_service_enrich_candles_with_open_interest() -> None:
     assert len(enriched) == 2
     assert enriched[0].open_interest == Decimal("5000")
     assert enriched[1].open_interest == Decimal("5200")
+
+
+def test_evaluate_oi_confluence_multi_horizon_persistent() -> None:
+    """Verify multi-horizon persistent accumulation across Δ1 and Δ3."""
+    # 5 candles: index 0 to 4
+    # OI: 1000, 1020, 1050, 1030, 1100
+    # Δ1 = (1100 - 1030) / 1030 = +6.79%
+    # Δ3 = (1100 - 1020) / 1020 = +7.84%
+    candles = [
+        _make_candle(
+            index=0,
+            open_price=Decimal("100"),
+            high_price=Decimal("101"),
+            low_price=Decimal("99"),
+            close_price=Decimal("100"),
+            open_interest=Decimal("1000"),
+        ),
+        _make_candle(
+            index=1,
+            open_price=Decimal("100"),
+            high_price=Decimal("102"),
+            low_price=Decimal("99"),
+            close_price=Decimal("101"),
+            open_interest=Decimal("1020"),
+        ),
+        _make_candle(
+            index=2,
+            open_price=Decimal("101"),
+            high_price=Decimal("103"),
+            low_price=Decimal("100"),
+            close_price=Decimal("102"),
+            open_interest=Decimal("1050"),
+        ),
+        _make_candle(
+            index=3,
+            open_price=Decimal("102"),
+            high_price=Decimal("103"),
+            low_price=Decimal("101"),
+            close_price=Decimal("101.5"),
+            open_interest=Decimal("1030"),
+        ),
+        _make_candle(
+            index=4,
+            open_price=Decimal("101.5"),
+            high_price=Decimal("105"),
+            low_price=Decimal("101"),
+            close_price=Decimal("104"),
+            open_interest=Decimal("1100"),
+        ),
+    ]
+
+    confluence = evaluate_oi_confluence(
+        signal_type=SignalType.BUY,
+        candles=candles,
+        require_persistent=True,
+    )
+    assert confluence is not None
+    assert confluence.is_confirmed is True
+    assert confluence.is_persistent is True
+    assert confluence.delta_3_pct is not None and confluence.delta_3_pct > Decimal("0")
+    assert "Bullish Long Buildup" in confluence.reason
+
+
+def test_evaluate_oi_confluence_transient_spike_rejected() -> None:
+    """Verify that a 1-bar spike in an overall downtrend of OI is rejected."""
+    # 5 candles: index 0 to 4
+    # OI: 1200, 1150, 1100, 1000, 1050
+    # Δ1 = (1050 - 1000) / 1000 = +5.00% (Up)
+    # Δ3 = (1050 - 1150) / 1150 = -8.70% (Down over 3 bars!)
+    candles = [
+        _make_candle(
+            index=0,
+            open_price=Decimal("100"),
+            high_price=Decimal("101"),
+            low_price=Decimal("99"),
+            close_price=Decimal("100"),
+            open_interest=Decimal("1200"),
+        ),
+        _make_candle(
+            index=1,
+            open_price=Decimal("100"),
+            high_price=Decimal("101"),
+            low_price=Decimal("99"),
+            close_price=Decimal("100"),
+            open_interest=Decimal("1150"),
+        ),
+        _make_candle(
+            index=2,
+            open_price=Decimal("100"),
+            high_price=Decimal("101"),
+            low_price=Decimal("99"),
+            close_price=Decimal("100"),
+            open_interest=Decimal("1100"),
+        ),
+        _make_candle(
+            index=3,
+            open_price=Decimal("100"),
+            high_price=Decimal("101"),
+            low_price=Decimal("99"),
+            close_price=Decimal("100"),
+            open_interest=Decimal("1000"),
+        ),
+        _make_candle(
+            index=4,
+            open_price=Decimal("100"),
+            high_price=Decimal("103"),
+            low_price=Decimal("99"),
+            close_price=Decimal("102"),
+            open_interest=Decimal("1050"),
+        ),
+    ]
+
+    confluence = evaluate_oi_confluence(
+        signal_type=SignalType.BUY,
+        candles=candles,
+        require_persistent=True,
+    )
+    assert confluence is not None
+    # Must NOT be confirmed because Δ3 is negative!
+    assert confluence.is_confirmed is False
+    assert confluence.is_persistent is False
+    assert "Transient Long Buildup" in confluence.reason
