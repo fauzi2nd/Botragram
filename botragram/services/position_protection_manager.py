@@ -69,6 +69,10 @@ class PositionProtectionManager:
     trailing_stop_enabled: bool = False
     trailing_stop_trigger_pct: Decimal = Decimal("0.015")
     trailing_stop_distance_pct: Decimal = Decimal("0.008")
+    trailing_stop_tier2_trigger_pct: Decimal = Decimal("0")
+    trailing_stop_tier2_distance_pct: Decimal = Decimal("0")
+    trailing_stop_tier3_trigger_pct: Decimal = Decimal("0")
+    trailing_stop_tier3_distance_pct: Decimal = Decimal("0")
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
         default_factory=LivePositionLifecycleCoordinator,
     )
@@ -119,6 +123,40 @@ class PositionProtectionManager:
                 )
             if self.trailing_stop_distance_pct >= self.trailing_stop_trigger_pct:
                 raise ValueError("Trailing stop distance must be less than trigger pct")
+            if self.trailing_stop_tier2_trigger_pct > _DECIMAL_ZERO:
+                if (
+                    self.trailing_stop_tier2_trigger_pct
+                    <= self.trailing_stop_trigger_pct
+                ):
+                    raise ValueError(
+                        "Trailing stop tier 2 trigger must exceed tier 1 trigger"
+                    )
+                if not (
+                    _DECIMAL_ZERO
+                    < self.trailing_stop_tier2_distance_pct
+                    < self.trailing_stop_distance_pct
+                ):
+                    raise ValueError(
+                        "Trailing stop tier 2 distance must be strictly between "
+                        "0 and tier 1 distance"
+                    )
+            if self.trailing_stop_tier3_trigger_pct > _DECIMAL_ZERO:
+                if (
+                    self.trailing_stop_tier3_trigger_pct
+                    <= self.trailing_stop_tier2_trigger_pct
+                ):
+                    raise ValueError(
+                        "Trailing stop tier 3 trigger must exceed tier 2 trigger"
+                    )
+                if not (
+                    _DECIMAL_ZERO
+                    < self.trailing_stop_tier3_distance_pct
+                    < self.trailing_stop_tier2_distance_pct
+                ):
+                    raise ValueError(
+                        "Trailing stop tier 3 distance must be strictly between "
+                        "0 and tier 2 distance"
+                    )
 
     async def on_market_tick(self, *, ticker: Ticker) -> None:
         """Advance profit protection when a stream tick crosses a new step."""
@@ -905,6 +943,20 @@ class PositionProtectionManager:
         for k in to_remove:
             self._peak_prices.pop(k, None)
 
+    def _resolve_trailing_distance(self, profit_pct: Decimal) -> Decimal:
+        """Resolve trailing distance percentage based on profit tiers."""
+        if (
+            self.trailing_stop_tier3_trigger_pct > _DECIMAL_ZERO
+            and profit_pct >= self.trailing_stop_tier3_trigger_pct
+        ):
+            return self.trailing_stop_tier3_distance_pct
+        if (
+            self.trailing_stop_tier2_trigger_pct > _DECIMAL_ZERO
+            and profit_pct >= self.trailing_stop_tier2_trigger_pct
+        ):
+            return self.trailing_stop_tier2_distance_pct
+        return self.trailing_stop_distance_pct
+
     def _calculate_trailing_stop(
         self,
         *,
@@ -927,7 +979,8 @@ class PositionProtectionManager:
 
             profit_pct = (peak - position.entry_price) / position.entry_price
             if profit_pct >= self.trailing_stop_trigger_pct:
-                return peak * (Decimal("1") - self.trailing_stop_distance_pct)
+                distance = self._resolve_trailing_distance(profit_pct)
+                return peak * (Decimal("1") - distance)
         else:
             peak = self._peak_prices.get(
                 pos_key, min(position.entry_price, current_price)
@@ -937,7 +990,8 @@ class PositionProtectionManager:
 
             profit_pct = (position.entry_price - peak) / position.entry_price
             if profit_pct >= self.trailing_stop_trigger_pct:
-                return peak * (Decimal("1") + self.trailing_stop_distance_pct)
+                distance = self._resolve_trailing_distance(profit_pct)
+                return peak * (Decimal("1") + distance)
 
         return None
 

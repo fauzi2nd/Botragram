@@ -374,6 +374,22 @@ class SettingsManager:
                 raw_value=environment.get_trailing_stop_distance_pct(),
                 setting_name="TRAILING_STOP_DISTANCE_PCT",
             ),
+            trailing_stop_tier2_trigger_pct=self._parse_decimal(
+                raw_value=environment.get_trailing_stop_tier2_trigger_pct(),
+                setting_name="TRAILING_STOP_TIER2_TRIGGER_PCT",
+            ),
+            trailing_stop_tier2_distance_pct=self._parse_decimal(
+                raw_value=environment.get_trailing_stop_tier2_distance_pct(),
+                setting_name="TRAILING_STOP_TIER2_DISTANCE_PCT",
+            ),
+            trailing_stop_tier3_trigger_pct=self._parse_decimal(
+                raw_value=environment.get_trailing_stop_tier3_trigger_pct(),
+                setting_name="TRAILING_STOP_TIER3_TRIGGER_PCT",
+            ),
+            trailing_stop_tier3_distance_pct=self._parse_decimal(
+                raw_value=environment.get_trailing_stop_tier3_distance_pct(),
+                setting_name="TRAILING_STOP_TIER3_DISTANCE_PCT",
+            ),
             enable_early_position_exit=environment.get_enable_early_position_exit(),
             early_exit_min_confidence=self._parse_non_negative_float(
                 raw_value=environment.get_early_exit_min_confidence(),

@@ -121,6 +121,10 @@ from botragram.constants.env import (
     ENV_TRADE_MODE_LEGACY,
     ENV_TRAILING_STOP_DISTANCE_PCT,
     ENV_TRAILING_STOP_ENABLED,
+    ENV_TRAILING_STOP_TIER2_DISTANCE_PCT,
+    ENV_TRAILING_STOP_TIER2_TRIGGER_PCT,
+    ENV_TRAILING_STOP_TIER3_DISTANCE_PCT,
+    ENV_TRAILING_STOP_TIER3_TRIGGER_PCT,
     ENV_TRAILING_STOP_TRIGGER_PCT,
     ENV_TREND_STOP_LOSS_PCT,
     ENV_TREND_TAKE_PROFIT_PCT,
@@ -592,6 +596,22 @@ class EnvironmentProvider:
     def get_trailing_stop_distance_pct(self) -> str:
         """Return the trailing stop trailing distance percentage."""
         return self._get_var(ENV_TRAILING_STOP_DISTANCE_PCT, default="0.008")
+
+    def get_trailing_stop_tier2_trigger_pct(self) -> str:
+        """Return the tier 2 trailing stop trigger percentage."""
+        return self._get_var(ENV_TRAILING_STOP_TIER2_TRIGGER_PCT, default="0.020")
+
+    def get_trailing_stop_tier2_distance_pct(self) -> str:
+        """Return the tier 2 trailing stop distance percentage."""
+        return self._get_var(ENV_TRAILING_STOP_TIER2_DISTANCE_PCT, default="0.0035")
+
+    def get_trailing_stop_tier3_trigger_pct(self) -> str:
+        """Return the tier 3 trailing stop trigger percentage."""
+        return self._get_var(ENV_TRAILING_STOP_TIER3_TRIGGER_PCT, default="0.035")
+
+    def get_trailing_stop_tier3_distance_pct(self) -> str:
+        """Return the tier 3 trailing stop distance percentage."""
+        return self._get_var(ENV_TRAILING_STOP_TIER3_DISTANCE_PCT, default="0.0020")
 
     def get_enable_early_position_exit(self) -> bool:
         """Return whether early in-flight position exit monitoring is enabled."""

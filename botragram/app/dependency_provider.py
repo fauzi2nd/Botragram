@@ -1678,6 +1678,18 @@ class DependencyProvider:
             trailing_stop_enabled=self._settings.risk.trailing_stop_enabled,
             trailing_stop_trigger_pct=self._settings.risk.trailing_stop_trigger_pct,
             trailing_stop_distance_pct=self._settings.risk.trailing_stop_distance_pct,
+            trailing_stop_tier2_trigger_pct=(
+                self._settings.risk.trailing_stop_tier2_trigger_pct
+            ),
+            trailing_stop_tier2_distance_pct=(
+                self._settings.risk.trailing_stop_tier2_distance_pct
+            ),
+            trailing_stop_tier3_trigger_pct=(
+                self._settings.risk.trailing_stop_tier3_trigger_pct
+            ),
+            trailing_stop_tier3_distance_pct=(
+                self._settings.risk.trailing_stop_tier3_distance_pct
+            ),
         )
 
     @staticmethod

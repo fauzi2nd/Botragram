@@ -346,3 +346,160 @@ def test_position_pending_stop_rejects_loosened_or_regressed_step() -> None:
             pending_stop_loss_client_algo_id="bsl-123456",
             pending_protection_step=2,
         )
+
+
+def test_tiered_trailing_stop_risk_settings_validation() -> None:
+    """Validate tier constraints in RiskSettings."""
+    # Tier 2 trigger <= Tier 1 trigger
+    with pytest.raises(ValueError, match="tier 2 trigger must exceed tier 1"):
+        RiskSettings(
+            trailing_stop_enabled=True,
+            trailing_stop_trigger_pct=Decimal("0.02"),
+            trailing_stop_distance_pct=Decimal("0.01"),
+            trailing_stop_tier2_trigger_pct=Decimal("0.015"),
+            trailing_stop_tier2_distance_pct=Decimal("0.005"),
+        )
+
+    # Tier 2 distance >= Tier 1 distance
+    with pytest.raises(ValueError, match="tier 2 distance must be strictly between"):
+        RiskSettings(
+            trailing_stop_enabled=True,
+            trailing_stop_trigger_pct=Decimal("0.015"),
+            trailing_stop_distance_pct=Decimal("0.008"),
+            trailing_stop_tier2_trigger_pct=Decimal("0.025"),
+            trailing_stop_tier2_distance_pct=Decimal("0.009"),
+        )
+
+    # Tier 3 trigger <= Tier 2 trigger
+    with pytest.raises(ValueError, match="tier 3 trigger must exceed tier 2"):
+        RiskSettings(
+            trailing_stop_enabled=True,
+            trailing_stop_trigger_pct=Decimal("0.015"),
+            trailing_stop_distance_pct=Decimal("0.008"),
+            trailing_stop_tier2_trigger_pct=Decimal("0.025"),
+            trailing_stop_tier2_distance_pct=Decimal("0.005"),
+            trailing_stop_tier3_trigger_pct=Decimal("0.020"),
+            trailing_stop_tier3_distance_pct=Decimal("0.002"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_dynamic_tiered_trailing_stop_long_advancement() -> None:
+    """Advance trailing stop through Tier 1, Tier 2, and Tier 3 for LONG."""
+    position_repository = MemoryPositionRepository()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.PAPER,
+        position_repository=position_repository,
+        exchange_client=_create_mock_client(),
+        trailing_stop_enabled=True,
+        trailing_stop_trigger_pct=Decimal("0.012"),
+        trailing_stop_distance_pct=Decimal("0.006"),
+        trailing_stop_tier2_trigger_pct=Decimal("0.020"),
+        trailing_stop_tier2_distance_pct=Decimal("0.0035"),
+        trailing_stop_tier3_trigger_pct=Decimal("0.035"),
+        trailing_stop_tier3_distance_pct=Decimal("0.0020"),
+        position_refresh_seconds=0.001,
+    )
+
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1.0"),
+        entry_price=Decimal("100.0"),
+        current_price=Decimal("100.0"),
+        stop_loss=Decimal("98.0"),
+        take_profit=Decimal("110.0"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+    await position_repository.save(position=position)
+
+    # Tick 1: Price 101.5 (+1.5%) -> Tier 1 (distance 0.006)
+    # Stop = 101.5 * (1 - 0.006) = 100.891
+    await manager.on_market_tick(
+        ticker=_create_ticker(symbol="BTCUSDT", price=Decimal("101.5"))
+    )
+    pos = await position_repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.stop_loss == Decimal("100.891")
+
+    # Tick 2: Price surges to 102.5 (+2.5%) -> Tier 2 (distance 0.0035)
+    # Stop = 102.5 * (1 - 0.0035) = 102.14125
+    await manager.on_market_tick(
+        ticker=_create_ticker(symbol="BTCUSDT", price=Decimal("102.5"))
+    )
+    pos = await position_repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.stop_loss == Decimal("102.14125")
+
+    # Tick 3: Price surges to 104.0 (+4.0%) -> Tier 3 (distance 0.0020)
+    # Stop = 104.0 * (1 - 0.0020) = 103.792
+    await manager.on_market_tick(
+        ticker=_create_ticker(symbol="BTCUSDT", price=Decimal("104.0"))
+    )
+    pos = await position_repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.stop_loss == Decimal("103.792")
+
+
+@pytest.mark.asyncio
+async def test_dynamic_tiered_trailing_stop_short_advancement() -> None:
+    """Advance trailing stop through Tier 1, Tier 2, and Tier 3 for SHORT."""
+    position_repository = MemoryPositionRepository()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.PAPER,
+        position_repository=position_repository,
+        exchange_client=_create_mock_client(),
+        trailing_stop_enabled=True,
+        trailing_stop_trigger_pct=Decimal("0.012"),
+        trailing_stop_distance_pct=Decimal("0.006"),
+        trailing_stop_tier2_trigger_pct=Decimal("0.020"),
+        trailing_stop_tier2_distance_pct=Decimal("0.0035"),
+        trailing_stop_tier3_trigger_pct=Decimal("0.035"),
+        trailing_stop_tier3_distance_pct=Decimal("0.0020"),
+        position_refresh_seconds=0.001,
+    )
+
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("1.0"),
+        entry_price=Decimal("100.0"),
+        current_price=Decimal("100.0"),
+        stop_loss=Decimal("102.0"),
+        take_profit=Decimal("90.0"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+    await position_repository.save(position=position)
+
+    # Tick 1: Price drops to 98.5 (profit +1.5%) -> Tier 1 (distance 0.006)
+    # Stop = 98.5 * (1 + 0.006) = 99.091
+    await manager.on_market_tick(
+        ticker=_create_ticker(symbol="BTCUSDT", price=Decimal("98.5"))
+    )
+    pos = await position_repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.stop_loss == Decimal("99.091")
+
+    # Tick 2: Price drops to 97.5 (profit +2.5%) -> Tier 2 (distance 0.0035)
+    # Stop = 97.5 * (1 + 0.0035) = 97.84125
+    await manager.on_market_tick(
+        ticker=_create_ticker(symbol="BTCUSDT", price=Decimal("97.5"))
+    )
+    pos = await position_repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.stop_loss == Decimal("97.84125")
+
+    # Tick 3: Price drops to 96.0 (profit +4.0%) -> Tier 3 (distance 0.0020)
+    # Stop = 96.0 * (1 + 0.0020) = 96.192
+    await manager.on_market_tick(
+        ticker=_create_ticker(symbol="BTCUSDT", price=Decimal("96.0"))
+    )
+    pos = await position_repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.stop_loss == Decimal("96.192")
