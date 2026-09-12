@@ -97,6 +97,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     max_long_account_ratio: Decimal = Decimal("0.75")
     min_short_account_ratio: Decimal = Decimal("0.25")
     require_account_ratio_confluence: bool = False
+    confirm_htf_account_ratio: bool = False
 
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
@@ -414,6 +415,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 max_long_ratio=self.max_long_account_ratio,
                 min_short_ratio=self.min_short_account_ratio,
                 strict=self.require_account_ratio_confluence,
+                confirm_htf=self.confirm_htf_account_ratio,
             )
 
         return signal

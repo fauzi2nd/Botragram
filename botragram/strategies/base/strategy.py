@@ -244,6 +244,7 @@ class BaseStrategy(ABC):
         max_long_ratio: Decimal = Decimal("0.75"),
         min_short_ratio: Decimal = Decimal("0.25"),
         strict: bool = True,
+        confirm_htf: bool = False,
     ) -> Signal:
         """Apply Account Long-Short Ratio crowd sentiment filter to a signal.
 
@@ -254,6 +255,7 @@ class BaseStrategy(ABC):
             min_short_ratio: Lower threshold below which market is crowded short.
             strict: If True, transforms contradictory signal to HOLD. If False,
                 reduces confidence.
+            confirm_htf: If True, also checks higher timeframe htf_buy_ratio.
 
         Returns:
             Filtered or confidence-adjusted Signal.
@@ -263,47 +265,78 @@ class BaseStrategy(ABC):
 
         latest_candle = candles[-1]
         buy_ratio = latest_candle.buy_ratio
-        if buy_ratio is None:
+        htf_buy_ratio = latest_candle.htf_buy_ratio if confirm_htf else None
+        if buy_ratio is None and htf_buy_ratio is None:
             return signal
 
-        sentiment = evaluate_account_ratio_sentiment(
-            buy_ratio=buy_ratio,
-            max_long_ratio=max_long_ratio,
-            min_short_ratio=min_short_ratio,
+        sentiment = (
+            evaluate_account_ratio_sentiment(
+                buy_ratio=buy_ratio,
+                max_long_ratio=max_long_ratio,
+                min_short_ratio=min_short_ratio,
+            )
+            if buy_ratio is not None
+            else None
+        )
+        htf_sentiment = (
+            evaluate_account_ratio_sentiment(
+                buy_ratio=htf_buy_ratio,
+                max_long_ratio=max_long_ratio,
+                min_short_ratio=min_short_ratio,
+            )
+            if htf_buy_ratio is not None
+            else None
         )
 
-        if signal.signal_type is SignalType.BUY and sentiment.is_crowded_long:
+        crowded_long = (sentiment is not None and sentiment.is_crowded_long) or (
+            htf_sentiment is not None and htf_sentiment.is_crowded_long
+        )
+        crowded_short = (sentiment is not None and sentiment.is_crowded_short) or (
+            htf_sentiment is not None and htf_sentiment.is_crowded_short
+        )
+
+        if signal.signal_type is SignalType.BUY and crowded_long:
+            reason_text = (
+                sentiment.reason
+                if sentiment is not None and sentiment.is_crowded_long
+                else f"HTF {htf_sentiment.reason if htf_sentiment else ''}"
+            )
             if strict:
                 return replace(
                     signal,
                     signal_type=SignalType.HOLD,
                     confidence=Decimal("0.0"),
                     reason=(
-                        f"[REJECTED_LS_RATIO] {sentiment.reason} "
+                        f"[REJECTED_LS_RATIO] {reason_text} "
                         f"(originally {signal.signal_type.value})"
                     ),
                 )
             return replace(
                 signal,
                 confidence=max(Decimal("0.10"), signal.confidence - Decimal("0.15")),
-                reason=f"{signal.reason} [{sentiment.reason}]",
+                reason=f"{signal.reason} [{reason_text}]",
             )
 
-        if signal.signal_type is SignalType.SELL and sentiment.is_crowded_short:
+        if signal.signal_type is SignalType.SELL and crowded_short:
+            reason_text = (
+                sentiment.reason
+                if sentiment is not None and sentiment.is_crowded_short
+                else f"HTF {htf_sentiment.reason if htf_sentiment else ''}"
+            )
             if strict:
                 return replace(
                     signal,
                     signal_type=SignalType.HOLD,
                     confidence=Decimal("0.0"),
                     reason=(
-                        f"[REJECTED_LS_RATIO] {sentiment.reason} "
+                        f"[REJECTED_LS_RATIO] {reason_text} "
                         f"(originally {signal.signal_type.value})"
                     ),
                 )
             return replace(
                 signal,
                 confidence=max(Decimal("0.10"), signal.confidence - Decimal("0.15")),
-                reason=f"{signal.reason} [{sentiment.reason}]",
+                reason=f"{signal.reason} [{reason_text}]",
             )
 
         return signal

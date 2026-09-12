@@ -513,6 +513,12 @@ class SettingsManager:
         require_account_ratio_confluence = (
             self._environment_provider.get_require_account_ratio_confluence()
         )
+        confirm_htf_account_ratio = (
+            self._environment_provider.get_confirm_htf_account_ratio()
+        )
+        account_ratio_htf_period = (
+            self._environment_provider.get_account_ratio_htf_period()
+        )
         return StrategySettings(
             strategy_type=(
                 self._parse_enum(
@@ -543,6 +549,9 @@ class SettingsManager:
             max_long_account_ratio=max_long_account_ratio,
             min_short_account_ratio=min_short_account_ratio,
             require_account_ratio_confluence=require_account_ratio_confluence,
+            confirm_htf_account_ratio=confirm_htf_account_ratio,
+            account_ratio_htf_period=account_ratio_htf_period,
+            pier_confirm_htf_account_ratio=confirm_htf_account_ratio,
         )
 
     def load_logging_settings(self) -> LoggingSettings:

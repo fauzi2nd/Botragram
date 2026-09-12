@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -302,31 +303,73 @@ class MarketService:
         *,
         candles: Sequence[Candle],
         period: str = "15min",
+        htf_period: str | None = "1h",
     ) -> Sequence[Candle]:
         """Enrich the latest candle with current long-short account ratio.
 
         Args:
             candles: Candles ordered from oldest to newest.
-            period: Query period (default '15min').
+            period: Primary query period (default '15min').
+            htf_period: Higher timeframe query period (default '1h').
 
         Returns:
-            New sequence with buy_ratio on latest candle if available.
+            New sequence with buy_ratio and htf_buy_ratio on latest candle.
         """
         if not candles:
             return candles
 
+        symbol = candles[-1].symbol
         try:
-            ratios = await self.get_account_ratio(
-                symbol=candles[-1].symbol,
+            ratios_coro = self.get_account_ratio(
+                symbol=symbol,
                 period=period,
                 limit=1,
             )
-            if ratios:
-                latest_buy_ratio = ratios[-1][1]
+            if htf_period is not None:
+                htf_coro = self.get_account_ratio(
+                    symbol=symbol,
+                    period=htf_period,
+                    limit=1,
+                )
+                ratios_res, htf_res = await asyncio.gather(
+                    ratios_coro,
+                    htf_coro,
+                    return_exceptions=True,
+                )
+                ratios = (
+                    ratios_res
+                    if isinstance(ratios_res, Sequence)
+                    and not isinstance(ratios_res, (str, bytes))
+                    else ()
+                )
+                htf_ratios = (
+                    htf_res
+                    if isinstance(htf_res, Sequence)
+                    and not isinstance(htf_res, (str, bytes))
+                    else ()
+                )
+            else:
+                ratios = await ratios_coro
+                htf_ratios = ()
+
+            latest_buy_ratio = ratios[-1][1] if ratios else None
+            latest_htf_buy_ratio = htf_ratios[-1][1] if htf_ratios else None
+
+            if latest_buy_ratio is not None or latest_htf_buy_ratio is not None:
                 enriched = list(candles)
+                current_last = enriched[-1]
                 enriched[-1] = replace(
-                    enriched[-1],
-                    buy_ratio=latest_buy_ratio,
+                    current_last,
+                    buy_ratio=(
+                        latest_buy_ratio
+                        if latest_buy_ratio is not None
+                        else current_last.buy_ratio
+                    ),
+                    htf_buy_ratio=(
+                        latest_htf_buy_ratio
+                        if latest_htf_buy_ratio is not None
+                        else current_last.htf_buy_ratio
+                    ),
                 )
                 return tuple(enriched)
         except Exception:

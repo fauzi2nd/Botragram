@@ -28,6 +28,7 @@ from dotenv import dotenv_values, load_dotenv
 # Local Imports
 # =============================================================================
 from botragram.constants.env import (
+    ENV_ACCOUNT_RATIO_HTF_PERIOD,
     ENV_ACTIVE_EXCHANGE,
     ENV_AI_MODEL,
     ENV_AI_PROVIDER,
@@ -52,6 +53,7 @@ from botragram.constants.env import (
     ENV_BYBIT_TESTNET,
     ENV_CANDLE_PRUNING_INTERVAL_HOURS,
     ENV_CANDLE_RETENTION_DAYS,
+    ENV_CONFIRM_HTF_ACCOUNT_RATIO,
     ENV_DISCOVERY_BATCH_SIZE,
     ENV_DISCOVERY_CADENCE_SECONDS,
     ENV_DISCOVERY_CANDLE_DELAY_SECONDS,
@@ -572,6 +574,14 @@ class EnvironmentProvider:
     def get_require_account_ratio_confluence(self) -> bool:
         """Return whether crowded account ratio strictly forces HOLD."""
         return self._get_bool(ENV_REQUIRE_ACCOUNT_RATIO_CONFLUENCE, default=True)
+
+    def get_confirm_htf_account_ratio(self) -> bool:
+        """Return whether higher timeframe account ratio confirmation is enabled."""
+        return self._get_bool(ENV_CONFIRM_HTF_ACCOUNT_RATIO, default=False)
+
+    def get_account_ratio_htf_period(self) -> str:
+        """Return the higher timeframe period for account ratio confirmation."""
+        return self._get_var(ENV_ACCOUNT_RATIO_HTF_PERIOD, default="1h")
 
     def get_partial_tp_enabled(self) -> bool:
         """Return whether partial take profit is enabled."""

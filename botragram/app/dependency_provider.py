@@ -1220,6 +1220,9 @@ class DependencyProvider:
             require_account_ratio_confluence=(
                 self._settings.strategy.require_account_ratio_confluence
             ),
+            confirm_htf_account_ratio=(
+                self._settings.strategy.confirm_htf_account_ratio
+            ),
         )
         self._risk_engine = RiskEngine(settings=self._settings.risk)
         self._pnl_engine = PnLEngine()

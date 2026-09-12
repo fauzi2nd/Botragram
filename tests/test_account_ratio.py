@@ -79,6 +79,7 @@ def _make_candle(
     *,
     index: int = 0,
     buy_ratio: Decimal | None = None,
+    htf_buy_ratio: Decimal | None = None,
 ) -> Candle:
     """Helper to generate a test candle."""
     open_time = _START_TIME + timedelta(minutes=15 * index)
@@ -94,6 +95,7 @@ def _make_candle(
         close_price=Decimal("102"),
         volume=Decimal("1000"),
         buy_ratio=buy_ratio,
+        htf_buy_ratio=htf_buy_ratio,
     )
 
 
@@ -292,6 +294,58 @@ def test_apply_account_ratio_filter_opposing_crowd_allowed() -> None:
     assert res.confidence == Decimal("0.80")
 
 
+def test_apply_account_ratio_filter_htf_confluence() -> None:
+    """Verify higher timeframe confirmation rejects crowded HTF positions."""
+    strategy = DummyStrategy()
+    buy_signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100"),
+        confidence=Decimal("0.80"),
+        strategy_name="test",
+        generated_at=_START_TIME,
+        reason="Bullish pattern",
+    )
+    # 15m is uncrowded (0.65 <= 0.70), but 1h HTF is crowded long (0.78 > 0.70)
+    candles = [_make_candle(buy_ratio=Decimal("0.65"), htf_buy_ratio=Decimal("0.78"))]
+
+    # Without HTF confirmation -> allowed
+    res_no_htf = strategy.apply_account_ratio_filter(
+        signal=buy_signal,
+        candles=candles,
+        max_long_ratio=Decimal("0.70"),
+        strict=True,
+        confirm_htf=False,
+    )
+    assert res_no_htf.signal_type is SignalType.BUY
+
+    # With HTF confirmation -> rejected
+    res_htf = strategy.apply_account_ratio_filter(
+        signal=buy_signal,
+        candles=candles,
+        max_long_ratio=Decimal("0.70"),
+        strict=True,
+        confirm_htf=True,
+    )
+    assert res_htf.signal_type is SignalType.HOLD
+    assert "[REJECTED_LS_RATIO]" in (res_htf.reason or "")
+    assert "HTF" in (res_htf.reason or "")
+
+    # Both timeframes clean (0.65 and 0.68 <= 0.70) -> allowed
+    clean_candles = [
+        _make_candle(buy_ratio=Decimal("0.65"), htf_buy_ratio=Decimal("0.68"))
+    ]
+    res_clean = strategy.apply_account_ratio_filter(
+        signal=buy_signal,
+        candles=clean_candles,
+        max_long_ratio=Decimal("0.70"),
+        strict=True,
+        confirm_htf=True,
+    )
+    assert res_clean.signal_type is SignalType.BUY
+    assert res_clean.confidence == Decimal("0.80")
+
+
 # =============================================================================
 # PinbarEngulfingEmaRsi Strategy Integration Test
 # =============================================================================
@@ -373,7 +427,9 @@ async def test_market_service_enrich_candles_with_account_ratio() -> None:
 
     assert len(enriched) == 2
     assert enriched[0].buy_ratio is None
+    assert enriched[0].htf_buy_ratio is None
     assert enriched[1].buy_ratio == Decimal("0.7800")
+    assert enriched[1].htf_buy_ratio == Decimal("0.7800")
 
 
 # =============================================================================
@@ -386,9 +442,11 @@ def test_signal_engine_account_ratio_confluence() -> None:
         default_strategy_type=StrategyType.EMA_CROSS,
         filter_account_ratio=True,
         require_account_ratio_confluence=True,
+        confirm_htf_account_ratio=True,
         max_long_account_ratio=Decimal("0.75"),
     )
     assert engine.filter_account_ratio is True
+    assert engine.confirm_htf_account_ratio is True
     assert engine.max_long_account_ratio == Decimal("0.75")
 
 
@@ -401,6 +459,8 @@ def test_settings_manager_account_ratio_loading(
     monkeypatch.setenv("MAX_LONG_ACCOUNT_RATIO", "0.70")
     monkeypatch.setenv("MIN_SHORT_ACCOUNT_RATIO", "0.30")
     monkeypatch.setenv("REQUIRE_ACCOUNT_RATIO_CONFLUENCE", "true")
+    monkeypatch.setenv("CONFIRM_HTF_ACCOUNT_RATIO", "true")
+    monkeypatch.setenv("ACCOUNT_RATIO_HTF_PERIOD", "1h")
     provider = EnvironmentProvider(env_path=str(tmp_path / "missing.env"))
     manager = SettingsManager(environment_provider=provider)
     settings = manager.load_strategy_settings()
@@ -408,3 +468,5 @@ def test_settings_manager_account_ratio_loading(
     assert settings.max_long_account_ratio == Decimal("0.70")
     assert settings.min_short_account_ratio == Decimal("0.30")
     assert settings.require_account_ratio_confluence is True
+    assert settings.confirm_htf_account_ratio is True
+    assert settings.account_ratio_htf_period == "1h"

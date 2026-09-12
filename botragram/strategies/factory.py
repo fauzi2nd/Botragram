@@ -355,6 +355,10 @@ class StrategyFactory:
                         settings.pier_require_account_ratio_confluence
                         or settings.require_account_ratio_confluence
                     ),
+                    confirm_htf_account_ratio=(
+                        settings.pier_confirm_htf_account_ratio
+                        or settings.confirm_htf_account_ratio
+                    ),
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

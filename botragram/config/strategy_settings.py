@@ -59,9 +59,11 @@ class StrategySettings:
     min_short_funding_rate: Decimal = Decimal("-0.0005")
     require_funding_sentiment: bool = True
     filter_account_ratio: bool = True
-    max_long_account_ratio: Decimal = Decimal("0.75")
-    min_short_account_ratio: Decimal = Decimal("0.25")
+    max_long_account_ratio: Decimal = Decimal("0.70")
+    min_short_account_ratio: Decimal = Decimal("0.30")
     require_account_ratio_confluence: bool = True
+    confirm_htf_account_ratio: bool = False
+    account_ratio_htf_period: str = "1h"
 
     @property
     def default_interval(self) -> Interval:
@@ -263,9 +265,10 @@ class StrategySettings:
     pier_min_natr_threshold: Decimal = Decimal("0.0020")
     pier_min_sl_distance_pct: Decimal = Decimal("0.0080")
     pier_filter_account_ratio: bool = True
-    pier_max_long_account_ratio: Decimal = Decimal("0.75")
-    pier_min_short_account_ratio: Decimal = Decimal("0.25")
+    pier_max_long_account_ratio: Decimal = Decimal("0.70")
+    pier_min_short_account_ratio: Decimal = Decimal("0.30")
     pier_require_account_ratio_confluence: bool = False
+    pier_confirm_htf_account_ratio: bool = False
 
     # =========================================================================
     # Market Orderflow Regime & Price-Hunt (MORPH)
@@ -546,4 +549,12 @@ class StrategySettings:
         if self.morph_min_short_funding_rate > self.morph_max_long_funding_rate:
             raise ValueError(
                 "morph_min_short_funding_rate cannot exceed morph_max_long_funding_rate"
+            )
+        if self.min_short_account_ratio > self.max_long_account_ratio:
+            raise ValueError(
+                "min_short_account_ratio cannot exceed max_long_account_ratio"
+            )
+        if self.pier_min_short_account_ratio > self.pier_max_long_account_ratio:
+            raise ValueError(
+                "pier_min_short_account_ratio cannot exceed pier_max_long_account_ratio"
             )

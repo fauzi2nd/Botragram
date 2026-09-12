@@ -112,6 +112,7 @@ class AccountRatioCandleEnricher(Protocol):
         *,
         candles: Sequence[Candle],
         period: str = "15min",
+        htf_period: str | None = "1h",
     ) -> Sequence[Candle]:
         """Enrich a sequence of candles with Account Ratio if available."""
         ...
