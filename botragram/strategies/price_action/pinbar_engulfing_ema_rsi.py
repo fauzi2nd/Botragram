@@ -90,6 +90,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     risk_reward_ratio: Decimal = Decimal("2.0")
     require_trend_filter: bool = True
     min_natr_threshold: Decimal = Decimal("0.0020")
+    min_sl_distance_pct: Decimal = Decimal("0.0080")
 
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
@@ -131,6 +132,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             raise ValueError("Risk reward ratio must be positive")
         if self.min_natr_threshold < _DECIMAL_ZERO:
             raise ValueError("Minimum NATR threshold must not be negative")
+        if self.min_sl_distance_pct < _DECIMAL_ZERO:
+            raise ValueError("Minimum SL distance pct must be non-negative")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -287,6 +290,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 if risk_dist <= _DECIMAL_ZERO:
                     stop_loss = current_close - (self.atr_multiplier_sl * current_atr)
                     risk_dist = self.atr_multiplier_sl * current_atr
+
+                min_risk_dist = current_close * self.min_sl_distance_pct
+                if risk_dist < min_risk_dist:
+                    risk_dist = min_risk_dist
+                    stop_loss = current_close - risk_dist
+
                 take_profit = current_close + (risk_dist * self.risk_reward_ratio)
 
                 reason = (
@@ -355,8 +364,14 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 stop_loss = pattern_high + (self.atr_multiplier_sl * current_atr)
                 risk_dist = stop_loss - current_close
                 if risk_dist <= _DECIMAL_ZERO:
-                    stop_loss = current_close + (self.atr_multiplier_sl * current_atr)
+                    stop_loss = current_close - (self.atr_multiplier_sl * current_atr)
                     risk_dist = self.atr_multiplier_sl * current_atr
+
+                min_risk_dist = current_close * self.min_sl_distance_pct
+                if risk_dist < min_risk_dist:
+                    risk_dist = min_risk_dist
+                    stop_loss = current_close + risk_dist
+
                 take_profit = current_close - (risk_dist * self.risk_reward_ratio)
 
                 reason = (

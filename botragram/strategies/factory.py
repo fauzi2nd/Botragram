@@ -346,6 +346,7 @@ class StrategyFactory:
                     risk_reward_ratio=settings.pier_risk_reward_ratio,
                     require_trend_filter=settings.pier_require_trend_filter,
                     min_natr_threshold=settings.pier_min_natr_threshold,
+                    min_sl_distance_pct=settings.pier_min_sl_distance_pct,
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

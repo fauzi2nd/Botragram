@@ -257,6 +257,7 @@ class StrategySettings:
     pier_swing_lookback: int = 15
     pier_require_trend_filter: bool = True
     pier_min_natr_threshold: Decimal = Decimal("0.0020")
+    pier_min_sl_distance_pct: Decimal = Decimal("0.0080")
 
     # =========================================================================
     # Market Orderflow Regime & Price-Hunt (MORPH)
@@ -512,6 +513,8 @@ class StrategySettings:
             raise ValueError("PIER OI confidence bonus must be non-negative")
         if self.pier_min_natr_threshold < Decimal("0"):
             raise ValueError("pier_min_natr_threshold must not be negative")
+        if self.pier_min_sl_distance_pct < Decimal("0"):
+            raise ValueError("pier_min_sl_distance_pct must not be negative")
         if self.morph_swing_lookback <= 2 or self.morph_fvg_lookback <= 2:
             raise ValueError("MORPH swing and FVG lookback must be greater than 2")
         if self.morph_volume_period <= 2 or self.morph_volume_multiplier <= Decimal(

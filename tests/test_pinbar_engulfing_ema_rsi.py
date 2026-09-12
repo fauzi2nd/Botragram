@@ -325,3 +325,76 @@ def test_hold_when_natr_below_threshold() -> None:
     signal = strategy.generate_signal(candles=candles)
     assert signal.signal_type is SignalType.HOLD
     assert "Dead market volatility rejected" in (signal.reason or "")
+
+
+def test_min_sl_distance_pct_floor_enforced() -> None:
+    """Enforce minimum stop-loss distance floor when candle wick is very tight."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        min_sl_distance_pct=Decimal("0.010"),  # 1.0% minimum floor
+        risk_reward_ratio=Decimal("2.0"),
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(45):
+        price = base + Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    for i in range(45, 55):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("0.2"),
+                low_price=prev_close - Decimal("1.5"),
+                close_price=prev_close - Decimal("1.2"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    # Bullish pinbar with a tight lower wick (0.3% below close)
+    last_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=last_close,
+            high_price=last_close + Decimal("0.1"),
+            low_price=last_close - Decimal("0.3"),
+            close_price=last_close + Decimal("0.05"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.BUY
+    assert signal.reason is not None
+
+    # Parse SL and TP from reason: "SL: <num> | TP: <num>"
+    reason_parts = signal.reason.split("|")
+    sl_str = reason_parts[-2].replace("SL:", "").strip()
+    tp_str = reason_parts[-1].replace("TP:", "").strip()
+    sl_val = Decimal(sl_str)
+    tp_val = Decimal(tp_str)
+
+    current_close = candles[-1].close_price
+    sl_distance = current_close - sl_val
+    expected_min_distance = current_close * Decimal("0.010")
+
+    # The SL distance must be at least the 1.0% floor
+    assert sl_distance >= expected_min_distance
+    # TP must be exactly 2x the risk distance
+    assert tp_val - current_close == sl_distance * Decimal("2.0")
