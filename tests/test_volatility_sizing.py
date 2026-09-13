@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 # =============================================================================
 # Third-Party Imports
@@ -157,3 +158,163 @@ def test_volatility_sizing_invalid_input() -> None:
             account_balance=Decimal("1000"),
             volatility_pct=Decimal("0"),
         )
+
+
+def test_dynamic_sizing_and_leverage_settings_validation() -> None:
+    """Validate bounds for dynamic sizing and adaptive leverage settings."""
+    with pytest.raises(ValueError, match="baseline_confidence must be between 0 and 1"):
+        RiskSettings(baseline_confidence=Decimal("0"))
+
+    with pytest.raises(ValueError, match="Confidence multipliers must be positive"):
+        RiskSettings(min_confidence_multiplier=Decimal("0"))
+
+    with pytest.raises(
+        ValueError,
+        match="min_confidence_multiplier cannot exceed max_confidence_multiplier",
+    ):
+        RiskSettings(
+            min_confidence_multiplier=Decimal("1.8"),
+            max_confidence_multiplier=Decimal("1.2"),
+        )
+
+    with pytest.raises(ValueError, match="Leverage bounds must be positive"):
+        RiskSettings(min_leverage=0)
+
+    with pytest.raises(ValueError, match="min_leverage cannot exceed max_leverage"):
+        RiskSettings(min_leverage=30, max_leverage=20)
+
+
+def test_dynamic_confidence_sizing_scaling() -> None:
+    """Scale position sizing dynamically based on signal confidence."""
+    settings = RiskSettings(
+        dynamic_sizing_enabled=True,
+        confidence_sizing_enabled=True,
+        baseline_confidence=Decimal("0.70"),
+        max_confidence_multiplier=Decimal("1.5"),
+        min_confidence_multiplier=Decimal("0.8"),
+        max_position_size_usdt=Decimal("10000"),
+        risk_per_trade_pct=Decimal("0.002"),  # 20 USDT risk -> 1000 USDT base notional
+        trend_stop_loss_pct=Decimal("0.02"),
+    )
+    engine = RiskEngine(settings=settings)
+
+    # 1. Baseline confidence (0.70) -> multiplier = 1.0x -> 1000 USDT
+    sig_base = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100.0"),
+        confidence=Decimal("0.70"),
+        strategy_name="trend",
+        generated_at=_NOW,
+    )
+    res_base = engine.evaluate(signal=sig_base, account_balance=Decimal("10000"))
+    assert res_base.position is not None
+    assert res_base.position.notional == Decimal("1000")
+
+    # 2. High confidence (0.91) -> multiplier = 0.91 / 0.70 = 1.30x -> 1300 USDT
+    sig_high = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100.0"),
+        confidence=Decimal("0.91"),
+        strategy_name="trend",
+        generated_at=_NOW,
+    )
+    res_high = engine.evaluate(signal=sig_high, account_balance=Decimal("10000"))
+    assert res_high.position is not None
+    assert res_high.position.notional == Decimal("1300")
+
+    # 3. Low confidence (0.50) -> 0.50 / 0.70 = 0.71 -> clamped to min 0.8x -> 800 USDT
+    sig_low = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100.0"),
+        confidence=Decimal("0.50"),
+        strategy_name="trend",
+        generated_at=_NOW,
+    )
+    res_low = engine.evaluate(signal=sig_low, account_balance=Decimal("10000"))
+    assert res_low.position is not None
+    assert res_low.position.notional == Decimal("800")
+
+
+def test_dynamic_adaptive_leverage() -> None:
+    """Adapt leverage to ensure liquidation distance stays outside stop loss."""
+    settings = RiskSettings(
+        dynamic_leverage_enabled=True,
+        min_leverage=5,
+        max_leverage=25,
+        risk_per_trade_pct=Decimal("0.002"),
+        trend_stop_loss_pct=Decimal("0.02"),
+        scalping_stop_loss_pct=Decimal("0.008"),  # 0.8% tight SL
+    )
+    engine = RiskEngine(settings=settings)
+
+    # 1. Tight SL (0.8%): safe leverage = int(0.80 / 0.008) = 100 -> clamped to max 25x
+    sig_scalp = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100.0"),
+        confidence=Decimal("0.70"),
+        strategy_name="scalping",
+        generated_at=_NOW,
+    )
+    res_scalp = engine.evaluate(signal=sig_scalp, account_balance=Decimal("10000"))
+    assert res_scalp.position is not None
+    assert res_scalp.position.leverage == 25
+
+    # 2. Wide SL (8%): safe leverage = int(0.80 / 0.08) = 10 -> leverage = 10x
+    settings_wide = RiskSettings(
+        dynamic_leverage_enabled=True,
+        min_leverage=5,
+        max_leverage=25,
+        risk_per_trade_pct=Decimal("0.002"),
+        trend_stop_loss_pct=Decimal("0.08"),
+        trend_take_profit_pct=Decimal("0.16"),
+    )
+    engine_wide = RiskEngine(settings=settings_wide)
+    sig_wide = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100.0"),
+        confidence=Decimal("0.70"),
+        strategy_name="ema_rsi",
+        generated_at=_NOW,
+    )
+    res_wide = engine_wide.evaluate(signal=sig_wide, account_balance=Decimal("10000"))
+    assert res_wide.position is not None
+    assert res_wide.position.leverage == 10
+
+
+def test_settings_manager_loads_dynamic_sizing_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify SettingsManager parses dynamic sizing environment variables."""
+    from botragram.app.environment_provider import EnvironmentProvider
+    from botragram.app.settings_manager import SettingsManager
+
+    monkeypatch.delenv("BOTRAGRAM_ENV_FILE", raising=False)
+    monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)
+    monkeypatch.setenv("DYNAMIC_SIZING_ENABLED", "true")
+    monkeypatch.setenv("CONFIDENCE_SIZING_ENABLED", "true")
+    monkeypatch.setenv("BASELINE_CONFIDENCE", "0.75")
+    monkeypatch.setenv("MAX_CONFIDENCE_MULTIPLIER", "1.6")
+    monkeypatch.setenv("DYNAMIC_LEVERAGE_ENABLED", "true")
+    monkeypatch.setenv("MIN_LEVERAGE", "8")
+    monkeypatch.setenv("MAX_LEVERAGE", "30")
+
+    manager = SettingsManager(
+        environment_provider=EnvironmentProvider(
+            env_path=str(tmp_path / "missing.env"),
+        )
+    )
+    risk_settings = manager.load_risk_settings()
+
+    assert risk_settings.dynamic_sizing_enabled is True
+    assert risk_settings.confidence_sizing_enabled is True
+    assert risk_settings.baseline_confidence == Decimal("0.75")
+    assert risk_settings.max_confidence_multiplier == Decimal("1.6")
+    assert risk_settings.dynamic_leverage_enabled is True
+    assert risk_settings.min_leverage == 8
+    assert risk_settings.max_leverage == 30

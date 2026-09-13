@@ -406,6 +406,25 @@ class SettingsManager:
                 raw_value=environment.get_baseline_volatility_pct(),
                 setting_name="BASELINE_VOLATILITY_PCT",
             ),
+            dynamic_sizing_enabled=environment.get_dynamic_sizing_enabled(),
+            confidence_sizing_enabled=environment.get_confidence_sizing_enabled(),
+            baseline_confidence=self._parse_decimal(
+                raw_value=environment.get_baseline_confidence(),
+                setting_name="BASELINE_CONFIDENCE",
+            ),
+            max_confidence_multiplier=self._parse_decimal(
+                raw_value=environment.get_max_confidence_multiplier(),
+                setting_name="MAX_CONFIDENCE_MULTIPLIER",
+            ),
+            dynamic_leverage_enabled=environment.get_dynamic_leverage_enabled(),
+            min_leverage=self._parse_positive_int(
+                raw_value=environment.get_min_leverage(),
+                setting_name="MIN_LEVERAGE",
+            ),
+            max_leverage=self._parse_positive_int(
+                raw_value=environment.get_max_leverage(),
+                setting_name="MAX_LEVERAGE",
+            ),
         )
 
     @staticmethod

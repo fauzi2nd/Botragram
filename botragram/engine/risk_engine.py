@@ -134,7 +134,10 @@ class RiskEngine:
         quantity = allowed_risk / risk_per_unit
         notional = quantity * signal.price
 
-        if self.settings.volatility_sizing_enabled and volatility_pct is not None:
+        if (
+            self.settings.volatility_sizing_enabled
+            or self.settings.dynamic_sizing_enabled
+        ) and volatility_pct is not None:
             vol_multiplier = min(
                 Decimal("1.5"),
                 max(
@@ -144,11 +147,37 @@ class RiskEngine:
             )
             notional = notional * vol_multiplier
 
+        if (
+            self.settings.dynamic_sizing_enabled
+            and self.settings.confidence_sizing_enabled
+            and signal.confidence > _DECIMAL_ZERO
+            and self.settings.baseline_confidence > _DECIMAL_ZERO
+        ):
+            conf_multiplier = min(
+                self.settings.max_confidence_multiplier,
+                max(
+                    self.settings.min_confidence_multiplier,
+                    signal.confidence / self.settings.baseline_confidence,
+                ),
+            )
+            notional = notional * conf_multiplier
+
         if notional > effective_max_position_size:
             notional = effective_max_position_size
             quantity = notional / signal.price
-        elif self.settings.volatility_sizing_enabled and volatility_pct is not None:
+        else:
             quantity = notional / signal.price
+
+        if self.settings.dynamic_leverage_enabled and (
+            leverage is None or isinstance(leverage, bool) or leverage <= 0
+        ):
+            sl_pct = risk_per_unit / signal.price
+            if sl_pct > _DECIMAL_ZERO:
+                safe_lev = int(Decimal("0.80") / sl_pct)
+                effective_leverage = min(
+                    self.settings.max_leverage,
+                    max(self.settings.min_leverage, safe_lev),
+                )
 
         risk_amount = quantity * risk_per_unit
         reward_amount = quantity * abs(take_profit - signal.price)

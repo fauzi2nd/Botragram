@@ -35,6 +35,7 @@ from botragram.constants.env import (
     ENV_AUTONOMOUS_EXECUTION_ENABLED,
     ENV_AUTONOMOUS_LIVE_ENTRY_ENABLED,
     ENV_AUTONOMOUS_MAINNET_ENTRY_ENABLED,
+    ENV_BASELINE_CONFIDENCE,
     ENV_BASELINE_VOLATILITY_PCT,
     ENV_BINANCE_API_KEY,
     ENV_BINANCE_API_SECRET,
@@ -53,6 +54,7 @@ from botragram.constants.env import (
     ENV_BYBIT_TESTNET,
     ENV_CANDLE_PRUNING_INTERVAL_HOURS,
     ENV_CANDLE_RETENTION_DAYS,
+    ENV_CONFIDENCE_SIZING_ENABLED,
     ENV_CONFIRM_HTF_ACCOUNT_RATIO,
     ENV_DISCOVERY_BATCH_SIZE,
     ENV_DISCOVERY_CADENCE_SECONDS,
@@ -66,6 +68,8 @@ from botragram.constants.env import (
     ENV_DISCOVERY_UNIVERSE_LIMIT,
     ENV_DISCOVERY_USE_DYNAMIC_VOLUME,
     ENV_DISCOVERY_VOLUME_SMA_PERIOD,
+    ENV_DYNAMIC_LEVERAGE_ENABLED,
+    ENV_DYNAMIC_SIZING_ENABLED,
     ENV_EARLY_EXIT_CHECK_CANDLESTICK_REVERSAL,
     ENV_EARLY_EXIT_CHECK_OPPOSITE_SIGNAL,
     ENV_EARLY_EXIT_MIN_CONFIDENCE,
@@ -85,13 +89,16 @@ from botragram.constants.env import (
     ENV_LOG_LEVEL,
     ENV_LOG_LEVEL_LEGACY,
     ENV_MARKET_INTERVAL,
+    ENV_MAX_CONFIDENCE_MULTIPLIER,
     ENV_MAX_DRAWDOWN_PCT,
     ENV_MAX_EXECUTABLE_QUOTE_AGE_MS,
+    ENV_MAX_LEVERAGE,
     ENV_MAX_LONG_ACCOUNT_RATIO,
     ENV_MAX_LONG_FUNDING_RATE,
     ENV_MAX_OPEN_POSITIONS,
     ENV_MAX_POSITION_SIZE_USDT,
     ENV_MAX_SPREAD_BPS,
+    ENV_MIN_LEVERAGE,
     ENV_MIN_OI_CHANGE_PCT,
     ENV_MIN_SHORT_ACCOUNT_RATIO,
     ENV_MIN_SHORT_FUNDING_RATE,
@@ -661,6 +668,34 @@ class EnvironmentProvider:
     def get_baseline_volatility_pct(self) -> str:
         """Return the baseline volatility percentage for sizing."""
         return self._get_var(ENV_BASELINE_VOLATILITY_PCT, default="0.02")
+
+    def get_dynamic_sizing_enabled(self) -> bool:
+        """Return whether dynamic position sizing is enabled."""
+        return self._get_bool(ENV_DYNAMIC_SIZING_ENABLED, default=False)
+
+    def get_confidence_sizing_enabled(self) -> bool:
+        """Return whether confidence-weighted sizing is enabled."""
+        return self._get_bool(ENV_CONFIDENCE_SIZING_ENABLED, default=True)
+
+    def get_baseline_confidence(self) -> str:
+        """Return baseline confidence for dynamic scaling."""
+        return self._get_var(ENV_BASELINE_CONFIDENCE, default="0.70")
+
+    def get_max_confidence_multiplier(self) -> str:
+        """Return max multiplier for high-confidence signals."""
+        return self._get_var(ENV_MAX_CONFIDENCE_MULTIPLIER, default="1.5")
+
+    def get_dynamic_leverage_enabled(self) -> bool:
+        """Return whether adaptive safe leverage is enabled."""
+        return self._get_bool(ENV_DYNAMIC_LEVERAGE_ENABLED, default=False)
+
+    def get_min_leverage(self) -> str:
+        """Return minimum bound for adaptive leverage."""
+        return self._get_var(ENV_MIN_LEVERAGE, default="5")
+
+    def get_max_leverage(self) -> str:
+        """Return maximum bound for adaptive leverage."""
+        return self._get_var(ENV_MAX_LEVERAGE, default="25")
 
     def get_scalping_stop_loss_pct(self) -> str:
         """Return the scalping stop-loss ratio."""

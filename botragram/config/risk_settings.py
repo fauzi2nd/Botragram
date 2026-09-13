@@ -88,6 +88,16 @@ class RiskSettings:
     volatility_sizing_enabled: bool = False
     baseline_volatility_pct: Decimal = Decimal("0.02")
 
+    # Smart Dynamic Sizing & Adaptive Leverage
+    dynamic_sizing_enabled: bool = False
+    confidence_sizing_enabled: bool = True
+    baseline_confidence: Decimal = Decimal("0.70")
+    max_confidence_multiplier: Decimal = Decimal("1.5")
+    min_confidence_multiplier: Decimal = Decimal("0.8")
+    dynamic_leverage_enabled: bool = False
+    min_leverage: int = 5
+    max_leverage: int = 25
+
     def __post_init__(self) -> None:
         """Validate global and strategy-specific risk ratios."""
         ratios = (
@@ -228,3 +238,18 @@ class RiskSettings:
             raise ValueError(
                 "Early exit minimum confidence must be between 0.0 and 1.0"
             )
+
+        if not (Decimal("0") < self.baseline_confidence <= Decimal("1")):
+            raise ValueError("baseline_confidence must be between 0 and 1")
+        if self.min_confidence_multiplier <= Decimal(
+            "0"
+        ) or self.max_confidence_multiplier <= Decimal("0"):
+            raise ValueError("Confidence multipliers must be positive")
+        if self.min_confidence_multiplier > self.max_confidence_multiplier:
+            raise ValueError(
+                "min_confidence_multiplier cannot exceed max_confidence_multiplier"
+            )
+        if self.min_leverage <= 0 or self.max_leverage <= 0:
+            raise ValueError("Leverage bounds must be positive")
+        if self.min_leverage > self.max_leverage:
+            raise ValueError("min_leverage cannot exceed max_leverage")
