@@ -30,12 +30,16 @@ __all__ = [
     "CandlestickMatch",
     "detect_engulfing",
     "detect_pinbar",
+    "detect_star",
 ]
 
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DEFAULT_MIN_WICK_RATIO: Final[Decimal] = Decimal("0.60")
 _DEFAULT_MAX_OPPOSITE_WICK_RATIO: Final[Decimal] = Decimal("0.20")
 _DEFAULT_MIN_ENGULFING_BODY_RATIO: Final[Decimal] = Decimal("1.05")
+_DEFAULT_MIN_STAR_FIRST_BODY_RATIO: Final[Decimal] = Decimal("0.50")
+_DEFAULT_MAX_STAR_MIDDLE_BODY_RATIO: Final[Decimal] = Decimal("0.35")
+_DEFAULT_MIN_STAR_PENETRATION_RATIO: Final[Decimal] = Decimal("0.50")
 _MIN_LOCATION_RATIO: Final[Decimal] = Decimal("0.60")
 
 
@@ -215,5 +219,127 @@ def detect_engulfing(
         pattern_name="none",
         rejection_level=_DECIMAL_ZERO,
         body_ratio=curr_body_ratio,
+        wick_ratio=_DECIMAL_ZERO,
+    )
+
+
+def detect_star(
+    *,
+    first_candle: Candle,
+    second_candle: Candle,
+    third_candle: Candle,
+    min_first_body_ratio: Decimal = _DEFAULT_MIN_STAR_FIRST_BODY_RATIO,
+    max_middle_body_ratio: Decimal = _DEFAULT_MAX_STAR_MIDDLE_BODY_RATIO,
+    min_penetration_ratio: Decimal = _DEFAULT_MIN_STAR_PENETRATION_RATIO,
+) -> CandlestickMatch:
+    """Detect a 3-candle Morning Star (bullish) or Evening Star (bearish) reversal.
+
+    Args:
+        first_candle: Preceding trend candlestick.
+        second_candle: Middle star (indecision) candlestick.
+        third_candle: Current confirmation candlestick.
+        min_first_body_ratio: Minimum body-to-range ratio for the first candle.
+        max_middle_body_ratio: Maximum allowable middle body relative to first body.
+        min_penetration_ratio: Minimum penetration of third candle into first body.
+
+    Returns:
+        A CandlestickMatch describing the detected pattern, if any.
+    """
+    third_range = third_candle.high_price - third_candle.low_price
+    if third_range <= _DECIMAL_ZERO:
+        return CandlestickMatch(
+            matched=False,
+            side=None,
+            pattern_name="none",
+            rejection_level=_DECIMAL_ZERO,
+            body_ratio=_DECIMAL_ZERO,
+            wick_ratio=_DECIMAL_ZERO,
+        )
+
+    first_range = first_candle.high_price - first_candle.low_price
+    if first_range <= _DECIMAL_ZERO:
+        return CandlestickMatch(
+            matched=False,
+            side=None,
+            pattern_name="none",
+            rejection_level=_DECIMAL_ZERO,
+            body_ratio=_DECIMAL_ZERO,
+            wick_ratio=_DECIMAL_ZERO,
+        )
+
+    first_body = abs(first_candle.close_price - first_candle.open_price)
+    if (first_body / first_range) < min_first_body_ratio:
+        return CandlestickMatch(
+            matched=False,
+            side=None,
+            pattern_name="none",
+            rejection_level=_DECIMAL_ZERO,
+            body_ratio=_DECIMAL_ZERO,
+            wick_ratio=_DECIMAL_ZERO,
+        )
+
+    second_body = abs(second_candle.close_price - second_candle.open_price)
+    if second_body > (max_middle_body_ratio * first_body):
+        return CandlestickMatch(
+            matched=False,
+            side=None,
+            pattern_name="none",
+            rejection_level=_DECIMAL_ZERO,
+            body_ratio=_DECIMAL_ZERO,
+            wick_ratio=_DECIMAL_ZERO,
+        )
+
+    third_body = abs(third_candle.close_price - third_candle.open_price)
+    third_body_ratio = third_body / third_range
+
+    # Morning Star: 1st red, 2nd small with lower low/probe, 3rd green penetrates >= 50%
+    if (
+        first_candle.close_price < first_candle.open_price
+        and second_candle.low_price <= first_candle.low_price
+        and third_candle.close_price > third_candle.open_price
+        and third_candle.close_price
+        >= (first_candle.close_price + (first_body * min_penetration_ratio))
+    ):
+        return CandlestickMatch(
+            matched=True,
+            side=PositionSide.LONG,
+            pattern_name="morning_star",
+            rejection_level=min(
+                first_candle.low_price,
+                second_candle.low_price,
+                third_candle.low_price,
+            ),
+            body_ratio=third_body_ratio,
+            wick_ratio=third_body / first_body,
+        )
+
+    # Evening Star: 1st green, 2nd small with higher high/probe,
+    # 3rd red penetrates >= 50% into 1st body.
+    if (
+        first_candle.close_price > first_candle.open_price
+        and second_candle.high_price >= first_candle.high_price
+        and third_candle.close_price < third_candle.open_price
+        and third_candle.close_price
+        <= (first_candle.close_price - (first_body * min_penetration_ratio))
+    ):
+        return CandlestickMatch(
+            matched=True,
+            side=PositionSide.SHORT,
+            pattern_name="evening_star",
+            rejection_level=max(
+                first_candle.high_price,
+                second_candle.high_price,
+                third_candle.high_price,
+            ),
+            body_ratio=third_body_ratio,
+            wick_ratio=third_body / first_body,
+        )
+
+    return CandlestickMatch(
+        matched=False,
+        side=None,
+        pattern_name="none",
+        rejection_level=_DECIMAL_ZERO,
+        body_ratio=third_body_ratio,
         wick_ratio=_DECIMAL_ZERO,
     )

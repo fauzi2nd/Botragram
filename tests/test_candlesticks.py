@@ -26,6 +26,7 @@ from botragram.enums import Interval, PositionSide
 from botragram.indicators.price_action.candlesticks import (
     detect_engulfing,
     detect_pinbar,
+    detect_star,
 )
 from botragram.models import Candle
 
@@ -191,6 +192,163 @@ def test_detect_engulfing_rejects_same_color_candles() -> None:
         minutes_offset=15,
     )
     result = detect_engulfing(prev_candle=prev, curr_candle=curr)
+
+    assert not result.matched
+    assert result.side is None
+
+
+def test_detect_morning_star_success() -> None:
+    """Detect a valid 3-candle Morning Star bullish reversal."""
+    c1 = _make_candle(
+        open_price="110.0",
+        high_price="111.0",
+        low_price="99.5",
+        close_price="100.0",  # Strong red body = 10, range = 11.5
+        minutes_offset=0,
+    )
+    c2 = _make_candle(
+        open_price="99.0",
+        high_price="100.0",
+        low_price="97.0",  # Lower low probe (97.0 <= 99.5)
+        close_price="99.5",  # Small indecision star body = 0.5 (< 35% of 10)
+        minutes_offset=15,
+    )
+    c3 = _make_candle(
+        open_price="99.5",
+        high_price="107.0",
+        low_price="99.0",
+        close_price="106.0",  # Strong green: penetrates > 50% into c1 body (106 >= 105)
+        minutes_offset=30,
+    )
+    result = detect_star(
+        first_candle=c1,
+        second_candle=c2,
+        third_candle=c3,
+    )
+
+    assert result.matched
+    assert result.side is PositionSide.LONG
+    assert result.pattern_name == "morning_star"
+    assert result.rejection_level == Decimal("97.0")
+    assert result.body_ratio > Decimal("0.70")
+
+
+def test_detect_evening_star_success() -> None:
+    """Detect a valid 3-candle Evening Star bearish reversal."""
+    c1 = _make_candle(
+        open_price="100.0",
+        high_price="110.5",
+        low_price="99.0",
+        close_price="110.0",  # Strong green body = 10, range = 11.5
+        minutes_offset=0,
+    )
+    c2 = _make_candle(
+        open_price="111.0",
+        high_price="113.0",  # Higher high probe (113.0 >= 110.5)
+        low_price="110.5",
+        close_price="111.5",  # Small star body = 0.5 (< 35% of 10)
+        minutes_offset=15,
+    )
+    c3 = _make_candle(
+        open_price="111.0",
+        high_price="111.5",
+        low_price="103.0",
+        close_price="104.0",  # Strong red: penetrates > 50% into c1 body (104 <= 105)
+        minutes_offset=30,
+    )
+    result = detect_star(
+        first_candle=c1,
+        second_candle=c2,
+        third_candle=c3,
+    )
+
+    assert result.matched
+    assert result.side is PositionSide.SHORT
+    assert result.pattern_name == "evening_star"
+    assert result.rejection_level == Decimal("113.0")
+    assert result.body_ratio > Decimal("0.70")
+
+
+def test_detect_star_rejects_insufficient_penetration() -> None:
+    """Reject star pattern when third candle fails to penetrate 50% of first body."""
+    c1 = _make_candle(
+        open_price="110.0",
+        high_price="111.0",
+        low_price="99.5",
+        close_price="100.0",  # Red body = 10
+        minutes_offset=0,
+    )
+    c2 = _make_candle(
+        open_price="99.0",
+        high_price="100.0",
+        low_price="97.0",
+        close_price="99.5",
+        minutes_offset=15,
+    )
+    c3 = _make_candle(
+        open_price="99.5",
+        high_price="103.0",
+        low_price="99.0",
+        close_price="102.0",  # Only reaches 102 (needs >= 105)
+        minutes_offset=30,
+    )
+    result = detect_star(
+        first_candle=c1,
+        second_candle=c2,
+        third_candle=c3,
+    )
+
+    assert not result.matched
+    assert result.side is None
+
+
+def test_detect_star_rejects_large_middle_body() -> None:
+    """Reject star pattern when middle star body is too large."""
+    c1 = _make_candle(
+        open_price="110.0",
+        high_price="111.0",
+        low_price="99.5",
+        close_price="100.0",  # Red body = 10
+        minutes_offset=0,
+    )
+    c2 = _make_candle(
+        open_price="95.0",
+        high_price="101.0",
+        low_price="94.0",
+        close_price="100.0",  # Body = 5 (50% of 10 > max 35%)
+        minutes_offset=15,
+    )
+    c3 = _make_candle(
+        open_price="100.0",
+        high_price="107.0",
+        low_price="99.0",
+        close_price="106.0",
+        minutes_offset=30,
+    )
+    result = detect_star(
+        first_candle=c1,
+        second_candle=c2,
+        third_candle=c3,
+    )
+
+    assert not result.matched
+    assert result.side is None
+
+
+def test_detect_star_zero_range_safely() -> None:
+    """Handle flat zero range candles gracefully without division error."""
+    flat = _make_candle(
+        open_price="100.0",
+        high_price="100.0",
+        low_price="100.0",
+        close_price="100.0",
+        minutes_offset=0,
+    )
+    result = detect_star(
+        first_candle=flat,
+        second_candle=flat,
+        third_candle=flat,
+    )
 
     assert not result.matched
     assert result.side is None

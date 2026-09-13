@@ -398,3 +398,167 @@ def test_min_sl_distance_pct_floor_enforced() -> None:
     assert sl_distance >= expected_min_distance
     # TP must be exactly 2x the risk distance
     assert tp_val - current_close == sl_distance * Decimal("2.0")
+
+
+def test_generate_morning_star_signal_in_uptrend() -> None:
+    """Trigger a BUY signal when a Morning Star pattern forms in an uptrend."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(45):
+        price = base + Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    for i in range(45, 53):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("0.2"),
+                low_price=prev_close - Decimal("1.5"),
+                close_price=prev_close - Decimal("1.2"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    # 3-bar Morning Star:
+    # 53 (c1): Strong red candle
+    c52_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=53,
+            open_price=c52_close,
+            high_price=c52_close + Decimal("0.2"),
+            low_price=c52_close - Decimal("4.2"),
+            close_price=c52_close - Decimal("4.0"),
+            volume=Decimal("120.0"),
+        )
+    )
+    # 54 (c2): Star candle (small body = 0.4, lower low probe)
+    c53_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=54,
+            open_price=c53_close - Decimal("0.2"),
+            high_price=c53_close + Decimal("0.3"),
+            low_price=c53_close - Decimal("1.5"),
+            close_price=c53_close + Decimal("0.2"),
+            volume=Decimal("130.0"),
+        )
+    )
+    # 55 (c3): Strong green candle (penetrates > 50% into c1 body)
+    c54_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=c54_close,
+            high_price=c54_close + Decimal("3.8"),
+            low_price=c54_close - Decimal("0.2"),
+            close_price=c54_close + Decimal("3.5"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.BUY
+    assert signal.confidence >= Decimal("0.65")
+    assert "Morning Star" in (signal.reason or "")
+
+
+def test_generate_evening_star_signal_in_downtrend() -> None:
+    """Trigger a SELL signal when an Evening Star pattern forms in a downtrend."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("200.0")
+    for i in range(45):
+        price = base - Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("0.5"),
+                low_price=price - Decimal("1.5"),
+                close_price=price - Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    for i in range(45, 53):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("1.5"),
+                low_price=prev_close - Decimal("0.2"),
+                close_price=prev_close + Decimal("1.2"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    # 3-bar Evening Star:
+    # 53 (c1): Strong green candle
+    c52_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=53,
+            open_price=c52_close,
+            high_price=c52_close + Decimal("4.2"),
+            low_price=c52_close - Decimal("0.2"),
+            close_price=c52_close + Decimal("4.0"),
+            volume=Decimal("120.0"),
+        )
+    )
+    # 54 (c2): Star candle (small body = 0.4, higher high probe)
+    c53_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=54,
+            open_price=c53_close + Decimal("0.2"),
+            high_price=c53_close + Decimal("1.5"),
+            low_price=c53_close - Decimal("0.3"),
+            close_price=c53_close - Decimal("0.2"),
+            volume=Decimal("130.0"),
+        )
+    )
+    # 55 (c3): Strong red candle (penetrates > 50% into c1 body)
+    c54_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=c54_close,
+            high_price=c54_close + Decimal("0.2"),
+            low_price=c54_close - Decimal("3.8"),
+            close_price=c54_close - Decimal("3.5"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+
+    assert signal.signal_type is SignalType.SELL
+    assert signal.confidence >= Decimal("0.65")
+    assert "Evening Star" in (signal.reason or "")

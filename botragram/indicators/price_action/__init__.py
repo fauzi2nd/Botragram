@@ -20,6 +20,7 @@ from botragram.indicators.price_action.candlesticks import (
     CandlestickMatch,
     detect_engulfing,
     detect_pinbar,
+    detect_star,
 )
 from botragram.indicators.price_action.choch_fvg import (
     ChochFvgResult,
@@ -37,5 +38,6 @@ __all__ = [
     "detect_engulfing",
     "detect_fvg_zones",
     "detect_pinbar",
+    "detect_star",
     "find_swing_levels",
 ]

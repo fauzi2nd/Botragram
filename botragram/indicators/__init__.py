@@ -27,12 +27,15 @@ from botragram.indicators.price_action import (
     calculate_choch_fvg,
     detect_engulfing,
     detect_pinbar,
+    detect_star,
 )
 from botragram.indicators.trend import (
     ADXResult,
+    ParabolicSARResult,
     SupertrendResult,
     calculate_adx,
     calculate_ema,
+    calculate_parabolic_sar,
     calculate_sma,
     calculate_supertrend,
 )
@@ -57,6 +60,7 @@ __all__ = [
     "MACDResult",
     "OpenInterestConfluence",
     "PSARResult",
+    "ParabolicSARResult",
     "StochRSIResult",
     "SupertrendResult",
     "calculate_adx",
@@ -69,6 +73,7 @@ __all__ = [
     "calculate_obv",
     "calculate_oi_change",
     "calculate_oi_sma",
+    "calculate_parabolic_sar",
     "calculate_psar",
     "calculate_rsi",
     "calculate_sma",
@@ -78,6 +83,7 @@ __all__ = [
     "classify_oi_regime",
     "detect_engulfing",
     "detect_pinbar",
+    "detect_star",
     "evaluate_account_ratio_sentiment",
     "evaluate_oi_confluence",
 ]

@@ -28,10 +28,12 @@ from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.indicators import (
     calculate_atr,
     calculate_ema,
+    calculate_psar,
     calculate_rsi,
     calculate_sma,
     detect_engulfing,
     detect_pinbar,
+    detect_star,
 )
 from botragram.indicators.price_action import find_swing_levels
 from botragram.models import Candle, Signal
@@ -49,6 +51,8 @@ _PULLBACK_PROXIMITY_PCT: Final[Decimal] = Decimal("0.006")  # 0.6% proximity to 
 _HIGH_VOLUME_BONUS_MULTIPLIER: Final[Decimal] = Decimal("1.30")
 _STRONG_WICK_BONUS_RATIO: Final[Decimal] = Decimal("0.70")
 _STRONG_ENGULFING_BONUS_RATIO: Final[Decimal] = Decimal("1.25")
+_STRONG_STAR_BONUS_RATIO: Final[Decimal] = Decimal("0.80")
+_SAR_BONUS: Final[Decimal] = Decimal("0.05")
 _CONFIDENCE_STEP_BONUS: Final[Decimal] = Decimal("0.05")
 
 
@@ -179,6 +183,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         atr_series = calculate_atr(
             high_prices, low_prices, close_prices, period=self.atr_period
         )
+        psar_series = calculate_psar(high_prices, low_prices)
+        current_psar_uptrend = psar_series.is_uptrend[-1]
 
         if self.require_key_level_location:
             last_swing_high, last_swing_low = find_swing_levels(
@@ -191,6 +197,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
 
         curr_candle = candles[-1]
         prev_candle = candles[-2]
+        first_star_candle = candles[-3] if len(candles) >= 3 else prev_candle
 
         current_close = curr_candle.close_price
         current_trend = ema_trend[-1]
@@ -232,6 +239,19 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             curr_candle=curr_candle,
             min_body_ratio=self.min_engulfing_body_ratio,
         )
+        star = (
+            detect_star(
+                first_candle=first_star_candle,
+                second_candle=prev_candle,
+                third_candle=curr_candle,
+            )
+            if len(candles) >= 3
+            else detect_star(
+                first_candle=prev_candle,
+                second_candle=prev_candle,
+                third_candle=curr_candle,
+            )
+        )
 
         signal_type = SignalType.HOLD
         confidence = _DECIMAL_ZERO
@@ -247,8 +267,11 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             )
             near_pullback = curr_candle.low_price <= pullback_proximity
             rsi_in_zone = self.rsi_long_min <= current_rsi <= self.rsi_long_max
-            candle_trigger = (pinbar.matched and pinbar.side is PositionSide.LONG) or (
-                engulfing.matched and engulfing.side is PositionSide.LONG
+            star_matched_buy = star.matched and star.side is PositionSide.LONG
+            candle_trigger = (
+                (pinbar.matched and pinbar.side is PositionSide.LONG)
+                or (engulfing.matched and engulfing.side is PositionSide.LONG)
+                or star_matched_buy
             )
 
             # Key level location check: Dynamic EMA Support or Swing Low Support
@@ -276,11 +299,20 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 and candle_trigger
                 and location_ok
             ):
-                pattern_label = (
-                    "Bullish Pinbar"
-                    if pinbar.matched and pinbar.side is PositionSide.LONG
-                    else "Bullish Engulfing"
-                )
+                if star_matched_buy:
+                    pattern_label = "Morning Star"
+                    pattern_low = min(
+                        curr_candle.low_price,
+                        prev_candle.low_price,
+                        first_star_candle.low_price,
+                    )
+                elif pinbar.matched and pinbar.side is PositionSide.LONG:
+                    pattern_label = "Bullish Pinbar"
+                    pattern_low = min(curr_candle.low_price, prev_candle.low_price)
+                else:
+                    pattern_label = "Bullish Engulfing"
+                    pattern_low = min(curr_candle.low_price, prev_candle.low_price)
+
                 signal_type = SignalType.BUY
                 confidence = self._compute_confidence(
                     pinbar_matched=pinbar.matched and pinbar.side is PositionSide.LONG,
@@ -288,10 +320,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     engulfing_matched=engulfing.matched
                     and engulfing.side is PositionSide.LONG,
                     engulfing_ratio=engulfing.wick_ratio,
+                    star_matched=star_matched_buy,
+                    star_ratio=star.wick_ratio,
+                    sar_aligned=current_psar_uptrend,
                     volume=curr_candle.volume,
                     volume_sma=current_vol_sma,
                 )
-                pattern_low = min(curr_candle.low_price, prev_candle.low_price)
                 stop_loss = pattern_low - (self.atr_multiplier_sl * current_atr)
                 risk_dist = current_close - stop_loss
                 if risk_dist <= _DECIMAL_ZERO:
@@ -323,8 +357,11 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             )
             near_pullback = curr_candle.high_price >= pullback_proximity
             rsi_in_zone = self.rsi_short_min <= current_rsi <= self.rsi_short_max
-            candle_trigger = (pinbar.matched and pinbar.side is PositionSide.SHORT) or (
-                engulfing.matched and engulfing.side is PositionSide.SHORT
+            star_matched_sell = star.matched and star.side is PositionSide.SHORT
+            candle_trigger = (
+                (pinbar.matched and pinbar.side is PositionSide.SHORT)
+                or (engulfing.matched and engulfing.side is PositionSide.SHORT)
+                or star_matched_sell
             )
 
             # Key level location check: Dynamic EMA Resistance or Swing High Resistance
@@ -352,11 +389,20 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 and candle_trigger
                 and location_ok
             ):
-                pattern_label = (
-                    "Bearish Pinbar"
-                    if pinbar.matched and pinbar.side is PositionSide.SHORT
-                    else "Bearish Engulfing"
-                )
+                if star_matched_sell:
+                    pattern_label = "Evening Star"
+                    pattern_high = max(
+                        curr_candle.high_price,
+                        prev_candle.high_price,
+                        first_star_candle.high_price,
+                    )
+                elif pinbar.matched and pinbar.side is PositionSide.SHORT:
+                    pattern_label = "Bearish Pinbar"
+                    pattern_high = max(curr_candle.high_price, prev_candle.high_price)
+                else:
+                    pattern_label = "Bearish Engulfing"
+                    pattern_high = max(curr_candle.high_price, prev_candle.high_price)
+
                 signal_type = SignalType.SELL
                 confidence = self._compute_confidence(
                     pinbar_matched=pinbar.matched and pinbar.side is PositionSide.SHORT,
@@ -364,10 +410,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     engulfing_matched=engulfing.matched
                     and engulfing.side is PositionSide.SHORT,
                     engulfing_ratio=engulfing.wick_ratio,
+                    star_matched=star_matched_sell,
+                    star_ratio=star.wick_ratio,
+                    sar_aligned=not current_psar_uptrend,
                     volume=curr_candle.volume,
                     volume_sma=current_vol_sma,
                 )
-                pattern_high = max(curr_candle.high_price, prev_candle.high_price)
                 stop_loss = pattern_high + (self.atr_multiplier_sl * current_atr)
                 risk_dist = stop_loss - current_close
                 if risk_dist <= _DECIMAL_ZERO:
@@ -427,6 +475,9 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         pinbar_ratio: Decimal,
         engulfing_matched: bool,
         engulfing_ratio: Decimal,
+        star_matched: bool = False,
+        star_ratio: Decimal = _DECIMAL_ZERO,
+        sar_aligned: bool = False,
         volume: Decimal,
         volume_sma: Decimal,
     ) -> Decimal:
@@ -438,6 +489,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
 
         if engulfing_matched and engulfing_ratio >= _STRONG_ENGULFING_BONUS_RATIO:
             score += _CONFIDENCE_STEP_BONUS
+
+        if star_matched and star_ratio >= _STRONG_STAR_BONUS_RATIO:
+            score += _CONFIDENCE_STEP_BONUS
+
+        if sar_aligned:
+            score += _SAR_BONUS
 
         if volume_sma > _DECIMAL_ZERO and volume >= (
             _HIGH_VOLUME_BONUS_MULTIPLIER * volume_sma
