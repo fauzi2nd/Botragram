@@ -61,8 +61,11 @@ from botragram.constants.env import (
     ENV_DISCOVERY_FILTER_MIN_LIQUIDITY,
     ENV_DISCOVERY_MAX_CANDLE_VOLATILITY_PCT,
     ENV_DISCOVERY_MAX_UNIVERSE_SYMBOLS,
+    ENV_DISCOVERY_MIN_24H_TURNOVER_USDT,
     ENV_DISCOVERY_MIN_QUOTE_VOLUME_USDT,
     ENV_DISCOVERY_UNIVERSE_LIMIT,
+    ENV_DISCOVERY_USE_DYNAMIC_VOLUME,
+    ENV_DISCOVERY_VOLUME_SMA_PERIOD,
     ENV_EARLY_EXIT_CHECK_CANDLESTICK_REVERSAL,
     ENV_EARLY_EXIT_CHECK_OPPOSITE_SIGNAL,
     ENV_EARLY_EXIT_MIN_CONFIDENCE,
@@ -530,6 +533,18 @@ class EnvironmentProvider:
     def get_discovery_min_quote_volume_usdt(self) -> str:
         """Return minimum quote volume in USDT for discovery filtering."""
         return self._get_var(ENV_DISCOVERY_MIN_QUOTE_VOLUME_USDT, default="1000")
+
+    def get_discovery_use_dynamic_volume(self) -> bool:
+        """Return whether dynamic volume filtering is enabled in discovery."""
+        return self._get_bool(ENV_DISCOVERY_USE_DYNAMIC_VOLUME, default=True)
+
+    def get_discovery_volume_sma_period(self) -> str:
+        """Return rolling SMA period for discovery volume estimation."""
+        return self._get_var(ENV_DISCOVERY_VOLUME_SMA_PERIOD, default="20")
+
+    def get_discovery_min_24h_turnover_usdt(self) -> str:
+        """Return minimum 24-hour estimated turnover in USDT for discovery."""
+        return self._get_var(ENV_DISCOVERY_MIN_24H_TURNOVER_USDT, default="1000000")
 
     def get_use_open_interest(self) -> bool:
         """Return whether Open Interest confluence evaluation is enabled."""

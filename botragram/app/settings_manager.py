@@ -481,6 +481,19 @@ class SettingsManager:
             ),
             setting_name="DISCOVERY_MIN_QUOTE_VOLUME_USDT",
         )
+        discovery_use_dynamic_volume = (
+            self._environment_provider.get_discovery_use_dynamic_volume()
+        )
+        discovery_volume_sma_period = self._parse_positive_int(
+            raw_value=self._environment_provider.get_discovery_volume_sma_period(),
+            setting_name="DISCOVERY_VOLUME_SMA_PERIOD",
+        )
+        discovery_min_24h_turnover_usdt = self._parse_decimal(
+            raw_value=(
+                self._environment_provider.get_discovery_min_24h_turnover_usdt()
+            ),
+            setting_name="DISCOVERY_MIN_24H_TURNOVER_USDT",
+        )
         use_open_interest = self._environment_provider.get_use_open_interest()
         min_oi_change_pct = self._parse_decimal(
             raw_value=self._environment_provider.get_min_oi_change_pct(),
@@ -538,6 +551,9 @@ class SettingsManager:
             discovery_max_candle_volatility_pct=(discovery_max_candle_volatility_pct),
             discovery_filter_min_liquidity=discovery_filter_min_liquidity,
             discovery_min_quote_volume_usdt=discovery_min_quote_volume_usdt,
+            discovery_use_dynamic_volume=discovery_use_dynamic_volume,
+            discovery_volume_sma_period=discovery_volume_sma_period,
+            discovery_min_24h_turnover_usdt=discovery_min_24h_turnover_usdt,
             use_open_interest=use_open_interest,
             min_oi_change_pct=min_oi_change_pct,
             require_oi_confluence=require_oi_confluence,

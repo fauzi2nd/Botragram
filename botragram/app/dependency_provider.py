@@ -1344,6 +1344,11 @@ class DependencyProvider:
             min_quote_volume_usdt=(
                 self._settings.strategy.discovery_min_quote_volume_usdt
             ),
+            use_dynamic_volume=(self._settings.strategy.discovery_use_dynamic_volume),
+            volume_sma_period=(self._settings.strategy.discovery_volume_sma_period),
+            min_24h_turnover_usdt=(
+                self._settings.strategy.discovery_min_24h_turnover_usdt
+            ),
             use_open_interest=self._settings.strategy.use_open_interest,
         )
         self._order_service = OrderService(

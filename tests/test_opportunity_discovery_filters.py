@@ -342,6 +342,20 @@ def test_strategy_settings_discovery_validation() -> None:
             discovery_min_quote_volume_usdt=Decimal("-10"),
         )
 
+    with pytest.raises(
+        ValueError, match="discovery_volume_sma_period must be positive"
+    ):
+        StrategySettings(
+            discovery_volume_sma_period=0,
+        )
+
+    with pytest.raises(
+        ValueError, match="discovery_min_24h_turnover_usdt must not be negative"
+    ):
+        StrategySettings(
+            discovery_min_24h_turnover_usdt=Decimal("-50"),
+        )
+
 
 def test_settings_manager_loads_discovery_filter_env(
     monkeypatch: pytest.MonkeyPatch,
@@ -354,6 +368,9 @@ def test_settings_manager_loads_discovery_filter_env(
     monkeypatch.setenv("DISCOVERY_MAX_CANDLE_VOLATILITY_PCT", "0.20")
     monkeypatch.setenv("DISCOVERY_FILTER_MIN_LIQUIDITY", "true")
     monkeypatch.setenv("DISCOVERY_MIN_QUOTE_VOLUME_USDT", "5000")
+    monkeypatch.setenv("DISCOVERY_USE_DYNAMIC_VOLUME", "true")
+    monkeypatch.setenv("DISCOVERY_VOLUME_SMA_PERIOD", "25")
+    monkeypatch.setenv("DISCOVERY_MIN_24H_TURNOVER_USDT", "2000000")
 
     manager = SettingsManager(
         environment_provider=EnvironmentProvider(
@@ -366,3 +383,144 @@ def test_settings_manager_loads_discovery_filter_env(
     assert settings.discovery_max_candle_volatility_pct == Decimal("0.20")
     assert settings.discovery_filter_min_liquidity is True
     assert settings.discovery_min_quote_volume_usdt == Decimal("5000")
+    assert settings.discovery_use_dynamic_volume is True
+    assert settings.discovery_volume_sma_period == 25
+    assert settings.discovery_min_24h_turnover_usdt == Decimal("2000000")
+
+
+@pytest.mark.asyncio
+async def test_opportunity_discovery_dynamic_volume_rejects_low_24h_turnover(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Require dynamic volume filter to reject dead symbols.
+
+    Reject symbols with low 24h turnover despite a single-candle pump.
+    """
+    caplog.set_level("INFO")
+    symbol = "PUMPUSDT"
+
+    # 19 dead candles (volume 1 * price 10 = 10 USDT)
+    # followed by 1 spike (volume 1000 * price 10 = 10,000 USDT)
+    candles: list[Candle] = []
+    base_time = _NOW - timedelta(minutes=15 * 20)
+    for i in range(19):
+        candles.append(
+            _make_candle(
+                symbol=symbol,
+                close_price=Decimal("10"),
+                high_price=Decimal("10.1"),
+                low_price=Decimal("9.9"),
+                open_price=Decimal("10"),
+                volume=Decimal("1"),
+                close_time=base_time + timedelta(minutes=15 * (i + 1)),
+            )
+        )
+    # 20th candle: sudden pump
+    candles.append(
+        _make_candle(
+            symbol=symbol,
+            close_price=Decimal("10"),
+            high_price=Decimal("11"),
+            low_price=Decimal("9.9"),
+            open_price=Decimal("10"),
+            volume=Decimal("1000"),  # 10,000 USDT
+            close_time=base_time + timedelta(minutes=15 * 20),
+        )
+    )
+
+    market = FakeMarketService(
+        symbols=(symbol,),
+        candles_by_symbol={symbol: tuple(candles)},
+    )
+    strategy = FakeStrategyService(
+        signals={symbol: _make_signal(symbol=symbol, price=Decimal("10"))}
+    )
+
+    service = OpportunityDiscoveryService(
+        market_service=market,
+        strategy_service=strategy,
+        candle_request_delay_seconds=0.0,
+        utc_now=lambda: _NOW + timedelta(seconds=1),
+        filter_min_liquidity=True,
+        use_dynamic_volume=True,
+        volume_sma_period=20,
+        min_24h_turnover_usdt=Decimal("500000"),  # 500k USDT required
+        min_quote_volume_usdt=Decimal("5000"),
+    )
+
+    signals = await service.discover(
+        quote_asset="USDT",
+        interval=Interval.M15,
+        candle_limit=20,
+        max_symbols=10,
+        top_n=5,
+    )
+
+    assert len(signals) == 0
+    assert "estimated 24h turnover" in caplog.text
+    assert symbol not in strategy.evaluated_symbols
+
+
+@pytest.mark.asyncio
+async def test_opportunity_discovery_dynamic_volume_accepts_momentary_dip() -> None:
+    """Allow liquid symbols whose current candle dips slightly if SMA is high."""
+    symbol = "HEALTHYUSDT"
+
+    # 19 candles with 50k USDT each, latest dips to 8,000 USDT (< 10k floor)
+    candles: list[Candle] = []
+    base_time = _NOW - timedelta(minutes=15 * 20)
+    for i in range(19):
+        candles.append(
+            _make_candle(
+                symbol=symbol,
+                close_price=Decimal("100"),
+                high_price=Decimal("101"),
+                low_price=Decimal("99"),
+                open_price=Decimal("100"),
+                volume=Decimal("500"),  # 50,000 USDT
+                close_time=base_time + timedelta(minutes=15 * (i + 1)),
+            )
+        )
+    candles.append(
+        _make_candle(
+            symbol=symbol,
+            close_price=Decimal("100"),
+            high_price=Decimal("100.5"),
+            low_price=Decimal("99.5"),
+            open_price=Decimal("100"),
+            volume=Decimal("80"),  # 8,000 USDT (< 10k floor)
+            close_time=base_time + timedelta(minutes=15 * 20),
+        )
+    )
+
+    market = FakeMarketService(
+        symbols=(symbol,),
+        candles_by_symbol={symbol: tuple(candles)},
+    )
+    strategy = FakeStrategyService(
+        signals={symbol: _make_signal(symbol=symbol, price=Decimal("100"))}
+    )
+
+    service = OpportunityDiscoveryService(
+        market_service=market,
+        strategy_service=strategy,
+        candle_request_delay_seconds=0.0,
+        utc_now=lambda: _NOW + timedelta(seconds=1),
+        filter_min_liquidity=True,
+        use_dynamic_volume=True,
+        volume_sma_period=20,
+        min_24h_turnover_usdt=Decimal("1000000"),  # 1M USDT required
+        min_quote_volume_usdt=Decimal("10000"),  # 10k floor
+    )
+
+    signals = await service.discover(
+        quote_asset="USDT",
+        interval=Interval.M15,
+        candle_limit=20,
+        max_symbols=10,
+        top_n=5,
+    )
+
+    assert len(signals) == 1
+    assert signals[0].symbol == symbol
+    assert symbol in strategy.evaluated_symbols

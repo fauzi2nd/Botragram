@@ -167,6 +167,9 @@ class OpportunityDiscoveryService:
     max_candle_volatility_pct: Decimal = Decimal("0.15")
     filter_min_liquidity: bool = False
     min_quote_volume_usdt: Decimal = Decimal("0")
+    use_dynamic_volume: bool = False
+    volume_sma_period: int = 20
+    min_24h_turnover_usdt: Decimal = Decimal("0")
     use_open_interest: bool = False
 
     async def discover(
@@ -352,16 +355,15 @@ class OpportunityDiscoveryService:
             latest_closed_candle = closed_candles[-1]
 
             if self.filter_min_liquidity:
-                quote_volume = (
-                    latest_closed_candle.volume * latest_closed_candle.close_price
+                is_liquid, reject_reason = self._evaluate_liquidity(
+                    closed_candles=closed_candles,
+                    interval=interval,
                 )
-                if quote_volume < self.min_quote_volume_usdt:
+                if not is_liquid:
                     _LOGGER.info(
-                        "Discovery liquidity filter rejected %s: "
-                        "quote volume %s USDT < min %s USDT",
+                        "Discovery liquidity filter rejected %s: %s",
                         symbol,
-                        quote_volume,
-                        self.min_quote_volume_usdt,
+                        reject_reason,
                     )
                     continue
 
@@ -676,6 +678,74 @@ class OpportunityDiscoveryService:
         if not normalized_symbol:
             raise ValueError("Discovery symbol must not be empty")
         return normalized_symbol
+
+    def _evaluate_liquidity(
+        self,
+        *,
+        closed_candles: Sequence[Candle],
+        interval: Interval,
+    ) -> tuple[bool, str]:
+        """Evaluate symbol liquidity using static or dynamic rules.
+
+        Args:
+            closed_candles: Historical closed candles for the symbol.
+            interval: Candlestick interval.
+
+        Returns:
+            Tuple of (is_liquid, rejection_reason).
+        """
+        if not closed_candles:
+            return False, "no closed candles available"
+
+        latest_closed_candle = closed_candles[-1]
+        quote_volume = latest_closed_candle.volume * latest_closed_candle.close_price
+
+        if not self.use_dynamic_volume:
+            if quote_volume < self.min_quote_volume_usdt:
+                return (
+                    False,
+                    f"quote volume {quote_volume} USDT < "
+                    f"min {self.min_quote_volume_usdt} USDT",
+                )
+            return True, ""
+
+        # Dynamic Volume Evaluation
+        eval_period = min(len(closed_candles), max(1, self.volume_sma_period))
+        relevant_candles = closed_candles[-eval_period:]
+        sma_quote_volume = sum(
+            (c.volume * c.close_price for c in relevant_candles),
+            start=Decimal("0"),
+        ) / Decimal(str(eval_period))
+
+        seconds = interval.seconds if interval.seconds > 0 else 900
+        candles_per_day = Decimal(str(86400 // seconds))
+        est_24h_turnover = sma_quote_volume * candles_per_day
+
+        # Check 1: 24-hour estimated turnover floor
+        if (
+            self.min_24h_turnover_usdt > Decimal("0")
+            and est_24h_turnover < self.min_24h_turnover_usdt
+        ):
+            return (
+                False,
+                f"estimated 24h turnover {est_24h_turnover:.2f} USDT < "
+                f"min {self.min_24h_turnover_usdt} USDT",
+            )
+
+        # Check 2: Absolute safety floor per candle vs SMA health
+        if (
+            self.min_quote_volume_usdt > Decimal("0")
+            and quote_volume < self.min_quote_volume_usdt
+        ):
+            if sma_quote_volume < self.min_quote_volume_usdt:
+                return (
+                    False,
+                    f"quote volume {quote_volume} USDT and SMA quote volume "
+                    f"{sma_quote_volume:.2f} USDT < "
+                    f"safety floor {self.min_quote_volume_usdt} USDT",
+                )
+
+        return True, ""
 
     @staticmethod
     def _normalize_quote_asset(quote_asset: str) -> str:

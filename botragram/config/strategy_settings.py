@@ -51,6 +51,9 @@ class StrategySettings:
     discovery_max_candle_volatility_pct: Decimal = Decimal("0.15")
     discovery_filter_min_liquidity: bool = True
     discovery_min_quote_volume_usdt: Decimal = Decimal("1000")
+    discovery_use_dynamic_volume: bool = True
+    discovery_volume_sma_period: int = 20
+    discovery_min_24h_turnover_usdt: Decimal = Decimal("1000000")
     use_open_interest: bool = False
     min_oi_change_pct: Decimal = Decimal("0.0")
     require_oi_confluence: bool = False
@@ -560,3 +563,7 @@ class StrategySettings:
             raise ValueError(
                 "pier_min_short_account_ratio cannot exceed pier_max_long_account_ratio"
             )
+        if self.discovery_volume_sma_period <= 0:
+            raise ValueError("discovery_volume_sma_period must be positive")
+        if self.discovery_min_24h_turnover_usdt < Decimal("0"):
+            raise ValueError("discovery_min_24h_turnover_usdt must not be negative")
