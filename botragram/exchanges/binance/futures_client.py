@@ -250,6 +250,10 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         )
         return self._mapper.map_futures_executable_quote(self._require_mapping(payload))
 
+    async def get_reference_price(self, *, symbol: str) -> Decimal:
+        """Return the current Futures trigger reference price."""
+        return await self.get_mark_price(symbol=symbol)
+
     async def get_mark_price(self, *, symbol: str) -> Decimal:
         """Return the current Futures MARK_PRICE for conditional triggers."""
         payload = await self._rest.get(

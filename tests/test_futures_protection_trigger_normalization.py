@@ -651,3 +651,15 @@ async def test_restart_reconciles_missing_stop_crossed_by_mark_price_by_clamping
     assert protected.stop_loss == Decimal("0.0022390")
     assert protected.take_profit == Decimal("0.0023850")
     assert any(event.startswith("post:stop_market") for event in exchange.events)
+
+
+def test_normalize_protection_trigger_accepts_reference_price() -> None:
+    """Validate that reference_price parameter works identically to mark_price."""
+    rules = _rules(minimum_price="0.10", maximum_price="100", tick_size="0.25")
+    normalized = rules.normalize_protection_trigger(
+        raw_trigger_price=Decimal("1.23"),
+        position_side=PositionSide.LONG,
+        order_type=OrderType.STOP_MARKET,
+        reference_price=Decimal("2"),
+    )
+    assert normalized == Decimal("1.35")

@@ -41,6 +41,10 @@ _DECIMAL_ZERO = Decimal("0")
 class OrderExchangeClient(Protocol):
     """Provide the narrow exchange operations owned by the order engine."""
 
+    async def get_reference_price(self, *, symbol: str) -> Decimal:
+        """Return the authoritative Futures trigger reference price."""
+        ...
+
     async def get_mark_price(self, *, symbol: str) -> Decimal:
         """Return the authoritative Futures MARK_PRICE reference."""
         ...
@@ -137,14 +141,14 @@ class OrderEngine:
     ) -> Decimal:
         """Normalize and validate a Futures MARKET quantity before mutation."""
         rules = await self.exchange_client.get_market_entry_rules(symbol=symbol)
-        mark_price = await self.exchange_client.get_mark_price(symbol=symbol)
+        reference_price = await self.exchange_client.get_reference_price(symbol=symbol)
         normalized_quantity = self._round_down(
             quantity=quantity,
             step=rules.market_quantity_step,
         )
         self._validate_market_quantity(
             quantity=normalized_quantity,
-            reference_price=mark_price,
+            reference_price=reference_price,
             symbol=symbol,
             minimum_quantity=rules.market_min_quantity,
             maximum_quantity=rules.market_max_quantity,

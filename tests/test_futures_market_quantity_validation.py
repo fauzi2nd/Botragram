@@ -43,6 +43,10 @@ class _Exchange:
             timestamp=datetime.now(UTC),
         )
 
+    async def get_reference_price(self, *, symbol: str) -> Decimal:
+        """Return the configured Futures trigger reference price."""
+        return await self.get_mark_price(symbol=symbol)
+
     async def get_mark_price(self, *, symbol: str) -> Decimal:
         """Return the configured Futures MARK_PRICE reference."""
         assert symbol == self.rules.symbol

@@ -99,12 +99,16 @@ class BaseExchangeClient(ABC):
             timestamp=ticker.timestamp,
         )
 
+    async def get_reference_price(self, *, symbol: str) -> Decimal:
+        """Return the current trigger reference price for a protection order."""
+        return await self.get_mark_price(symbol=symbol)
+
     async def get_mark_price(self, *, symbol: str) -> Decimal:
         """Return the current trigger reference price for a protection order.
 
         Spot clients have no distinct mark price, so their typed ticker price is
         the closest available reference.  Futures clients override this method
-        with their authoritative MARK_PRICE endpoint.
+        with their authoritative reference price endpoint.
         """
         return (await self.get_ticker(symbol=symbol)).last_price
 

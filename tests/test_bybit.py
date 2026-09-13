@@ -1279,3 +1279,5 @@ async def test_bybit_client_get_mark_price_prefers_last_price() -> None:
 
     price = await client.get_mark_price(symbol="BTCUSDT")
     assert price == Decimal("50500.5")
+    ref_price = await client.get_reference_price(symbol="BTCUSDT")
+    assert ref_price == Decimal("50500.5")

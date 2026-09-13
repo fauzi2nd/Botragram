@@ -193,6 +193,7 @@ class TerminalMonitor(ResponsiveTerminalMonitor):
             "stop_loss",
             "take_profit",
             "entry_price",
+            "last_price",
             "mark_price",
         }:
             return _format_decimal_str(normalized)

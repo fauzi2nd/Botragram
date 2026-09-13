@@ -191,8 +191,8 @@ class BybitExchangeClient(BaseExchangeClient):
             timestamp=ticker.timestamp,
         )
 
-    async def get_mark_price(self, *, symbol: str) -> Decimal:
-        """Return the current mark price for a symbol."""
+    async def get_reference_price(self, *, symbol: str) -> Decimal:
+        """Return the current trigger reference price for a symbol."""
         payload = await self._rest.get(
             _TICKERS_ENDPOINT,
             params={"category": "linear", "symbol": symbol.strip().upper()},
@@ -219,6 +219,10 @@ class BybitExchangeClient(BaseExchangeClient):
                                 pass
         ticker = await self.get_ticker(symbol=symbol)
         return ticker.last_price
+
+    async def get_mark_price(self, *, symbol: str) -> Decimal:
+        """Return the current mark/reference price for a symbol."""
+        return await self.get_reference_price(symbol=symbol)
 
     async def get_market_entry_rules(self, *, symbol: str) -> ExchangeSymbolRules:
         """Return quantity and price rules for an instrument."""

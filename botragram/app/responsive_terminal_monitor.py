@@ -113,6 +113,23 @@ class TerminalMonitor(BaseTerminalMonitor):
             stream_price = status.stream.last_price
         return stream_price is not None
 
+    def _get_position_last_price(
+        self,
+        *,
+        position: Position,
+        status: TerminalStatus,
+    ) -> Decimal:
+        """Return the stream or cached last price for one position."""
+        stream_states = (
+            status.live_runtime_health.stream_states
+            if status.live_runtime_health is not None
+            else ()
+        )
+        return self._get_matching_stream_price(
+            position=position,
+            stream_states=stream_states,
+        ) or super()._get_position_last_price(position=position, status=status)
+
     def render_dashboard(self, status: TerminalStatus) -> Layout:
         """Choose a readable layout from the active terminal width."""
         width = self.console.size.width
@@ -283,7 +300,10 @@ class TerminalMonitor(BaseTerminalMonitor):
                         quantity=self._format_compact_decimal(paper_position.quantity),
                         entry=self._format_compact_decimal(paper_position.entry_price),
                         last_price=self._format_compact_decimal(
-                            paper_position.current_price
+                            self._get_position_last_price(
+                                position=paper_position,
+                                status=status,
+                            )
                         ),
                         pnl=self.format_position_pnl(paper_position.unrealized_pnl),
                         roi=self.format_position_roi(
@@ -314,12 +334,9 @@ class TerminalMonitor(BaseTerminalMonitor):
                 if managed_position is None:
                     table.add_row(context.symbol, "POSITION MISSING")
                     continue
-                last_price = (
-                    self._get_matching_stream_price(
-                        position=managed_position,
-                        stream_states=health_snapshot.stream_states,
-                    )
-                    or managed_position.current_price
+                last_price = self._get_position_last_price(
+                    position=managed_position,
+                    status=status,
                 )
                 self._add_compact_position_rows(
                     table=table,

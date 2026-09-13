@@ -57,24 +57,24 @@ class LivePositionProtectionService:
     ) -> None:
         """Reject a protection plan that is already invalid before entry mutation."""
         rules = await self.exchange_client.get_market_entry_rules(symbol=symbol)
-        mark_price = await self.exchange_client.get_mark_price(symbol=symbol)
+        reference_price = await self.exchange_client.get_reference_price(symbol=symbol)
         normalized_stop = rules.normalize_protection_trigger(
             raw_trigger_price=stop_loss,
             position_side=position_side,
             order_type=OrderType.STOP_MARKET,
-            mark_price=mark_price,
+            reference_price=reference_price,
         )
         normalized_take_profit = rules.normalize_protection_trigger(
             raw_trigger_price=take_profit,
             position_side=position_side,
             order_type=OrderType.TAKE_PROFIT_MARKET,
-            mark_price=mark_price,
+            reference_price=reference_price,
         )
         _LOGGER.info(
-            "Pre-entry protection plan verified: symbol=%s mark_price=%s "
+            "Pre-entry protection plan verified: symbol=%s reference_price=%s "
             "stop_loss=%s take_profit=%s",
             symbol,
-            mark_price,
+            reference_price,
             normalized_stop,
             normalized_take_profit,
         )
@@ -197,29 +197,29 @@ class LivePositionProtectionService:
                     fresh_rules = await self.exchange_client.get_market_entry_rules(
                         symbol=position.symbol
                     )
-                    fresh_mark = await self.exchange_client.get_mark_price(
+                    fresh_reference = await self.exchange_client.get_reference_price(
                         symbol=position.symbol
                     )
                     clamped_stop = (
                         max(
                             fresh_rules.minimum_price,
-                            fresh_mark - fresh_rules.price_tick_size * 2,
+                            fresh_reference - fresh_rules.price_tick_size * 2,
                         )
                         if position.side is PositionSide.LONG
                         else (
                             min(
                                 fresh_rules.maximum_price,
-                                fresh_mark + fresh_rules.price_tick_size * 2,
+                                fresh_reference + fresh_rules.price_tick_size * 2,
                             )
                             if fresh_rules.maximum_price > _DECIMAL_ZERO
-                            else fresh_mark + fresh_rules.price_tick_size * 2
+                            else fresh_reference + fresh_rules.price_tick_size * 2
                         )
                     )
                     fresh_stop = fresh_rules.normalize_protection_trigger(
                         raw_trigger_price=clamped_stop,
                         position_side=position.side,
                         order_type=OrderType.STOP_MARKET,
-                        mark_price=fresh_mark,
+                        reference_price=fresh_reference,
                     )
                     position = replace(position, stop_loss=fresh_stop)
                     await self.position_repository.save(position=position)
@@ -414,7 +414,9 @@ class LivePositionProtectionService:
         rules = await self.exchange_client.get_market_entry_rules(
             symbol=position.symbol,
         )
-        mark_price = await self.exchange_client.get_mark_price(symbol=position.symbol)
+        reference_price = await self.exchange_client.get_reference_price(
+            symbol=position.symbol
+        )
 
         normalized_stop: Decimal | None = None
         if needs_stop_loss:
@@ -428,22 +430,31 @@ class LivePositionProtectionService:
                     "Persisted LIVE STOP identity is missing its durable trigger"
                 )
             if position.stop_loss is not None:
-                if position.side is PositionSide.LONG and stop_source >= mark_price:
+                if (
+                    position.side is PositionSide.LONG
+                    and stop_source >= reference_price
+                ):
                     stop_source = max(
                         rules.minimum_price,
-                        mark_price - rules.price_tick_size,
+                        reference_price - rules.price_tick_size,
                     )
-                elif position.side is PositionSide.SHORT and stop_source <= mark_price:
+                elif (
+                    position.side is PositionSide.SHORT
+                    and stop_source <= reference_price
+                ):
                     stop_source = (
-                        min(rules.maximum_price, mark_price + rules.price_tick_size)
+                        min(
+                            rules.maximum_price,
+                            reference_price + rules.price_tick_size,
+                        )
                         if rules.maximum_price > _DECIMAL_ZERO
-                        else mark_price + rules.price_tick_size
+                        else reference_price + rules.price_tick_size
                     )
             normalized_stop = rules.normalize_protection_trigger(
                 raw_trigger_price=stop_source,
                 position_side=position.side,
                 order_type=OrderType.STOP_MARKET,
-                mark_price=mark_price,
+                reference_price=reference_price,
             )
 
         normalized_take_profit: Decimal | None = None
@@ -460,26 +471,29 @@ class LivePositionProtectionService:
             if position.take_profit is not None:
                 if (
                     position.side is PositionSide.LONG
-                    and take_profit_source <= mark_price
+                    and take_profit_source <= reference_price
                 ):
                     take_profit_source = (
-                        min(rules.maximum_price, mark_price + rules.price_tick_size)
+                        min(
+                            rules.maximum_price,
+                            reference_price + rules.price_tick_size,
+                        )
                         if rules.maximum_price > _DECIMAL_ZERO
-                        else mark_price + rules.price_tick_size
+                        else reference_price + rules.price_tick_size
                     )
                 elif (
                     position.side is PositionSide.SHORT
-                    and take_profit_source >= mark_price
+                    and take_profit_source >= reference_price
                 ):
                     take_profit_source = max(
                         rules.minimum_price,
-                        mark_price - rules.price_tick_size,
+                        reference_price - rules.price_tick_size,
                     )
             normalized_take_profit = rules.normalize_protection_trigger(
                 raw_trigger_price=take_profit_source,
                 position_side=position.side,
                 order_type=OrderType.TAKE_PROFIT_MARKET,
-                mark_price=mark_price,
+                reference_price=reference_price,
             )
 
         return normalized_stop, normalized_take_profit

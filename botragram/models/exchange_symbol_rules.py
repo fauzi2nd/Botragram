@@ -57,7 +57,8 @@ class ExchangeSymbolRules:
         raw_trigger_price: Decimal,
         position_side: PositionSide,
         order_type: OrderType,
-        mark_price: Decimal,
+        reference_price: Decimal | None = None,
+        mark_price: Decimal | None = None,
     ) -> Decimal:
         """Return one venue-valid, conservative protection trigger price.
 
@@ -65,7 +66,8 @@ class ExchangeSymbolRules:
             raw_trigger_price: Risk-engine protection price before venue rounding.
             position_side: Side of the protected position.
             order_type: STOP or take-profit protection order type.
-            mark_price: Fresh exchange MARK_PRICE for trigger validation.
+            reference_price: Fresh exchange reference price for trigger validation.
+            mark_price: Deprecated alias for reference_price.
 
         Returns:
             The directionally normalized price on the venue's anchored grid.
@@ -73,8 +75,15 @@ class ExchangeSymbolRules:
         Raises:
             VenueRuleValidationError: If the price cannot safely be submitted.
         """
+        active_reference = (
+            reference_price if reference_price is not None else mark_price
+        )
+        if active_reference is None:
+            raise VenueRuleValidationError(
+                "Reference price must be provided for trigger normalization"
+            )
         self._validate_raw_trigger(raw_trigger_price=raw_trigger_price)
-        self._validate_mark_price(mark_price=mark_price)
+        self._validate_reference_price(reference_price=active_reference)
         rounding = self._rounding_for(
             position_side=position_side,
             order_type=order_type,
@@ -87,7 +96,7 @@ class ExchangeSymbolRules:
             trigger_price=normalized,
             position_side=position_side,
             order_type=order_type,
-            mark_price=mark_price,
+            reference_price=active_reference,
         )
         return normalized
 
@@ -104,10 +113,15 @@ class ExchangeSymbolRules:
             raise VenueRuleValidationError("Protection trigger price exceeds maximum")
 
     @staticmethod
+    def _validate_reference_price(*, reference_price: Decimal) -> None:
+        """Reject an unusable reference price."""
+        if reference_price <= _DECIMAL_ZERO:
+            raise VenueRuleValidationError("Reference price must be greater than zero")
+
+    @staticmethod
     def _validate_mark_price(*, mark_price: Decimal) -> None:
-        """Reject an unusable MARK_PRICE reference."""
-        if mark_price <= _DECIMAL_ZERO:
-            raise VenueRuleValidationError("MARK_PRICE must be greater than zero")
+        """Deprecated alias for _validate_reference_price."""
+        ExchangeSymbolRules._validate_reference_price(reference_price=mark_price)
 
     def _round_to_price_grid(self, *, price: Decimal, rounding: str) -> Decimal:
         """Round one price against the exchange grid anchored at minimum price."""
@@ -121,7 +135,7 @@ class ExchangeSymbolRules:
         trigger_price: Decimal,
         position_side: PositionSide,
         order_type: OrderType,
-        mark_price: Decimal,
+        reference_price: Decimal,
     ) -> None:
         """Validate a normalized trigger before the protection mutation boundary."""
         if trigger_price <= _DECIMAL_ZERO:
@@ -138,7 +152,7 @@ class ExchangeSymbolRules:
             trigger_price=trigger_price,
             position_side=position_side,
             order_type=order_type,
-            mark_price=mark_price,
+            reference_price=reference_price,
         )
 
     @staticmethod
@@ -156,20 +170,25 @@ class ExchangeSymbolRules:
         trigger_price: Decimal,
         position_side: PositionSide,
         order_type: OrderType,
-        mark_price: Decimal,
+        reference_price: Decimal,
     ) -> None:
-        """Ensure a MARK_PRICE trigger cannot immediately execute the exit leg."""
-        is_below_mark = trigger_price < mark_price
-        is_above_mark = trigger_price > mark_price
+        """Ensure a protection trigger cannot immediately execute the exit leg."""
+        is_below_reference = trigger_price < reference_price
+        is_above_reference = trigger_price > reference_price
         if position_side is PositionSide.LONG:
             valid = (
-                is_below_mark if order_type is OrderType.STOP_MARKET else is_above_mark
+                is_below_reference
+                if order_type is OrderType.STOP_MARKET
+                else is_above_reference
             )
         else:
             valid = (
-                is_above_mark if order_type is OrderType.STOP_MARKET else is_below_mark
+                is_above_reference
+                if order_type is OrderType.STOP_MARKET
+                else is_below_reference
             )
         if not valid:
             raise VenueRuleValidationError(
-                "Protection trigger is invalid relative to current MARK_PRICE"
+                "Protection trigger is invalid relative to current MARK_PRICE / "
+                "reference price"
             )
