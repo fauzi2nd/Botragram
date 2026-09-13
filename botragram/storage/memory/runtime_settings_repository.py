@@ -30,7 +30,7 @@ __all__ = ["MemoryRuntimeSettingsRepository"]
 class MemoryRuntimeSettingsRepository(RuntimeSettingsRepository):
     """In-memory runtime settings repository for testing."""
 
-    __slots__ = ("_strategy_type", "_leverage", "_trailing_stop")
+    __slots__ = ("_strategy_type", "_leverage", "_trailing_stop", "_dynamic_leverage")
 
     def __init__(
         self,
@@ -38,11 +38,13 @@ class MemoryRuntimeSettingsRepository(RuntimeSettingsRepository):
         strategy_type: StrategyType | None = None,
         leverage: int | None = None,
         trailing_stop: tuple[bool, Decimal, Decimal] | None = None,
+        dynamic_leverage: bool | None = None,
     ) -> None:
         """Initialize the repository with optional initial settings."""
         self._strategy_type = strategy_type
         self._leverage = leverage
         self._trailing_stop = trailing_stop
+        self._dynamic_leverage = dynamic_leverage
 
     async def get_strategy(self) -> StrategyType | None:
         """Return the current in-memory strategy, if configured."""
@@ -83,3 +85,11 @@ class MemoryRuntimeSettingsRepository(RuntimeSettingsRepository):
                 "Trailing stop distance must be strictly less than trigger"
             )
         self._trailing_stop = (enabled, trigger_pct, distance_pct)
+
+    async def get_dynamic_leverage(self) -> bool | None:
+        """Return the current in-memory dynamic leverage setting."""
+        return self._dynamic_leverage
+
+    async def save_dynamic_leverage(self, *, enabled: bool) -> None:
+        """Persist dynamic leverage setting in memory."""
+        self._dynamic_leverage = enabled

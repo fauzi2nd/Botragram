@@ -813,12 +813,14 @@ class PositionProtectionManager:
         rules = await self.exchange_client.get_market_entry_rules(
             symbol=position.symbol,
         )
-        mark_price = await self.exchange_client.get_mark_price(symbol=position.symbol)
+        reference_price = await self.exchange_client.get_mark_price(
+            symbol=position.symbol,
+        )
         return rules.normalize_protection_trigger(
             raw_trigger_price=raw_stop,
             position_side=position.side,
             order_type=OrderType.STOP_MARKET,
-            mark_price=mark_price,
+            mark_price=reference_price,
         )
 
     async def _get_position(self, *, symbol: str) -> Position | None:

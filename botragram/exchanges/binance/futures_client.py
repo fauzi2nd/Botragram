@@ -517,7 +517,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
                         "quantity": self._format_decimal(quantity),
                         "triggerPrice": self._format_decimal(trigger_price),
                         "reduceOnly": "true",
-                        "workingType": "MARK_PRICE",
+                        "workingType": "CONTRACT_PRICE",
                         "clientAlgoId": self._normalize_client_order_id(client_algo_id),
                     }
                 )

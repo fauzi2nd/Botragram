@@ -35,6 +35,7 @@ __all__ = ["SQLiteRuntimeSettingsRepository"]
 # =============================================================================
 _STRATEGY_KEY: Final[str] = "active_strategy"
 _LEVERAGE_KEY: Final[str] = "active_leverage"
+_DYNAMIC_LEVERAGE_KEY: Final[str] = "dynamic_leverage_enabled"
 _TRAILING_STOP_ENABLED_KEY: Final[str] = "trailing_stop_enabled"
 _TRAILING_STOP_TRIGGER_PCT_KEY: Final[str] = "trailing_stop_trigger_pct"
 _TRAILING_STOP_DISTANCE_PCT_KEY: Final[str] = "trailing_stop_distance_pct"
@@ -188,4 +189,32 @@ class SQLiteRuntimeSettingsRepository(RuntimeSettingsRepository):
             await connection.execute(
                 _UPSERT_SQL,
                 (_TRAILING_STOP_DISTANCE_PCT_KEY, str(distance_pct), now),
+            )
+
+    async def get_dynamic_leverage(self) -> bool | None:
+        """Return latest durable dynamic leverage setting, if configured."""
+        row = await self._database.fetch_one(
+            statement=_SELECT_SQL,
+            parameters=(_DYNAMIC_LEVERAGE_KEY,),
+        )
+        if row is None:
+            return None
+        raw_value = row["value"]
+        if not isinstance(raw_value, str):
+            raise TypeError("SQLite runtime setting value must be text")
+        norm = raw_value.strip().lower()
+        if norm in ("1", "true", "yes", "on"):
+            return True
+        if norm in ("0", "false", "no", "off"):
+            return False
+        return None
+
+    async def save_dynamic_leverage(self, *, enabled: bool) -> None:
+        """Atomically persist dynamic leverage setting."""
+        now = datetime.now(UTC).isoformat()
+        val_str = "true" if enabled else "false"
+        async with self._database.transaction() as connection:
+            await connection.execute(
+                _UPSERT_SQL,
+                (_DYNAMIC_LEVERAGE_KEY, val_str, now),
             )

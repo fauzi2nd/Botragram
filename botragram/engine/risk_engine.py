@@ -72,6 +72,7 @@ class RiskEngine:
         current_drawdown_pct: Decimal = _DECIMAL_ZERO,
         max_position_size_usdt: Decimal | None = None,
         leverage: int | None = None,
+        dynamic_leverage_enabled: bool | None = None,
         volatility_pct: Decimal | None = None,
     ) -> RiskResult:
         """Evaluate a signal against configured and optional runtime limits."""
@@ -168,9 +169,12 @@ class RiskEngine:
         else:
             quantity = notional / signal.price
 
-        if self.settings.dynamic_leverage_enabled and (
-            leverage is None or isinstance(leverage, bool) or leverage <= 0
-        ):
+        is_dynamic = (
+            dynamic_leverage_enabled
+            if dynamic_leverage_enabled is not None
+            else self.settings.dynamic_leverage_enabled
+        )
+        if is_dynamic:
             sl_pct = risk_per_unit / signal.price
             if sl_pct > _DECIMAL_ZERO:
                 safe_lev = int(Decimal("0.80") / sl_pct)

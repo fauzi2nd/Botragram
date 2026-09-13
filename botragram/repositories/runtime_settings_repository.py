@@ -64,3 +64,11 @@ class RuntimeSettingsRepository(ABC):
         distance_pct: Decimal,
     ) -> None:
         """Atomically persist the active trailing stop settings."""
+
+    @abstractmethod
+    async def get_dynamic_leverage(self) -> bool | None:
+        """Return the latest durable dynamic leverage setting, if configured."""
+
+    @abstractmethod
+    async def save_dynamic_leverage(self, *, enabled: bool) -> None:
+        """Atomically persist the active dynamic leverage setting."""

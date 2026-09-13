@@ -112,7 +112,6 @@ def get_status_dashboard_keyboard(
         ]
         row4 = [
             InlineKeyboardButton("🎯 TP / SL", callback_data="cb_tpsl_menu"),
-            InlineKeyboardButton("⚡ Leverage", callback_data="cb_leverage_menu"),
             InlineKeyboardButton(MENU_INTERVAL, callback_data="cb_interval"),
         ]
     else:
@@ -223,8 +222,18 @@ def get_leverage_keyboard(
     *,
     current_leverage: int,
     max_leverage: int = 100,
+    dynamic_leverage_enabled: bool = False,
 ) -> InlineKeyboardMarkup:
     """Return interactive buttons for tuning futures leverage."""
+    row_mode = [
+        InlineKeyboardButton(
+            "✅ ⚡ Mode: Adaptive (Otomatis)"
+            if dynamic_leverage_enabled
+            else "⚡ Mode: Beralih ke Adaptive (Auto)",
+            callback_data="cb_leverage_mode_adaptive",
+        ),
+    ]
+
     row_fine = [
         InlineKeyboardButton("➖ 1x", callback_data="cb_leverage_dec_1"),
         InlineKeyboardButton("➕ 1x", callback_data="cb_leverage_inc_1"),
@@ -235,7 +244,11 @@ def get_leverage_keyboard(
     preset_tier1 = (1, 2, 3, 5, 10)
     row_presets1 = [
         InlineKeyboardButton(
-            f"📍 {lev}x" if lev == current_leverage else f"{lev}x",
+            (
+                f"📍 {lev}x"
+                if (lev == current_leverage and not dynamic_leverage_enabled)
+                else f"{lev}x"
+            ),
             callback_data=f"cb_leverage_set_{lev}",
         )
         for lev in preset_tier1
@@ -245,7 +258,11 @@ def get_leverage_keyboard(
     preset_tier2 = (15, 20, 25, 50, 75, 100)
     row_presets2 = [
         InlineKeyboardButton(
-            f"📍 {lev}x" if lev == current_leverage else f"{lev}x",
+            (
+                f"📍 {lev}x"
+                if (lev == current_leverage and not dynamic_leverage_enabled)
+                else f"{lev}x"
+            ),
             callback_data=f"cb_leverage_set_{lev}",
         )
         for lev in preset_tier2
@@ -257,7 +274,7 @@ def get_leverage_keyboard(
         InlineKeyboardButton(f"◀️ {MENU_STATUS}", callback_data="cb_status"),
     ]
 
-    rows: list[list[InlineKeyboardButton]] = [row_fine]
+    rows: list[list[InlineKeyboardButton]] = [row_mode, row_fine]
     if row_presets1:
         rows.append(row_presets1)
     if row_presets2:
@@ -274,6 +291,7 @@ def get_risk_limits_keyboard(
     max_position_size_usdt_ceiling: Decimal,
     current_leverage: int = 1,
     leverage_ceiling: int = 50,
+    dynamic_leverage_enabled: bool = False,
 ) -> InlineKeyboardMarkup:
     """Return interactive buttons to adjust runtime risk limits."""
     # Row 1: Fine-tune positions
@@ -320,8 +338,8 @@ def get_risk_limits_keyboard(
         if p <= max_open_positions_ceiling
     ]
 
-    # Row 5: Preset Sizes (e.g. 10, 20, 50, 100 up to ceiling)
-    preset_sizes = (10, 20, 50, 100)
+    # Row 5: Preset Sizes (10, 15, 20, 25, 50 up to ceiling)
+    preset_sizes = (10, 15, 20, 25, 50)
     row_preset_size = [
         InlineKeyboardButton(
             f"💵 ${s}" if Decimal(s) == current_size_usdt else f"${s}",
@@ -331,18 +349,33 @@ def get_risk_limits_keyboard(
         if Decimal(s) <= max_position_size_usdt_ceiling
     ]
 
-    # Row 6: Preset Leverage (e.g. 5, 10, 15, 20, 25, 50 up to ceiling)
+    # Row 6: Mode Leverage Toggle
+    mode_btn_text = (
+        "✅ ⚡ Mode: Adaptive (Auto)"
+        if dynamic_leverage_enabled
+        else "⚡ Mode: Beralih ke Adaptive (Auto)"
+    )
+    row_mode = [
+        InlineKeyboardButton(
+            mode_btn_text,
+            callback_data="cb_risk_mode_adaptive",
+        )
+    ]
+
+    # Row 7: Preset Leverage (5, 10, 15, 20, 25, 50 up to ceiling)
     preset_lev = (5, 10, 15, 20, 25, 50)
     row_preset_lev = [
         InlineKeyboardButton(
-            f"⚡ {lev}x" if lev == current_leverage else f"{lev}x",
+            f"⚡ {lev}x"
+            if (lev == current_leverage and not dynamic_leverage_enabled)
+            else f"{lev}x",
             callback_data=f"cb_risk_set_lev_{lev}",
         )
         for lev in preset_lev
         if lev <= leverage_ceiling
     ]
 
-    # Row 7: Nav Row
+    # Row 8: Nav Row
     row_nav = [
         InlineKeyboardButton("🔄 Refresh", callback_data="cb_risk_limits"),
         InlineKeyboardButton(f"◀️ {MENU_STATUS}", callback_data="cb_status"),
@@ -359,6 +392,7 @@ def get_risk_limits_keyboard(
         rows.append(row_preset_pos)
     if row_preset_size:
         rows.append(row_preset_size)
+    rows.append(row_mode)
     if row_preset_lev:
         rows.append(row_preset_lev)
     rows.append(

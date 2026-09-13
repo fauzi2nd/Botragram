@@ -514,6 +514,24 @@ class DependencyProvider:
                 self._runtime_control.leverage = persisted_leverage
             else:
                 self._runtime_control.leverage = self._settings.risk.leverage
+            persisted_dynamic_leverage = (
+                await self.runtime_settings_repository.get_dynamic_leverage()
+            )
+            if persisted_dynamic_leverage is not None:
+                self._settings = replace(
+                    self._settings,
+                    risk=replace(
+                        self._settings.risk,
+                        dynamic_leverage_enabled=persisted_dynamic_leverage,
+                    ),
+                )
+                self._runtime_control.dynamic_leverage_enabled = (
+                    persisted_dynamic_leverage
+                )
+            else:
+                self._runtime_control.dynamic_leverage_enabled = (
+                    self._settings.risk.dynamic_leverage_enabled
+                )
             persisted_trailing = (
                 await self.runtime_settings_repository.get_trailing_stop()
             )
@@ -546,6 +564,9 @@ class DependencyProvider:
             self._build_engines()
             self.runtime_control.bind_strategy_selector(self._select_runtime_strategy)
             self.runtime_control.bind_leverage_selector(self._select_runtime_leverage)
+            self.runtime_control.bind_dynamic_leverage_selector(
+                self._select_runtime_dynamic_leverage
+            )
             self.runtime_control.bind_trailing_stop_selector(
                 self._select_runtime_trailing_stop
             )
@@ -1157,6 +1178,7 @@ class DependencyProvider:
                 ),
                 equity_asset=self._settings.market.quote_asset,
                 equity_observer=self._live_account_drawdown_service,
+                exchange_name="Binance Futures",
             )
             await service.start()
             self._live_futures_user_data_service = service
@@ -1174,6 +1196,7 @@ class DependencyProvider:
                 ),
                 equity_asset=self._settings.market.quote_asset,
                 equity_observer=self._live_account_drawdown_service,
+                exchange_name="Bybit Futures",
             )
             await service.start()
             self._live_futures_user_data_service = service
@@ -1258,7 +1281,11 @@ class DependencyProvider:
     def _select_runtime_leverage(self, leverage: int) -> None:
         self._settings = replace(
             self._settings,
-            risk=replace(self._settings.risk, leverage=leverage),
+            risk=replace(
+                self._settings.risk,
+                leverage=leverage,
+                dynamic_leverage_enabled=False,
+            ),
         )
         if self._runtime_settings_repository is not None:
             asyncio.create_task(
@@ -1266,7 +1293,28 @@ class DependencyProvider:
                     leverage=leverage,
                 )
             )
-        _LOGGER.info("Runtime leverage selected: leverage=%dx", leverage)
+            asyncio.create_task(
+                self._runtime_settings_repository.save_dynamic_leverage(
+                    enabled=False,
+                )
+            )
+        _LOGGER.info("Runtime leverage selected: leverage=%dx (fixed)", leverage)
+
+    def _select_runtime_dynamic_leverage(self, enabled: bool) -> None:
+        self._settings = replace(
+            self._settings,
+            risk=replace(
+                self._settings.risk,
+                dynamic_leverage_enabled=enabled,
+            ),
+        )
+        if self._runtime_settings_repository is not None:
+            asyncio.create_task(
+                self._runtime_settings_repository.save_dynamic_leverage(
+                    enabled=enabled,
+                )
+            )
+        _LOGGER.info("Runtime dynamic leverage selected: enabled=%s", enabled)
 
     def _select_runtime_trailing_stop(
         self,

@@ -214,10 +214,15 @@ class LiveFuturesEntryService:
                     "Venue-normalized entry exceeds the runtime position-size limit"
                 )
             if self.venue_entry_readiness is not None:
+                target_leverage = (
+                    risk_result.position.leverage
+                    if risk_result.position.leverage > 1
+                    else self.maximum_leverage
+                )
                 try:
                     await self.venue_entry_readiness.verify_mainnet_symbol_readiness(
                         symbol=signal.symbol,
-                        maximum_leverage=self.maximum_leverage,
+                        maximum_leverage=target_leverage,
                         entry_notional=normalized_notional,
                     )
                 except RuntimeError as error:

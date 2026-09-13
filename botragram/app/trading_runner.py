@@ -1465,9 +1465,13 @@ class TradingRunner:
                         self._unattended_live_recovery_supported()
                         and is_transient_connectivity_error(error)
                     ):
+                        reason = (
+                            f"{self.runtime_control.exchange_type.value.lower()}"
+                            "_connectivity_unavailable"
+                        )
                         recovered = await self._recover_unattended_live_runtime(
                             error=error,
-                            reason="binance_connectivity_unavailable",
+                            reason=reason,
                         )
                         if not recovered:
                             break

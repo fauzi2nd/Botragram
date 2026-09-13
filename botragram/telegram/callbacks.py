@@ -1014,6 +1014,7 @@ async def handle_callback_query(
             "cb_risk_size_dec",
             "cb_risk_lev_inc",
             "cb_risk_lev_dec",
+            "cb_risk_mode_adaptive",
         }
         or data.startswith("cb_risk_set_pos_")
         or data.startswith("cb_risk_set_size_")
@@ -1041,6 +1042,9 @@ async def handle_callback_query(
         is_paused = control.is_paused if control is not None else False
         current_lev = control.leverage if control is not None else bot_context.leverage
         lev_ceiling = bot_context.leverage_ceiling
+        dynamic_enabled = (
+            control.dynamic_leverage_enabled if control is not None else False
+        )
 
         if data != "cb_risk_limits":
             if not is_paused:
@@ -1058,7 +1062,13 @@ async def handle_callback_query(
                 ceil_size = risk_limit_service.max_position_size_usdt_ceiling
                 new_lev = current_lev
 
-                if data == "cb_risk_pos_inc":
+                if data == "cb_risk_mode_adaptive":
+                    new_dynamic = not dynamic_enabled
+                    if control is not None:
+                        control.select_dynamic_leverage(new_dynamic)
+                        bot_context.dynamic_leverage_enabled = new_dynamic
+                        dynamic_enabled = new_dynamic
+                elif data == "cb_risk_pos_inc":
                     new_pos = min(new_pos + 1, ceil_pos)
                 elif data == "cb_risk_pos_dec":
                     new_pos = max(new_pos - 1, 1)
@@ -1092,10 +1102,16 @@ async def handle_callback_query(
                 user = update.effective_user
                 actor_id = user.id if user is not None else 0
 
-                if new_lev != current_lev and control is not None:
+                is_lev_change = data in (
+                    "cb_risk_lev_inc",
+                    "cb_risk_lev_dec",
+                ) or data.startswith("cb_risk_set_lev_")
+                if (new_lev != current_lev or is_lev_change) and control is not None:
                     try:
                         control.select_leverage(new_lev)
                         bot_context.leverage = new_lev
+                        bot_context.dynamic_leverage_enabled = False
+                        dynamic_enabled = False
                         current_lev = new_lev
                     except Exception as lev_err:
                         _LOGGER.warning("Leverage selection failed: %s", lev_err)
@@ -1116,11 +1132,15 @@ async def handle_callback_query(
                         except Exception:
                             pass
 
+                lev_status = "⚡ Adaptive" if dynamic_enabled else f"{current_lev}x Lev"
+                toast = (
+                    "⚡ Mode: Adaptive (Auto dari SL) diaktifkan!"
+                    if data == "cb_risk_mode_adaptive" and dynamic_enabled
+                    else f"🔒 Mode: Fixed ({current_lev}x) diaktifkan!"
+                    if data == "cb_risk_mode_adaptive"
+                    else f"✅ Limits: {new_pos} Pos | {new_size} USDT | {lev_status}"
+                )
                 try:
-                    toast = (
-                        f"✅ Limits: {new_pos} Pos | {new_size} USDT "
-                        f"| {current_lev}x Lev"
-                    )
                     await query.answer(toast, show_alert=False)
                 except Exception:
                     pass
@@ -1128,18 +1148,24 @@ async def handle_callback_query(
         msg = get_risk_limits_message(
             limits=current_limits,
             max_open_positions_ceiling=risk_limit_service.max_open_positions_ceiling,
-            max_position_size_usdt_ceiling=risk_limit_service.max_position_size_usdt_ceiling,
+            max_position_size_usdt_ceiling=(
+                risk_limit_service.max_position_size_usdt_ceiling
+            ),
             is_paused=is_paused,
             current_leverage=current_lev,
             leverage_ceiling=lev_ceiling,
+            dynamic_leverage_enabled=dynamic_enabled,
         )
         keyboard = get_risk_limits_keyboard(
             current_positions=current_limits.max_open_positions,
             current_size_usdt=current_limits.max_position_size_usdt,
             max_open_positions_ceiling=risk_limit_service.max_open_positions_ceiling,
-            max_position_size_usdt_ceiling=risk_limit_service.max_position_size_usdt_ceiling,
+            max_position_size_usdt_ceiling=(
+                risk_limit_service.max_position_size_usdt_ceiling
+            ),
             current_leverage=current_lev,
             leverage_ceiling=lev_ceiling,
+            dynamic_leverage_enabled=dynamic_enabled,
         )
         await query.edit_message_text(
             msg,
@@ -1219,48 +1245,74 @@ async def handle_callback_query(
                 except Exception:
                     pass
             else:
-                current_lev = bot_context.leverage
-                new_lev = current_lev
-                if data == "cb_leverage_inc_1":
-                    new_lev = min(current_lev + 1, 100)
-                elif data == "cb_leverage_dec_1":
-                    new_lev = max(current_lev - 1, 1)
-                elif data == "cb_leverage_inc_5":
-                    new_lev = min(current_lev + 5, 100)
-                elif data == "cb_leverage_dec_5":
-                    new_lev = max(current_lev - 5, 1)
-                elif data.startswith("cb_leverage_set_"):
-                    try:
-                        raw_val = int(data.removeprefix("cb_leverage_set_"))
-                        new_lev = min(max(raw_val, 1), 100)
-                    except ValueError:
-                        new_lev = current_lev
-
-                if control is not None:
-                    try:
-                        control.select_leverage(new_lev)
-                    except (ValueError, RuntimeError) as error:
+                if data == "cb_leverage_mode_adaptive":
+                    if control is not None:
                         try:
-                            await query.answer(f"⚠️ {error}", show_alert=True)
-                        except Exception:
-                            pass
-                bot_context.leverage = new_lev
-                try:
-                    await query.answer(
-                        f"✅ Leverage diatur: {new_lev}x",
-                        show_alert=False,
-                    )
-                except Exception:
-                    pass
+                            control.select_dynamic_leverage(True)
+                        except (ValueError, RuntimeError) as error:
+                            try:
+                                await query.answer(f"⚠️ {error}", show_alert=True)
+                            except Exception:
+                                pass
+                    bot_context.dynamic_leverage_enabled = True
+                    try:
+                        await query.answer(
+                            "✅ Mode Adaptive Leverage diaktifkan!",
+                            show_alert=False,
+                        )
+                    except Exception:
+                        pass
+                else:
+                    current_lev = bot_context.leverage
+                    new_lev = current_lev
+                    if data == "cb_leverage_inc_1":
+                        new_lev = min(current_lev + 1, 100)
+                    elif data == "cb_leverage_dec_1":
+                        new_lev = max(current_lev - 1, 1)
+                    elif data == "cb_leverage_inc_5":
+                        new_lev = min(current_lev + 5, 100)
+                    elif data == "cb_leverage_dec_5":
+                        new_lev = max(current_lev - 5, 1)
+                    elif data.startswith("cb_leverage_set_"):
+                        try:
+                            raw_val = int(data.removeprefix("cb_leverage_set_"))
+                            new_lev = min(max(raw_val, 1), 100)
+                        except ValueError:
+                            new_lev = current_lev
 
+                    if control is not None:
+                        try:
+                            control.select_leverage(new_lev)
+                        except (ValueError, RuntimeError) as error:
+                            try:
+                                await query.answer(f"⚠️ {error}", show_alert=True)
+                            except Exception:
+                                pass
+                    bot_context.leverage = new_lev
+                    bot_context.dynamic_leverage_enabled = False
+                    try:
+                        await query.answer(
+                            f"✅ Mode Fixed Leverage: {new_lev}x",
+                            show_alert=False,
+                        )
+                    except Exception:
+                        pass
+
+        dynamic_enabled = (
+            control.dynamic_leverage_enabled
+            if control is not None
+            else bot_context.dynamic_leverage_enabled
+        )
         msg = get_leverage_message(
             current_leverage=bot_context.leverage,
             max_leverage=100,
             is_paused=is_paused,
+            dynamic_leverage_enabled=dynamic_enabled,
         )
         keyboard = get_leverage_keyboard(
             current_leverage=bot_context.leverage,
             max_leverage=100,
+            dynamic_leverage_enabled=dynamic_enabled,
         )
         await query.edit_message_text(
             msg,

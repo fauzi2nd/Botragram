@@ -52,6 +52,7 @@ async def risk_limits_command(
     is_paused = control.is_paused if control is not None else False
     current_lev = control.leverage if control is not None else bot_context.leverage
     lev_ceiling = bot_context.leverage_ceiling
+    dynamic_enabled = control.dynamic_leverage_enabled if control is not None else False
     msg = get_risk_limits_message(
         limits=limits,
         max_open_positions_ceiling=service.max_open_positions_ceiling,
@@ -59,6 +60,7 @@ async def risk_limits_command(
         is_paused=is_paused,
         current_leverage=current_lev,
         leverage_ceiling=lev_ceiling,
+        dynamic_leverage_enabled=dynamic_enabled,
     )
     keyboard = get_risk_limits_keyboard(
         current_positions=limits.max_open_positions,
@@ -67,6 +69,7 @@ async def risk_limits_command(
         max_position_size_usdt_ceiling=service.max_position_size_usdt_ceiling,
         current_leverage=current_lev,
         leverage_ceiling=lev_ceiling,
+        dynamic_leverage_enabled=dynamic_enabled,
     )
     await message.reply_text(
         msg,

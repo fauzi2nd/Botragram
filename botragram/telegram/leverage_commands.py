@@ -60,14 +60,21 @@ async def leverage_command(
     control = bot_context.runtime_control
     is_paused = control.is_paused if control is not None else False
 
+    dynamic_enabled = (
+        control.dynamic_leverage_enabled
+        if control is not None
+        else bot_context.dynamic_leverage_enabled
+    )
     msg = get_leverage_message(
         current_leverage=bot_context.leverage,
         max_leverage=_MAX_LEVERAGE,
         is_paused=is_paused,
+        dynamic_leverage_enabled=dynamic_enabled,
     )
     keyboard = get_leverage_keyboard(
         current_leverage=bot_context.leverage,
         max_leverage=_MAX_LEVERAGE,
+        dynamic_leverage_enabled=dynamic_enabled,
     )
     await message.reply_text(
         msg,
@@ -107,7 +114,30 @@ async def set_leverage_command(
     args = context.args or []
     if len(args) != 1:
         await message.reply_text(
-            "ℹ️ <b>Format penggunaan:</b> <code>/setleverage &lt;1-100&gt;</code>",
+            "ℹ️ <b>Format penggunaan:</b>\n"
+            "• <code>/setleverage auto</code> (Mode Adaptive)\n"
+            "• <code>/setleverage &lt;1-100&gt;</code> (Mode Fixed)",
+            parse_mode=DEFAULT_PARSE_MODE,
+        )
+        return
+
+    raw_arg = args[0].strip().lower()
+    if raw_arg in ("auto", "adaptive"):
+        try:
+            control.select_dynamic_leverage(True)
+        except (RuntimeError, ValueError) as error:
+            _LOGGER.warning("Adaptive leverage update rejected: %s", error)
+            await message.reply_text(
+                f"⚠️ <b>Gagal mengaktifkan mode adaptive:</b> {error}",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+            return
+
+        bot_context.dynamic_leverage_enabled = True
+        _LOGGER.info("Dynamic adaptive leverage enabled via Telegram")
+        await message.reply_text(
+            "✅ <b>Mode Adaptive Leverage berhasil diaktifkan!</b>\n"
+            "<i>Leverage akan otomatis dihitung berdasarkan jarak Stop Loss setup.</i>",
             parse_mode=DEFAULT_PARSE_MODE,
         )
         return
@@ -134,9 +164,10 @@ async def set_leverage_command(
         return
 
     bot_context.leverage = new_leverage
-    _LOGGER.info("Leverage updated via Telegram: %dx", new_leverage)
+    bot_context.dynamic_leverage_enabled = False
+    _LOGGER.info("Fixed leverage updated via Telegram: %dx", new_leverage)
     await message.reply_text(
-        f"✅ <b>Leverage berhasil diatur ke {new_leverage}x.</b>\n"
+        f"✅ <b>Mode Fixed Leverage berhasil diatur ke {new_leverage}x.</b>\n"
         "Lanjutkan trading (resume) saat siap.",
         parse_mode=DEFAULT_PARSE_MODE,
     )

@@ -1225,3 +1225,57 @@ async def test_bybit_base_client_close_position_exact_raises() -> None:
             position=position,
             client_order_id="bop-test-123",
         )
+
+
+@pytest.mark.asyncio
+async def test_bybit_futures_submit_protection_orders_uses_last_price() -> None:
+    """Submit Bybit protection orders with LastPrice trigger."""
+    rest = MockBybitRestClient()
+    rest.canned_response = {
+        "retCode": 0,
+        "retMsg": "OK",
+        "result": {"orderId": "sl-123"},
+        "retExtInfo": {},
+        "time": 1700000000000,
+    }
+    mapper = BybitExchangeMapper()
+    client = BybitFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    orders = await client.create_protection_orders(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("1"),
+        stop_loss=Decimal("49000"),
+        take_profit=Decimal("52000"),
+    )
+
+    assert len(orders) == 2
+    assert rest.last_data is not None
+    assert rest.last_data.get("triggerBy") == "LastPrice"
+
+
+@pytest.mark.asyncio
+async def test_bybit_client_get_mark_price_prefers_last_price() -> None:
+    """Return the last traded price as the trigger reference price."""
+    rest = MockBybitRestClient()
+    rest.canned_response = {
+        "retCode": 0,
+        "retMsg": "OK",
+        "result": {
+            "category": "linear",
+            "list": [
+                {
+                    "symbol": "BTCUSDT",
+                    "lastPrice": "50500.5",
+                    "markPrice": "50490.0",
+                }
+            ],
+        },
+        "retExtInfo": {},
+        "time": 1700000000000,
+    }
+    mapper = BybitExchangeMapper()
+    client = BybitExchangeClient(rest=rest, mapper=mapper)
+
+    price = await client.get_mark_price(symbol="BTCUSDT")
+    assert price == Decimal("50500.5")

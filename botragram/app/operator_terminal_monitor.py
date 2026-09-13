@@ -45,6 +45,7 @@ _KEY_LABELS: Final[dict[str, str]] = {
     "entry_price": "entry",
     "error_type": "error",
     "interval": "interval",
+    "last_price": "last",
     "mark_price": "mark",
     "mode": "mode",
     "monitors": "monitors",

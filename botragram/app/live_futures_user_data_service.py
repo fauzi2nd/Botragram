@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Lifecycle owner for the cached Binance Futures User Data Stream.
+    Lifecycle owner for the cached private Futures User Data Stream.
 
 Python:
     3.14+
@@ -100,6 +100,7 @@ class LiveFuturesUserDataService:
     clock: Callable[[], float] = field(default=monotonic, repr=False)
     equity_asset: str | None = None
     equity_observer: FuturesEquityObserver | None = None
+    exchange_name: str = "Futures"
     _task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _initialization: asyncio.Future[None] | None = field(
         default=None,
@@ -234,7 +235,7 @@ class LiveFuturesUserDataService:
                         await self._observe_current_equity()
                 if self._closed:
                     return
-                raise RuntimeError("Binance Futures User Data Stream ended")
+                raise RuntimeError(f"{self.exchange_name} User Data Stream ended")
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -318,8 +319,8 @@ class LiveFuturesUserDataService:
         if missing_symbols:
             await self.cache.mark_resyncing()
             raise RuntimeError(
-                "Binance Futures REST snapshot did not confirm streamed position(s): "
-                + ", ".join(missing_symbols)
+                f"{self.exchange_name} REST snapshot did not confirm "
+                f"streamed position(s): {', '.join(missing_symbols)}"
             )
         self._status = LiveFuturesUserDataStatus.READY
 
@@ -335,8 +336,9 @@ class LiveFuturesUserDataService:
             self._outage_started_monotonic = now
             self._last_outage_log_monotonic = now
             _LOGGER.warning(
-                "Binance Futures User Data Stream unavailable; retrying: "
+                "%s User Data Stream unavailable; retrying: "
                 "error_type=%s attempt=%d next_retry_seconds=%.3f",
+                self.exchange_name,
                 type(error).__name__,
                 attempt,
                 self._next_retry_seconds,
@@ -348,8 +350,9 @@ class LiveFuturesUserDataService:
             return
         self._last_outage_log_monotonic = now
         _LOGGER.warning(
-            "Binance Futures User Data Stream outage heartbeat: "
+            "%s User Data Stream outage heartbeat: "
             "outage_seconds=%.1f attempt=%d next_retry_seconds=%.3f",
+            self.exchange_name,
             max(0.0, now - self._outage_started_monotonic),
             attempt,
             self._next_retry_seconds,
@@ -360,8 +363,8 @@ class LiveFuturesUserDataService:
         started = self._outage_started_monotonic
         if started is not None:
             _LOGGER.info(
-                "Binance Futures User Data Stream recovered after REST resync: "
-                "outage_seconds=%.1f",
+                "%s User Data Stream recovered after REST resync: outage_seconds=%.1f",
+                self.exchange_name,
                 max(0.0, self.clock() - started),
             )
         self._outage_started_monotonic = None

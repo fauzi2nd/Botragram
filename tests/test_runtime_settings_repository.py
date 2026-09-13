@@ -57,10 +57,12 @@ async def test_sqlite_runtime_settings_repository_lifecycle(tmp_path: Path) -> N
     assert await repo.get_strategy() is None
     assert await repo.get_leverage() is None
     assert await repo.get_trailing_stop() is None
+    assert await repo.get_dynamic_leverage() is None
 
-    # Save initial strategy, leverage, and trailing stop
+    # Save initial strategy, leverage, trailing stop, and dynamic leverage
     await repo.save_strategy(strategy_type=StrategyType.EMA_SCALPING)
     await repo.save_leverage(leverage=5)
+    await repo.save_dynamic_leverage(enabled=True)
     await repo.save_trailing_stop(
         enabled=True,
         trigger_pct=Decimal("0.02"),
@@ -68,12 +70,14 @@ async def test_sqlite_runtime_settings_repository_lifecycle(tmp_path: Path) -> N
     )
     assert await repo.get_strategy() is StrategyType.EMA_SCALPING
     assert await repo.get_leverage() == 5
+    assert await repo.get_dynamic_leverage() is True
     trailing = await repo.get_trailing_stop()
     assert trailing == (True, Decimal("0.02"), Decimal("0.01"))
 
-    # Update strategy, leverage, and trailing stop
+    # Update strategy, leverage, trailing stop, and dynamic leverage
     await repo.save_strategy(strategy_type=StrategyType.ADX_TREND)
     await repo.save_leverage(leverage=10)
+    await repo.save_dynamic_leverage(enabled=False)
     await repo.save_trailing_stop(
         enabled=False,
         trigger_pct=Decimal("0.015"),
@@ -81,6 +85,7 @@ async def test_sqlite_runtime_settings_repository_lifecycle(tmp_path: Path) -> N
     )
     assert await repo.get_strategy() is StrategyType.ADX_TREND
     assert await repo.get_leverage() == 10
+    assert await repo.get_dynamic_leverage() is False
     trailing2 = await repo.get_trailing_stop()
     assert trailing2 == (False, Decimal("0.015"), Decimal("0.008"))
 
@@ -126,9 +131,11 @@ async def test_memory_runtime_settings_repository() -> None:
         strategy_type=StrategyType.EMA_CROSS,
         leverage=15,
         trailing_stop=(False, Decimal("0.02"), Decimal("0.01")),
+        dynamic_leverage=True,
     )
     assert await init_repo.get_strategy() is StrategyType.EMA_CROSS
     assert await init_repo.get_leverage() == 15
+    assert await init_repo.get_dynamic_leverage() is True
     assert await init_repo.get_trailing_stop() == (
         False,
         Decimal("0.02"),

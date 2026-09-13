@@ -60,6 +60,11 @@ class _RuntimeControlLeverageProvider(Protocol):
         """Return the active runtime leverage."""
         ...
 
+    @property
+    def dynamic_leverage_enabled(self) -> bool:
+        """Return whether dynamic leverage is active."""
+        ...
+
 
 @dataclass(slots=True, kw_only=True, frozen=True)
 class LiveEntryRiskEvaluationService:
@@ -152,6 +157,11 @@ class LiveEntryRiskEvaluationService:
             ),
             leverage=(
                 self.runtime_control.leverage
+                if self.runtime_control is not None
+                else None
+            ),
+            dynamic_leverage_enabled=(
+                self.runtime_control.dynamic_leverage_enabled
                 if self.runtime_control is not None
                 else None
             ),

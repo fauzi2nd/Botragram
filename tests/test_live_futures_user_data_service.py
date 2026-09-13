@@ -356,3 +356,22 @@ async def test_transient_dns_outage_retries_until_rest_resync_is_authoritative()
 
     await service.close()
     assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_user_data_service_formats_custom_exchange_name() -> None:
+    """Reflect the configured exchange name in service exceptions and telemetry."""
+    snapshots = FakeSnapshotProvider()
+    stream = FlakyEventStream(failures_remaining=0)
+    service = LiveFuturesUserDataService(
+        snapshot_provider=snapshots,
+        event_stream=stream,
+        exchange_name="Bybit Futures",
+        reconnect_delay_seconds=0.0,
+    )
+
+    await service.start()
+    assert service.exchange_name == "Bybit Futures"
+    assert service.status is LiveFuturesUserDataStatus.READY
+    await service.close()
+    assert stream.closed

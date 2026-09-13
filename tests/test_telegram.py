@@ -313,7 +313,7 @@ def test_positions_message_uses_current_domain_model() -> None:
     assert "BTCUSDT" in message
     assert "LONG" in message
     assert "Qty=2" in message
-    assert "Entry / Mark: 0.002246 / 0.0025" in message
+    assert "Entry / Last: 0.002246 / 0.0025" in message
     assert "SL / TP: 0.0021 / 0.0028" in message
     assert "PnL=20.00 USDT" in message
     assert "Tidak ada posisi" in get_positions_message(())
@@ -655,7 +655,7 @@ def test_leverage_messages_and_keyboard() -> None:
     assert "cb_leverage_menu" in callbacks
     assert "cb_status" in callbacks
 
-    # Verify status dashboard includes leverage button
+    # Verify status dashboard routes leverage through risk limits in AUTONOMOUS_LIVE
     dash_live = get_status_dashboard_keyboard(
         is_paused=True,
         execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
@@ -663,4 +663,15 @@ def test_leverage_messages_and_keyboard() -> None:
     dash_callbacks = {
         button.callback_data for row in dash_live.inline_keyboard for button in row
     }
-    assert "cb_leverage_menu" in dash_callbacks
+    assert "cb_risk_limits" in dash_callbacks
+    assert "cb_leverage_menu" not in dash_callbacks
+
+    # Verify single-symbol dashboard retains direct leverage button
+    dash_single = get_status_dashboard_keyboard(
+        is_paused=True,
+        execution_policy=ExecutionPolicy.SINGLE_SYMBOL,
+    )
+    single_callbacks = {
+        button.callback_data for row in dash_single.inline_keyboard for button in row
+    }
+    assert "cb_leverage_menu" in single_callbacks

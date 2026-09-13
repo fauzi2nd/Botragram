@@ -224,11 +224,11 @@ def test_compact_terminal_keeps_five_positions_with_readable_price_rows() -> Non
     for index in range(1, 6):
         assert f"PAIR{index}USDT" in rendered
         assert f"STEP {index}" in rendered
-    assert "Entry / Mark" in rendered
+    assert "Entry / Last" in rendered
     assert "SL / TP" in rendered
     assert "100 / 101" in rendered
     assert "98 / 104" in rendered
-    assert "Entry / Mark / SL / TP" not in rendered
+    assert "Entry / Last / SL / TP" not in rendered
     assert "Protection Step" not in rendered
     assert "Strategy Type" not in rendered
     assert "Runtime Events" in rendered

@@ -246,6 +246,15 @@ class BotRuntimeControl(Protocol):
         ...
 
     @property
+    def dynamic_leverage_enabled(self) -> bool:
+        """Return whether dynamic adaptive leverage is active."""
+        ...
+
+    def select_dynamic_leverage(self, enabled: bool) -> bool:
+        """Select dynamic leverage mode while paused."""
+        ...
+
+    @property
     def trailing_stop_enabled(self) -> bool:
         """Return whether trailing stop is active."""
         ...
@@ -405,6 +414,7 @@ class BotContext:
     positions: tuple[Position, ...] = ()
     leverage: int = 1
     leverage_ceiling: int = 50
+    dynamic_leverage_enabled: bool = False
     stop_loss_pct: Decimal = Decimal("0.01")
     take_profit_pct: Decimal = Decimal("0.02")
     trailing_stop_enabled: bool = False

@@ -806,7 +806,7 @@ async def _run_rich_dashboard_render_test() -> None:
     assert "Lev" in rendered
     assert "1x" in rendered
     assert "Qty" in rendered
-    assert "Entry" in rendered and "Mark" in rendered
+    assert "Entry" in rendered and "Last" in rendered
     assert "Trading Performance" in rendered
     assert "PAPER PORTFOLIO" in rendered
     assert "Step" in rendered
@@ -1147,7 +1147,7 @@ def test_terminal_one_managed_position_renders_exact_correlation() -> None:
         "LONG",
         "Qty",
         "Entry",
-        "Mark",
+        "Last",
         "SL",
         "TP",
         "Step",
@@ -1182,7 +1182,7 @@ def test_terminal_two_managed_positions_correlate_by_symbol() -> None:
         ),
     )
     assert "BTCUSDT" in rendered and "ETHUSDT" in rendered
-    assert "Mark" in rendered and "180" in rendered
+    assert "Last" in rendered and "180" in rendered
     assert "Balance" in rendered
     assert "500.00 USDT" in rendered
     assert "Unrealized PnL" in rendered

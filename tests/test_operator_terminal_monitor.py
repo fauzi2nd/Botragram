@@ -94,6 +94,23 @@ def test_humanizes_generic_outage_heartbeat_telemetry() -> None:
     assert "_" not in rendered
 
 
+def test_humanizes_bybit_outage_heartbeat_telemetry() -> None:
+    """Present Bybit fail-closed outage telemetry clearly without delimiters."""
+    rendered = _TestTerminalMonitor.format_compact_event(
+        "Runtime heartbeat: state=PAUSED reason=bybit_connectivity_unavailable "
+        "outage_seconds=12.5 next_retry_seconds=1.000 positions_known=1 "
+        "positions_state=known_non_authoritative entry_enabled=false"
+    )
+
+    assert rendered == (
+        "Runtime heartbeat | state PAUSED | reason BYBIT CONNECTIVITY UNAVAILABLE | "
+        "outage 12.5 | next retry 1.000 | positions known 1 | "
+        "positions state KNOWN NON AUTHORITATIVE | entry OFF"
+    )
+    assert "=" not in rendered
+    assert "_" not in rendered
+
+
 def test_humanizes_generic_entry_synchronization_telemetry() -> None:
     """Keep useful entry facts while removing raw field syntax."""
     rendered = _TestTerminalMonitor.format_compact_event(

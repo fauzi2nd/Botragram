@@ -426,7 +426,7 @@ def get_positions_message(
             f"\n{side_icon} <b>{escape(position.symbol)}</b> · "
             f"{position.side.value.upper()} · {position.leverage}x\n"
             f"Qty={qty_str}\n"
-            f"Entry / Mark: {_format_optional_price(position.entry_price)} / "
+            f"Entry / Last: {_format_optional_price(position.entry_price)} / "
             f"{_format_optional_price(position.current_price)}\n"
             f"SL / TP: {_format_optional_price(position.stop_loss)} / "
             f"{_format_optional_price(position.take_profit)}\n"
@@ -1155,6 +1155,7 @@ def get_risk_limits_message(
     is_paused: bool,
     current_leverage: int = 1,
     leverage_ceiling: int = 50,
+    dynamic_leverage_enabled: bool = False,
 ) -> str:
     """Return formatted autonomous LIVE risk limits status and controls."""
     updated_str = limits.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1163,6 +1164,14 @@ def get_risk_limits_message(
         if is_paused
         else "🔴 <b>RUNNING (Jeda bot untuk mengubah)</b>"
     )
+    if dynamic_leverage_enabled:
+        leverage_str = (
+            f"⚡ <b>ADAPTIVE (Auto dari SL)</b> [Ceiling: {leverage_ceiling}x]"
+        )
+    else:
+        leverage_str = (
+            f"🔒 <b>FIXED {current_leverage}x</b> [Ceiling: {leverage_ceiling}x]"
+        )
     return (
         "⚙️ <b>Runtime Risk Limits</b>\n\n"
         f"• <b>Status:</b> {pause_status}\n"
@@ -1170,8 +1179,7 @@ def get_risk_limits_message(
         f"(Ceiling: {max_open_positions_ceiling})\n"
         f"• <b>Max Position Size:</b> <b>{limits.max_position_size_usdt} USDT</b> "
         f"(Ceiling: {max_position_size_usdt_ceiling} USDT)\n"
-        f"• <b>Leverage:</b> <b>{current_leverage}x</b> "
-        f"(Ceiling: {leverage_ceiling}x)\n"
+        f"• <b>Leverage:</b> {leverage_str}\n"
         f"• <b>Source:</b> <code>{limits.updated_by}</code>\n"
         f"• <b>Updated:</b> <code>{updated_str}</code>\n\n"
         "<i>Gunakan tombol di bawah atau perintah: "
@@ -1244,6 +1252,7 @@ def get_leverage_message(
     current_leverage: int,
     max_leverage: int = 100,
     is_paused: bool,
+    dynamic_leverage_enabled: bool = False,
 ) -> str:
     """Return formatted futures leverage status and tuning controls."""
     pause_status = (
@@ -1251,14 +1260,21 @@ def get_leverage_message(
         if is_paused
         else "🔴 <b>RUNNING (Jeda bot untuk mengubah)</b>"
     )
+    mode_str = (
+        "⚡ <b>ADAPTIVE (Auto berdasarkan Stop Loss)</b>"
+        if dynamic_leverage_enabled
+        else f"🔒 <b>FIXED ({current_leverage}x)</b>"
+    )
     return (
         "⚡ <b>Pengaturan Leverage Futures</b>\n\n"
         f"• <b>Status:</b> {pause_status}\n"
-        f"• <b>Leverage Aktif:</b> <b>{current_leverage}x</b>\n"
+        f"• <b>Mode:</b> {mode_str}\n"
+        f"• <b>Leverage Statis/Ceiling:</b> <b>{current_leverage}x</b>\n"
         f"• <b>Maksimum yang Didukung:</b> <b>{max_leverage}x</b>\n\n"
-        "<i>Gunakan tombol di bawah untuk fine-tuning atau memilih preset leverage "
-        "(saat PAUSED), atau gunakan perintah:</i>\n"
-        "<code>/setleverage &lt;angka 1-100&gt;</code>"
+        "<i>Gunakan tombol di bawah untuk beralih antara Mode Adaptive dan "
+        "Fixed (saat PAUSED), atau gunakan perintah:</i>\n"
+        "<code>/setleverage auto</code> <i>(Adaptive)</i>\n"
+        "<code>/setleverage &lt;1-100&gt;</code> <i>(Fixed)</i>"
     )
 
 

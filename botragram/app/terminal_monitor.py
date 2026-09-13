@@ -927,12 +927,12 @@ class TerminalMonitor:
                     f"positions=0 / max_open_positions={rendered_maximum}",
                 )
             table.add_row("Position (0)", "NONE")
-            table.add_row("Entry / Mark", "-")
+            table.add_row("Entry / Last", "-")
             table.add_row("Risk @ SL", "-")
             table.add_row("SL / TP", "-")
             return
 
-        mark_price = self._get_position_mark_price(position=position, status=status)
+        last_price = self._get_position_last_price(position=position, status=status)
         risk_amount = self._calculate_position_risk(position=position)
         if status.global_discovery is not None:
             maximum = self._get_max_open_positions()
@@ -948,8 +948,8 @@ class TerminalMonitor:
             f"{position.leverage}x",
         )
         table.add_row(
-            "Entry / Mark",
-            f"{position.entry_price:,.8f} / {mark_price:,.8f}",
+            "Entry / Last",
+            f"{position.entry_price:,.8f} / {last_price:,.8f}",
         )
         table.add_row(
             "Risk @ SL",
@@ -979,13 +979,13 @@ class TerminalMonitor:
 
         return positions[0] if positions else None
 
-    def _get_position_mark_price(
+    def _get_position_last_price(
         self,
         *,
         position: Position,
         status: TerminalStatus,
     ) -> Decimal:
-        """Return a fresh matching stream price or the persisted mark price."""
+        """Return a fresh matching stream price or the persisted current price."""
         if (
             status.stream.enabled
             and position.symbol == self.runtime_control.symbol
@@ -1180,7 +1180,7 @@ class TerminalMonitor:
         table.add_column("Lev", justify="right", no_wrap=True)
         table.add_column("Qty", justify="right", no_wrap=True)
         table.add_column("Entry", justify="right", no_wrap=True)
-        table.add_column("Mark", justify="right", no_wrap=True)
+        table.add_column("Last", justify="right", no_wrap=True)
         table.add_column("PnL", justify="right", no_wrap=True)
         table.add_column("ROI", justify="right", no_wrap=True)
         table.add_column("SL", justify="right", no_wrap=True)
@@ -1265,7 +1265,7 @@ class TerminalMonitor:
                 "POSITION MISSING",
             )
             return
-        mark = (
+        last_price = (
             self._get_matching_stream_price(
                 position=position,
                 stream_states=health_snapshot.stream_states,
@@ -1278,7 +1278,7 @@ class TerminalMonitor:
             f"{position.leverage}x",
             self._format_compact_decimal(position.quantity),
             self._format_compact_decimal(position.entry_price),
-            self._format_compact_decimal(mark),
+            self._format_compact_decimal(last_price),
             self.format_position_pnl(position.unrealized_pnl),
             self.format_position_roi(
                 unrealized_pnl=position.unrealized_pnl,

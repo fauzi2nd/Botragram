@@ -181,7 +181,7 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                 "qty": str(quantity),
                 "triggerPrice": str(stop_loss),
                 "triggerDirection": trigger_dir,
-                "triggerBy": "MarkPrice",
+                "triggerBy": "LastPrice",
                 "orderFilter": "StopOrder",
                 "reduceOnly": True,
             }
@@ -237,7 +237,7 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                 "qty": str(quantity),
                 "triggerPrice": str(take_profit),
                 "triggerDirection": trigger_dir,
-                "triggerBy": "MarkPrice",
+                "triggerBy": "LastPrice",
                 "orderFilter": "StopOrder",
                 "reduceOnly": True,
             }

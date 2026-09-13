@@ -207,12 +207,14 @@ class BybitExchangeClient(BaseExchangeClient):
                     raw_first = cast(list[object], ticker_list)[0]
                     if isinstance(raw_first, dict):
                         first_item = cast(ExchangePayload, raw_first)
-                        mark_val = first_item.get("markPrice")
-                        if isinstance(mark_val, (str, int, float, Decimal)):
+                        last_val = first_item.get("lastPrice") or first_item.get(
+                            "markPrice"
+                        )
+                        if isinstance(last_val, (str, int, float, Decimal)):
                             try:
-                                mark_price = Decimal(str(mark_val))
-                                if mark_price > _DECIMAL_ZERO:
-                                    return mark_price
+                                ref_price = Decimal(str(last_val))
+                                if ref_price > _DECIMAL_ZERO:
+                                    return ref_price
                             except InvalidOperation, ValueError:
                                 pass
         ticker = await self.get_ticker(symbol=symbol)

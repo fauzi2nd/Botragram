@@ -282,7 +282,9 @@ class TerminalMonitor(BaseTerminalMonitor):
                         leverage=paper_position.leverage,
                         quantity=self._format_compact_decimal(paper_position.quantity),
                         entry=self._format_compact_decimal(paper_position.entry_price),
-                        mark=self._format_compact_decimal(paper_position.current_price),
+                        last_price=self._format_compact_decimal(
+                            paper_position.current_price
+                        ),
                         pnl=self.format_position_pnl(paper_position.unrealized_pnl),
                         roi=self.format_position_roi(
                             unrealized_pnl=paper_position.unrealized_pnl,
@@ -312,7 +314,7 @@ class TerminalMonitor(BaseTerminalMonitor):
                 if managed_position is None:
                     table.add_row(context.symbol, "POSITION MISSING")
                     continue
-                mark = (
+                last_price = (
                     self._get_matching_stream_price(
                         position=managed_position,
                         stream_states=health_snapshot.stream_states,
@@ -326,7 +328,7 @@ class TerminalMonitor(BaseTerminalMonitor):
                     leverage=managed_position.leverage,
                     quantity=self._format_compact_decimal(managed_position.quantity),
                     entry=self._format_compact_decimal(managed_position.entry_price),
-                    mark=self._format_compact_decimal(mark),
+                    last_price=self._format_compact_decimal(last_price),
                     pnl=self.format_position_pnl(managed_position.unrealized_pnl),
                     roi=self.format_position_roi(
                         unrealized_pnl=managed_position.unrealized_pnl,
@@ -360,7 +362,7 @@ class TerminalMonitor(BaseTerminalMonitor):
         leverage: int,
         quantity: str,
         entry: str,
-        mark: str,
+        last_price: str,
         pnl: str,
         roi: str,
         stop_loss: str,
@@ -372,7 +374,7 @@ class TerminalMonitor(BaseTerminalMonitor):
         leverage_label = f"{leverage}x" if leverage > 0 else "N/A"
         table.add_row(symbol, f"{side} | {leverage_label} | {health} | STEP {step}")
         table.add_row("Qty / PnL", f"{quantity} / {pnl} ({roi})")
-        table.add_row("Entry / Mark", f"{entry} / {mark}")
+        table.add_row("Entry / Last", f"{entry} / {last_price}")
         table.add_row("SL / TP", f"{stop_loss} / {take_profit}")
 
     def _build_compact_log_panel(self, status: TerminalStatus) -> Panel:

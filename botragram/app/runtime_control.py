@@ -87,6 +87,12 @@ class TradingRuntimeControl:
         init=False,
         repr=False,
     )
+    dynamic_leverage_enabled: bool = False
+    _dynamic_leverage_selector: Callable[[bool], None] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     trailing_stop_enabled: bool = False
     trailing_stop_trigger_pct: Decimal = Decimal("0.015")
     trailing_stop_distance_pct: Decimal = Decimal("0.008")
@@ -449,14 +455,33 @@ class TradingRuntimeControl:
         self._require_paused_configuration()
         self._leverage_confirmed = True
 
-        if leverage == self.leverage:
+        changed = False
+        if self.dynamic_leverage_enabled:
+            self.dynamic_leverage_enabled = False
+            dynamic_selector = self._dynamic_leverage_selector
+            if dynamic_selector is not None:
+                dynamic_selector(False)
+            changed = True
+
+        if leverage != self.leverage:
+            selector = self._leverage_selector
+            if selector is not None:
+                selector(leverage)
+            self.leverage = leverage
+            changed = True
+
+        return changed
+
+    def select_dynamic_leverage(self, enabled: bool) -> bool:
+        """Select and apply dynamic adaptive leverage while paused."""
+        self._require_paused_configuration()
+        if enabled == self.dynamic_leverage_enabled:
             return False
 
-        selector = self._leverage_selector
+        self.dynamic_leverage_enabled = enabled
+        selector = self._dynamic_leverage_selector
         if selector is not None:
-            selector(leverage)
-
-        self.leverage = leverage
+            selector(enabled)
         return True
 
     def select_trailing_stop(
@@ -577,6 +602,13 @@ class TradingRuntimeControl:
     ) -> None:
         """Bind the application callback that persists and applies leverage."""
         self._leverage_selector = selector
+
+    def bind_dynamic_leverage_selector(
+        self,
+        selector: Callable[[bool], None],
+    ) -> None:
+        """Bind application callback that persists and applies dynamic leverage."""
+        self._dynamic_leverage_selector = selector
 
     def bind_trailing_stop_selector(
         self,

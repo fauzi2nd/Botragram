@@ -250,7 +250,8 @@ def test_dynamic_adaptive_leverage() -> None:
     )
     engine = RiskEngine(settings=settings)
 
-    # 1. Tight SL (0.8%): safe leverage = int(0.80 / 0.008) = 100 -> clamped to max 25x
+    # 1. Tight SL (0.8%): safe leverage = int(0.80 / 0.008) = 100 -> clamped to 25x
+    # Static leverage=5 passed into evaluate is overridden by adaptive leverage.
     sig_scalp = Signal(
         symbol="BTCUSDT",
         signal_type=SignalType.BUY,
@@ -259,7 +260,11 @@ def test_dynamic_adaptive_leverage() -> None:
         strategy_name="scalping",
         generated_at=_NOW,
     )
-    res_scalp = engine.evaluate(signal=sig_scalp, account_balance=Decimal("10000"))
+    res_scalp = engine.evaluate(
+        signal=sig_scalp,
+        account_balance=Decimal("10000"),
+        leverage=5,
+    )
     assert res_scalp.position is not None
     assert res_scalp.position.leverage == 25
 
@@ -281,7 +286,11 @@ def test_dynamic_adaptive_leverage() -> None:
         strategy_name="ema_rsi",
         generated_at=_NOW,
     )
-    res_wide = engine_wide.evaluate(signal=sig_wide, account_balance=Decimal("10000"))
+    res_wide = engine_wide.evaluate(
+        signal=sig_wide,
+        account_balance=Decimal("10000"),
+        leverage=20,
+    )
     assert res_wide.position is not None
     assert res_wide.position.leverage == 10
 
@@ -318,3 +327,60 @@ def test_settings_manager_loads_dynamic_sizing_env(
     assert risk_settings.dynamic_leverage_enabled is True
     assert risk_settings.min_leverage == 8
     assert risk_settings.max_leverage == 30
+
+
+def test_dynamic_leverage_runtime_override() -> None:
+    """Verify runtime dynamic_leverage_enabled parameter overrides settings."""
+    # Base setting: dynamic_leverage_enabled = False, default leverage = 5
+    engine_fixed = RiskEngine(
+        settings=RiskSettings(
+            stop_loss_pct=Decimal("0.02"),
+            take_profit_pct=Decimal("0.06"),
+            leverage=5,
+            dynamic_leverage_enabled=False,
+            min_leverage=5,
+            max_leverage=50,
+        )
+    )
+    sig = _create_signal(price=Decimal("100"))
+
+    # 1. Without dynamic override, uses static leverage 5
+    res_default = engine_fixed.evaluate(
+        signal=sig,
+        account_balance=Decimal("10000"),
+        leverage=5,
+    )
+    assert res_default.position is not None
+    assert res_default.position.leverage == 5
+
+    # 2. With dynamic_leverage_enabled=True override,
+    # computes safe_lev = int(0.80 / 0.02) = 40
+    res_override_adaptive = engine_fixed.evaluate(
+        signal=sig,
+        account_balance=Decimal("10000"),
+        leverage=5,
+        dynamic_leverage_enabled=True,
+    )
+    assert res_override_adaptive.position is not None
+    assert res_override_adaptive.position.leverage == 40
+
+    # 3. Base setting: dynamic_leverage_enabled = True,
+    # but override is False -> uses fixed leverage
+    engine_adaptive = RiskEngine(
+        settings=RiskSettings(
+            stop_loss_pct=Decimal("0.02"),
+            take_profit_pct=Decimal("0.06"),
+            leverage=5,
+            dynamic_leverage_enabled=True,
+            min_leverage=5,
+            max_leverage=50,
+        )
+    )
+    res_override_fixed = engine_adaptive.evaluate(
+        signal=sig,
+        account_balance=Decimal("10000"),
+        leverage=8,
+        dynamic_leverage_enabled=False,
+    )
+    assert res_override_fixed.position is not None
+    assert res_override_fixed.position.leverage == 8

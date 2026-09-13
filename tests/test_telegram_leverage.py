@@ -428,3 +428,116 @@ async def test_set_risk_limits_command_with_leverage() -> None:
     message.reply_text.assert_called_once()
     reply_content = message.reply_text.call_args[0][0]
     assert "15x" in reply_content
+
+
+@pytest.mark.asyncio
+async def test_set_leverage_command_auto_adaptive() -> None:
+    """Verify /setleverage auto enables dynamic adaptive leverage."""
+    update, context, control, bot_context = _create_mock_update_and_context(
+        current_leverage=5,
+        is_paused=True,
+        args=["auto"],
+    )
+    control.dynamic_leverage_enabled = False
+    bot_context.dynamic_leverage_enabled = False
+
+    await set_leverage_command(update, context)
+
+    assert control.dynamic_leverage_enabled is True
+    assert bot_context.dynamic_leverage_enabled is True
+    update.effective_message.reply_text.assert_called_once()
+    reply = update.effective_message.reply_text.call_args[0][0]
+    assert "Mode Adaptive Leverage" in reply
+
+
+@pytest.mark.asyncio
+async def test_leverage_callback_mode_adaptive() -> None:
+    """Verify callback enables adaptive leverage and fixed preset disables it."""
+    control = TradingRuntimeControl(leverage=5)
+    control.pause()
+    control.dynamic_leverage_enabled = False
+    bot_context = BotContext(
+        is_running=True,
+        leverage=5,
+        dynamic_leverage_enabled=False,
+        runtime_control=control,
+    )
+
+    update = MagicMock()
+    query = AsyncMock()
+    query.data = "cb_leverage_mode_adaptive"
+    update.callback_query = query
+    update.effective_user.id = 12345
+    update.effective_chat.id = 12345
+
+    context = MagicMock()
+    context.bot_data = {
+        BOT_CONTEXT_KEY: bot_context,
+        ALLOWED_CHAT_IDS_KEY: [12345],
+    }
+
+    # 1. Switch to adaptive
+    await handle_callback_query(update, context)
+    assert control.dynamic_leverage_enabled is True
+    assert bot_context.dynamic_leverage_enabled is True
+
+    # 2. Select fixed preset -> disables adaptive
+    query.data = "cb_leverage_set_10"
+    await handle_callback_query(update, context)
+    assert control.dynamic_leverage_enabled is False
+    assert bot_context.dynamic_leverage_enabled is False
+    assert control.leverage == 10
+    assert bot_context.leverage == 10
+
+
+@pytest.mark.asyncio
+async def test_risk_limits_adaptive_mode_callback() -> None:
+    """Verify cb_risk_mode_adaptive toggles adaptive mode and presets turn it off."""
+    limits = RuntimeRiskLimits(
+        max_open_positions=5,
+        max_position_size_usdt=Decimal("25"),
+        updated_at=datetime.now(UTC),
+        updated_by="telegram:12345",
+    )
+    risk_service = _FakeRuntimeRiskLimitService(snapshot=limits)
+    control = TradingRuntimeControl(leverage=5)
+    control.pause()
+    control.dynamic_leverage_enabled = False
+
+    bot_context = BotContext(
+        is_running=True,
+        leverage=5,
+        leverage_ceiling=50,
+        dynamic_leverage_enabled=False,
+        runtime_control=control,
+        runtime_risk_limit_service=risk_service,  # type: ignore[arg-type]
+    )
+
+    update = MagicMock()
+    query = AsyncMock()
+    update.callback_query = query
+    update.effective_user.id = 12345
+    update.effective_chat.id = 12345
+
+    context = MagicMock()
+    context.bot_data = {
+        BOT_CONTEXT_KEY: bot_context,
+        ALLOWED_CHAT_IDS_KEY: [12345],
+    }
+
+    # 1. Toggle adaptive mode via Risk Limits menu
+    query.data = "cb_risk_mode_adaptive"
+    await handle_callback_query(update, context)
+    assert control.dynamic_leverage_enabled is True
+    assert bot_context.dynamic_leverage_enabled is True
+    call_args = query.edit_message_text.call_args
+    assert "ADAPTIVE" in call_args[0][0]
+
+    # 2. Select fixed preset -> disables adaptive
+    query.data = "cb_risk_set_lev_20"
+    await handle_callback_query(update, context)
+    assert control.dynamic_leverage_enabled is False
+    assert bot_context.dynamic_leverage_enabled is False
+    assert control.leverage == 20
+    call_args = query.edit_message_text.call_args
+    assert "FIXED 20x" in call_args[0][0]
