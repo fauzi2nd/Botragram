@@ -269,6 +269,8 @@ class StrategySettings:
     pier_min_short_account_ratio: Decimal = Decimal("0.30")
     pier_require_account_ratio_confluence: bool = False
     pier_confirm_htf_account_ratio: bool = False
+    pier_include_star_patterns: bool = True
+    pier_use_parabolic_sar: bool = True
 
     # =========================================================================
     # Market Orderflow Regime & Price-Hunt (MORPH)

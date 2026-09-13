@@ -359,6 +359,8 @@ class StrategyFactory:
                         settings.pier_confirm_htf_account_ratio
                         or settings.confirm_htf_account_ratio
                     ),
+                    include_star_patterns=settings.pier_include_star_patterns,
+                    use_parabolic_sar=settings.pier_use_parabolic_sar,
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

@@ -26,6 +26,7 @@ from typing import Final
 # =============================================================================
 from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.indicators import (
+    CandlestickMatch,
     calculate_atr,
     calculate_ema,
     calculate_psar,
@@ -102,6 +103,10 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     min_short_account_ratio: Decimal = Decimal("0.25")
     require_account_ratio_confluence: bool = False
     confirm_htf_account_ratio: bool = False
+
+    # Star Patterns & Parabolic SAR Configuration
+    include_star_patterns: bool = True
+    use_parabolic_sar: bool = True
 
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
@@ -183,8 +188,11 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         atr_series = calculate_atr(
             high_prices, low_prices, close_prices, period=self.atr_period
         )
-        psar_series = calculate_psar(high_prices, low_prices)
-        current_psar_uptrend = psar_series.is_uptrend[-1]
+        if self.use_parabolic_sar:
+            psar_series = calculate_psar(high_prices, low_prices)
+            current_psar_uptrend: bool | None = psar_series.is_uptrend[-1]
+        else:
+            current_psar_uptrend = None
 
         if self.require_key_level_location:
             last_swing_high, last_swing_low = find_swing_levels(
@@ -239,19 +247,21 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             curr_candle=curr_candle,
             min_body_ratio=self.min_engulfing_body_ratio,
         )
-        star = (
-            detect_star(
+        if self.include_star_patterns and len(candles) >= 3:
+            star = detect_star(
                 first_candle=first_star_candle,
                 second_candle=prev_candle,
                 third_candle=curr_candle,
             )
-            if len(candles) >= 3
-            else detect_star(
-                first_candle=prev_candle,
-                second_candle=prev_candle,
-                third_candle=curr_candle,
+        else:
+            star = CandlestickMatch(
+                matched=False,
+                side=None,
+                pattern_name="none",
+                rejection_level=_DECIMAL_ZERO,
+                body_ratio=_DECIMAL_ZERO,
+                wick_ratio=_DECIMAL_ZERO,
             )
-        )
 
         signal_type = SignalType.HOLD
         confidence = _DECIMAL_ZERO
@@ -322,7 +332,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     engulfing_ratio=engulfing.wick_ratio,
                     star_matched=star_matched_buy,
                     star_ratio=star.wick_ratio,
-                    sar_aligned=current_psar_uptrend,
+                    sar_aligned=current_psar_uptrend is True,
                     volume=curr_candle.volume,
                     volume_sma=current_vol_sma,
                 )
@@ -412,7 +422,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     engulfing_ratio=engulfing.wick_ratio,
                     star_matched=star_matched_sell,
                     star_ratio=star.wick_ratio,
-                    sar_aligned=not current_psar_uptrend,
+                    sar_aligned=current_psar_uptrend is False,
                     volume=curr_candle.volume,
                     volume_sma=current_vol_sma,
                 )
