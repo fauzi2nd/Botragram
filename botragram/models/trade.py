@@ -60,3 +60,4 @@ class Trade:
     # Futures exchanges may provide this value.
     # Spot exchanges will typically return None.
     realized_pnl: Decimal | None = None
+    is_liquidation: bool = False

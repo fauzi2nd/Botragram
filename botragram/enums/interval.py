@@ -39,6 +39,7 @@ class Interval(BaseEnum):
     M1 = "1m"
     M3 = "3m"
     M5 = "5m"
+    M7 = "7m"
     M15 = "15m"
     M30 = "30m"
 
@@ -65,6 +66,7 @@ class Interval(BaseEnum):
             Interval.M1: 60,
             Interval.M3: 180,
             Interval.M5: 300,
+            Interval.M7: 420,
             Interval.M15: 900,
             Interval.M30: 1800,
             Interval.H1: 3600,

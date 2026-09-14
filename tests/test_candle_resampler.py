@@ -313,3 +313,39 @@ def test_resample_validation_errors() -> None:
         resample_candles(
             candles=[c1], target_interval=Interval.M5, min_candles_per_bucket=0
         )
+
+
+def test_resample_1m_to_7m_ohlcv_accuracy() -> None:
+    """Resample 7 continuous 1m candles into one 7m candle with exact OHLCV."""
+    # Compute an epoch-aligned 7-minute bucket boundary dynamically.
+    # The bucket open is the largest multiple-of-420-seconds <= the reference
+    # epoch, guaranteeing a full 7m bucket with the 7 candles we feed in.
+    from botragram.utils.candle_resampler import get_bucket_open_time
+
+    reference = datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
+    base_time = get_bucket_open_time(reference, Interval.M7)
+
+    candles = [
+        _make_1m_candle(
+            open_time=base_time + timedelta(minutes=i),
+            open_price=str(100 + i),
+            high_price=str(102 + i),
+            low_price=str(99 + i),
+            close_price=str(101 + i),
+            volume="2.0",
+        )
+        for i in range(7)
+    ]
+
+    result = resample_candles(candles=candles, target_interval=Interval.M7)
+
+    assert len(result) == 1
+    candle = result[0]
+    assert candle.interval is Interval.M7
+    assert candle.open_time == base_time
+    assert candle.close_time == base_time + timedelta(minutes=7)
+    assert candle.open_price == Decimal("100")
+    assert candle.high_price == Decimal("108")  # max of highs (102..108)
+    assert candle.low_price == Decimal("99")  # min of lows (99..105)
+    assert candle.close_price == Decimal("107")
+    assert candle.volume == Decimal("14.0")  # 7 × 2.0

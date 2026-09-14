@@ -29,7 +29,11 @@ from typing import Final, Protocol, runtime_checkable
 # =============================================================================
 from botragram.constants import DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
 from botragram.enums import Interval, SignalType, StrategyType
-from botragram.indicators.trend import evaluate_mtf_trend
+from botragram.indicators.trend import (
+    MtfTrendResult,
+    TrendDirection,
+    evaluate_mtf_trend,
+)
 from botragram.models import Candle, Signal
 from botragram.utils.validator import validate_symbol
 
@@ -163,6 +167,9 @@ class OpportunityDiscoveryService:
     mtf_confirmation_enabled: bool = False
     mtf_interval: Interval = Interval.H1
     mtf_ema_period: int = 50
+    btc_trend_filter_enabled: bool = False
+    btc_trend_interval: Interval = Interval.M15
+    btc_trend_ema_period: int = 50
     filter_extreme_volatility: bool = False
     max_candle_volatility_pct: Decimal = Decimal("0.15")
     filter_min_liquidity: bool = False
@@ -291,6 +298,7 @@ class OpportunityDiscoveryService:
     ) -> tuple[Signal, ...]:
         """Evaluate one already-normalized symbol batch sequentially."""
         actionable_signals: list[Signal] = []
+        btc_trend_result: MtfTrendResult | None = None
         effective_candle_limit = candle_limit
         candidate_minimum: int | None = None
         get_minimum = getattr(self.strategy_service, "get_minimum_candles", None)
@@ -492,6 +500,40 @@ class OpportunityDiscoveryService:
                             trend_result.direction.value,
                             trend_result.current_close,
                             trend_result.ema_value,
+                        )
+                        continue
+
+                if self.btc_trend_filter_enabled and symbol != "BTCUSDT":
+                    if btc_trend_result is None:
+                        btc_trend_result = await self._evaluate_btc_benchmark_trend(
+                            as_of=as_of,
+                        )
+                    if (
+                        signal.signal_type is SignalType.BUY
+                        and not btc_trend_result.is_aligned_with_buy
+                    ):
+                        _LOGGER.info(
+                            "BTC benchmark trend filter rejected BUY signal for %s: "
+                            "btc_tf=%s btc_trend=%s btc_close=%s btc_ema=%s",
+                            symbol,
+                            self.btc_trend_interval.value,
+                            btc_trend_result.direction.value,
+                            btc_trend_result.current_close,
+                            btc_trend_result.ema_value,
+                        )
+                        continue
+                    if (
+                        signal.signal_type is SignalType.SELL
+                        and not btc_trend_result.is_aligned_with_sell
+                    ):
+                        _LOGGER.info(
+                            "BTC benchmark trend filter rejected SELL signal for %s: "
+                            "btc_tf=%s btc_trend=%s btc_close=%s btc_ema=%s",
+                            symbol,
+                            self.btc_trend_interval.value,
+                            btc_trend_result.direction.value,
+                            btc_trend_result.current_close,
+                            btc_trend_result.ema_value,
                         )
                         continue
 
@@ -746,6 +788,44 @@ class OpportunityDiscoveryService:
                 )
 
         return True, ""
+
+    async def _evaluate_btc_benchmark_trend(
+        self,
+        *,
+        as_of: datetime,
+    ) -> MtfTrendResult:
+        """Evaluate market benchmark (BTCUSDT) trend direction."""
+        try:
+            btc_candles = await self.market_service.get_candles(
+                symbol="BTCUSDT",
+                interval=self.btc_trend_interval,
+                limit=self.btc_trend_ema_period + 5,
+                persist=False,
+                prefer_stored=True,
+                as_of=as_of,
+            )
+            closed_btc_candles = self._select_closed_candles(
+                candles=btc_candles,
+                as_of=as_of,
+                candle_limit=self.btc_trend_ema_period + 1,
+                require_strict_sequence=False,
+            )
+            return evaluate_mtf_trend(
+                closed_btc_candles,
+                ema_period=self.btc_trend_ema_period,
+            )
+        except Exception as error:
+            _LOGGER.warning(
+                "Failed to evaluate BTC benchmark trend: %s. Defaulting to neutral.",
+                error,
+            )
+            return MtfTrendResult(
+                direction=TrendDirection.NEUTRAL,
+                current_close=Decimal("0"),
+                ema_value=None,
+                is_aligned_with_buy=True,
+                is_aligned_with_sell=True,
+            )
 
     @staticmethod
     def _normalize_quote_asset(quote_asset: str) -> str:

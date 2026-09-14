@@ -11,7 +11,8 @@ Python:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
+from typing import Final
 
 from botragram.config.risk_settings import RiskSettings
 from botragram.constants.strategy import get_strategy_default_exit_rates
@@ -20,7 +21,9 @@ from botragram.models import PositionSize, RiskMetrics, RiskResult, Signal
 
 __all__ = ["RiskEngine"]
 
-_DECIMAL_ZERO = Decimal("0")
+_DECIMAL_ZERO: Final[Decimal] = Decimal("0")
+_LIQUIDATION_SAFETY_FACTOR: Final[Decimal] = Decimal("0.70")
+_MAINTENANCE_MARGIN_BUFFER: Final[Decimal] = Decimal("0.012")
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -74,6 +77,7 @@ class RiskEngine:
         leverage: int | None = None,
         dynamic_leverage_enabled: bool | None = None,
         volatility_pct: Decimal | None = None,
+        remaining_slots: int | None = None,
     ) -> RiskResult:
         """Evaluate a signal against configured and optional runtime limits."""
         self._validate_inputs(
@@ -85,6 +89,10 @@ class RiskEngine:
             not volatility_pct.is_finite() or volatility_pct <= _DECIMAL_ZERO
         ):
             raise ValueError("Volatility percentage must be finite and positive")
+        if remaining_slots is not None and (
+            isinstance(remaining_slots, bool) or remaining_slots <= 0
+        ):
+            raise ValueError("Remaining slots must be positive")
 
         effective_max_position_size = self._resolve_max_position_size(
             runtime_limit=max_position_size_usdt,
@@ -131,44 +139,6 @@ class RiskEngine:
                 reason="Stop-loss distance must be greater than zero",
             )
 
-        allowed_risk = account_balance * self.settings.risk_per_trade_pct
-        quantity = allowed_risk / risk_per_unit
-        notional = quantity * signal.price
-
-        if (
-            self.settings.volatility_sizing_enabled
-            or self.settings.dynamic_sizing_enabled
-        ) and volatility_pct is not None:
-            vol_multiplier = min(
-                Decimal("1.5"),
-                max(
-                    Decimal("0.5"),
-                    self.settings.baseline_volatility_pct / volatility_pct,
-                ),
-            )
-            notional = notional * vol_multiplier
-
-        if (
-            self.settings.dynamic_sizing_enabled
-            and self.settings.confidence_sizing_enabled
-            and signal.confidence > _DECIMAL_ZERO
-            and self.settings.baseline_confidence > _DECIMAL_ZERO
-        ):
-            conf_multiplier = min(
-                self.settings.max_confidence_multiplier,
-                max(
-                    self.settings.min_confidence_multiplier,
-                    signal.confidence / self.settings.baseline_confidence,
-                ),
-            )
-            notional = notional * conf_multiplier
-
-        if notional > effective_max_position_size:
-            notional = effective_max_position_size
-            quantity = notional / signal.price
-        else:
-            quantity = notional / signal.price
-
         is_dynamic = (
             dynamic_leverage_enabled
             if dynamic_leverage_enabled is not None
@@ -177,11 +147,142 @@ class RiskEngine:
         if is_dynamic:
             sl_pct = risk_per_unit / signal.price
             if sl_pct > _DECIMAL_ZERO:
-                safe_lev = int(Decimal("0.80") / sl_pct)
+                effective_risk_distance = (
+                    max(sl_pct, volatility_pct)
+                    if volatility_pct is not None
+                    else sl_pct
+                )
+                denominator = (
+                    effective_risk_distance / _LIQUIDATION_SAFETY_FACTOR
+                ) + _MAINTENANCE_MARGIN_BUFFER
+                safe_lev = (
+                    int(Decimal("1") / denominator)
+                    if denominator > _DECIMAL_ZERO
+                    else self.settings.min_leverage
+                )
                 effective_leverage = min(
                     self.settings.max_leverage,
                     max(self.settings.min_leverage, safe_lev),
                 )
+
+        if (
+            self.settings.slot_sizing_enabled
+            and remaining_slots is not None
+            and remaining_slots > 0
+        ):
+            usable_balance = account_balance * (
+                Decimal("1") - self.settings.slot_margin_buffer_pct
+            )
+            if usable_balance <= _DECIMAL_ZERO:
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Insufficient usable balance after safety margin buffer",
+                )
+            slot_margin = usable_balance / Decimal(remaining_slots)
+            max_lev_decimal = Decimal(self.settings.max_leverage)
+            if slot_margin * max_lev_decimal < self.settings.min_order_notional_usdt:
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason=(
+                        f"Insufficient slot margin {slot_margin} to meet "
+                        f"minimum order notional "
+                        f"{self.settings.min_order_notional_usdt}"
+                    ),
+                )
+            if (
+                slot_margin * Decimal(effective_leverage)
+                < self.settings.min_order_notional_usdt
+                and effective_leverage < self.settings.max_leverage
+            ):
+                needed_lev = int(
+                    (
+                        self.settings.min_order_notional_usdt / slot_margin
+                    ).to_integral_value(rounding=ROUND_CEILING)
+                )
+                effective_leverage = min(
+                    self.settings.max_leverage,
+                    max(effective_leverage, needed_lev),
+                )
+
+            notional = slot_margin * Decimal(effective_leverage)
+
+            if (
+                self.settings.volatility_sizing_enabled
+                or self.settings.dynamic_sizing_enabled
+            ) and volatility_pct is not None:
+                vol_multiplier = min(
+                    Decimal("1.5"),
+                    max(
+                        Decimal("0.5"),
+                        self.settings.baseline_volatility_pct / volatility_pct,
+                    ),
+                )
+                notional = notional * vol_multiplier
+
+            if (
+                self.settings.dynamic_sizing_enabled
+                and self.settings.confidence_sizing_enabled
+                and signal.confidence > _DECIMAL_ZERO
+                and self.settings.baseline_confidence > _DECIMAL_ZERO
+            ):
+                conf_multiplier = min(
+                    self.settings.max_confidence_multiplier,
+                    max(
+                        self.settings.min_confidence_multiplier,
+                        signal.confidence / self.settings.baseline_confidence,
+                    ),
+                )
+                notional = notional * conf_multiplier
+
+            if notional > effective_max_position_size:
+                notional = effective_max_position_size
+
+            max_balance_notional = usable_balance * Decimal(effective_leverage)
+            if notional > max_balance_notional:
+                notional = max_balance_notional
+
+            if notional < self.settings.min_order_notional_usdt <= max_balance_notional:
+                notional = self.settings.min_order_notional_usdt
+
+            quantity = notional / signal.price
+        else:
+            allowed_risk = account_balance * self.settings.risk_per_trade_pct
+            quantity = allowed_risk / risk_per_unit
+            notional = quantity * signal.price
+
+            if (
+                self.settings.volatility_sizing_enabled
+                or self.settings.dynamic_sizing_enabled
+            ) and volatility_pct is not None:
+                vol_multiplier = min(
+                    Decimal("1.5"),
+                    max(
+                        Decimal("0.5"),
+                        self.settings.baseline_volatility_pct / volatility_pct,
+                    ),
+                )
+                notional = notional * vol_multiplier
+
+            if (
+                self.settings.dynamic_sizing_enabled
+                and self.settings.confidence_sizing_enabled
+                and signal.confidence > _DECIMAL_ZERO
+                and self.settings.baseline_confidence > _DECIMAL_ZERO
+            ):
+                conf_multiplier = min(
+                    self.settings.max_confidence_multiplier,
+                    max(
+                        self.settings.min_confidence_multiplier,
+                        signal.confidence / self.settings.baseline_confidence,
+                    ),
+                )
+                notional = notional * conf_multiplier
+
+            if notional > effective_max_position_size:
+                notional = effective_max_position_size
+                quantity = notional / signal.price
+            else:
+                quantity = notional / signal.price
 
         risk_amount = quantity * risk_per_unit
         reward_amount = quantity * abs(take_profit - signal.price)
@@ -325,9 +426,13 @@ class RiskEngine:
                     self.settings.swing_stop_loss_pct,
                     self.settings.swing_take_profit_pct,
                 )
+            case StrategyType.PINBAR_ENGULFING_EMA_RSI:
+                return (
+                    self.settings.pier_stop_loss_pct,
+                    self.settings.pier_take_profit_pct,
+                )
             case (
                 StrategyType.HIGH_CONFLUENCE_EXHAUSTION
-                | StrategyType.PINBAR_ENGULFING_EMA_RSI
                 | StrategyType.CHOCH_FVG
                 | StrategyType.LIQUIDITY_SWEEP_EXHAUSTION
                 | StrategyType.CHOCH_RSI_BB_HYBRID

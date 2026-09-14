@@ -137,6 +137,28 @@ class BaseExchangeClient(ABC):
         del quote_asset
         raise NotImplementedError("Market-universe discovery is not supported")
 
+    @property
+    def supported_intervals(self) -> frozenset[Interval]:
+        """Return candlestick intervals natively supported by the exchange."""
+        return frozenset(
+            (
+                Interval.M1,
+                Interval.M3,
+                Interval.M5,
+                Interval.M15,
+                Interval.M30,
+                Interval.H1,
+                Interval.H2,
+                Interval.H4,
+                Interval.H6,
+                Interval.H8,
+                Interval.H12,
+                Interval.D1,
+                Interval.W1,
+                Interval.MN1,
+            )
+        )
+
     @abstractmethod
     async def get_candles(
         self,

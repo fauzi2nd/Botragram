@@ -361,6 +361,16 @@ class StrategyFactory:
                     ),
                     include_star_patterns=settings.pier_include_star_patterns,
                     use_parabolic_sar=settings.pier_use_parabolic_sar,
+                    use_macd=settings.pier_use_macd,
+                    macd_fast_period=settings.pier_macd_fast_period,
+                    macd_slow_period=settings.pier_macd_slow_period,
+                    macd_signal_period=settings.pier_macd_signal_period,
+                    use_stoch_rsi=settings.pier_use_stoch_rsi,
+                    stoch_rsi_period=settings.pier_stoch_rsi_period,
+                    stoch_rsi_k_period=settings.pier_stoch_rsi_k_period,
+                    stoch_rsi_d_period=settings.pier_stoch_rsi_d_period,
+                    stoch_rsi_overbought=settings.pier_stoch_rsi_overbought,
+                    stoch_rsi_oversold=settings.pier_stoch_rsi_oversold,
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

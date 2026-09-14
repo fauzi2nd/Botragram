@@ -47,6 +47,9 @@ class StrategySettings:
     mtf_confirmation_enabled: bool = False
     mtf_interval: Interval = Interval.H1
     mtf_ema_period: int = 50
+    btc_trend_filter_enabled: bool = True
+    btc_trend_interval: Interval = Interval.M15
+    btc_trend_ema_period: int = 50
     discovery_filter_extreme_volatility: bool = True
     discovery_max_candle_volatility_pct: Decimal = Decimal("0.15")
     discovery_filter_min_liquidity: bool = True
@@ -245,10 +248,10 @@ class StrategySettings:
     pier_trend_period: int = 200
     pier_pullback_period: int = 21
     pier_rsi_period: int = 14
-    pier_rsi_long_min: Decimal = Decimal("35.0")
-    pier_rsi_long_max: Decimal = Decimal("52.0")
-    pier_rsi_short_min: Decimal = Decimal("48.0")
-    pier_rsi_short_max: Decimal = Decimal("65.0")
+    pier_rsi_long_min: Decimal = Decimal("38.0")
+    pier_rsi_long_max: Decimal = Decimal("58.0")
+    pier_rsi_short_min: Decimal = Decimal("42.0")
+    pier_rsi_short_max: Decimal = Decimal("62.0")
     pier_volume_period: int = 20
     pier_volume_multiplier: Decimal = Decimal("1.10")
     pier_min_wick_ratio: Decimal = Decimal("0.60")
@@ -274,6 +277,16 @@ class StrategySettings:
     pier_confirm_htf_account_ratio: bool = False
     pier_include_star_patterns: bool = True
     pier_use_parabolic_sar: bool = True
+    pier_use_macd: bool = True
+    pier_macd_fast_period: int = 12
+    pier_macd_slow_period: int = 26
+    pier_macd_signal_period: int = 9
+    pier_use_stoch_rsi: bool = True
+    pier_stoch_rsi_period: int = 14
+    pier_stoch_rsi_k_period: int = 3
+    pier_stoch_rsi_d_period: int = 3
+    pier_stoch_rsi_overbought: Decimal = Decimal("80.0")
+    pier_stoch_rsi_oversold: Decimal = Decimal("20.0")
 
     # =========================================================================
     # Market Orderflow Regime & Price-Hunt (MORPH)
@@ -437,6 +450,8 @@ class StrategySettings:
             )
         if self.discovery_min_quote_volume_usdt < Decimal("0"):
             raise ValueError("Discovery min quote volume USDT must not be negative")
+        if self.btc_trend_ema_period <= 0:
+            raise ValueError("BTC trend EMA period must be positive")
         if self.scalping_fast_period <= 0 or self.scalping_slow_period <= 0:
             raise ValueError("Scalping EMA periods must be positive")
         if self.scalping_fast_period >= self.scalping_slow_period:
@@ -531,6 +546,25 @@ class StrategySettings:
             raise ValueError("pier_min_natr_threshold must not be negative")
         if self.pier_min_sl_distance_pct < Decimal("0"):
             raise ValueError("pier_min_sl_distance_pct must not be negative")
+        if (
+            self.pier_macd_fast_period <= 0
+            or self.pier_macd_slow_period <= self.pier_macd_fast_period
+            or self.pier_macd_signal_period <= 0
+        ):
+            raise ValueError("PIER MACD parameters are invalid")
+        if (
+            self.pier_stoch_rsi_period <= 0
+            or self.pier_stoch_rsi_k_period <= 0
+            or self.pier_stoch_rsi_d_period <= 0
+        ):
+            raise ValueError("PIER Stoch RSI periods must be positive")
+        if not (
+            Decimal("0")
+            <= self.pier_stoch_rsi_oversold
+            < self.pier_stoch_rsi_overbought
+            <= Decimal("100")
+        ):
+            raise ValueError("PIER Stoch RSI thresholds must be in [0, 100]")
         if self.morph_swing_lookback <= 2 or self.morph_fvg_lookback <= 2:
             raise ValueError("MORPH swing and FVG lookback must be greater than 2")
         if self.morph_volume_period <= 2 or self.morph_volume_multiplier <= Decimal(

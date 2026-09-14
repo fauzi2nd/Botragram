@@ -123,6 +123,7 @@ TELEGRAM_INTERVALS: tuple[str, ...] = (
     "1m",
     "3m",
     "5m",
+    "7m",
     "15m",
     "30m",
     "1h",

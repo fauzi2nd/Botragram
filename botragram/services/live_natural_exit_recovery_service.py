@@ -375,11 +375,18 @@ class LiveNaturalExitRecoveryService:
                 position=position,
             )
             if recovered_exit is None:
-                exit_order = await self._recover_filled_manual_close_from_history(
+                (
+                    exit_order,
+                    is_liquidation,
+                ) = await self._recover_filled_manual_close_from_history(
                     position=position,
                 )
-                close_reason = ClosedPositionReason.MANUAL_CLOSE
-                provenance = ClosedPositionProvenance.MANUAL_ORDER
+                if is_liquidation:
+                    close_reason = ClosedPositionReason.LIQUIDATION
+                    provenance = ClosedPositionProvenance.LIQUIDATION_ORDER
+                else:
+                    close_reason = ClosedPositionReason.MANUAL_CLOSE
+                    provenance = ClosedPositionProvenance.MANUAL_ORDER
             else:
                 exit_order = recovered_exit
                 close_reason = self._close_reason(
@@ -466,8 +473,8 @@ class LiveNaturalExitRecoveryService:
         self,
         *,
         position: Position,
-    ) -> Order:
-        """Recover one full manual close from bounded authoritative account fills."""
+    ) -> tuple[Order, bool]:
+        """Recover one full manual close or liquidation from account fills."""
         closing_side = (
             OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
@@ -515,14 +522,26 @@ class LiveNaturalExitRecoveryService:
             order_id=order_id,
             position=position,
         )
-        _LOGGER.warning(
-            "Natural LIVE exit recovered a manual close from authoritative "
-            "account history: symbol=%s exit_client_id=%s order_id=%s",
-            position.symbol,
-            recovered.client_order_id,
-            recovered.order_id,
+        is_liquidation = any(
+            trade.is_liquidation for trade in trades if trade.order_id == order_id
         )
-        return recovered
+        if is_liquidation:
+            _LOGGER.error(
+                "Natural LIVE exit detected a LIQUIDATION execution from exchange "
+                "account history: symbol=%s exit_client_id=%s order_id=%s",
+                position.symbol,
+                recovered.client_order_id,
+                recovered.order_id,
+            )
+        else:
+            _LOGGER.warning(
+                "Natural LIVE exit recovered a manual close from authoritative "
+                "account history: symbol=%s exit_client_id=%s order_id=%s",
+                position.symbol,
+                recovered.client_order_id,
+                recovered.order_id,
+            )
+        return recovered, is_liquidation
 
     @staticmethod
     def _validate_manual_close_order(

@@ -43,6 +43,8 @@ from botragram.constants import (
     BINANCE_TESTNET_REST_BASE_URL,
     BINANCE_TESTNET_WEBSOCKET_BASE_URL,
     BINANCE_WEBSOCKET_BASE_URL,
+    BITGET_REST_BASE_URL,
+    BITGET_WEBSOCKET_BASE_URL,
     BYBIT_DEMO_PRIVATE_WEBSOCKET_BASE_URL,
     BYBIT_DEMO_REST_BASE_URL,
     BYBIT_DEMO_SPOT_WEBSOCKET_BASE_URL,
@@ -80,6 +82,7 @@ from botragram.exchanges.binance import (
     BinanceFuturesExchangeClient,
     BinanceFuturesUserDataStream,
 )
+from botragram.exchanges.bitget import BitgetFuturesExchangeClient
 from botragram.exchanges.bybit import BybitFuturesExchangeClient
 from botragram.exchanges.bybit.futures_user_data_stream import (
     BybitFuturesUserDataStream,
@@ -1123,9 +1126,14 @@ class DependencyProvider:
                 demo=exchange.demo,
                 market_type=exchange.market_type,
             )
+        elif exchange.exchange is ExchangeType.BITGET:
+            rest_base_url, websocket_base_url = self._get_bitget_urls(
+                testnet=exchange.testnet,
+                market_type=exchange.market_type,
+            )
         else:
             raise ValueError(
-                "DependencyProvider currently supports Binance and Bybit, "
+                "DependencyProvider currently supports Binance, Bybit, and Bitget, "
                 f"got {exchange.exchange.value!r}"
             )
         exchange_client, stream_client = ExchangeFactory.create(
@@ -1134,6 +1142,7 @@ class DependencyProvider:
             websocket_base_url=websocket_base_url,
             api_key=exchange.api_key,
             api_secret=exchange.api_secret,
+            passphrase=exchange.passphrase,
             market_type=exchange.market_type,
         )
         self._exchange_client = exchange_client
@@ -1151,7 +1160,11 @@ class DependencyProvider:
         ):
             if isinstance(
                 exchange_client,
-                (BinanceFuturesExchangeClient, BybitFuturesExchangeClient),
+                (
+                    BinanceFuturesExchangeClient,
+                    BybitFuturesExchangeClient,
+                    BitgetFuturesExchangeClient,
+                ),
             ):
                 await exchange_client.verify_mainnet_readiness()
         await stream_client.connect()
@@ -1380,6 +1393,9 @@ class DependencyProvider:
             mtf_confirmation_enabled=self._settings.strategy.mtf_confirmation_enabled,
             mtf_interval=self._settings.strategy.mtf_interval,
             mtf_ema_period=self._settings.strategy.mtf_ema_period,
+            btc_trend_filter_enabled=(self._settings.strategy.btc_trend_filter_enabled),
+            btc_trend_interval=self._settings.strategy.btc_trend_interval,
+            btc_trend_ema_period=self._settings.strategy.btc_trend_ema_period,
             filter_extreme_volatility=(
                 self._settings.strategy.discovery_filter_extreme_volatility
             ),
@@ -1729,6 +1745,7 @@ class DependencyProvider:
             position_repository=self.position_repository,
             exchange_client=self.exchange_client,
             lifecycle_coordinator=self._live_position_lifecycle_coordinator,
+            notification_publisher=self.telegram_bot,
             partial_tp_enabled=self._settings.risk.partial_tp_enabled,
             partial_tp_ratio=self._settings.risk.partial_tp_ratio,
             partial_tp_trigger_progress=self._settings.risk.partial_tp_trigger_progress,
@@ -1817,6 +1834,15 @@ class DependencyProvider:
         if testnet:
             return BYBIT_TESTNET_PRIVATE_WEBSOCKET_BASE_URL
         return BYBIT_PRIVATE_WEBSOCKET_BASE_URL
+
+    @staticmethod
+    def _get_bitget_urls(
+        *,
+        testnet: bool,
+        market_type: MarketType,
+    ) -> tuple[str, str]:
+        del testnet, market_type
+        return BITGET_REST_BASE_URL, BITGET_WEBSOCKET_BASE_URL
 
     @staticmethod
     def _require[Dependency](dependency: Dependency | None) -> Dependency:

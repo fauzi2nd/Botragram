@@ -29,7 +29,13 @@ from botragram.exchanges.binance.futures_client import (
 )
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
-from botragram.models import ExchangeSymbolRules, Order, Position, Ticker
+from botragram.models import (
+    ExchangeSymbolRules,
+    Notification,
+    Order,
+    Position,
+    Ticker,
+)
 from botragram.services import PaperTradingService, PositionProtectionManager
 from botragram.storage.memory import (
     MemoryOrderRepository,
@@ -38,6 +44,16 @@ from botragram.storage.memory import (
 )
 
 _NOW = datetime(2026, 8, 7, tzinfo=UTC)
+
+
+class RecordingNotificationPublisher:
+    """Capture published notifications in-memory."""
+
+    def __init__(self) -> None:
+        self.notifications: list[Notification] = []
+
+    async def publish(self, *, notification: Notification) -> None:
+        self.notifications.append(notification)
 
 
 class RecordingProtectionExchange(BinanceFuturesExchangeClient):
@@ -1113,11 +1129,13 @@ async def test_partial_take_profit_paper_execution() -> None:
     repository = MemoryPositionRepository()
     await repository.save(position=position)
     exchange = RecordingProtectionExchange()
+    publisher = RecordingNotificationPublisher()
     manager = PositionProtectionManager(
         trade_mode=TradeMode.PAPER,
         position_repository=repository,
         exchange_client=exchange,
         position_refresh_seconds=0.001,
+        notification_publisher=publisher,
         partial_tp_enabled=True,
         partial_tp_ratio=Decimal("0.50"),
         partial_tp_trigger_progress=Decimal("0.50"),
@@ -1129,6 +1147,7 @@ async def test_partial_take_profit_paper_execution() -> None:
     assert pos is not None
     assert pos.quantity == Decimal("10")
     assert not pos.partial_tp_executed
+    assert len(publisher.notifications) == 0
 
     # Price moves to 105.00 -> Progress = 50% -> triggers Partial TP!
     await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=2))
@@ -1139,6 +1158,9 @@ async def test_partial_take_profit_paper_execution() -> None:
     # Stop loss moved to at least Breakeven (100.10)
     assert pos.stop_loss is not None
     assert pos.stop_loss >= Decimal("100.10")
+    assert len(publisher.notifications) == 1
+    assert "Partial Take-Profit Executed [PAPER]" in publisher.notifications[0].message
+    assert "BTCUSDT" in publisher.notifications[0].message
 
     # Subsequent tick at higher price should not trigger partial TP again
     await manager.on_market_tick(ticker=_ticker(price="106.00", seconds=3))
@@ -1167,11 +1189,13 @@ async def test_partial_take_profit_live_execution() -> None:
     repository = MemoryPositionRepository()
     await repository.save(position=position)
     exchange = RecordingProtectionExchange()
+    publisher = RecordingNotificationPublisher()
     manager = PositionProtectionManager(
         trade_mode=TradeMode.LIVE,
         position_repository=repository,
         exchange_client=exchange,
         position_refresh_seconds=0.001,
+        notification_publisher=publisher,
         partial_tp_enabled=True,
         partial_tp_ratio=Decimal("0.50"),
         partial_tp_trigger_progress=Decimal("0.50"),
@@ -1200,6 +1224,8 @@ async def test_partial_take_profit_live_execution() -> None:
     assert pos is not None
     assert pos.quantity == Decimal("5")
     assert pos.partial_tp_executed is True
+    assert len(publisher.notifications) == 1
+    assert "Partial Take-Profit Executed [LIVE]" in publisher.notifications[0].message
 
 
 @pytest.mark.asyncio

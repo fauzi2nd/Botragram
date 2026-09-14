@@ -323,6 +323,11 @@ class BybitExchangeClient(BaseExchangeClient):
 
         return tuple(entries)
 
+    @property
+    def supported_intervals(self) -> frozenset[Interval]:
+        """Return candlestick intervals natively supported by Bybit."""
+        return frozenset(BYBIT_INTERVAL_MAP.keys())
+
     async def get_candles(
         self,
         *,
@@ -339,7 +344,12 @@ class BybitExchangeClient(BaseExchangeClient):
         if start_time is not None and end_time is not None and start_time > end_time:
             raise ValueError("Candle start time must not be after end time")
 
-        interval_code = BYBIT_INTERVAL_MAP.get(interval, "15")
+        if interval not in BYBIT_INTERVAL_MAP:
+            raise ValueError(
+                f"Interval {interval.value} is not natively supported by Bybit"
+            )
+
+        interval_code = BYBIT_INTERVAL_MAP[interval]
         symbol_upper = symbol.strip().upper()
         candles: list[Candle] = []
         current_end_ms: int | None = (

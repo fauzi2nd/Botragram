@@ -152,6 +152,33 @@ class MarketService:
             if stored_candles is not None:
                 return stored_candles
 
+        if (
+            interval is not Interval.M1
+            and interval not in self.exchange_client.supported_intervals
+        ):
+            multiplier = max(1, interval.seconds // Interval.M1.seconds)
+            base_limit = (limit + 2) * multiplier
+            base_candles = await self.get_candles(
+                symbol=normalized_symbol,
+                interval=Interval.M1,
+                limit=base_limit,
+                start_time=start_time,
+                end_time=end_time,
+                persist=persist,
+                prefer_stored=prefer_stored,
+                as_of=as_of,
+            )
+            if not base_candles:
+                return ()
+            resampled = resample_candles(
+                candles=base_candles,
+                target_interval=interval,
+                closed_only=True,
+            )
+            if len(resampled) > limit:
+                return resampled[-limit:]
+            return resampled
+
         candles = await self.exchange_client.get_candles(
             symbol=normalized_symbol,
             interval=interval,
@@ -618,6 +645,17 @@ class MarketService:
             Standardized candle updates.
         """
         normalized_symbol = self._normalize_symbol(symbol)
+
+        if interval not in self.stream_client.supported_intervals:
+            async for candle in self.stream_resampled_candles(
+                symbol=normalized_symbol,
+                target_interval=interval,
+                source_interval=Interval.M1,
+                persist_source=persist,
+                closed_only=True,
+            ):
+                yield candle
+            return
 
         async for candle in self.stream_client.stream_candles(
             symbol=normalized_symbol,

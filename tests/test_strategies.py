@@ -275,6 +275,11 @@ def test_signal_engine_resolves_each_context_strategy_without_leakage() -> None:
             quad_stoch_oversold=Decimal("90"), quad_stoch_overbought=Decimal("10")
         ),
         lambda: StrategySettings(quad_macd_fast_period=20, quad_macd_slow_period=10),
+        lambda: StrategySettings(pier_macd_fast_period=30, pier_macd_slow_period=20),
+        lambda: StrategySettings(
+            pier_stoch_rsi_oversold=Decimal("80"),
+            pier_stoch_rsi_overbought=Decimal("20"),
+        ),
         lambda: IchimokuCloudStrategy(
             conversion_period=10,
             base_period=5,
@@ -723,6 +728,16 @@ def test_strategy_default_intervals_and_exit_rates() -> None:
     assert sl_hce == Decimal("0.007")
     assert tp_hce == Decimal("0.014")
 
+    assert (
+        get_strategy_default_interval(StrategyType.PINBAR_ENGULFING_EMA_RSI)
+        is Interval.M7
+    )
+    sl_pier, tp_pier = get_strategy_default_exit_rates(
+        StrategyType.PINBAR_ENGULFING_EMA_RSI
+    )
+    assert sl_pier == Decimal("0.012")
+    assert tp_pier == Decimal("0.024")
+
 
 def test_strategy_settings_default_interval() -> None:
     """Verify StrategySettings exposes default_interval."""
@@ -748,6 +763,11 @@ def test_strategy_settings_default_interval() -> None:
 
     settings_quad = StrategySettings(strategy_type=StrategyType.QUAD_CONFLUENCE)
     assert settings_quad.default_interval is Interval.M15
+
+    settings_pier = StrategySettings(
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI
+    )
+    assert settings_pier.default_interval is Interval.M7
     from botragram.constants.strategy import get_strategy_default_exit_rates
 
     sl, tp = get_strategy_default_exit_rates(StrategyType.QUAD_CONFLUENCE)

@@ -29,6 +29,12 @@ from botragram.exchanges.binance.client import BinanceExchangeClient
 from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.exchanges.binance.stream import BinanceStreamClient
+from botragram.exchanges.bitget import (
+    BitgetExchangeMapper,
+    BitgetFuturesExchangeClient,
+    BitgetRestClient,
+    BitgetStreamClient,
+)
 from botragram.exchanges.bybit import (
     BybitExchangeClient,
     BybitExchangeMapper,
@@ -57,6 +63,7 @@ class ExchangeFactory:
         base_url: str,
         api_key: str = "",
         api_secret: str = "",
+        passphrase: str = "",
     ) -> BaseRestClient:
         """Create a REST transport for an exchange.
 
@@ -65,6 +72,7 @@ class ExchangeFactory:
             base_url: REST API base URL.
             api_key: Exchange API key.
             api_secret: Exchange API secret.
+            passphrase: Exchange API passphrase (used by Bitget).
 
         Returns:
             Exchange REST transport.
@@ -85,6 +93,13 @@ class ExchangeFactory:
                     api_key=api_key,
                     api_secret=api_secret,
                 )
+            case ExchangeType.BITGET:
+                return BitgetRestClient(
+                    base_url=base_url,
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    passphrase=passphrase,
+                )
             case _:
                 raise ExchangeFactory._unsupported_exchange(exchange_type)
 
@@ -100,6 +115,7 @@ class ExchangeFactory:
         Args:
             exchange_type: Exchange implementation to create.
             rest_client: REST transport used by the client.
+            market_type: Target market type (spot or futures).
 
         Returns:
             High-level exchange client.
@@ -137,6 +153,21 @@ class ExchangeFactory:
                     )
 
                 return BybitExchangeClient(rest=rest_client, mapper=bybit_mapper)
+            case ExchangeType.BITGET:
+                if not isinstance(rest_client, BitgetRestClient):
+                    raise TypeError("Bitget exchange client requires BitgetRestClient")
+
+                bitget_mapper = BitgetExchangeMapper()
+
+                if market_type is MarketType.FUTURES:
+                    return BitgetFuturesExchangeClient(
+                        rest=rest_client,
+                        mapper=bitget_mapper,
+                    )
+
+                raise ValueError(
+                    "Bitget exchange client currently only supports FUTURES"
+                )
             case _:
                 raise ExchangeFactory._unsupported_exchange(exchange_type)
 
@@ -169,6 +200,11 @@ class ExchangeFactory:
                     websocket_url=base_url,
                     mapper=BybitExchangeMapper(),
                 )
+            case ExchangeType.BITGET:
+                return BitgetStreamClient(
+                    base_url=base_url,
+                    mapper=BitgetExchangeMapper(),
+                )
             case _:
                 raise ExchangeFactory._unsupported_exchange(exchange_type)
 
@@ -180,6 +216,7 @@ class ExchangeFactory:
         websocket_base_url: str,
         api_key: str = "",
         api_secret: str = "",
+        passphrase: str = "",
         market_type: MarketType = MarketType.SPOT,
     ) -> tuple[BaseExchangeClient, BaseStreamClient]:
         """Create matching REST-backed and streaming exchange clients.
@@ -190,6 +227,8 @@ class ExchangeFactory:
             websocket_base_url: WebSocket API base URL.
             api_key: Exchange API key.
             api_secret: Exchange API secret.
+            passphrase: Exchange API passphrase (used by Bitget).
+            market_type: Target market type (spot or futures).
 
         Returns:
             Tuple containing the exchange client and stream client.
@@ -199,6 +238,7 @@ class ExchangeFactory:
             base_url=rest_base_url,
             api_key=api_key,
             api_secret=api_secret,
+            passphrase=passphrase,
         )
         exchange_client = ExchangeFactory.create_exchange_client(
             exchange_type=exchange_type,

@@ -37,6 +37,28 @@ class BaseStreamClient(ABC):
     """Abstract interface for exchange streaming clients."""
 
     @property
+    def supported_intervals(self) -> frozenset[Interval]:
+        """Return candlestick intervals natively supported for streaming."""
+        return frozenset(
+            (
+                Interval.M1,
+                Interval.M3,
+                Interval.M5,
+                Interval.M15,
+                Interval.M30,
+                Interval.H1,
+                Interval.H2,
+                Interval.H4,
+                Interval.H6,
+                Interval.H8,
+                Interval.H12,
+                Interval.D1,
+                Interval.W1,
+                Interval.MN1,
+            )
+        )
+
+    @property
     @abstractmethod
     def is_connected(self) -> bool:
         """Return whether the streaming connection is active."""

@@ -1175,6 +1175,7 @@ def _fill(
     side: OrderSide,
     realized_pnl: str,
     quantity: str = "885",
+    is_liquidation: bool = False,
 ) -> Trade:
     """Build one exact Futures fill for lifecycle enrichment."""
     fill_price = Decimal("0.011")
@@ -1191,6 +1192,7 @@ def _fill(
         fee_asset="USDT",
         realized_pnl=Decimal(realized_pnl),
         executed_at=_NOW,
+        is_liquidation=is_liquidation,
     )
 
 
@@ -1261,6 +1263,71 @@ async def test_manual_close_recovers_one_full_order_with_multiple_fills() -> Non
     assert len(completed) == 1
     assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
     assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+
+
+@pytest.mark.asyncio
+async def test_liquidation_close_recovers_as_liquidation_reason() -> None:
+    """Classify exchange liquidation executions with LIQUIDATION reason and
+    provenance.
+    """
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    liq_order = Order(
+        order_id="liq-order-1",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        price=Decimal("0.011"),
+        stop_price=None,
+        client_order_id=None,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+            ),
+            _fill(
+                trade_id="liq-fill-1",
+                order_id=liq_order.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="-5",
+                quantity=str(position.quantity),
+                is_liquidation=True,
+            ),
+        ),
+        standard_orders=(liq_order,),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.LIQUIDATION
+    assert (
+        completed[0].ownership.provenance is ClosedPositionProvenance.LIQUIDATION_ORDER
+    )
 
 
 @pytest.mark.asyncio

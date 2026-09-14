@@ -108,6 +108,14 @@ class TradingEngine:
                     reason=_MAXIMUM_OPEN_POSITIONS_REASON,
                 )
 
+        current_open_positions_count = (
+            len(open_positions) if open_positions is not None else 0
+        )
+        remaining_slots = max(
+            1,
+            effective_max_open_positions - current_open_positions_count,
+        )
+
         risk_result = self.risk_engine.evaluate(
             signal=signal,
             account_balance=account_balance,
@@ -116,6 +124,7 @@ class TradingEngine:
             leverage=leverage,
             dynamic_leverage_enabled=dynamic_leverage_enabled,
             volatility_pct=volatility_pct,
+            remaining_slots=remaining_slots,
         )
 
         if not risk_result.approved:

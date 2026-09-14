@@ -430,6 +430,7 @@ class BybitExchangeMapper(BaseExchangeMapper):
             if raw_realized_pnl is not None and raw_realized_pnl != ""
             else None
         )
+        is_liquidation = self._to_string(payload.get("execType")).strip() == "BustTrade"
 
         return Trade(
             trade_id=trade_id,
@@ -443,6 +444,7 @@ class BybitExchangeMapper(BaseExchangeMapper):
             fee_asset=fee_asset,
             executed_at=executed_at,
             realized_pnl=realized_pnl,
+            is_liquidation=is_liquidation,
         )
 
     def map_symbol_rules(self, payload: ExchangePayload) -> ExchangeSymbolRules:

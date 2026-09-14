@@ -39,6 +39,8 @@ __all__ = [
     "BYBIT_PRIVATE_WEBSOCKET_BASE_URL",
     "BYBIT_TESTNET_PRIVATE_WEBSOCKET_BASE_URL",
     "BYBIT_DEMO_PRIVATE_WEBSOCKET_BASE_URL",
+    "BITGET_REST_BASE_URL",
+    "BITGET_WEBSOCKET_BASE_URL",
 ]
 
 # =============================================================================
@@ -98,3 +100,9 @@ BYBIT_TESTNET_PRIVATE_WEBSOCKET_BASE_URL: str = (
     "wss://stream-testnet.bybit.com/v5/private"
 )
 BYBIT_DEMO_PRIVATE_WEBSOCKET_BASE_URL: str = "wss://stream-demo.bybit.com/v5/private"
+
+# =============================================================================
+# Bitget URLs
+# =============================================================================
+BITGET_REST_BASE_URL: str = "https://api.bitget.com"
+BITGET_WEBSOCKET_BASE_URL: str = "wss://ws.bitget.com/v2/ws/public"

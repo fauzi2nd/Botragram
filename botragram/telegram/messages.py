@@ -32,6 +32,7 @@ from botragram.enums import (
     AuthorizationStatus,
     LiveRuntimeHealthStatus,
     MarketType,
+    PositionSide,
     SignalType,
     StrategyType,
 )
@@ -71,6 +72,7 @@ __all__ = [
     "get_execution_authorization_outcome_message",
     "get_paper_entry_message",
     "get_paper_exit_message",
+    "get_partial_tp_message",
     "get_pause_message",
     "get_performance_card_message",
     "get_positions_message",
@@ -635,6 +637,40 @@ def get_paper_exit_message(
         f"<b>Available Balance:</b> "
         f"{format_currency(available_balance, symbol='USDT')}\n"
         f"<b>Reason:</b> {escape(reason)}"
+    )
+
+
+def get_partial_tp_message(
+    *,
+    position: Position,
+    closed_quantity: Decimal,
+    remaining_quantity: Decimal,
+    exit_price: Decimal,
+    new_stop_loss: Decimal | None,
+    mode: str = "LIVE",
+) -> str:
+    """Return an authoritative partial take-profit notification message."""
+    side_label = "LONG" if position.side is PositionSide.LONG else "SHORT"
+    side_emoji = "🟢" if position.side is PositionSide.LONG else "🔴"
+    stop_text = (
+        format_price(new_stop_loss, symbol="USDT")
+        if new_stop_loss is not None
+        else "N/A"
+    )
+    total_qty = closed_quantity + remaining_quantity
+    ratio_pct = (
+        int((closed_quantity / total_qty) * 100) if total_qty > Decimal("0") else 50
+    )
+
+    return (
+        f"🎯 <b>Partial Take-Profit Executed [{escape(mode)}]</b>\n\n"
+        f"<b>Symbol:</b> {escape(position.symbol)}\n"
+        f"<b>Side:</b> {side_emoji} {side_label}\n"
+        f"<b>Exit Price:</b> {format_price(exit_price, symbol='USDT')}\n"
+        f"<b>Closed:</b> {closed_quantity} ({ratio_pct}%)\n"
+        f"<b>Remaining:</b> {remaining_quantity}\n"
+        f"<b>Stop Loss:</b> {stop_text} <i>(Breakeven)</i>\n"
+        f"<b>Status:</b> Risk-Free Position 🛡️"
     )
 
 

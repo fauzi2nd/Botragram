@@ -47,6 +47,9 @@ from botragram.constants.env import (
     ENV_BITGET_TESTNET,
     ENV_BOTRAGRAM_ENV_FILE,
     ENV_BOTRAGRAM_PROFILE,
+    ENV_BTC_TREND_EMA_PERIOD,
+    ENV_BTC_TREND_FILTER_ENABLED,
+    ENV_BTC_TREND_INTERVAL,
     ENV_BYBIT_API_KEY,
     ENV_BYBIT_API_SECRET,
     ENV_BYBIT_DEMO,
@@ -100,6 +103,7 @@ from botragram.constants.env import (
     ENV_MAX_SPREAD_BPS,
     ENV_MIN_LEVERAGE,
     ENV_MIN_OI_CHANGE_PCT,
+    ENV_MIN_ORDER_NOTIONAL_USDT,
     ENV_MIN_SHORT_ACCOUNT_RATIO,
     ENV_MIN_SHORT_FUNDING_RATE,
     ENV_MIN_SIGNAL_CONFIDENCE,
@@ -115,12 +119,22 @@ from botragram.constants.env import (
     ENV_PARTIAL_TP_ENABLED,
     ENV_PARTIAL_TP_RATIO,
     ENV_PARTIAL_TP_TRIGGER_PROGRESS,
+    ENV_PIER_RSI_LONG_MAX,
+    ENV_PIER_RSI_LONG_MIN,
+    ENV_PIER_RSI_SHORT_MAX,
+    ENV_PIER_RSI_SHORT_MIN,
+    ENV_PIER_STOP_LOSS_PCT,
+    ENV_PIER_TAKE_PROFIT_PCT,
+    ENV_PIER_USE_MACD,
+    ENV_PIER_USE_STOCH_RSI,
     ENV_REQUIRE_ACCOUNT_RATIO_CONFLUENCE,
     ENV_REQUIRE_FUNDING_SENTIMENT,
     ENV_REQUIRE_OI_CONFLUENCE,
     ENV_RISK_PER_TRADE_PCT,
     ENV_SCALPING_STOP_LOSS_PCT,
     ENV_SCALPING_TAKE_PROFIT_PCT,
+    ENV_SLOT_MARGIN_BUFFER_PCT,
+    ENV_SLOT_SIZING_ENABLED,
     ENV_STOP_LOSS_PCT,
     ENV_STRATEGY_TYPE,
     ENV_SWING_STOP_LOSS_PCT,
@@ -525,6 +539,18 @@ class EnvironmentProvider:
         """Return the lookback period for MTF trend EMA."""
         return self._get_var(ENV_MTF_EMA_PERIOD, default="50")
 
+    def get_btc_trend_filter_enabled(self) -> bool:
+        """Return whether BTC benchmark trend filter is enabled."""
+        return self._get_bool(ENV_BTC_TREND_FILTER_ENABLED, default=True)
+
+    def get_btc_trend_interval(self) -> str:
+        """Return the timeframe for BTC benchmark trend filter."""
+        return self._get_var(ENV_BTC_TREND_INTERVAL, default="15m")
+
+    def get_btc_trend_ema_period(self) -> str:
+        """Return the lookback period for BTC benchmark trend EMA."""
+        return self._get_var(ENV_BTC_TREND_EMA_PERIOD, default="50")
+
     def get_discovery_filter_extreme_volatility(self) -> bool:
         """Return whether extreme volatility filter is enabled in discovery."""
         return self._get_bool(ENV_DISCOVERY_FILTER_EXTREME_VOLATILITY, default=True)
@@ -697,6 +723,18 @@ class EnvironmentProvider:
         """Return maximum bound for adaptive leverage."""
         return self._get_var(ENV_MAX_LEVERAGE, default="25")
 
+    def get_slot_sizing_enabled(self) -> bool:
+        """Return whether dynamic slot-based margin allocation is enabled."""
+        return self._get_bool(ENV_SLOT_SIZING_ENABLED, default=False)
+
+    def get_slot_margin_buffer_pct(self) -> str:
+        """Return the reserve safety buffer percentage for slot margin."""
+        return self._get_var(ENV_SLOT_MARGIN_BUFFER_PCT, default="0.05")
+
+    def get_min_order_notional_usdt(self) -> str:
+        """Return the minimum exchange order notional threshold."""
+        return self._get_var(ENV_MIN_ORDER_NOTIONAL_USDT, default="5.0")
+
     def get_scalping_stop_loss_pct(self) -> str:
         """Return the scalping stop-loss ratio."""
         return self._get_var(
@@ -778,6 +816,38 @@ class EnvironmentProvider:
     def get_ema_scalping_take_profit_pct(self) -> str:
         """Return the EMA scalping take-profit ratio (legacy alias)."""
         return self.get_scalping_take_profit_pct()
+
+    def get_pier_stop_loss_pct(self) -> str:
+        """Return the PIER price action stop-loss ratio."""
+        return self._get_var(ENV_PIER_STOP_LOSS_PCT, default="0.012")
+
+    def get_pier_take_profit_pct(self) -> str:
+        """Return the PIER price action take-profit ratio."""
+        return self._get_var(ENV_PIER_TAKE_PROFIT_PCT, default="0.024")
+
+    def get_pier_rsi_long_min(self) -> str:
+        """Return the lower bound of PIER long RSI pullback zone."""
+        return self._get_var(ENV_PIER_RSI_LONG_MIN, default="38.0")
+
+    def get_pier_rsi_long_max(self) -> str:
+        """Return the upper bound of PIER long RSI pullback zone."""
+        return self._get_var(ENV_PIER_RSI_LONG_MAX, default="58.0")
+
+    def get_pier_rsi_short_min(self) -> str:
+        """Return the lower bound of PIER short RSI pullback zone."""
+        return self._get_var(ENV_PIER_RSI_SHORT_MIN, default="42.0")
+
+    def get_pier_rsi_short_max(self) -> str:
+        """Return the upper bound of PIER short RSI pullback zone."""
+        return self._get_var(ENV_PIER_RSI_SHORT_MAX, default="62.0")
+
+    def get_pier_use_macd(self) -> bool:
+        """Return whether PIER uses MACD momentum direction guard."""
+        return self._get_bool(ENV_PIER_USE_MACD, default=True)
+
+    def get_pier_use_stoch_rsi(self) -> bool:
+        """Return whether PIER uses Stochastic RSI timing guard."""
+        return self._get_bool(ENV_PIER_USE_STOCH_RSI, default=True)
 
     def get_max_open_positions(self) -> str:
         """Return the configured limit for concurrently open positions."""

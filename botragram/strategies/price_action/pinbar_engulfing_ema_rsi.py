@@ -27,11 +27,15 @@ from typing import Final
 from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.indicators import (
     CandlestickMatch,
+    MACDResult,
+    StochRSIResult,
     calculate_atr,
     calculate_ema,
+    calculate_macd,
     calculate_psar,
     calculate_rsi,
     calculate_sma,
+    calculate_stoch_rsi,
     detect_engulfing,
     detect_pinbar,
     detect_star,
@@ -71,10 +75,10 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     trend_period: int = 200
     pullback_period: int = 21
     rsi_period: int = 14
-    rsi_long_min: Decimal = Decimal("35.0")
-    rsi_long_max: Decimal = Decimal("52.0")
-    rsi_short_min: Decimal = Decimal("48.0")
-    rsi_short_max: Decimal = Decimal("65.0")
+    rsi_long_min: Decimal = Decimal("38.0")
+    rsi_long_max: Decimal = Decimal("58.0")
+    rsi_short_min: Decimal = Decimal("42.0")
+    rsi_short_max: Decimal = Decimal("62.0")
     volume_period: int = 20
     volume_multiplier: Decimal = Decimal("1.10")
     min_wick_ratio: Decimal = Decimal("0.60")
@@ -96,6 +100,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     require_trend_filter: bool = True
     min_natr_threshold: Decimal = Decimal("0.0020")
     min_sl_distance_pct: Decimal = Decimal("0.0080")
+    min_trend_distance_pct: Decimal = Decimal("0.003")
 
     # Account Long-Short Ratio Sentiment Filter
     filter_account_ratio: bool = False
@@ -107,6 +112,18 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     # Star Patterns & Parabolic SAR Configuration
     include_star_patterns: bool = True
     use_parabolic_sar: bool = True
+
+    # MACD & Stochastic RSI Momentum & Timing Guards
+    use_macd: bool = True
+    macd_fast_period: int = 12
+    macd_slow_period: int = 26
+    macd_signal_period: int = 9
+    use_stoch_rsi: bool = True
+    stoch_rsi_period: int = 14
+    stoch_rsi_k_period: int = 3
+    stoch_rsi_d_period: int = 3
+    stoch_rsi_overbought: Decimal = Decimal("80.0")
+    stoch_rsi_oversold: Decimal = Decimal("20.0")
 
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
@@ -150,6 +167,29 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             raise ValueError("Minimum NATR threshold must not be negative")
         if self.min_sl_distance_pct < _DECIMAL_ZERO:
             raise ValueError("Minimum SL distance pct must be non-negative")
+        if self.min_trend_distance_pct < _DECIMAL_ZERO:
+            raise ValueError("Minimum trend distance percentage must not be negative")
+        if (
+            self.macd_fast_period <= 0
+            or self.macd_slow_period <= 0
+            or self.macd_signal_period <= 0
+        ):
+            raise ValueError("MACD periods must be positive")
+        if self.macd_fast_period >= self.macd_slow_period:
+            raise ValueError("MACD fast period must be less than slow period")
+        if (
+            self.stoch_rsi_period <= 0
+            or self.stoch_rsi_k_period <= 0
+            or self.stoch_rsi_d_period <= 0
+        ):
+            raise ValueError("Stoch RSI periods must be positive")
+        if not (
+            _DECIMAL_ZERO
+            <= self.stoch_rsi_oversold
+            < self.stoch_rsi_overbought
+            <= Decimal("100.0")
+        ):
+            raise ValueError("Stoch RSI thresholds must be bounded within [0, 100]")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -159,7 +199,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     @property
     def minimum_candles(self) -> int:
         """Return the minimum number of candles required for execution."""
-        return max(
+        min_candles = max(
             self.trend_period + 2,
             self.pullback_period + 2,
             self.rsi_period + 5,
@@ -167,6 +207,19 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             self.atr_period + 5,
             (self.swing_lookback * 2 + 1) if self.require_key_level_location else 1,
         )
+        if self.use_macd:
+            min_candles = max(
+                min_candles, self.macd_slow_period + self.macd_signal_period + 2
+            )
+        if self.use_stoch_rsi:
+            min_candles = max(
+                min_candles,
+                self.rsi_period
+                + self.stoch_rsi_period
+                + self.stoch_rsi_k_period
+                + self.stoch_rsi_d_period,
+            )
+        return min_candles
 
     def generate_signal(
         self,
@@ -193,6 +246,58 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             current_psar_uptrend: bool | None = psar_series.is_uptrend[-1]
         else:
             current_psar_uptrend = None
+
+        macd_result: MACDResult | None = None
+        if self.use_macd and len(close_prices) >= (
+            self.macd_slow_period + self.macd_signal_period - 1
+        ):
+            macd_result = calculate_macd(
+                close_prices,
+                fast_period=self.macd_fast_period,
+                slow_period=self.macd_slow_period,
+                signal_period=self.macd_signal_period,
+            )
+
+        stoch_rsi_result: StochRSIResult | None = None
+        min_stoch_candles = (
+            self.rsi_period
+            + self.stoch_rsi_period
+            + self.stoch_rsi_k_period
+            + self.stoch_rsi_d_period
+            - 2
+        )
+        if self.use_stoch_rsi and len(close_prices) >= min_stoch_candles:
+            stoch_rsi_result = calculate_stoch_rsi(
+                close_prices,
+                rsi_period=self.rsi_period,
+                stoch_period=self.stoch_rsi_period,
+                k_period=self.stoch_rsi_k_period,
+                d_period=self.stoch_rsi_d_period,
+            )
+
+        curr_macd_hist: Decimal | None = None
+        prev_macd_hist: Decimal | None = None
+        if macd_result is not None and len(macd_result.histogram) >= 1:
+            curr_macd_hist = macd_result.histogram[-1]
+            prev_macd_hist = (
+                macd_result.histogram[-2]
+                if len(macd_result.histogram) >= 2
+                else curr_macd_hist
+            )
+
+        curr_stoch_k: Decimal | None = None
+        prev_stoch_k: Decimal | None = None
+        curr_stoch_d: Decimal | None = None
+        prev_stoch_d: Decimal | None = None
+        if stoch_rsi_result is not None and len(stoch_rsi_result.k) >= 1:
+            curr_stoch_k = stoch_rsi_result.k[-1]
+            curr_stoch_d = stoch_rsi_result.d[-1]
+            prev_stoch_k = (
+                stoch_rsi_result.k[-2] if len(stoch_rsi_result.k) >= 2 else curr_stoch_k
+            )
+            prev_stoch_d = (
+                stoch_rsi_result.d[-2] if len(stoch_rsi_result.d) >= 2 else curr_stoch_d
+            )
 
         if self.require_key_level_location:
             last_swing_high, last_swing_low = find_swing_levels(
@@ -268,8 +373,15 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         reason = "No candlestick confluence pattern matched"
 
         # Check BUY (Long) Setup with Dual EMA Alignment
-        uptrend_aligned = current_close > current_trend and (
-            not self.require_trend_filter or current_pullback >= current_trend
+        trend_dist_long = (
+            (current_close - current_trend) / current_trend
+            if current_trend > _DECIMAL_ZERO
+            else _DECIMAL_ZERO
+        )
+        uptrend_aligned = (
+            current_close > current_trend
+            and trend_dist_long >= self.min_trend_distance_pct
+            and (not self.require_trend_filter or current_pullback >= current_trend)
         )
         if uptrend_aligned:
             pullback_proximity = current_pullback * (
@@ -302,12 +414,48 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 or at_swing_support
             )
 
+            # Stoch RSI Guard: avoid buying at overbought top and ensure turning up
+            stoch_rsi_long_ok = True
+            stoch_rsi_long_aligned = False
+            if self.use_stoch_rsi and curr_stoch_k is not None:
+                not_overbought = curr_stoch_k <= self.stoch_rsi_overbought
+                turning_up = (
+                    curr_stoch_d is not None and curr_stoch_k >= curr_stoch_d
+                ) or (prev_stoch_k is not None and curr_stoch_k >= prev_stoch_k)
+                stoch_rsi_long_ok = not_overbought and turning_up
+                stoch_rsi_long_aligned = (
+                    prev_stoch_k is not None
+                    and prev_stoch_k <= self.stoch_rsi_oversold
+                    and curr_stoch_k > self.stoch_rsi_oversold
+                ) or (
+                    prev_stoch_k is not None
+                    and prev_stoch_d is not None
+                    and curr_stoch_d is not None
+                    and prev_stoch_k <= prev_stoch_d
+                    and curr_stoch_k > curr_stoch_d
+                )
+
+            # MACD Guard: avoid buying into accelerating bearish momentum
+            macd_long_ok = True
+            macd_long_aligned = False
+            if self.use_macd and curr_macd_hist is not None:
+                macd_long_ok = (
+                    prev_macd_hist is None or curr_macd_hist >= prev_macd_hist
+                )
+                macd_long_aligned = (
+                    prev_macd_hist is not None
+                    and curr_macd_hist > _DECIMAL_ZERO
+                    and curr_macd_hist > prev_macd_hist
+                )
+
             if (
                 near_pullback
                 and rsi_in_zone
                 and volume_ok
                 and candle_trigger
                 and location_ok
+                and stoch_rsi_long_ok
+                and macd_long_ok
             ):
                 if star_matched_buy:
                     pattern_label = "Morning Star"
@@ -333,6 +481,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     star_matched=star_matched_buy,
                     star_ratio=star.wick_ratio,
                     sar_aligned=current_psar_uptrend is True,
+                    macd_aligned=macd_long_aligned,
+                    stoch_rsi_aligned=stoch_rsi_long_aligned,
                     volume=curr_candle.volume,
                     volume_sma=current_vol_sma,
                 )
@@ -349,17 +499,32 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
 
                 take_profit = current_close + (risk_dist * self.risk_reward_ratio)
 
+                stoch_str = (
+                    f", StochK={curr_stoch_k:.1f}" if curr_stoch_k is not None else ""
+                )
+                macd_str = (
+                    f", MACD_h={curr_macd_hist:.4f}"
+                    if curr_macd_hist is not None
+                    else ""
+                )
                 reason = (
                     f"{pattern_label} bounce at key location "
                     f"(EMA{self.pullback_period} or Swing Low) "
                     f"in EMA{self.trend_period} uptrend "
-                    f"(RSI={current_rsi:.1f}) | "
+                    f"(RSI={current_rsi:.1f}{stoch_str}{macd_str}) | "
                     f"SL: {stop_loss:.5f} | TP: {take_profit:.5f}"
                 )
 
         # Check SELL (Short) Setup with Dual EMA Alignment
-        downtrend_aligned = current_close < current_trend and (
-            not self.require_trend_filter or current_pullback <= current_trend
+        trend_dist_short = (
+            (current_trend - current_close) / current_trend
+            if current_trend > _DECIMAL_ZERO
+            else _DECIMAL_ZERO
+        )
+        downtrend_aligned = (
+            current_close < current_trend
+            and trend_dist_short >= self.min_trend_distance_pct
+            and (not self.require_trend_filter or current_pullback <= current_trend)
         )
         if signal_type is SignalType.HOLD and downtrend_aligned:
             pullback_proximity = current_pullback * (
@@ -392,12 +557,48 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 or at_swing_resistance
             )
 
+            # Stoch RSI Guard: avoid shorting at oversold bottom and ensure turning down
+            stoch_rsi_short_ok = True
+            stoch_rsi_short_aligned = False
+            if self.use_stoch_rsi and curr_stoch_k is not None:
+                not_oversold = curr_stoch_k >= self.stoch_rsi_oversold
+                turning_down = (
+                    curr_stoch_d is not None and curr_stoch_k <= curr_stoch_d
+                ) or (prev_stoch_k is not None and curr_stoch_k <= prev_stoch_k)
+                stoch_rsi_short_ok = not_oversold and turning_down
+                stoch_rsi_short_aligned = (
+                    prev_stoch_k is not None
+                    and prev_stoch_k >= self.stoch_rsi_overbought
+                    and curr_stoch_k < self.stoch_rsi_overbought
+                ) or (
+                    prev_stoch_k is not None
+                    and prev_stoch_d is not None
+                    and curr_stoch_d is not None
+                    and prev_stoch_k >= prev_stoch_d
+                    and curr_stoch_k < curr_stoch_d
+                )
+
+            # MACD Guard: avoid shorting into accelerating bullish momentum
+            macd_short_ok = True
+            macd_short_aligned = False
+            if self.use_macd and curr_macd_hist is not None:
+                macd_short_ok = (
+                    prev_macd_hist is None or curr_macd_hist <= prev_macd_hist
+                )
+                macd_short_aligned = (
+                    prev_macd_hist is not None
+                    and curr_macd_hist < _DECIMAL_ZERO
+                    and curr_macd_hist < prev_macd_hist
+                )
+
             if (
                 near_pullback
                 and rsi_in_zone
                 and volume_ok
                 and candle_trigger
                 and location_ok
+                and stoch_rsi_short_ok
+                and macd_short_ok
             ):
                 if star_matched_sell:
                     pattern_label = "Evening Star"
@@ -423,6 +624,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     star_matched=star_matched_sell,
                     star_ratio=star.wick_ratio,
                     sar_aligned=current_psar_uptrend is False,
+                    macd_aligned=macd_short_aligned,
+                    stoch_rsi_aligned=stoch_rsi_short_aligned,
                     volume=curr_candle.volume,
                     volume_sma=current_vol_sma,
                 )
@@ -439,11 +642,19 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
 
                 take_profit = current_close - (risk_dist * self.risk_reward_ratio)
 
+                stoch_str = (
+                    f", StochK={curr_stoch_k:.1f}" if curr_stoch_k is not None else ""
+                )
+                macd_str = (
+                    f", MACD_h={curr_macd_hist:.4f}"
+                    if curr_macd_hist is not None
+                    else ""
+                )
                 reason = (
                     f"{pattern_label} rejection at key location "
                     f"(EMA{self.pullback_period} or Swing High) "
                     f"in EMA{self.trend_period} downtrend "
-                    f"(RSI={current_rsi:.1f}) | "
+                    f"(RSI={current_rsi:.1f}{stoch_str}{macd_str}) | "
                     f"SL: {stop_loss:.5f} | TP: {take_profit:.5f}"
                 )
 
@@ -488,6 +699,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         star_matched: bool = False,
         star_ratio: Decimal = _DECIMAL_ZERO,
         sar_aligned: bool = False,
+        macd_aligned: bool = False,
+        stoch_rsi_aligned: bool = False,
         volume: Decimal,
         volume_sma: Decimal,
     ) -> Decimal:
@@ -505,6 +718,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
 
         if sar_aligned:
             score += _SAR_BONUS
+
+        if macd_aligned:
+            score += _CONFIDENCE_STEP_BONUS
+
+        if stoch_rsi_aligned:
+            score += _CONFIDENCE_STEP_BONUS
 
         if volume_sma > _DECIMAL_ZERO and volume >= (
             _HIGH_VOLUME_BONUS_MULTIPLIER * volume_sma

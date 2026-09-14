@@ -95,6 +95,11 @@ class BybitStreamClient(BaseStreamClient):
         self._heartbeat_task: asyncio.Task[None] | None = None
 
     @property
+    def supported_intervals(self) -> frozenset[Interval]:
+        """Return candlestick intervals natively supported for Bybit streaming."""
+        return frozenset(BYBIT_INTERVAL_MAP.keys())
+
+    @property
     def is_connected(self) -> bool:
         """Return whether the WebSocket connection is active."""
         return (
@@ -400,7 +405,11 @@ class BybitStreamClient(BaseStreamClient):
         interval: Interval,
     ) -> AsyncIterator[Candle]:
         """Stream real-time candlestick updates for a symbol."""
-        interval_code = BYBIT_INTERVAL_MAP.get(interval, "15")
+        if interval not in BYBIT_INTERVAL_MAP:
+            raise ValueError(
+                f"Interval {interval.value} is not natively supported by Bybit stream"
+            )
+        interval_code = BYBIT_INTERVAL_MAP[interval]
         topic = f"kline.{interval_code}.{symbol.strip().upper()}"
         queue: asyncio.Queue[object] = asyncio.Queue()
 

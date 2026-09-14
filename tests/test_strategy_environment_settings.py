@@ -29,7 +29,7 @@ import pytest
 # =============================================================================
 from botragram.app.environment_provider import EnvironmentProvider
 from botragram.app.settings_manager import SettingsManager
-from botragram.enums import StrategyType
+from botragram.enums import Interval, StrategyType
 
 
 # =============================================================================
@@ -137,3 +137,22 @@ def test_min_signal_confidence_environment_setting(
         strategy_type=None,
     )
     assert manager.load_strategy_settings().min_signal_confidence == Decimal("0.85")
+
+
+def test_btc_trend_environment_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify BTC_TREND_* environment variables are parsed correctly."""
+    monkeypatch.setenv("BTC_TREND_FILTER_ENABLED", "true")
+    monkeypatch.setenv("BTC_TREND_INTERVAL", "15m")
+    monkeypatch.setenv("BTC_TREND_EMA_PERIOD", "50")
+    manager = _create_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        strategy_type=None,
+    )
+    settings = manager.load_strategy_settings()
+    assert settings.btc_trend_filter_enabled is True
+    assert settings.btc_trend_interval is Interval.M15
+    assert settings.btc_trend_ema_period == 50

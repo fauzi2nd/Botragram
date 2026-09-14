@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Placeholder for the Bitget WebSocket stream client.
+    Bitget V2 WebSocket streaming client.
 
 Python:
     3.14+
@@ -14,13 +14,440 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
+# Standard Library
+# =============================================================================
+import asyncio
+import json
+import logging
+from collections.abc import AsyncIterator, Mapping
+from decimal import Decimal
+from typing import Final, cast
+
+# =============================================================================
+# Third-Party Imports
+# =============================================================================
+import aiohttp
+
+# =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.exchanges.base.stream import BaseStreamClient
+from botragram.enums.interval import Interval
+from botragram.exchanges.base import BaseStreamClient
+from botragram.exchanges.base.mapper import ExchangePayload, ExchangeSequencePayload
+from botragram.exchanges.bitget.mapper import BitgetExchangeMapper
+from botragram.models import Candle, Ticker
+
+__all__ = [
+    "BitgetStreamClient",
+]
+
+# =============================================================================
+# Constants
+# =============================================================================
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+
+_HEARTBEAT_INTERVAL_SECONDS: Final[float] = 20.0
+_INITIAL_RECONNECT_DELAY_SECONDS: Final[float] = 1.0
+_MAX_RECONNECT_DELAY_SECONDS: Final[float] = 30.0
+_PING_MESSAGE: Final[str] = "ping"
+_DECIMAL_ZERO: Final[Decimal] = Decimal("0")
+_STREAM_CLOSED: Final[object] = object()
+
+BITGET_STREAM_INTERVAL_MAP: Final[Mapping[Interval, str]] = {
+    Interval.M1: "candle1m",
+    Interval.M5: "candle5m",
+    Interval.M15: "candle15m",
+    Interval.M30: "candle30m",
+    Interval.H1: "candle1H",
+    Interval.H4: "candle4H",
+    Interval.D1: "candle1D",
+    Interval.W1: "candle1W",
+}
 
 
 # =============================================================================
-# Stream Client Class
+# Stream Client Implementation
 # =============================================================================
 class BitgetStreamClient(BaseStreamClient):
-    """Placeholder stream client until the Bitget connector is implemented."""
+    """Bitget V2 WebSocket streaming client."""
+
+    __slots__ = (
+        "_closed",
+        "_connected",
+        "_heartbeat_task",
+        "_mapper",
+        "_queues",
+        "_read_task",
+        "_session",
+        "_subscriptions",
+        "_ticker_cache",
+        "_websocket",
+        "_websocket_url",
+    )
+
+    def __init__(
+        self,
+        *,
+        websocket_url: str = "wss://ws.bitget.com/v2/ws/public",
+        base_url: str = "",
+        mapper: BitgetExchangeMapper,
+    ) -> None:
+        """Initialize the Bitget streaming client."""
+        url = base_url or websocket_url
+        self._websocket_url: str = url.rstrip("/")
+        self._mapper: BitgetExchangeMapper = mapper
+        self._session: aiohttp.ClientSession | None = None
+        self._websocket: aiohttp.ClientWebSocketResponse | None = None
+        self._connected: bool = False
+        self._closed: bool = False
+        self._subscriptions: set[str] = set()
+        self._queues: dict[str, set[asyncio.Queue[object]]] = {}
+        self._ticker_cache: dict[str, dict[str, object]] = {}
+        self._read_task: asyncio.Task[None] | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
+
+    @property
+    def supported_intervals(self) -> frozenset[Interval]:
+        """Return candlestick intervals natively supported for Bitget streaming."""
+        return frozenset(BITGET_STREAM_INTERVAL_MAP.keys())
+
+    @property
+    def is_connected(self) -> bool:
+        """Return whether the streaming connection is active."""
+        return (
+            self._connected
+            and self._websocket is not None
+            and not self._websocket.closed
+        )
+
+    async def connect(self) -> None:
+        """Open WebSocket connection and start background handlers."""
+        if self.is_connected:
+            return
+
+        self._closed = False
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+
+        try:
+            self._websocket = await self._session.ws_connect(self._websocket_url)
+            self._connected = True
+            if self._read_task is None or self._read_task.done():
+                self._read_task = asyncio.create_task(
+                    self._supervise_connection(),
+                    name="bitget-stream-supervise",
+                )
+            if self._heartbeat_task is None or self._heartbeat_task.done():
+                self._heartbeat_task = asyncio.create_task(
+                    self._heartbeat_loop(),
+                    name="bitget-stream-heartbeat",
+                )
+            _LOGGER.info("Connected to Bitget WebSocket at %s", self._websocket_url)
+
+            # Resubscribe active topics if reconnecting
+            if self._subscriptions and self._websocket:
+                for topic in self._subscriptions:
+                    await self._send_subscription(topic, is_sub=True)
+        except Exception as error:
+            self._connected = False
+            _LOGGER.error(
+                "Failed to connect to Bitget WebSocket %s: %s",
+                self._websocket_url,
+                error,
+            )
+            raise
+
+    async def close(self) -> None:
+        """Close WebSocket connection and clean up resources."""
+        self._closed = True
+        self._connected = False
+
+        for queues in self._queues.values():
+            for queue in tuple(queues):
+                queue.put_nowait(_STREAM_CLOSED)
+
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            self._heartbeat_task = None
+
+        if self._read_task is not None:
+            self._read_task.cancel()
+            self._read_task = None
+
+        if self._websocket is not None and not self._websocket.closed:
+            await self._websocket.close()
+            self._websocket = None
+
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+            self._session = None
+
+        self._ticker_cache.clear()
+        _LOGGER.info("Bitget WebSocket connection closed")
+
+    async def _heartbeat_loop(self) -> None:
+        """Send ping every 20 seconds while connection is open."""
+        try:
+            while not self._closed:
+                await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+                if (
+                    self._connected
+                    and self._websocket is not None
+                    and not self._websocket.closed
+                ):
+                    try:
+                        await self._websocket.send_str(_PING_MESSAGE)
+                    except Exception as error:
+                        _LOGGER.warning("Bitget WebSocket heartbeat error: %s", error)
+        except asyncio.CancelledError:
+            pass
+
+    async def _supervise_connection(self) -> None:
+        """Consume messages and automatically reconnect on connection drop."""
+        reconnect_attempt = 0
+        while not self._closed:
+            try:
+                await self._read_messages()
+            except asyncio.CancelledError:
+                break
+            except Exception as error:
+                _LOGGER.warning("Bitget WebSocket read error: %s", error)
+            finally:
+                self._connected = False
+                if self._websocket is not None and not self._websocket.closed:
+                    await self._websocket.close()
+                self._websocket = None
+
+            if self._closed:
+                break
+
+            reconnect_attempt += 1
+            delay = min(
+                _INITIAL_RECONNECT_DELAY_SECONDS * (2 ** (reconnect_attempt - 1)),
+                _MAX_RECONNECT_DELAY_SECONDS,
+            )
+            _LOGGER.warning(
+                "Bitget WebSocket interrupted; reconnecting in %.1fs (attempt %d)",
+                delay,
+                reconnect_attempt,
+            )
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                break
+
+            if self._closed:
+                break
+
+            try:
+                if self._session is None or self._session.closed:
+                    self._session = aiohttp.ClientSession()
+
+                self._websocket = await self._session.ws_connect(self._websocket_url)
+                self._connected = True
+                reconnect_attempt = 0
+                _LOGGER.info(
+                    "Reconnected to Bitget WebSocket at %s", self._websocket_url
+                )
+
+                if self._subscriptions and self._websocket:
+                    for topic in self._subscriptions:
+                        await self._send_subscription(topic, is_sub=True)
+            except asyncio.CancelledError:
+                break
+            except Exception as error:
+                _LOGGER.warning("Bitget WebSocket reconnect attempt failed: %s", error)
+
+    async def _read_messages(self) -> None:
+        """Read and dispatch incoming Bitget WebSocket frames."""
+        socket = self._websocket
+        while (
+            not self._closed
+            and self._connected
+            and socket is not None
+            and not socket.closed
+        ):
+            msg = await socket.receive()
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                self._handle_message(msg.data)
+            elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                break
+
+    def handle_message(self, raw_data: str) -> None:
+        """Parse Bitget V2 message frame and dispatch to queues."""
+        self._handle_message(raw_data)
+
+    def _handle_message(self, raw_data: str) -> None:
+        """Parse Bitget V2 message frame and dispatch to queues."""
+        if raw_data == "pong":
+            return
+
+        try:
+            raw_payload = json.loads(raw_data)
+        except Exception:
+            return
+
+        if not isinstance(raw_payload, dict):
+            return
+
+        payload = cast(ExchangePayload, raw_payload)
+        arg = payload.get("arg")
+        if not isinstance(arg, dict):
+            return
+
+        arg_dict = cast(dict[str, object], arg)
+        channel = str(arg_dict.get("channel", ""))
+        inst_id = str(arg_dict.get("instId", "")).strip().upper()
+        topic = f"{channel}:{inst_id}"
+
+        data = payload.get("data")
+        if not isinstance(data, list) or not data:
+            return
+
+        data_list = cast(list[object], data)
+
+        if channel == "ticker":
+            ticker_item = data_list[0]
+            if isinstance(ticker_item, dict):
+                ticker_dict = cast(ExchangePayload, ticker_item)
+                ticker = self._mapper.map_ticker(ticker_dict)
+                self._ticker_cache[inst_id] = dict(ticker_dict)
+
+                queues = self._queues.get(topic)
+                if queues and ticker.last_price > _DECIMAL_ZERO:
+                    for q in tuple(queues):
+                        q.put_nowait(ticker)
+
+        elif channel.startswith("candle"):
+            candle_item = data_list[0]
+            if isinstance(candle_item, list):
+                candle_list = cast(list[object], candle_item)
+                candle_seq: ExchangeSequencePayload = tuple(candle_list)
+                queues = self._queues.get(topic)
+                if queues:
+                    # Determine interval from channel name
+                    itv = Interval.M5
+                    for interval_enum, ch_name in BITGET_STREAM_INTERVAL_MAP.items():
+                        if ch_name == channel:
+                            itv = interval_enum
+                            break
+                    candle = self._mapper.map_candle(
+                        candle_seq,
+                        symbol=inst_id,
+                        interval=itv,
+                    )
+                    for q in tuple(queues):
+                        q.put_nowait(candle)
+
+    async def _send_subscription(self, topic: str, *, is_sub: bool) -> None:
+        """Send subscription/unsubscription command for a topic string."""
+        if not self.is_connected or self._websocket is None or self._websocket.closed:
+            return
+
+        parts = topic.split(":")
+        if len(parts) != 2:
+            return
+        channel, inst_id = parts[0], parts[1]
+
+        op = "subscribe" if is_sub else "unsubscribe"
+        sub_msg = json.dumps(
+            {
+                "op": op,
+                "args": [
+                    {
+                        "instType": "USDT-FUTURES",
+                        "channel": channel,
+                        "instId": inst_id,
+                    }
+                ],
+            }
+        )
+        await self._websocket.send_str(sub_msg)
+
+    async def unsubscribe(self, *, symbol: str) -> None:
+        """Unsubscribe all topics associated with a symbol."""
+        inst_id = symbol.strip().upper()
+        self._ticker_cache.pop(inst_id, None)
+        topics_to_remove = [t for t in self._subscriptions if t.endswith(f":{inst_id}")]
+        for topic in topics_to_remove:
+            self._subscriptions.discard(topic)
+            queues = self._queues.pop(topic, None)
+            if queues:
+                for q in queues:
+                    q.put_nowait(_STREAM_CLOSED)
+            await self._send_subscription(topic, is_sub=False)
+
+    async def stream_ticker(
+        self,
+        *,
+        symbol: str,
+    ) -> AsyncIterator[Ticker]:
+        """Stream real-time ticker updates for a symbol."""
+        inst_id = symbol.strip().upper()
+        topic = f"ticker:{inst_id}"
+        queue: asyncio.Queue[object] = asyncio.Queue()
+
+        if topic not in self._queues:
+            self._queues[topic] = set()
+        self._queues[topic].add(queue)
+
+        if topic not in self._subscriptions:
+            self._subscriptions.add(topic)
+            await self._send_subscription(topic, is_sub=True)
+
+        try:
+            while True:
+                item = await queue.get()
+                if item is _STREAM_CLOSED:
+                    break
+                if isinstance(item, Ticker):
+                    yield item
+        finally:
+            queues = self._queues.get(topic)
+            if queues is not None:
+                queues.discard(queue)
+                if not queues:
+                    self._queues.pop(topic, None)
+                    self._subscriptions.discard(topic)
+                    await self._send_subscription(topic, is_sub=False)
+
+    async def stream_candles(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+    ) -> AsyncIterator[Candle]:
+        """Stream real-time candlestick updates for a symbol and timeframe."""
+        channel = BITGET_STREAM_INTERVAL_MAP.get(interval)
+        if not channel:
+            raise ValueError(
+                f"Interval {interval.value} not supported natively for Bitget streaming"
+            )
+
+        inst_id = symbol.strip().upper()
+        topic = f"{channel}:{inst_id}"
+        queue: asyncio.Queue[object] = asyncio.Queue()
+
+        if topic not in self._queues:
+            self._queues[topic] = set()
+        self._queues[topic].add(queue)
+
+        if topic not in self._subscriptions:
+            self._subscriptions.add(topic)
+            await self._send_subscription(topic, is_sub=True)
+
+        try:
+            while True:
+                item = await queue.get()
+                if item is _STREAM_CLOSED:
+                    break
+                if isinstance(item, Candle):
+                    yield item
+        finally:
+            queues = self._queues.get(topic)
+            if queues is not None:
+                queues.discard(queue)
+                if not queues:
+                    self._queues.pop(topic, None)
+                    self._subscriptions.discard(topic)
+                    await self._send_subscription(topic, is_sub=False)

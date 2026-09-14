@@ -158,3 +158,78 @@ async def test_get_stored_resampled_candles_between() -> None:
         assert resampled[0].volume == Decimal("22.5")
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_get_candles_falls_back_to_resampling_for_non_native_interval() -> None:
+    """get_candles with Interval.M7 resamples 1m candles on-the-fly."""
+    from unittest.mock import AsyncMock
+
+    from botragram.utils.candle_resampler import get_bucket_open_time
+
+    db, sqlite_repo = await _setup_sqlite_repo()
+    try:
+        reference = datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
+        base_time = get_bucket_open_time(reference, Interval.M7)
+
+        # Build 14 1m candles covering 2 complete 7m buckets
+        m1_candles = [
+            _make_1m_candle(
+                open_time=base_time + timedelta(minutes=i),
+                close_price=f"{100 + i}",
+                volume="3.0",
+            )
+            for i in range(14)
+        ]
+
+        exchange_mock = MagicMock(spec=BaseExchangeClient)
+        # Bybit supported intervals do NOT include M7
+        exchange_mock.supported_intervals = frozenset(
+            (
+                Interval.M1,
+                Interval.M3,
+                Interval.M5,
+                Interval.M15,
+                Interval.M30,
+                Interval.H1,
+                Interval.H2,
+                Interval.H4,
+                Interval.H6,
+                Interval.H8,
+                Interval.H12,
+                Interval.D1,
+                Interval.W1,
+                Interval.MN1,
+            )
+        )
+        # When the inner M1 call hits the exchange, return the 1m candles
+        exchange_mock.get_candles = AsyncMock(return_value=tuple(m1_candles))
+        stream_mock = MagicMock(spec=BaseStreamClient)
+
+        market_service = MarketService(
+            exchange_client=exchange_mock,
+            stream_client=stream_mock,
+            candle_repository=sqlite_repo,
+        )
+
+        # prefer_stored=False so the inner M1 call uses the exchange mock directly
+        result = await market_service.get_candles(
+            symbol="BTCUSDT",
+            interval=Interval.M7,
+            limit=2,
+            prefer_stored=False,
+            persist=False,
+        )
+
+        assert len(result) == 2
+        for c in result:
+            assert c.interval is Interval.M7
+        # volume = 7 candles × 3.0 per bucket
+        assert result[0].volume == Decimal("21.0")
+        assert result[1].volume == Decimal("21.0")
+        # exchange was called for M1 candles, not M7
+        exchange_mock.get_candles.assert_called_once()
+        call_kwargs = exchange_mock.get_candles.call_args.kwargs
+        assert call_kwargs["interval"] is Interval.M1
+    finally:
+        await db.close()

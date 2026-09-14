@@ -6,12 +6,13 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from time import monotonic
-from typing import Final
+from typing import Final, Protocol
 
 from botragram.enums import (
+    NotificationType,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -25,13 +26,23 @@ from botragram.exceptions import (
     VenueRuleValidationError,
 )
 from botragram.exchanges.base import BaseExchangeClient
-from botragram.models import Order, Position, Ticker
+from botragram.models import Notification, Order, Position, Ticker
 from botragram.repositories import PositionRepository
 from botragram.services.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
 )
+from botragram.telegram.messages import get_partial_tp_message
 
-__all__ = ["PositionProtectionManager"]
+__all__ = [
+    "PartialTpNotificationPublisher",
+    "PositionProtectionManager",
+]
+
+
+class PartialTpNotificationPublisher(Protocol):
+    """Publish arbitrary notifications to notification channels."""
+
+    async def publish(self, *, notification: Notification) -> None: ...
 
 
 _POSITION_REFRESH_SECONDS: Final[float] = 1.0
@@ -76,6 +87,7 @@ class PositionProtectionManager:
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
         default_factory=LivePositionLifecycleCoordinator,
     )
+    notification_publisher: PartialTpNotificationPublisher | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _cached_position: Position | None = field(default=None, init=False, repr=False)
     _cached_position_version: int = field(default=0, init=False, repr=False)
@@ -474,6 +486,31 @@ class PositionProtectionManager:
             remaining_qty,
             updated_position.stop_loss,
         )
+
+        if self.notification_publisher is not None:
+            try:
+                msg = get_partial_tp_message(
+                    position=position,
+                    closed_quantity=close_qty,
+                    remaining_quantity=remaining_qty,
+                    exit_price=ticker.last_price,
+                    new_stop_loss=updated_position.stop_loss,
+                    mode=self.trade_mode.value.upper(),
+                )
+                await self.notification_publisher.publish(
+                    notification=Notification(
+                        title=f"Partial TP Executed: {position.symbol}",
+                        message=msg,
+                        level=NotificationType.INFO,
+                        created_at=datetime.now(UTC),
+                    )
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Failed to deliver partial TP notification for %s",
+                    position.symbol,
+                )
+
         return updated_position
 
     async def _resume_pending_stop_replacement(

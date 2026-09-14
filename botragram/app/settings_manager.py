@@ -328,6 +328,14 @@ class SettingsManager:
                 raw_value=environment.get_ema_scalping_take_profit_pct(),
                 setting_name="EMA_SCALPING_TAKE_PROFIT_PCT",
             ),
+            pier_stop_loss_pct=self._parse_decimal(
+                raw_value=environment.get_pier_stop_loss_pct(),
+                setting_name="PIER_STOP_LOSS_PCT",
+            ),
+            pier_take_profit_pct=self._parse_decimal(
+                raw_value=environment.get_pier_take_profit_pct(),
+                setting_name="PIER_TAKE_PROFIT_PCT",
+            ),
             max_open_positions=self._parse_positive_int(
                 raw_value=environment.get_max_open_positions(),
                 setting_name="MAX_OPEN_POSITIONS",
@@ -425,6 +433,15 @@ class SettingsManager:
                 raw_value=environment.get_max_leverage(),
                 setting_name="MAX_LEVERAGE",
             ),
+            slot_sizing_enabled=environment.get_slot_sizing_enabled(),
+            slot_margin_buffer_pct=self._parse_decimal(
+                raw_value=environment.get_slot_margin_buffer_pct(),
+                setting_name="SLOT_MARGIN_BUFFER_PCT",
+            ),
+            min_order_notional_usdt=self._parse_decimal(
+                raw_value=environment.get_min_order_notional_usdt(),
+                setting_name="MIN_ORDER_NOTIONAL_USDT",
+            ),
         )
 
     @staticmethod
@@ -461,8 +478,9 @@ class SettingsManager:
 
     def load_strategy_settings(self) -> StrategySettings:
         """Load strategy settings with strict optional environment selection."""
-        raw_strategy_type = self._environment_provider.get_strategy_type()
-        invert_signals = self._environment_provider.get_invert_signals()
+        environment = self._environment_provider
+        raw_strategy_type = environment.get_strategy_type()
+        invert_signals = environment.get_invert_signals()
         min_signal_confidence = self._parse_decimal(
             raw_value=self._environment_provider.get_min_signal_confidence(),
             setting_name="MIN_SIGNAL_CONFIDENCE",
@@ -481,6 +499,23 @@ class SettingsManager:
         mtf_ema_period = self._parse_positive_int(
             raw_value=self._environment_provider.get_mtf_ema_period(),
             setting_name="MTF_EMA_PERIOD",
+        )
+        btc_trend_filter_enabled = (
+            self._environment_provider.get_btc_trend_filter_enabled()
+        )
+        raw_btc_trend_interval = self._environment_provider.get_btc_trend_interval()
+        btc_trend_interval = (
+            self._parse_enum(
+                enum_type=Interval,
+                raw_value=raw_btc_trend_interval,
+                setting_name="BTC_TREND_INTERVAL",
+            )
+            if raw_btc_trend_interval
+            else Interval.M15
+        )
+        btc_trend_ema_period = self._parse_positive_int(
+            raw_value=self._environment_provider.get_btc_trend_ema_period(),
+            setting_name="BTC_TREND_EMA_PERIOD",
         )
         discovery_filter_extreme_volatility = (
             self._environment_provider.get_discovery_filter_extreme_volatility()
@@ -566,6 +601,9 @@ class SettingsManager:
             mtf_confirmation_enabled=mtf_enabled,
             mtf_interval=mtf_interval,
             mtf_ema_period=mtf_ema_period,
+            btc_trend_filter_enabled=btc_trend_filter_enabled,
+            btc_trend_interval=btc_trend_interval,
+            btc_trend_ema_period=btc_trend_ema_period,
             discovery_filter_extreme_volatility=(discovery_filter_extreme_volatility),
             discovery_max_candle_volatility_pct=(discovery_max_candle_volatility_pct),
             discovery_filter_min_liquidity=discovery_filter_min_liquidity,
@@ -587,6 +625,24 @@ class SettingsManager:
             confirm_htf_account_ratio=confirm_htf_account_ratio,
             account_ratio_htf_period=account_ratio_htf_period,
             pier_confirm_htf_account_ratio=confirm_htf_account_ratio,
+            pier_rsi_long_min=self._parse_decimal(
+                raw_value=environment.get_pier_rsi_long_min(),
+                setting_name="PIER_RSI_LONG_MIN",
+            ),
+            pier_rsi_long_max=self._parse_decimal(
+                raw_value=environment.get_pier_rsi_long_max(),
+                setting_name="PIER_RSI_LONG_MAX",
+            ),
+            pier_rsi_short_min=self._parse_decimal(
+                raw_value=environment.get_pier_rsi_short_min(),
+                setting_name="PIER_RSI_SHORT_MIN",
+            ),
+            pier_rsi_short_max=self._parse_decimal(
+                raw_value=environment.get_pier_rsi_short_max(),
+                setting_name="PIER_RSI_SHORT_MAX",
+            ),
+            pier_use_macd=environment.get_pier_use_macd(),
+            pier_use_stoch_rsi=environment.get_pier_use_stoch_rsi(),
         )
 
     def load_logging_settings(self) -> LoggingSettings:

@@ -64,6 +64,10 @@ class RiskSettings:
     ema_cross_stop_loss_pct: Decimal = Decimal("0.02")
     ema_cross_take_profit_pct: Decimal = Decimal("0.04")
 
+    # PIER (Price Action) Exits
+    pier_stop_loss_pct: Decimal = Decimal("0.012")
+    pier_take_profit_pct: Decimal = Decimal("0.024")
+
     # Partial Take Profit
     partial_tp_enabled: bool = False
     partial_tp_ratio: Decimal = Decimal("0.50")
@@ -98,6 +102,11 @@ class RiskSettings:
     min_leverage: int = 5
     max_leverage: int = 25
 
+    # Dynamic Slot-Based Margin Allocation
+    slot_sizing_enabled: bool = False
+    slot_margin_buffer_pct: Decimal = Decimal("0.05")
+    min_order_notional_usdt: Decimal = Decimal("5.0")
+
     def __post_init__(self) -> None:
         """Validate global and strategy-specific risk ratios."""
         ratios = (
@@ -115,6 +124,8 @@ class RiskSettings:
             ("ema_scalping_take_profit_pct", self.ema_scalping_take_profit_pct),
             ("ema_cross_stop_loss_pct", self.ema_cross_stop_loss_pct),
             ("ema_cross_take_profit_pct", self.ema_cross_take_profit_pct),
+            ("pier_stop_loss_pct", self.pier_stop_loss_pct),
+            ("pier_take_profit_pct", self.pier_take_profit_pct),
         )
 
         for name, value in ratios:
@@ -158,6 +169,9 @@ class RiskSettings:
 
         if self.ema_cross_take_profit_pct <= self.ema_cross_stop_loss_pct:
             raise ValueError("EMA cross take-profit must exceed EMA cross stop-loss")
+
+        if self.pier_take_profit_pct <= self.pier_stop_loss_pct:
+            raise ValueError("PIER take-profit must exceed PIER stop-loss")
 
         if self.partial_tp_enabled:
             if not self.partial_tp_ratio.is_finite() or not (
@@ -253,3 +267,13 @@ class RiskSettings:
             raise ValueError("Leverage bounds must be positive")
         if self.min_leverage > self.max_leverage:
             raise ValueError("min_leverage cannot exceed max_leverage")
+        if not (
+            self.slot_margin_buffer_pct.is_finite()
+            and Decimal("0") <= self.slot_margin_buffer_pct < Decimal("1")
+        ):
+            raise ValueError("slot_margin_buffer_pct must be in [0, 1)")
+        if not (
+            self.min_order_notional_usdt.is_finite()
+            and self.min_order_notional_usdt > Decimal("0")
+        ):
+            raise ValueError("min_order_notional_usdt must be positive")

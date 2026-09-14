@@ -164,6 +164,30 @@ def test_risk_engine_uses_overridden_ema_cross_exit_profile() -> None:
     assert result.metrics.risk_reward_ratio == Decimal("1.5")
 
 
+def test_risk_engine_uses_pier_configured_exit_profile() -> None:
+    """Use configured PIER exit rates (e.g. 1.8% SL and 3.6% TP)."""
+    engine = RiskEngine(
+        settings=RiskSettings(
+            pier_stop_loss_pct=Decimal("0.018"),
+            pier_take_profit_pct=Decimal("0.036"),
+        )
+    )
+
+    result = engine.evaluate(
+        signal=_create_signal(
+            signal_type=SignalType.BUY,
+            price=Decimal("100"),
+            strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
+        ),
+        account_balance=Decimal("1000"),
+    )
+
+    assert result.approved
+    assert result.metrics.stop_loss == Decimal("98.200")
+    assert result.metrics.take_profit == Decimal("103.600")
+    assert result.metrics.risk_reward_ratio == Decimal("2")
+
+
 def test_risk_engine_caps_position_at_configured_notional() -> None:
     """Verify calculated quantity respects maximum position size."""
     engine = RiskEngine(
@@ -748,3 +772,176 @@ def test_signal_engine_inverts_signals_when_enabled() -> None:
     assert normal_signal.signal_type is SignalType.BUY
     assert inverted_signal.signal_type is SignalType.SELL
     assert inverted_signal.reason is not None and "[INVERTED]" in inverted_signal.reason
+
+
+def test_risk_engine_slot_sizing_partitions_margin_across_remaining_slots() -> None:
+    """Verify that slot sizing divides usable balance equally across slots."""
+    settings = RiskSettings(
+        slot_sizing_enabled=True,
+        slot_margin_buffer_pct=Decimal("0.05"),
+        max_position_size_usdt=Decimal("50"),
+        leverage=20,
+    )
+    engine = RiskEngine(settings=settings)
+
+    result = engine.evaluate(
+        signal=_create_signal(price=Decimal("100")),
+        account_balance=Decimal("9.0"),
+        remaining_slots=5,
+    )
+
+    assert result.approved
+    # usable_balance = 9.0 * 0.95 = 8.55
+    # slot_margin = 8.55 / 5 = 1.71
+    # notional = 1.71 * 20 = 34.2
+    assert result.position.notional == Decimal("34.2")
+    assert result.position.quantity == Decimal("0.342")
+    assert result.position.leverage == 20
+
+
+def test_risk_engine_slot_sizing_sequential_five_trades() -> None:
+    """Verify 5 sequential entries from 9 USDT each get equal ~1.7 USDT margin."""
+    settings = RiskSettings(
+        slot_sizing_enabled=True,
+        slot_margin_buffer_pct=Decimal("0.05"),
+        max_position_size_usdt=Decimal("50"),
+        leverage=20,
+    )
+    engine = RiskEngine(settings=settings)
+
+    balance = Decimal("9.0")
+    for remaining in range(5, 0, -1):
+        result = engine.evaluate(
+            signal=_create_signal(price=Decimal("100")),
+            account_balance=balance,
+            remaining_slots=remaining,
+        )
+        assert result.approved
+        margin_used = result.position.notional / Decimal(result.position.leverage)
+        # Each slot margin should be between 1.6 and 2.0 USDT
+        assert Decimal("1.6") <= margin_used <= Decimal("2.0")
+        balance -= margin_used
+
+    # Sisa buffer tetap aman di atas 0
+    assert balance > Decimal("0")
+
+
+def test_risk_engine_slot_sizing_insufficient_balance_rejection() -> None:
+    """Reject when slot margin at max leverage cannot meet minimum order notional."""
+    settings = RiskSettings(
+        slot_sizing_enabled=True,
+        slot_margin_buffer_pct=Decimal("0.05"),
+        min_order_notional_usdt=Decimal("5.0"),
+        max_leverage=20,
+    )
+    engine = RiskEngine(settings=settings)
+
+    result = engine.evaluate(
+        signal=_create_signal(),
+        account_balance=Decimal("0.10"),
+        remaining_slots=1,
+    )
+
+    assert not result.approved
+    assert result.reason is not None
+    assert "minimum order notional" in result.reason
+
+
+def test_risk_engine_slot_sizing_auto_boosts_leverage_for_min_notional() -> None:
+    """Auto-boost leverage up to max_leverage when slot notional < min_notional."""
+    settings = RiskSettings(
+        slot_sizing_enabled=True,
+        slot_margin_buffer_pct=Decimal("0.05"),
+        min_order_notional_usdt=Decimal("5.0"),
+        leverage=2,
+        min_leverage=1,
+        max_leverage=10,
+    )
+    engine = RiskEngine(settings=settings)
+
+    # balance = 3.0, 2 slots => usable = 2.85, slot_margin = 1.425
+    # at 2x lev: notional = 2.85 < 5.0. Needs ceil(5.0 / 1.425) = 4x
+    result = engine.evaluate(
+        signal=_create_signal(price=Decimal("10")),
+        account_balance=Decimal("3.0"),
+        remaining_slots=2,
+    )
+
+    assert result.approved
+    assert result.position.leverage >= 4
+    assert result.position.notional >= Decimal("5.0")
+
+
+def test_trading_engine_forwards_remaining_slots() -> None:
+    """Verify TradingEngine computes remaining_slots from open positions."""
+    settings = RiskSettings(
+        slot_sizing_enabled=True,
+        slot_margin_buffer_pct=Decimal("0.05"),
+        max_open_positions=5,
+        max_position_size_usdt=Decimal("50"),
+        leverage=20,
+    )
+    risk_engine = RiskEngine(settings=settings)
+    trading_engine = TradingEngine(
+        risk_engine=risk_engine,
+        portfolio_engine=PortfolioEngine(),
+    )
+
+    # 2 existing positions -> 3 remaining slots
+    existing_positions = (
+        _create_position(
+            symbol="ETHUSDT",
+            side=PositionSide.LONG,
+            quantity=Decimal("1"),
+            entry_price=Decimal("100"),
+            current_price=Decimal("100"),
+            unrealized_pnl=Decimal("0"),
+        ),
+        _create_position(
+            symbol="SOLUSDT",
+            side=PositionSide.LONG,
+            quantity=Decimal("1"),
+            entry_price=Decimal("100"),
+            current_price=Decimal("100"),
+            unrealized_pnl=Decimal("0"),
+        ),
+    )
+
+    decision = trading_engine.evaluate(
+        signal=_create_signal(),
+        account_balance=Decimal("9.0"),
+        has_open_position=False,
+        open_positions=existing_positions,
+    )
+
+    assert decision.should_execute
+    assert decision.risk_result is not None
+    # usable = 8.55 / 3 slots = 2.85 margin * 20 = 57 notional -> capped at 50
+    assert decision.risk_result.position.notional == Decimal("50")
+
+
+def test_risk_engine_dynamic_leverage_incorporates_volatility() -> None:
+    """Verify dynamic leverage adapts to coin volatility."""
+    settings = RiskSettings(
+        dynamic_leverage_enabled=True,
+        min_leverage=5,
+        max_leverage=20,
+    )
+    engine = RiskEngine(settings=settings)
+
+    # Low volatility (0.01) -> safe leverage remains capped at max (20)
+    low_vol = engine.evaluate(
+        signal=_create_signal(),
+        account_balance=Decimal("1000"),
+        volatility_pct=Decimal("0.01"),
+    )
+    assert low_vol.position.leverage == 20
+
+    # High volatility (0.06) -> safe leverage is significantly reduced
+    high_vol = engine.evaluate(
+        signal=_create_signal(),
+        account_balance=Decimal("1000"),
+        volatility_pct=Decimal("0.06"),
+    )
+    assert high_vol.position.leverage < 20
+    assert high_vol.position.leverage >= 5

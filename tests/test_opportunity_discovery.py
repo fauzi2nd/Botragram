@@ -2268,3 +2268,111 @@ async def _run_discovery_mtf_trend_filter_test() -> None:
 
     assert len(signals_plain) == 2
     assert {s.symbol for s in signals_plain} == {"BTCUSDT", "ETHUSDT"}
+
+
+@pytest.mark.asyncio
+async def test_btc_benchmark_trend_filter_rejects_counter_trend_altcoins() -> None:
+    """Verify BTC benchmark trend filter rejects altcoin SELL when BTC is bullish."""
+    # Create BTC candles in a strong uptrend: EMA10 around 105, close 120
+    btc_candles = tuple(
+        _create_candle(
+            symbol="BTCUSDT",
+            interval=Interval.M15,
+            open_time=_NOW - timedelta(minutes=15 * (17 - i)),
+            close_time=_NOW - timedelta(minutes=15 * (16 - i)),
+            close_price=Decimal("100") + Decimal(i * 2),
+        )
+        for i in range(16)
+    )
+    eth_candles = (
+        _create_candle(
+            symbol="ETHUSDT",
+            interval=Interval.M15,
+            open_time=_NOW - timedelta(minutes=15),
+            close_time=_NOW,
+            close_price=Decimal("2000"),
+        ),
+    )
+    sol_candles = (
+        _create_candle(
+            symbol="SOLUSDT",
+            interval=Interval.M15,
+            open_time=_NOW - timedelta(minutes=15),
+            close_time=_NOW,
+            close_price=Decimal("150"),
+        ),
+    )
+
+    market_service = FakeMarketService(
+        symbols=("ETHUSDT", "SOLUSDT"),
+        allowed_intervals=(Interval.M15,),
+        candles_by_symbol_and_interval={
+            ("BTCUSDT", Interval.M15): btc_candles,
+            ("ETHUSDT", Interval.M15): eth_candles,
+            ("SOLUSDT", Interval.M15): sol_candles,
+        },
+    )
+
+    strategy_service = FakeStrategyService(
+        signals={
+            "ETHUSDT": _create_signal(
+                symbol="ETHUSDT",
+                signal_type=SignalType.SELL,  # Short counter to BTC pump
+                price=Decimal("2000"),
+                confidence="0.85",
+                generated_at=_NOW,
+                strategy_name=StrategyType.EMA_CROSS.value,
+            ),
+            "SOLUSDT": _create_signal(
+                symbol="SOLUSDT",
+                signal_type=SignalType.BUY,  # Long aligned with BTC pump
+                price=Decimal("150"),
+                confidence="0.80",
+                generated_at=_NOW,
+                strategy_name=StrategyType.EMA_CROSS.value,
+            ),
+        },
+        minimum_candles_by_strategy={
+            StrategyType.EMA_CROSS: 1,
+        },
+    )
+
+    service_filtered = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        btc_trend_filter_enabled=True,
+        btc_trend_interval=Interval.M15,
+        btc_trend_ema_period=10,
+        utc_now=lambda: _NOW,
+    )
+
+    signals = await service_filtered.discover_symbols(
+        symbols=("ETHUSDT", "SOLUSDT"),
+        interval=Interval.M15,
+        candle_limit=1,
+        top_n=2,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    # ETHUSDT (SELL) should be rejected, only SOLUSDT (BUY) passes
+    assert len(signals) == 1
+    assert signals[0].symbol == "SOLUSDT"
+
+    # When disabled, both pass
+    service_unfiltered = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        btc_trend_filter_enabled=False,
+        btc_trend_interval=Interval.M15,
+        btc_trend_ema_period=10,
+        utc_now=lambda: _NOW,
+    )
+    signals_all = await service_unfiltered.discover_symbols(
+        symbols=("ETHUSDT", "SOLUSDT"),
+        interval=Interval.M15,
+        candle_limit=1,
+        top_n=2,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+    assert len(signals_all) == 2
+    assert {s.symbol for s in signals_all} == {"ETHUSDT", "SOLUSDT"}

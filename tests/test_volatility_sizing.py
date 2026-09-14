@@ -250,14 +250,15 @@ def test_dynamic_adaptive_leverage() -> None:
     )
     engine = RiskEngine(settings=settings)
 
-    # 1. Tight SL (0.8%): safe leverage = int(0.80 / 0.008) = 100 -> clamped to 25x
+    # 1. Tight SL (0.8%): safe leverage = int(1 / ((0.008 / 0.70) + 0.012)) = 42
+    # Clamped to 25x max leverage.
     # Static leverage=5 passed into evaluate is overridden by adaptive leverage.
     sig_scalp = Signal(
         symbol="BTCUSDT",
         signal_type=SignalType.BUY,
         price=Decimal("100.0"),
         confidence=Decimal("0.70"),
-        strategy_name="scalping",
+        strategy_name="ema_scalping",
         generated_at=_NOW,
     )
     res_scalp = engine.evaluate(
@@ -268,7 +269,8 @@ def test_dynamic_adaptive_leverage() -> None:
     assert res_scalp.position is not None
     assert res_scalp.position.leverage == 25
 
-    # 2. Wide SL (8%): safe leverage = int(0.80 / 0.08) = 10 -> leverage = 10x
+    # 2. Wide SL (8%): safe leverage = int(1 / ((0.08 / 0.70) + 0.012)) = 7
+    # Resolves to leverage = 7x.
     settings_wide = RiskSettings(
         dynamic_leverage_enabled=True,
         min_leverage=5,
@@ -292,7 +294,7 @@ def test_dynamic_adaptive_leverage() -> None:
         leverage=20,
     )
     assert res_wide.position is not None
-    assert res_wide.position.leverage == 10
+    assert res_wide.position.leverage == 7
 
 
 def test_settings_manager_loads_dynamic_sizing_env(
@@ -354,7 +356,7 @@ def test_dynamic_leverage_runtime_override() -> None:
     assert res_default.position.leverage == 5
 
     # 2. With dynamic_leverage_enabled=True override,
-    # computes safe_lev = int(0.80 / 0.02) = 40
+    # computes safe_lev = int(1 / ((0.02 / 0.70) + 0.012)) = 24
     res_override_adaptive = engine_fixed.evaluate(
         signal=sig,
         account_balance=Decimal("10000"),
@@ -362,7 +364,7 @@ def test_dynamic_leverage_runtime_override() -> None:
         dynamic_leverage_enabled=True,
     )
     assert res_override_adaptive.position is not None
-    assert res_override_adaptive.position.leverage == 40
+    assert res_override_adaptive.position.leverage == 24
 
     # 3. Base setting: dynamic_leverage_enabled = True,
     # but override is False -> uses fixed leverage

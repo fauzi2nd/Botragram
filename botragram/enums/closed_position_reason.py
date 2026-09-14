@@ -22,3 +22,4 @@ class ClosedPositionReason(BaseEnum):
     OPERATOR_EXIT = "operator_exit"
     EARLY_CUT_LOSS = "early_cut_loss"
     EARLY_TAKE_PROFIT = "early_take_profit"
+    LIQUIDATION = "liquidation"

@@ -72,6 +72,7 @@ from botragram.telegram.messages import (
     get_orders_message,
     get_paper_entry_message,
     get_paper_exit_message,
+    get_partial_tp_message,
     get_positions_message,
     get_settings_message,
     get_startup_configuration_message,
@@ -675,3 +676,35 @@ def test_leverage_messages_and_keyboard() -> None:
         button.callback_data for row in dash_single.inline_keyboard for button in row
     }
     assert "cb_leverage_menu" in single_callbacks
+
+
+def test_get_partial_tp_message_formats_correctly() -> None:
+    """Verify partial TP Telegram message includes all key metrics."""
+    pos = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("0.10"),
+        entry_price=Decimal("50000"),
+        current_price=Decimal("51000"),
+        stop_loss=Decimal("49000"),
+        take_profit=Decimal("52000"),
+        unrealized_pnl=Decimal("100"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+    msg = get_partial_tp_message(
+        position=pos,
+        closed_quantity=Decimal("0.05"),
+        remaining_quantity=Decimal("0.05"),
+        exit_price=Decimal("51000"),
+        new_stop_loss=Decimal("50050"),
+        mode="LIVE",
+    )
+    assert "Partial Take-Profit Executed [LIVE]" in msg
+    assert "BTCUSDT" in msg
+    assert "LONG" in msg
+    assert "51000.00 USDT" in msg
+    assert "0.05 (50%)" in msg
+    assert "50050.00 USDT" in msg
+    assert "Risk-Free Position" in msg

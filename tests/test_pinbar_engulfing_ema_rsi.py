@@ -562,3 +562,217 @@ def test_generate_evening_star_signal_in_downtrend() -> None:
     assert signal.signal_type is SignalType.SELL
     assert signal.confidence >= Decimal("0.65")
     assert "Evening Star" in (signal.reason or "")
+
+
+def test_pinbar_rejection_in_ema200_dead_zone_buffer_emits_hold() -> None:
+    """Verify setup near EMA200 within min_trend_distance_pct emits HOLD."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=5,
+        pullback_period=3,
+        rsi_period=3,
+        volume_period=3,
+        min_trend_distance_pct=Decimal("0.01"),  # 1% buffer
+        require_key_level_location=False,
+        use_macd=False,
+        use_stoch_rsi=False,
+    )
+    # Price is 99.5, EMA is ~100 -> distance is 0.5% < 1% buffer
+    candles = [
+        _make_candle(
+            index=i,
+            open_price=Decimal("100.0"),
+            high_price=Decimal("101.0"),
+            low_price=Decimal("99.0"),
+            close_price=Decimal("99.5"),
+            volume=Decimal("100.0"),
+        )
+        for i in range(30)
+    ]
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+
+
+def test_pinbar_rejection_with_rsi_above_short_max_emits_hold() -> None:
+    """Verify SELL setup is suppressed when RSI exceeds rsi_short_max (e.g. 55.0)."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=5,
+        pullback_period=3,
+        rsi_period=3,
+        rsi_short_max=Decimal("55.0"),
+        require_key_level_location=False,
+        use_macd=False,
+        use_stoch_rsi=False,
+    )
+    # Price steadily rising creates high RSI > 60
+    candles = [
+        _make_candle(
+            index=i,
+            open_price=Decimal(str(80 + i * 2)),
+            high_price=Decimal(str(82 + i * 2)),
+            low_price=Decimal(str(79 + i * 2)),
+            close_price=Decimal(str(81 + i * 2)),
+            volume=Decimal("100.0"),
+        )
+        for i in range(30)
+    ]
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+
+
+def test_strategy_macd_stoch_rsi_parameter_validation() -> None:
+    """Validate MACD and Stoch RSI parameter bounds on initialization."""
+    with pytest.raises(ValueError, match="MACD periods must be positive"):
+        PinbarEngulfingEmaRsiStrategy(macd_fast_period=0)
+
+    with pytest.raises(ValueError, match="MACD fast period must be less"):
+        PinbarEngulfingEmaRsiStrategy(macd_fast_period=26, macd_slow_period=26)
+
+    with pytest.raises(ValueError, match="Stoch RSI periods must be positive"):
+        PinbarEngulfingEmaRsiStrategy(stoch_rsi_period=0)
+
+    with pytest.raises(ValueError, match="Stoch RSI thresholds must be bounded"):
+        PinbarEngulfingEmaRsiStrategy(
+            stoch_rsi_oversold=Decimal("85.0"),
+            stoch_rsi_overbought=Decimal("80.0"),
+        )
+
+
+def test_factory_creates_strategy_with_custom_macd_and_stoch_rsi() -> None:
+    """Verify StrategyFactory configures MACD and Stoch RSI fields."""
+    settings = StrategySettings(
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+        pier_use_macd=True,
+        pier_macd_fast_period=10,
+        pier_macd_slow_period=20,
+        pier_macd_signal_period=7,
+        pier_use_stoch_rsi=True,
+        pier_stoch_rsi_period=12,
+        pier_stoch_rsi_k_period=4,
+        pier_stoch_rsi_d_period=4,
+        pier_stoch_rsi_overbought=Decimal("75.0"),
+        pier_stoch_rsi_oversold=Decimal("25.0"),
+    )
+    strategy = StrategyFactory.create(settings=settings)
+    assert isinstance(strategy, PinbarEngulfingEmaRsiStrategy)
+    assert strategy.use_macd is True
+    assert strategy.macd_fast_period == 10
+    assert strategy.macd_slow_period == 20
+    assert strategy.macd_signal_period == 7
+    assert strategy.use_stoch_rsi is True
+    assert strategy.stoch_rsi_period == 12
+    assert strategy.stoch_rsi_k_period == 4
+    assert strategy.stoch_rsi_d_period == 4
+    assert strategy.stoch_rsi_overbought == Decimal("75.0")
+    assert strategy.stoch_rsi_oversold == Decimal("25.0")
+
+
+def test_stoch_rsi_guard_suppresses_long_signal_when_overbought() -> None:
+    """Verify BUY setup is rejected if Stoch RSI is above overbought limit."""
+    base_strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        stoch_rsi_oversold=Decimal("0.5"),
+        stoch_rsi_overbought=Decimal("1.0"),
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(45):
+        price = base + Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    for i in range(45, 55):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("0.2"),
+                low_price=prev_close - Decimal("1.5"),
+                close_price=prev_close - Decimal("1.2"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    last_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=last_close,
+            high_price=last_close + Decimal("0.8"),
+            low_price=last_close - Decimal("8.0"),
+            close_price=last_close + Decimal("0.5"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    signal = base_strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+
+
+def test_macd_guard_allows_valid_bounce_and_includes_context() -> None:
+    """Verify BUY setup includes MACD and Stoch RSI context in signal reason."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        use_macd=True,
+        use_stoch_rsi=True,
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(45):
+        price = base + Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    for i in range(45, 55):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("0.2"),
+                low_price=prev_close - Decimal("1.5"),
+                close_price=prev_close - Decimal("1.2"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    last_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=last_close,
+            high_price=last_close + Decimal("0.8"),
+            low_price=last_close - Decimal("8.0"),
+            close_price=last_close + Decimal("0.5"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.BUY
+    assert "MACD_h=" in (signal.reason or "")
+    assert "StochK=" in (signal.reason or "")
