@@ -29,6 +29,11 @@ import pytest
 # =============================================================================
 from botragram.config.strategy_settings import StrategySettings
 from botragram.enums import Interval, SignalType, StrategyType
+from botragram.indicators.price_action.candlesticks import (
+    detect_engulfing,
+    detect_pinbar,
+    detect_star,
+)
 from botragram.models import Candle
 from botragram.strategies.factory import StrategyFactory
 from botragram.strategies.price_action import PinbarEngulfingEmaRsiStrategy
@@ -776,3 +781,68 @@ def test_macd_guard_allows_valid_bounce_and_includes_context() -> None:
     assert signal.signal_type is SignalType.BUY
     assert "MACD_h=" in (signal.reason or "")
     assert "StochK=" in (signal.reason or "")
+
+
+def test_candlestick_match_pattern_ratio_and_confidence() -> None:
+    """Ensure pattern_ratio is cleanly populated and drives confidence bonus."""
+    c_prev = _make_candle(
+        index=0,
+        open_price=Decimal("102.0"),
+        high_price=Decimal("103.0"),
+        low_price=Decimal("99.0"),
+        close_price=Decimal("100.0"),  # body = 2.0
+    )
+    c_curr = _make_candle(
+        index=1,
+        open_price=Decimal("99.5"),
+        high_price=Decimal("104.0"),
+        low_price=Decimal("99.0"),
+        close_price=Decimal("103.5"),  # body = 4.0 -> ratio = 2.0
+    )
+
+    engulfing = detect_engulfing(prev_candle=c_prev, curr_candle=c_curr)
+    assert engulfing.matched is True
+    assert engulfing.pattern_ratio == Decimal("2.0")
+    assert engulfing.wick_ratio == Decimal("2.0")
+
+    # Pinbar pattern_ratio test
+    c_pinbar = _make_candle(
+        index=2,
+        open_price=Decimal("103.0"),
+        high_price=Decimal("103.5"),
+        low_price=Decimal("95.0"),
+        close_price=Decimal("103.2"),
+    )
+    pinbar = detect_pinbar(candle=c_pinbar)
+    assert pinbar.matched is True
+    assert pinbar.pattern_ratio == pinbar.wick_ratio
+
+    # Star pattern_ratio test
+    c_star1 = _make_candle(
+        index=3,
+        open_price=Decimal("110.0"),
+        high_price=Decimal("111.0"),
+        low_price=Decimal("99.0"),
+        close_price=Decimal("100.0"),
+    )
+    c_star2 = _make_candle(
+        index=4,
+        open_price=Decimal("98.0"),
+        high_price=Decimal("99.0"),
+        low_price=Decimal("97.0"),
+        close_price=Decimal("98.5"),
+    )
+    c_star3 = _make_candle(
+        index=5,
+        open_price=Decimal("99.0"),
+        high_price=Decimal("108.0"),
+        low_price=Decimal("98.5"),
+        close_price=Decimal("107.0"),
+    )
+    star = detect_star(
+        first_candle=c_star1,
+        second_candle=c_star2,
+        third_candle=c_star3,
+    )
+    assert star.matched is True
+    assert star.pattern_ratio == star.wick_ratio

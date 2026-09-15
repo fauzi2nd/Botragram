@@ -56,6 +56,7 @@ class CandlestickMatch:
     rejection_level: Decimal
     body_ratio: Decimal
     wick_ratio: Decimal
+    pattern_ratio: Decimal = _DECIMAL_ZERO
 
 
 # =============================================================================
@@ -110,6 +111,7 @@ def detect_pinbar(
             rejection_level=candle.low_price,
             body_ratio=body_ratio,
             wick_ratio=lower_wick_ratio,
+            pattern_ratio=lower_wick_ratio,
         )
 
     # Bearish Pinbar (Shooting Star / High Rejection)
@@ -126,6 +128,7 @@ def detect_pinbar(
             rejection_level=candle.high_price,
             body_ratio=body_ratio,
             wick_ratio=upper_wick_ratio,
+            pattern_ratio=upper_wick_ratio,
         )
 
     return CandlestickMatch(
@@ -194,6 +197,7 @@ def detect_engulfing(
             rejection_level=min(prev_candle.low_price, curr_candle.low_price),
             body_ratio=curr_body_ratio,
             wick_ratio=curr_body / prev_body,
+            pattern_ratio=curr_body / prev_body,
         )
 
     # Bearish Engulfing: previous green, current red, current body engulfs
@@ -211,6 +215,7 @@ def detect_engulfing(
             rejection_level=max(prev_candle.high_price, curr_candle.high_price),
             body_ratio=curr_body_ratio,
             wick_ratio=curr_body / prev_body,
+            pattern_ratio=curr_body / prev_body,
         )
 
     return CandlestickMatch(
@@ -311,6 +316,7 @@ def detect_star(
             ),
             body_ratio=third_body_ratio,
             wick_ratio=third_body / first_body,
+            pattern_ratio=third_body / first_body,
         )
 
     # Evening Star: 1st green, 2nd small with higher high/probe,
@@ -333,6 +339,7 @@ def detect_star(
             ),
             body_ratio=third_body_ratio,
             wick_ratio=third_body / first_body,
+            pattern_ratio=third_body / first_body,
         )
 
     return CandlestickMatch(

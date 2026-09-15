@@ -474,12 +474,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 signal_type = SignalType.BUY
                 confidence = self._compute_confidence(
                     pinbar_matched=pinbar.matched and pinbar.side is PositionSide.LONG,
-                    pinbar_ratio=pinbar.wick_ratio,
+                    pinbar_ratio=pinbar.pattern_ratio or pinbar.wick_ratio,
                     engulfing_matched=engulfing.matched
                     and engulfing.side is PositionSide.LONG,
-                    engulfing_ratio=engulfing.wick_ratio,
+                    engulfing_ratio=engulfing.pattern_ratio or engulfing.wick_ratio,
                     star_matched=star_matched_buy,
-                    star_ratio=star.wick_ratio,
+                    star_ratio=star.pattern_ratio or star.wick_ratio,
                     sar_aligned=current_psar_uptrend is True,
                     macd_aligned=macd_long_aligned,
                     stoch_rsi_aligned=stoch_rsi_long_aligned,
@@ -617,12 +617,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 signal_type = SignalType.SELL
                 confidence = self._compute_confidence(
                     pinbar_matched=pinbar.matched and pinbar.side is PositionSide.SHORT,
-                    pinbar_ratio=pinbar.wick_ratio,
+                    pinbar_ratio=pinbar.pattern_ratio or pinbar.wick_ratio,
                     engulfing_matched=engulfing.matched
                     and engulfing.side is PositionSide.SHORT,
-                    engulfing_ratio=engulfing.wick_ratio,
+                    engulfing_ratio=engulfing.pattern_ratio or engulfing.wick_ratio,
                     star_matched=star_matched_sell,
-                    star_ratio=star.wick_ratio,
+                    star_ratio=star.pattern_ratio or star.wick_ratio,
                     sar_aligned=current_psar_uptrend is False,
                     macd_aligned=macd_short_aligned,
                     stoch_rsi_aligned=stoch_rsi_short_aligned,
