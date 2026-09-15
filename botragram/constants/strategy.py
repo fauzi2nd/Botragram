@@ -59,8 +59,6 @@ def get_strategy_default_interval(strategy_type: StrategyType) -> Interval:
             | StrategyType.VWAP_BREAKOUT
         ):
             return Interval.M5
-        case StrategyType.PINBAR_ENGULFING_EMA_RSI:
-            return Interval.M7
         case StrategyType.MACD_SWING:
             return Interval.H1
         case (
@@ -71,6 +69,7 @@ def get_strategy_default_interval(strategy_type: StrategyType) -> Interval:
             | StrategyType.SUPERTREND
             | StrategyType.ADX_TREND
             | StrategyType.BOLLINGER_BREAKOUT
+            | StrategyType.PINBAR_ENGULFING_EMA_RSI
             | StrategyType.QUAD_CONFLUENCE
             | _
         ):

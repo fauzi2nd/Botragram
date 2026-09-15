@@ -357,6 +357,23 @@ def test_risk_settings_requires_ema_cross_take_profit_above_stop_loss(
         )
 
 
+@pytest.mark.parametrize(
+    "breakeven_roi",
+    (
+        Decimal("0"),
+        Decimal("-0.10"),
+        Decimal("nan"),
+        Decimal("inf"),
+    ),
+)
+def test_risk_settings_rejects_invalid_breakeven_roi_threshold(
+    breakeven_roi: Decimal,
+) -> None:
+    """Reject non-positive or non-finite breakeven ROI thresholds."""
+    with pytest.raises(ValueError, match="breakeven_roi_threshold must be positive"):
+        RiskSettings(breakeven_roi_threshold=breakeven_roi)
+
+
 # =============================================================================
 # Environment and Settings Manager Tests
 # =============================================================================

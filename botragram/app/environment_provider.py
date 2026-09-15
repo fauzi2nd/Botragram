@@ -47,6 +47,7 @@ from botragram.constants.env import (
     ENV_BITGET_TESTNET,
     ENV_BOTRAGRAM_ENV_FILE,
     ENV_BOTRAGRAM_PROFILE,
+    ENV_BREAKEVEN_ROI_THRESHOLD,
     ENV_BTC_TREND_EMA_PERIOD,
     ENV_BTC_TREND_FILTER_ENABLED,
     ENV_BTC_TREND_INTERVAL,
@@ -630,6 +631,10 @@ class EnvironmentProvider:
     def get_account_ratio_htf_period(self) -> str:
         """Return the higher timeframe period for account ratio confirmation."""
         return self._get_var(ENV_ACCOUNT_RATIO_HTF_PERIOD, default="1h")
+
+    def get_breakeven_roi_threshold(self) -> str:
+        """Return the minimum ROI threshold to arm breakeven protection."""
+        return self._get_var(ENV_BREAKEVEN_ROI_THRESHOLD, default="0.30")
 
     def get_partial_tp_enabled(self) -> bool:
         """Return whether partial take profit is enabled."""

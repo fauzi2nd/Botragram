@@ -1746,6 +1746,7 @@ class DependencyProvider:
             exchange_client=self.exchange_client,
             lifecycle_coordinator=self._live_position_lifecycle_coordinator,
             notification_publisher=self.telegram_bot,
+            breakeven_roi_threshold=self._settings.risk.breakeven_roi_threshold,
             partial_tp_enabled=self._settings.risk.partial_tp_enabled,
             partial_tp_ratio=self._settings.risk.partial_tp_ratio,
             partial_tp_trigger_progress=self._settings.risk.partial_tp_trigger_progress,

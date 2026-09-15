@@ -364,6 +364,10 @@ class SettingsManager:
                 raw_value=environment.get_max_spread_bps(),
                 setting_name="MAX_SPREAD_BPS",
             ),
+            breakeven_roi_threshold=self._parse_decimal(
+                raw_value=environment.get_breakeven_roi_threshold(),
+                setting_name="BREAKEVEN_ROI_THRESHOLD",
+            ),
             partial_tp_enabled=environment.get_partial_tp_enabled(),
             partial_tp_ratio=self._parse_decimal(
                 raw_value=environment.get_partial_tp_ratio(),

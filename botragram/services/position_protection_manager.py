@@ -49,7 +49,7 @@ _POSITION_REFRESH_SECONDS: Final[float] = 1.0
 _FAILURE_RETRY_SECONDS: Final[float] = 5.0
 _PENDING_RECONCILIATION_ATTEMPTS: Final[int] = 2
 _PENDING_RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
-_BREAKEVEN_ROI_THRESHOLD: Final[Decimal] = Decimal("0.10")
+_BREAKEVEN_ROI_THRESHOLD: Final[Decimal] = Decimal("0.30")
 _BREAKEVEN_FEE_BUFFER: Final[Decimal] = Decimal("0.0016")
 _PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = (
     Decimal("0.30"),

@@ -730,7 +730,7 @@ def test_strategy_default_intervals_and_exit_rates() -> None:
 
     assert (
         get_strategy_default_interval(StrategyType.PINBAR_ENGULFING_EMA_RSI)
-        is Interval.M7
+        is Interval.M15
     )
     sl_pier, tp_pier = get_strategy_default_exit_rates(
         StrategyType.PINBAR_ENGULFING_EMA_RSI
@@ -767,7 +767,7 @@ def test_strategy_settings_default_interval() -> None:
     settings_pier = StrategySettings(
         strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI
     )
-    assert settings_pier.default_interval is Interval.M7
+    assert settings_pier.default_interval is Interval.M15
     from botragram.constants.strategy import get_strategy_default_exit_rates
 
     sl, tp = get_strategy_default_exit_rates(StrategyType.QUAD_CONFLUENCE)

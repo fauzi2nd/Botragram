@@ -59,7 +59,7 @@ __all__ = [
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DECIMAL_HUNDRED: Final[Decimal] = Decimal("100")
 _STRATEGY_WINDOW: Final[int] = 500
-_BREAKEVEN_ROI_THRESHOLD: Final[Decimal] = Decimal("0.10")
+_BREAKEVEN_ROI_THRESHOLD: Final[Decimal] = Decimal("0.30")
 _BREAKEVEN_FEE_BUFFER: Final[Decimal] = Decimal("0.001")
 _PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = (
     Decimal("0.30"),
@@ -310,7 +310,7 @@ class BacktestEngine:
             )
             if tp_steps > 0:
                 resolved_step = tp_steps + 1
-            elif roi >= _BREAKEVEN_ROI_THRESHOLD:
+            elif roi >= self.risk_settings.breakeven_roi_threshold:
                 resolved_step = 1
             else:
                 resolved_step = 0

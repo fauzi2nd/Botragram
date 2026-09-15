@@ -68,6 +68,9 @@ class RiskSettings:
     pier_stop_loss_pct: Decimal = Decimal("0.012")
     pier_take_profit_pct: Decimal = Decimal("0.024")
 
+    # Stepped Position Protection
+    breakeven_roi_threshold: Decimal = Decimal("0.30")
+
     # Partial Take Profit
     partial_tp_enabled: bool = False
     partial_tp_ratio: Decimal = Decimal("0.50")
@@ -172,6 +175,12 @@ class RiskSettings:
 
         if self.pier_take_profit_pct <= self.pier_stop_loss_pct:
             raise ValueError("PIER take-profit must exceed PIER stop-loss")
+
+        if (
+            not self.breakeven_roi_threshold.is_finite()
+            or self.breakeven_roi_threshold <= Decimal("0")
+        ):
+            raise ValueError("breakeven_roi_threshold must be positive and finite")
 
         if self.partial_tp_enabled:
             if not self.partial_tp_ratio.is_finite() or not (

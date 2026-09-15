@@ -957,7 +957,7 @@ async def test_live_active_pending_stop_promotes_despite_moved_mark_price() -> N
 
 @pytest.mark.asyncio
 async def test_position_protection_activates_breakeven_at_target_roi_long() -> None:
-    """Lock Breakeven+ for Long when ROI reaches 10% before 30% TP progress."""
+    """Lock Breakeven+ for Long when ROI reaches 30% before 30% TP progress."""
     position = Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -969,7 +969,7 @@ async def test_position_protection_activates_breakeven_at_target_roi_long() -> N
         opened_at=_NOW,
         updated_at=_NOW,
         stop_loss=Decimal("99"),
-        take_profit=Decimal("104"),
+        take_profit=Decimal("106"),
     )
     repository = MemoryPositionRepository()
     await repository.save(position=position)
@@ -981,7 +981,7 @@ async def test_position_protection_activates_breakeven_at_target_roi_long() -> N
         position_refresh_seconds=0.001,
     )
 
-    await manager.on_market_tick(ticker=_ticker(price="100.55", seconds=1))
+    await manager.on_market_tick(ticker=_ticker(price="101.55", seconds=1))
 
     updated = await repository.get_by_symbol(symbol="BTCUSDT")
     assert updated is not None
@@ -991,7 +991,7 @@ async def test_position_protection_activates_breakeven_at_target_roi_long() -> N
 
 @pytest.mark.asyncio
 async def test_position_protection_activates_breakeven_at_target_roi_short() -> None:
-    """Lock Breakeven+ for Short when ROI reaches 10% before 30% TP progress."""
+    """Lock Breakeven+ for Short when ROI reaches 30% before 30% TP progress."""
     position = Position(
         symbol="BTCUSDT",
         side=PositionSide.SHORT,
@@ -1003,7 +1003,7 @@ async def test_position_protection_activates_breakeven_at_target_roi_short() -> 
         opened_at=_NOW,
         updated_at=_NOW,
         stop_loss=Decimal("101"),
-        take_profit=Decimal("96"),
+        take_profit=Decimal("94"),
     )
     repository = MemoryPositionRepository()
     await repository.save(position=position)
@@ -1015,7 +1015,7 @@ async def test_position_protection_activates_breakeven_at_target_roi_short() -> 
         position_refresh_seconds=0.001,
     )
 
-    await manager.on_market_tick(ticker=_ticker(price="99.45", seconds=1))
+    await manager.on_market_tick(ticker=_ticker(price="98.45", seconds=1))
 
     updated = await repository.get_by_symbol(symbol="BTCUSDT")
     assert updated is not None
@@ -1037,7 +1037,7 @@ async def test_position_protection_advances_from_breakeven_to_tp_progress() -> N
         opened_at=_NOW,
         updated_at=_NOW,
         stop_loss=Decimal("99"),
-        take_profit=Decimal("104"),
+        take_profit=Decimal("106"),
     )
     repository = MemoryPositionRepository()
     await repository.save(position=position)
@@ -1049,35 +1049,35 @@ async def test_position_protection_advances_from_breakeven_to_tp_progress() -> N
         position_refresh_seconds=0.001,
     )
 
-    # Step 1: 10% ROI reached -> Breakeven lock (100.16)
-    await manager.on_market_tick(ticker=_ticker(price="100.55", seconds=1))
+    # Step 1: 30% ROI reached -> Breakeven lock (100.16)
+    await manager.on_market_tick(ticker=_ticker(price="101.55", seconds=1))
     pos_step1 = await repository.get_by_symbol(symbol="BTCUSDT")
     assert pos_step1 is not None
     assert pos_step1.protection_step == 1
     assert pos_step1.stop_loss == Decimal("100.16")
 
-    # Step 2: 30% TP progress reached (favorable = 1.40, TP dist = 4.0, progress = 35%)
-    # locked_progress = 0.30 - 0.20 = 0.10 -> stop = 100 + 4.0 * 0.10 = 100.40
-    await manager.on_market_tick(ticker=_ticker(price="101.40", seconds=2))
+    # Step 2: 30% TP progress reached (favorable = 2.10, TP dist = 6.0, progress = 35%)
+    # locked_progress = 0.30 - 0.20 = 0.10 -> stop = 100 + 6.0 * 0.10 = 100.60
+    await manager.on_market_tick(ticker=_ticker(price="102.10", seconds=2))
     pos_step2 = await repository.get_by_symbol(symbol="BTCUSDT")
     assert pos_step2 is not None
     assert pos_step2.protection_step == 2
-    assert pos_step2.stop_loss == Decimal("100.40")
+    assert pos_step2.stop_loss == Decimal("100.60")
 
-    # Step 3: 45% TP progress reached (favorable = 2.00, progress = 50%)
-    # locked_progress = 0.45 - 0.20 = 0.25 -> stop = 100 + 4.0 * 0.25 = 101.00
-    await manager.on_market_tick(ticker=_ticker(price="102.00", seconds=3))
+    # Step 3: 45% TP progress reached (favorable = 3.00, TP dist = 6.0, progress = 50%)
+    # locked_progress = 0.45 - 0.20 = 0.25 -> stop = 100 + 6.0 * 0.25 = 101.50
+    await manager.on_market_tick(ticker=_ticker(price="103.00", seconds=3))
     pos_step3 = await repository.get_by_symbol(symbol="BTCUSDT")
     assert pos_step3 is not None
     assert pos_step3.protection_step == 3
-    assert pos_step3.stop_loss == Decimal("101.00")
+    assert pos_step3.stop_loss == Decimal("101.50")
 
-    # Pullback tick: price drops to 101.50 -> stop loss does not move backward
-    await manager.on_market_tick(ticker=_ticker(price="101.50", seconds=4))
+    # Pullback tick: price drops to 102.00 -> stop loss does not move backward
+    await manager.on_market_tick(ticker=_ticker(price="102.00", seconds=4))
     pos_pullback = await repository.get_by_symbol(symbol="BTCUSDT")
     assert pos_pullback is not None
     assert pos_pullback.protection_step == 3
-    assert pos_pullback.stop_loss == Decimal("101.00")
+    assert pos_pullback.stop_loss == Decimal("101.50")
 
 
 def test_partial_take_profit_validation_rejects_out_of_bounds() -> None:
