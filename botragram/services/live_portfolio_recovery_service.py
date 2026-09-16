@@ -177,33 +177,48 @@ class LivePortfolioRecoveryService:
             )
             if signal.generated_at == position.opened_at
         )
-        if len(signals) != 1:
-            return None
+        if len(signals) == 1:
+            try:
+                strategy_type = StrategyType(signals[0].strategy_name)
+            except ValueError:
+                return None
 
-        try:
-            strategy_type = StrategyType(signals[0].strategy_name)
-        except ValueError:
-            return None
+            matching_intervals: list[Interval] = []
+            for interval in Interval:
+                candles = await self.candle_repository.get_between(
+                    symbol=position.symbol,
+                    interval=interval,
+                    start_time=position.opened_at - timedelta(seconds=interval.seconds),
+                    end_time=position.opened_at,
+                )
+                if any(candle.close_time == position.opened_at for candle in candles):
+                    matching_intervals.append(interval)
 
-        matching_intervals: list[Interval] = []
-        for interval in Interval:
-            candles = await self.candle_repository.get_between(
-                symbol=position.symbol,
-                interval=interval,
-                start_time=position.opened_at - timedelta(seconds=interval.seconds),
-                end_time=position.opened_at,
+            if len(matching_intervals) == 1:
+                return replace(
+                    position,
+                    interval=matching_intervals[0],
+                    strategy_type=strategy_type,
+                )
+
+        if not signals:
+            strategy_type = self.runtime_control.configured_strategy_type
+            interval = self.runtime_control.interval
+            _LOGGER.warning(
+                "Adopting manual / external LIVE position into active bot strategy: "
+                "symbol=%s side=%s strategy=%s interval=%s",
+                position.symbol,
+                position.side.value,
+                strategy_type.value,
+                interval.value,
             )
-            if any(candle.close_time == position.opened_at for candle in candles):
-                matching_intervals.append(interval)
+            return replace(
+                position,
+                interval=interval,
+                strategy_type=strategy_type,
+            )
 
-        if len(matching_intervals) != 1:
-            return None
-
-        return replace(
-            position,
-            interval=matching_intervals[0],
-            strategy_type=strategy_type,
-        )
+        return None
 
     def _unsafe(
         self,

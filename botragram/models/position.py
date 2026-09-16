@@ -142,3 +142,15 @@ class Position:
         return len(suffix) == _CLIENT_ALGO_ID_HEX_LENGTH and all(
             character in _LOWER_HEX_CHARACTERS for character in suffix
         )
+
+    @staticmethod
+    def is_generated_take_profit_client_algo_id(client_id: str | None) -> bool:
+        """Return whether an identity has Botragram's generated TP form."""
+        if client_id is None or not client_id.startswith(
+            _TAKE_PROFIT_CLIENT_ALGO_ID_PREFIX
+        ):
+            return False
+        suffix = client_id.removeprefix(_TAKE_PROFIT_CLIENT_ALGO_ID_PREFIX)
+        return len(suffix) == _CLIENT_ALGO_ID_HEX_LENGTH and all(
+            character in _LOWER_HEX_CHARACTERS for character in suffix
+        )

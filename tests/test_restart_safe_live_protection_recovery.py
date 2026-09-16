@@ -167,6 +167,21 @@ class RestartProtectionExchange(BinanceFuturesExchangeClient):
             order for order in self.orders if order.client_order_id != client_id
         ]
 
+    async def cancel_order(self, *, symbol: str, order_id: str) -> Order:
+        del symbol
+        self.cancelled.append(order_id)
+        for order in list(self.orders):
+            if order.order_id == order_id:
+                self.orders.remove(order)
+                return order
+        return _order(
+            order_id=order_id,
+            client_id=None,
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_MARKET,
+            trigger=Decimal("100"),
+        )
+
     async def get_market_entry_rules(self, *, symbol: str) -> ExchangeSymbolRules:
         return ExchangeSymbolRules(
             symbol=symbol,
@@ -1273,3 +1288,62 @@ async def test_ensure_recovers_when_persisted_take_profit_is_canceled() -> None:
     assert protected.take_profit == Decimal("104")
     assert protected.take_profit_client_algo_id is not None
     assert protected.take_profit_client_algo_id != tp_id
+
+
+@pytest.mark.asyncio
+async def test_unowned_manual_protection_orders_are_cancelled_and_replaced() -> None:
+    """Cancel foreign protection orders and establish systematic legs."""
+    exchange = RestartProtectionExchange()
+    exchange.orders = [
+        _order(
+            order_id="bybit-manual-sl-12345",
+            client_id=None,
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_MARKET,
+            trigger=Decimal("95"),
+        ),
+        _order(
+            order_id="bybit-manual-tp-67890",
+            client_id="custom-user-tp",
+            side=OrderSide.SELL,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            trigger=Decimal("110"),
+        ),
+    ]
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(
+            settings=replace(
+                RiskSettings(),
+                ema_cross_stop_loss_pct=Decimal("0.02"),
+                ema_cross_take_profit_pct=Decimal("0.04"),
+            )
+        ),
+    )
+    # Position entered manually on Bybit with no bot-tracked algo IDs initially
+    position = _position(
+        stop_loss=None,
+        take_profit=None,
+        stop_id=None,
+        tp_id=None,
+    )
+
+    protected = await service.ensure(position=position)
+
+    # Manual orders must have been canceled via cancel_order
+    assert "bybit-manual-sl-12345" in exchange.cancelled
+    assert "bybit-manual-tp-67890" in exchange.cancelled
+
+    # Botragram's systematic legs must have been established
+    assert protected.stop_loss is not None
+    assert protected.take_profit is not None
+    assert protected.stop_loss_client_algo_id is not None
+    assert protected.stop_loss_client_algo_id.startswith("bsl-")
+    assert protected.take_profit_client_algo_id is not None
+    assert protected.take_profit_client_algo_id.startswith("btp-")
+    assert exchange.posts == [
+        protected.stop_loss_client_algo_id,
+        protected.take_profit_client_algo_id,
+    ]

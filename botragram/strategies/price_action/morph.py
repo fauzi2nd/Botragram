@@ -438,6 +438,8 @@ class MorphStrategy(BaseStrategy):
             strategy_name=self.strategy_type.value,
             generated_at=curr_candle.close_time,
             reason=full_reason,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
         )
 
         # ---------------------------------------------------------------------

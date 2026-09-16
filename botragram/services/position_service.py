@@ -152,7 +152,10 @@ class PositionService:
         stored_position: Position | None,
     ) -> Position:
         """Preserve metadata absent from an exchange position snapshot."""
-        if stored_position is None:
+        if (
+            stored_position is None
+            or stored_position.side is not exchange_position.side
+        ):
             return exchange_position
 
         return replace(

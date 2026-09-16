@@ -1139,12 +1139,35 @@ async def test_live_recovery_clears_preexisting_monitor_state_before_recovery() 
 @pytest.mark.asyncio
 async def test_live_unsafe_portfolio_clears_stale_runtime_context() -> None:
     """Partial portfolio diagnostics must never preserve prior active context."""
-    exchange = RecoveryExchangeClient(positions=(_position(include_metadata=False),))
+    position = _position(include_metadata=False)
+    exchange = RecoveryExchangeClient(positions=(position,))
     repository = MemoryPositionRepository()
+    signal_repository = MemorySignalRepository()
+    await signal_repository.save(
+        signal=Signal(
+            symbol=position.symbol,
+            signal_type=SignalType.BUY,
+            price=position.entry_price,
+            confidence=Decimal("0.8"),
+            strategy_name=StrategyType.EMA_CROSS.value,
+            generated_at=position.opened_at,
+        )
+    )
+    await signal_repository.save(
+        signal=Signal(
+            symbol=position.symbol,
+            signal_type=SignalType.BUY,
+            price=position.entry_price,
+            confidence=Decimal("0.9"),
+            strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
+            generated_at=position.opened_at,
+        )
+    )
     service, control = _recovery_service(
         trade_mode=TradeMode.LIVE,
         exchange=exchange,
         repository=repository,
+        signal_repository=signal_repository,
     )
     control.set_runtime_contexts(
         contexts=(
@@ -1603,3 +1626,56 @@ def test_live_runtime_recovery_fails_closed_on_natural_exit_guard() -> None:
     assert natural_exit_recovery.calls == 1
     assert control.is_paused
     assert "position protection" in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_position_service_does_not_merge_metadata_on_side_flip() -> None:
+    """Do not merge stored position metadata when position flipped sides on venue."""
+    now = datetime(2026, 9, 15, tzinfo=UTC)
+    stored_short = Position(
+        symbol="KAITOUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("96"),
+        entry_price=Decimal("0.2881"),
+        current_price=Decimal("0.2881"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=now,
+        updated_at=now,
+        stop_loss=Decimal("0.2883"),
+        take_profit=Decimal("0.2878"),
+        stop_loss_client_algo_id="bsl-478dcb7d2d054bf8aa1d5c9ca142e2ab",
+        take_profit_client_algo_id="btp-55a3defe7efd44fdbfa9c23c23265770",
+    )
+    exchange_long = Position(
+        symbol="KAITOUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("48"),
+        entry_price=Decimal("0.2881"),
+        current_price=Decimal("0.2881"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=now,
+        updated_at=now,
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=stored_short)
+    exchange = RecoveryExchangeClient(
+        positions=(exchange_long,),
+        position_repository=repository,
+    )
+    position_engine = PositionEngine(exchange_client=exchange)
+    service = PositionService(
+        position_engine=position_engine,
+        position_repository=repository,
+    )
+
+    synced = await service.sync()
+
+    assert len(synced) == 1
+    merged = synced[0]
+    assert merged.side is PositionSide.LONG
+    assert merged.stop_loss is None
+    assert merged.take_profit is None
+    assert merged.stop_loss_client_algo_id is None
+    assert merged.take_profit_client_algo_id is None

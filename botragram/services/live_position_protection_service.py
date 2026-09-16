@@ -93,18 +93,6 @@ class LivePositionProtectionService:
         )
         stop_order: Order | None = None
         take_profit_order: Order | None = None
-        if position.stop_loss_client_algo_id is None:
-            stop_order = self._find_protection_order(
-                orders=protection_orders,
-                position=position,
-                order_type=OrderType.STOP_MARKET,
-            )
-        if position.take_profit_client_algo_id is None:
-            take_profit_order = self._find_protection_order(
-                orders=protection_orders,
-                position=position,
-                order_type=OrderType.TAKE_PROFIT_MARKET,
-            )
 
         # A client identity retained from an earlier process cannot prove whether
         # its POST was never attempted or reached the exchange before a crash.
@@ -138,6 +126,18 @@ class LivePositionProtectionService:
                     stop_order = None
             else:
                 stop_order = persisted_stop
+        elif position.stop_loss is not None:
+            candidate_stop = self._find_protection_order(
+                orders=protection_orders,
+                position=position,
+                order_type=OrderType.STOP_MARKET,
+            )
+            if (
+                candidate_stop is not None
+                and candidate_stop.stop_price == position.stop_loss
+            ):
+                stop_order = candidate_stop
+
         if position.take_profit_client_algo_id is not None:
             persisted_tp = await self._recover_persisted_leg(
                 position=position,
@@ -153,6 +153,75 @@ class LivePositionProtectionService:
                 take_profit_order = None
             else:
                 take_profit_order = persisted_tp
+        elif position.take_profit is not None:
+            candidate_tp = self._find_protection_order(
+                orders=protection_orders,
+                position=position,
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+            )
+            if (
+                candidate_tp is not None
+                and candidate_tp.stop_price == position.take_profit
+            ):
+                take_profit_order = candidate_tp
+
+        closing_side = self._closing_side(position.side)
+        for order in protection_orders:
+            if (
+                order.symbol.upper() == position.symbol.upper()
+                and order.side is closing_side
+                and order.status is OrderStatus.NEW
+            ):
+                is_owned_stop = (
+                    position.stop_loss_client_algo_id is not None
+                    and order.client_order_id == position.stop_loss_client_algo_id
+                )
+                is_owned_tp = (
+                    position.take_profit_client_algo_id is not None
+                    and order.client_order_id == position.take_profit_client_algo_id
+                )
+                is_adopted_stop = (
+                    stop_order is not None and order.order_id == stop_order.order_id
+                )
+                is_adopted_tp = (
+                    take_profit_order is not None
+                    and order.order_id == take_profit_order.order_id
+                )
+                is_replacement_stop = Position.is_generated_stop_loss_client_algo_id(
+                    order.client_order_id
+                )
+                is_replacement_tp = Position.is_generated_take_profit_client_algo_id(
+                    order.client_order_id
+                )
+                if not (
+                    is_owned_stop
+                    or is_owned_tp
+                    or is_adopted_stop
+                    or is_adopted_tp
+                    or is_replacement_stop
+                    or is_replacement_tp
+                ):
+                    _LOGGER.info(
+                        "Canceling unowned / manual protection order on venue: "
+                        "symbol=%s order_id=%s client_id=%s type=%s",
+                        position.symbol,
+                        order.order_id,
+                        order.client_order_id,
+                        order.order_type.value,
+                    )
+                    try:
+                        await self.exchange_client.cancel_order(
+                            symbol=position.symbol,
+                            order_id=order.order_id,
+                        )
+                    except Exception as error:
+                        _LOGGER.warning(
+                            "Failed to cancel unowned protection order: "
+                            "symbol=%s order_id=%s error=%s",
+                            position.symbol,
+                            order.order_id,
+                            error,
+                        )
 
         if stop_order is None or take_profit_order is None:
             (

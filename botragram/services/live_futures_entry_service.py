@@ -393,6 +393,10 @@ class LiveFuturesEntryService:
                 interval=interval,
                 strategy_type=self._resolve_strategy_type(signal.strategy_name),
                 entry_client_order_id=client_order_id,
+                stop_loss=risk_result.metrics.stop_loss,
+                take_profit=risk_result.metrics.take_profit,
+                stop_loss_client_algo_id=Position.create_stop_loss_client_algo_id(),
+                take_profit_client_algo_id=Position.create_take_profit_client_algo_id(),
             )
             await self.position_service.save(position=persisted_position)
             _LOGGER.info(

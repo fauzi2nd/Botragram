@@ -15,9 +15,10 @@ from botragram.enums import (
     LivePortfolioRecoveryStatus,
     LivePortfolioRecoveryUnsafeReason,
     PositionSide,
+    SignalType,
     StrategyType,
 )
-from botragram.models import LivePortfolioRecoveryResult, Position
+from botragram.models import LivePortfolioRecoveryResult, Position, Signal
 from botragram.services import (
     LivePortfolioRecoveryService,
     LivePositionLifecycleCoordinator,
@@ -145,6 +146,7 @@ def _service(
     cancel_sync: bool = False,
     fail_sync: bool = False,
     cancel_protection: str | None = None,
+    signal_repository: MemorySignalRepository | None = None,
 ) -> tuple[LivePortfolioRecoveryService, TradingRuntimeControl]:
     """Construct recovery with deterministic protocol-compatible fakes."""
     control = TradingRuntimeControl()
@@ -163,7 +165,7 @@ def _service(
                 cancel_symbol=cancel_protection,
             ),
             runtime_control=control,
-            signal_repository=MemorySignalRepository(),
+            signal_repository=signal_repository or MemorySignalRepository(),
             candle_repository=MemoryCandleRepository(),
         ),
         control,
@@ -297,12 +299,56 @@ async def test_recovery_excludes_concurrent_stepped_stop_snapshot_overwrite() ->
 
 
 @pytest.mark.asyncio
-async def test_unknown_metadata_fails_before_persistence_or_protection() -> None:
-    """Never infer strategy or interval for an unmanaged exchange position."""
+async def test_manual_position_without_signal_is_adopted_into_active_strategy() -> None:
+    """Adopt unmanaged manual exchange position into active runtime strategy."""
     events: list[str] = []
     service, control = _service(
         positions=(_position("BTCUSDT", interval=None, strategy_type=None),),
         events=events,
+    )
+
+    result = await service.recover()
+
+    assert result.status is LivePortfolioRecoveryStatus.SINGLE_POSITION_SAFE
+    assert len(result.recovered_positions) == 1
+    recovered = result.recovered_positions[0]
+    assert recovered.symbol == "BTCUSDT"
+    assert recovered.strategy_type is control.configured_strategy_type
+    assert recovered.interval is control.interval
+    assert events == ["sync", "BTCUSDT:persist", "BTCUSDT:protect"]
+    assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_signals_fail_closed_as_unknown_metadata() -> None:
+    """Fail closed when signals exist for the position open time but are ambiguous."""
+    events: list[str] = []
+    position = _position("BTCUSDT", interval=None, strategy_type=None)
+    signal_repo = MemorySignalRepository()
+    await signal_repo.save(
+        signal=Signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("100"),
+            confidence=Decimal("0.8"),
+            strategy_name=StrategyType.EMA_CROSS.value,
+            generated_at=position.opened_at,
+        )
+    )
+    await signal_repo.save(
+        signal=Signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("100"),
+            confidence=Decimal("0.9"),
+            strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
+            generated_at=position.opened_at,
+        )
+    )
+    service, control = _service(
+        positions=(position,),
+        events=events,
+        signal_repository=signal_repo,
     )
 
     result = await service.recover()

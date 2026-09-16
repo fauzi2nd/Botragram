@@ -502,13 +502,17 @@ class PaperTradingService:
             realized_pnl=None,
             action="trade",
         )
-        stop_loss, take_profit = (
-            self.trading_engine.risk_engine.calculate_protection_levels(
-                side=position_side,
-                entry_price=fill_price,
-                strategy_type=self._resolve_strategy_type(signal.strategy_name),
+        if signal.stop_loss is not None and signal.take_profit is not None:
+            stop_loss = risk_result.metrics.stop_loss
+            take_profit = risk_result.metrics.take_profit
+        else:
+            stop_loss, take_profit = (
+                self.trading_engine.risk_engine.calculate_protection_levels(
+                    side=position_side,
+                    entry_price=fill_price,
+                    strategy_type=self._resolve_strategy_type(signal.strategy_name),
+                )
             )
-        )
         position = Position(
             symbol=signal.symbol,
             side=position_side,

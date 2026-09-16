@@ -371,6 +371,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         signal_type = SignalType.HOLD
         confidence = _DECIMAL_ZERO
         reason = "No candlestick confluence pattern matched"
+        stop_loss: Decimal | None = None
+        take_profit: Decimal | None = None
 
         # Check BUY (Long) Setup with Dual EMA Alignment
         trend_dist_long = (
@@ -666,6 +668,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             strategy_name=self.strategy_type.value,
             generated_at=curr_candle.close_time,
             reason=reason,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
         )
 
         if self.use_open_interest and signal_type is not SignalType.HOLD:

@@ -121,16 +121,69 @@ class RiskEngine:
         stop_loss_pct, take_profit_pct = self._resolve_exit_rates(
             strategy_type=strategy_type,
         )
-        stop_loss = self._calculate_stop_loss(
-            signal_type=signal.signal_type,
-            entry_price=signal.price,
-            stop_loss_pct=stop_loss_pct,
-        )
-        take_profit = self._calculate_take_profit(
-            signal_type=signal.signal_type,
-            entry_price=signal.price,
-            take_profit_pct=take_profit_pct,
-        )
+
+        if signal.stop_loss is not None:
+            if not signal.stop_loss.is_finite() or signal.stop_loss <= _DECIMAL_ZERO:
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Explicit stop-loss must be finite and positive",
+                )
+            if (
+                signal.signal_type is SignalType.BUY
+                and signal.stop_loss >= signal.price
+            ):
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Explicit buy stop-loss must be below entry price",
+                )
+            if (
+                signal.signal_type is SignalType.SELL
+                and signal.stop_loss <= signal.price
+            ):
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Explicit sell stop-loss must be above entry price",
+                )
+            stop_loss = signal.stop_loss
+        else:
+            stop_loss = self._calculate_stop_loss(
+                signal_type=signal.signal_type,
+                entry_price=signal.price,
+                stop_loss_pct=stop_loss_pct,
+            )
+
+        if signal.take_profit is not None:
+            if (
+                not signal.take_profit.is_finite()
+                or signal.take_profit <= _DECIMAL_ZERO
+            ):
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Explicit take-profit must be finite and positive",
+                )
+            if (
+                signal.signal_type is SignalType.BUY
+                and signal.take_profit <= signal.price
+            ):
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Explicit buy take-profit must be above entry price",
+                )
+            if (
+                signal.signal_type is SignalType.SELL
+                and signal.take_profit >= signal.price
+            ):
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Explicit sell take-profit must be below entry price",
+                )
+            take_profit = signal.take_profit
+        else:
+            take_profit = self._calculate_take_profit(
+                signal_type=signal.signal_type,
+                entry_price=signal.price,
+                take_profit_pct=take_profit_pct,
+            )
 
         risk_per_unit = abs(signal.price - stop_loss)
         if risk_per_unit <= _DECIMAL_ZERO:

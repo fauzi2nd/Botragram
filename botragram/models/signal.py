@@ -51,3 +51,5 @@ class Signal:
     generated_at: datetime
 
     reason: str | None = None
+    stop_loss: Decimal | None = None
+    take_profit: Decimal | None = None
