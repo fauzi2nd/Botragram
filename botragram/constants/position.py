@@ -22,7 +22,6 @@ __all__ = [
     "DEFAULT_LEVERAGE",
     "DEFAULT_STOP_LOSS_RATE",
     "DEFAULT_TAKE_PROFIT_RATE",
-    "DEFAULT_TRAILING_STOP_RATE",
 ]
 
 # =============================================================================
@@ -37,6 +36,3 @@ DEFAULT_STOP_LOSS_RATE: Decimal = Decimal("0.02")
 
 # Default take-profit distance from the entry price (4%).
 DEFAULT_TAKE_PROFIT_RATE: Decimal = Decimal("0.04")
-
-# Default trailing-stop distance from the reference price (1%).
-DEFAULT_TRAILING_STOP_RATE: Decimal = Decimal("0.01")

@@ -68,10 +68,6 @@ from botragram.telegram.strategy_switch import (
     strategy_switch_callback,
     strategy_switch_command,
 )
-from botragram.telegram.trailing_stop_commands import (
-    set_trailing_stop_command,
-    trailing_stop_command,
-)
 
 
 def register_handlers(app: Any) -> None:
@@ -97,8 +93,6 @@ def register_handlers(app: Any) -> None:
     app.add_handler(CommandHandler("setleverage", set_leverage_command))
     app.add_handler(CommandHandler("risklimits", risk_limits_command))
     app.add_handler(CommandHandler("setrisklimits", set_risk_limits_command))
-    app.add_handler(CommandHandler("trailingstop", trailing_stop_command))
-    app.add_handler(CommandHandler("settrail", set_trailing_stop_command))
     app.add_handler(CommandHandler("exitstatus", exit_status_command))
 
     app.add_handler(CommandHandler("closeposition", close_position_command))

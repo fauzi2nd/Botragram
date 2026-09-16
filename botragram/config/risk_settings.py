@@ -76,15 +76,6 @@ class RiskSettings:
     partial_tp_ratio: Decimal = Decimal("0.50")
     partial_tp_trigger_progress: Decimal = Decimal("0.50")
 
-    # Trailing Stop
-    trailing_stop_enabled: bool = False
-    trailing_stop_trigger_pct: Decimal = Decimal("0.015")
-    trailing_stop_distance_pct: Decimal = Decimal("0.008")
-    trailing_stop_tier2_trigger_pct: Decimal = Decimal("0")
-    trailing_stop_tier2_distance_pct: Decimal = Decimal("0")
-    trailing_stop_tier3_trigger_pct: Decimal = Decimal("0")
-    trailing_stop_tier3_distance_pct: Decimal = Decimal("0")
-
     # Early In-Flight Position Exit
     enable_early_position_exit: bool = False
     early_exit_min_confidence: float = 0.75
@@ -196,58 +187,6 @@ class RiskSettings:
                     "Partial take-profit trigger progress must be "
                     "strictly between 0 and 1"
                 )
-
-        if self.trailing_stop_enabled:
-            if not self.trailing_stop_trigger_pct.is_finite() or not (
-                Decimal("0") < self.trailing_stop_trigger_pct < Decimal("1")
-            ):
-                raise ValueError(
-                    "Trailing stop trigger percentage must be strictly between 0 and 1"
-                )
-            if not self.trailing_stop_distance_pct.is_finite() or not (
-                Decimal("0") < self.trailing_stop_distance_pct < Decimal("1")
-            ):
-                raise ValueError(
-                    "Trailing stop distance percentage must be strictly between 0 and 1"
-                )
-            if self.trailing_stop_distance_pct >= self.trailing_stop_trigger_pct:
-                raise ValueError(
-                    "Trailing stop distance must be less than trigger percentage"
-                )
-            if self.trailing_stop_tier2_trigger_pct > Decimal("0"):
-                if (
-                    self.trailing_stop_tier2_trigger_pct
-                    <= self.trailing_stop_trigger_pct
-                ):
-                    raise ValueError(
-                        "Trailing stop tier 2 trigger must exceed tier 1 trigger"
-                    )
-                if not (
-                    Decimal("0")
-                    < self.trailing_stop_tier2_distance_pct
-                    < self.trailing_stop_distance_pct
-                ):
-                    raise ValueError(
-                        "Trailing stop tier 2 distance must be strictly between "
-                        "0 and tier 1 distance"
-                    )
-            if self.trailing_stop_tier3_trigger_pct > Decimal("0"):
-                if (
-                    self.trailing_stop_tier3_trigger_pct
-                    <= self.trailing_stop_tier2_trigger_pct
-                ):
-                    raise ValueError(
-                        "Trailing stop tier 3 trigger must exceed tier 2 trigger"
-                    )
-                if not (
-                    Decimal("0")
-                    < self.trailing_stop_tier3_distance_pct
-                    < self.trailing_stop_tier2_distance_pct
-                ):
-                    raise ValueError(
-                        "Trailing stop tier 3 distance must be strictly between "
-                        "0 and tier 2 distance"
-                    )
 
         if self.volatility_sizing_enabled:
             if not self.baseline_volatility_pct.is_finite() or not (

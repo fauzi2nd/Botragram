@@ -113,13 +113,6 @@ async def run_upgraded_pier_top10_backtest() -> list[UpgradeComparisonSummary]:
             leverage=5,
             stop_loss_pct=Decimal("0.012"),
             take_profit_pct=Decimal("0.024"),
-            trailing_stop_enabled=True,
-            trailing_stop_trigger_pct=Decimal("0.015"),
-            trailing_stop_distance_pct=Decimal("0.006"),
-            trailing_stop_tier2_trigger_pct=Decimal("0.022"),
-            trailing_stop_tier2_distance_pct=Decimal("0.0035"),
-            trailing_stop_tier3_trigger_pct=Decimal("0.035"),
-            trailing_stop_tier3_distance_pct=Decimal("0.0020"),
             volatility_sizing_enabled=True,
             baseline_volatility_pct=Decimal("0.015"),
         )

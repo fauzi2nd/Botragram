@@ -254,31 +254,6 @@ class BotRuntimeControl(Protocol):
         """Select dynamic leverage mode while paused."""
         ...
 
-    @property
-    def trailing_stop_enabled(self) -> bool:
-        """Return whether trailing stop is active."""
-        ...
-
-    @property
-    def trailing_stop_trigger_pct(self) -> Decimal:
-        """Return the trailing stop trigger percentage."""
-        ...
-
-    @property
-    def trailing_stop_distance_pct(self) -> Decimal:
-        """Return the trailing stop distance percentage."""
-        ...
-
-    def select_trailing_stop(
-        self,
-        *,
-        enabled: bool,
-        trigger_pct: Decimal,
-        distance_pct: Decimal,
-    ) -> bool:
-        """Select trailing stop parameters while paused."""
-        ...
-
     def select_interval(self, interval: Interval) -> bool:
         """Select a candle interval while paused."""
         ...
@@ -417,9 +392,6 @@ class BotContext:
     dynamic_leverage_enabled: bool = False
     stop_loss_pct: Decimal = Decimal("0.01")
     take_profit_pct: Decimal = Decimal("0.02")
-    trailing_stop_enabled: bool = False
-    trailing_stop_trigger_pct: Decimal = Decimal("0.015")
-    trailing_stop_distance_pct: Decimal = Decimal("0.008")
     query_provider: BotQueryProvider | None = None
 
     runtime_control: BotRuntimeControl | None = None

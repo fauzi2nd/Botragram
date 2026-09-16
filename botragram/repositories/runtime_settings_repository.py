@@ -17,7 +17,6 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 from abc import ABC, abstractmethod
-from decimal import Decimal
 
 # =============================================================================
 # Local Imports
@@ -50,20 +49,6 @@ class RuntimeSettingsRepository(ABC):
     @abstractmethod
     async def save_leverage(self, *, leverage: int) -> None:
         """Atomically persist the active runtime leverage."""
-
-    @abstractmethod
-    async def get_trailing_stop(self) -> tuple[bool, Decimal, Decimal] | None:
-        """Return the latest durable trailing stop settings (enabled, trigger, dist)."""
-
-    @abstractmethod
-    async def save_trailing_stop(
-        self,
-        *,
-        enabled: bool,
-        trigger_pct: Decimal,
-        distance_pct: Decimal,
-    ) -> None:
-        """Atomically persist the active trailing stop settings."""
 
     @abstractmethod
     async def get_dynamic_leverage(self) -> bool | None:

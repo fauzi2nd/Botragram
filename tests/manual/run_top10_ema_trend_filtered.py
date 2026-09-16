@@ -136,7 +136,7 @@ async def run_trend_filter_comparison() -> list[TrendComparisonSummary]:
     try:
         base_strat = EMAScalpingStrategy()
         filt_strat = TrendFilteredEMAScalpingStrategy()
-        risk_settings = RiskSettings(leverage=5, trailing_stop_enabled=True)
+        risk_settings = RiskSettings(leverage=5)
 
         base_engine = BacktestEngine(strategy=base_strat, risk_settings=risk_settings)
         filt_engine = BacktestEngine(strategy=filt_strat, risk_settings=risk_settings)

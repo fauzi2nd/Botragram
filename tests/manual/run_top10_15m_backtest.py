@@ -141,17 +141,13 @@ async def run_15m_top10_backtest() -> list[TimeframeComparisonSummary]:
             leverage=5,
             scalping_stop_loss_pct=Decimal("0.012"),
             scalping_take_profit_pct=Decimal("0.025"),
-            trailing_stop_enabled=False,
             volatility_sizing_enabled=False,
         )
-        # Enhanced: With Trailing Stop & Volatility Sizing on 15m
+        # Enhanced: With Volatility Sizing on 15m
         enh_risk = RiskSettings(
             leverage=5,
             scalping_stop_loss_pct=Decimal("0.012"),
             scalping_take_profit_pct=Decimal("0.025"),
-            trailing_stop_enabled=True,
-            trailing_stop_trigger_pct=Decimal("0.015"),
-            trailing_stop_distance_pct=Decimal("0.008"),
             volatility_sizing_enabled=True,
             baseline_volatility_pct=Decimal("0.015"),
         )

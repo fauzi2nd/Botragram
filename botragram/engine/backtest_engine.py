@@ -335,29 +335,6 @@ class BacktestEngine:
                         candidate_stops.append(
                             position.entry_price - tp_distance * locked_progress
                         )
-
-        if self.risk_settings.trailing_stop_enabled:
-            if position.side is PositionSide.LONG:
-                pnl_pct = (
-                    (candle.high_price - position.entry_price) / position.entry_price
-                    if position.entry_price > _DECIMAL_ZERO
-                    else _DECIMAL_ZERO
-                )
-                if pnl_pct >= self.risk_settings.trailing_stop_trigger_pct:
-                    distance = self._resolve_trailing_distance(pnl_pct)
-                    trailing_stop = candle.high_price * (Decimal("1") - distance)
-                    candidate_stops.append(trailing_stop)
-            else:
-                pnl_pct = (
-                    (position.entry_price - candle.low_price) / position.entry_price
-                    if position.entry_price > _DECIMAL_ZERO
-                    else _DECIMAL_ZERO
-                )
-                if pnl_pct >= self.risk_settings.trailing_stop_trigger_pct:
-                    distance = self._resolve_trailing_distance(pnl_pct)
-                    trailing_stop = candle.low_price * (Decimal("1") + distance)
-                    candidate_stops.append(trailing_stop)
-
         if not candidate_stops:
             return
 
@@ -384,20 +361,6 @@ class BacktestEngine:
                 updated_at=candle.close_time,
             )
         )
-
-    def _resolve_trailing_distance(self, profit_pct: Decimal) -> Decimal:
-        """Resolve trailing distance percentage based on profit tiers."""
-        if (
-            self.risk_settings.trailing_stop_tier3_trigger_pct > _DECIMAL_ZERO
-            and profit_pct >= self.risk_settings.trailing_stop_tier3_trigger_pct
-        ):
-            return self.risk_settings.trailing_stop_tier3_distance_pct
-        if (
-            self.risk_settings.trailing_stop_tier2_trigger_pct > _DECIMAL_ZERO
-            and profit_pct >= self.risk_settings.trailing_stop_tier2_trigger_pct
-        ):
-            return self.risk_settings.trailing_stop_tier2_distance_pct
-        return self.risk_settings.trailing_stop_distance_pct
 
     @staticmethod
     async def _equity_state(

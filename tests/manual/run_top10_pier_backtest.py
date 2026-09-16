@@ -100,18 +100,14 @@ async def run_pier_top10_backtest() -> list[PierBacktestSummary]:
             leverage=5,
             stop_loss_pct=Decimal("0.012"),
             take_profit_pct=Decimal("0.024"),
-            trailing_stop_enabled=False,
             volatility_sizing_enabled=False,
         )
 
-        # Enhanced: Dynamic Trailing Stop (trigger 1.2%, distance 0.6%)
+        # Enhanced: Volatility Sizing
         enh_risk = RiskSettings(
             leverage=5,
             stop_loss_pct=Decimal("0.012"),
             take_profit_pct=Decimal("0.024"),
-            trailing_stop_enabled=True,
-            trailing_stop_trigger_pct=Decimal("0.012"),
-            trailing_stop_distance_pct=Decimal("0.006"),
             volatility_sizing_enabled=True,
             baseline_volatility_pct=Decimal("0.015"),
         )

@@ -16,11 +16,6 @@ from botragram.services.candle_sync_service import CandleSyncService
 from botragram.services.closed_position_lifecycle_service import (
     ClosedPositionLifecycleService,
 )
-from botragram.services.comparative_backtest_service import (
-    ComparativeBacktestResult,
-    ComparativeBacktestService,
-    calculate_sharpe_ratio,
-)
 from botragram.services.execution_authorization_service import (
     ExecutionAuthorizationService,
 )
@@ -102,9 +97,6 @@ __all__ = [
     "CandleRetentionService",
     "CandleSyncService",
     "ClosedPositionLifecycleService",
-    "ComparativeBacktestResult",
-    "ComparativeBacktestService",
-    "calculate_sharpe_ratio",
     "AccountService",
     "AutonomousPaperExecutionService",
     "AutonomousLiveEntryIntentService",
