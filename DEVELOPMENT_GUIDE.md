@@ -539,6 +539,7 @@ python -m ruff format --check .
 python -m ruff check .
 python -m pyright
 python -m mypy botragram
+pyrefly check
 python -m pytest
 git diff --check
 ```

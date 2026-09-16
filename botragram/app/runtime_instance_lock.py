@@ -144,15 +144,15 @@ class RuntimeInstanceLock:
                     return False
                 raise
             return True
-
-        try:
-            fcntl.flock(
-                file_descriptor,
-                fcntl.LOCK_EX | fcntl.LOCK_NB,
-            )
-        except BlockingIOError:
-            return False
-        return True
+        else:
+            try:
+                fcntl.flock(
+                    file_descriptor,
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                )
+            except BlockingIOError:
+                return False
+            return True
 
     @staticmethod
     def _release_file_lock(*, file_descriptor: int) -> None:
@@ -165,7 +165,8 @@ class RuntimeInstanceLock:
                 _LOCK_BYTE_COUNT,
             )
             return
-        fcntl.flock(file_descriptor, fcntl.LOCK_UN)
+        else:
+            fcntl.flock(file_descriptor, fcntl.LOCK_UN)
 
     def _write_process_id(self, *, file_descriptor: int) -> None:
         """Replace diagnostic lock metadata with this process identifier."""

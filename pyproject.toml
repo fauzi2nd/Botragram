@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "mypy",
+    "pyrefly",
     "pyright",
     "pytest",
     "pytest-asyncio",
@@ -54,3 +55,17 @@ exclude = [".venv", "scratch"]
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 ignore = []
+
+[tool.pyrefly]
+project-includes = [
+    "botragram",
+    "tests",
+    "main.py",
+]
+project-excludes = ["**/.venv*", "scratch"]
+python-version = "3.14.0"
+preset = "legacy"
+
+[tool.pyrefly.errors]
+no-any-return = "error"
+redundant-cast = "warn"

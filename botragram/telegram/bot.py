@@ -95,7 +95,7 @@ class TelegramBot:
 
     @property
     def is_running(self) -> bool:
-        return self._app is not None
+        return bool(self._app is not None)
 
     async def start(self) -> None:
         """Initialize Telegram resources and begin long polling."""

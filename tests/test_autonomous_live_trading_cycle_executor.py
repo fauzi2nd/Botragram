@@ -168,7 +168,9 @@ class _Reconciler:
     """Return deterministic authoritative managed portfolio snapshots."""
 
     results: list[LiveRuntimePortfolioContext | None] = field(
-        default_factory=lambda: [_portfolio_context()]
+        default_factory=lambda: list[LiveRuntimePortfolioContext | None](
+            [_portfolio_context()]
+        )
     )
     calls: int = 0
     last_context: LiveRuntimePortfolioContext = field(

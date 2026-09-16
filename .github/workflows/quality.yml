@@ -47,5 +47,8 @@ jobs:
       - name: Type-check with MyPy
         run: python -m mypy botragram
 
+      - name: Type-check with Pyrefly
+        run: pyrefly check
+
       - name: Run tests
         run: python -m pytest

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from socket import gaierror
@@ -320,7 +320,10 @@ def test_existing_unhealthy_target_stream_fails_closed(failed: bool) -> None:
 def test_unhealthy_monitor_is_replaced_after_protection_recovery() -> None:
     """Replace sticky local monitor failure after portfolio protection is safe."""
 
+    @dataclass(slots=True, kw_only=True)
     class RecoverableUnhealthyMonitors(_Monitors):
+        unhealthy_symbols: set[str] = field(default_factory=set[str])
+
         def __init__(self, *, context: LiveRuntimePositionContext) -> None:
             super().__init__()
             self._contexts[context.symbol] = context
