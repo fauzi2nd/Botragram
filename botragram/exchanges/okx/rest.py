@@ -18,6 +18,8 @@ from __future__ import annotations
 # =============================================================================
 from botragram.exchanges.base.rest import BaseRestClient
 
+__all__ = ["OkxRestClient"]
+
 
 # =============================================================================
 # REST Client Class

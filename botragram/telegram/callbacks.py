@@ -1047,8 +1047,11 @@ async def handle_callback_query(
         if data != "cb_risk_limits":
             if not is_paused:
                 try:
+                    alert_msg = (
+                        "⚠️ Pause trading terlebih dahulu sebelum mengubah risk limits!"
+                    )
                     await query.answer(
-                        "⚠️ Pause trading terlebih dahulu sebelum mengubah risk limits!",
+                        alert_msg,
                         show_alert=True,
                     )
                 except Exception:

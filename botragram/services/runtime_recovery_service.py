@@ -207,10 +207,12 @@ class RuntimeRecoveryService:
                     if self.autonomous_live_entry_authorization is not None:
                         if activate_runtime:
                             self.runtime_control.resume_global_cycle()
+                        auth = self.autonomous_live_entry_authorization
+                        auth_env = auth.environment.value.upper()
                         _LOGGER.info(
                             "%s autonomous LIVE runtime %s after clean "
                             "portfolio reconciliation",
-                            self.autonomous_live_entry_authorization.environment.value.upper(),
+                            auth_env,
                             "activated" if activate_runtime else "prepared",
                         )
                         return True
@@ -235,9 +237,11 @@ class RuntimeRecoveryService:
                     self.runtime_control.set_position_protection_ready(True)
                     if activate_runtime:
                         self.runtime_control.resume_global_cycle()
+                    auth = self.autonomous_live_entry_authorization
+                    auth_env = auth.environment.value.upper()
                     _LOGGER.info(
                         "%s autonomous LIVE runtime %s after clean portfolio recovery",
-                        self.autonomous_live_entry_authorization.environment.value.upper(),
+                        auth_env,
                         "activated" if activate_runtime else "prepared",
                     )
                     return True

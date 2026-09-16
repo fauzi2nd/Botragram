@@ -8,6 +8,8 @@ from botragram.storage.sqlite.submission_attempt_repository import (
     SQLiteSubmissionAttemptRepository,
 )
 
+__all__ = ["SQLiteLiveRecoveryRepository"]
+
 
 class SQLiteLiveRecoveryRepository(LiveRecoveryRepository):
     __slots__ = ("_subrepo",)

@@ -576,7 +576,9 @@ class DependencyProvider:
                 market_stream_service=self.live_market_stream_service,
                 protection_monitoring_service=self.live_protection_monitoring_service,
                 first_tick_timeout_seconds=15.0,
-                live_natural_exit_recovery_service=self.live_natural_exit_recovery_service,
+                live_natural_exit_recovery_service=(
+                    self.live_natural_exit_recovery_service
+                ),
             )
             self._live_runtime_portfolio_reconciliation_service = reconciliation_service
             self._live_runtime_health_service = LiveRuntimeHealthService(
@@ -690,7 +692,9 @@ class DependencyProvider:
                     query_provider=query_service,
                     runtime_control=self.runtime_control,
                     market_type_switcher=self.market_type_switch_service,
-                    execution_authorization_service=self._execution_authorization_service,
+                    execution_authorization_service=(
+                        self._execution_authorization_service
+                    ),
                     runtime_risk_limit_service=self._runtime_risk_limit_service,
                     operator_exit_service=self.operator_exit_service,
                 )

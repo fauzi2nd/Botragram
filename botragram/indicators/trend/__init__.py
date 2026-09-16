@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from botragram.indicators.trend.adx import (
     ADXResult,
     calculate_adx,

@@ -113,6 +113,28 @@ from botragram.telegram.messages import (
 from botragram.telegram.risk_limit_commands import risk_limits_command
 
 logger: Final[logging.Logger] = logging.getLogger(__name__)
+
+__all__ = [
+    "balance_command",
+    "exchange_command",
+    "history_command",
+    "interval_command",
+    "market_command",
+    "market_overview_command",
+    "menu_message_handler",
+    "orders_command",
+    "pause_bot_command",
+    "performance_command",
+    "positions_command",
+    "settings_command",
+    "start_bot_command",
+    "start_command",
+    "status_command",
+    "stream_command",
+    "test_command",
+    "trading_mode_command",
+]
+
 _HISTORY_LIMIT: Final[int] = 10
 _ORDER_LIMIT: Final[int] = 10
 _MARKET_SEARCH_RESULT_LIMIT: Final[int] = 10

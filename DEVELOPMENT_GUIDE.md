@@ -413,7 +413,7 @@ data yang belum dinormalisasi tanpa batas ukuran.
 - Strategy dengan horizon trading berbeda WAJIB dapat memiliki exit risk profile
   sendiri. Nilai SL/TP DILARANG diasumsikan cocok untuk semua timeframe tanpa
   regression test dan evaluasi paper/backtest.
-- Trailing atau stepped stop WAJIB memakai progress harga Entry→TP, bersifat
+- Stepped profit protection (SL+) WAJIB memakai progress harga Entry→TP, bersifat
   monotonik, menyimpan step secara persistent, dan hanya mengubah order ketika
   threshold baru dilewati. Persentase UPnL yang berubah karena leverage DILARANG
   menjadi sumber progress.

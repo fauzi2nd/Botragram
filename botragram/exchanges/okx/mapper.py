@@ -18,6 +18,8 @@ from __future__ import annotations
 # =============================================================================
 from botragram.exchanges.base.mapper import BaseExchangeMapper
 
+__all__ = ["OkxMapper"]
+
 
 # =============================================================================
 # Mapper Class

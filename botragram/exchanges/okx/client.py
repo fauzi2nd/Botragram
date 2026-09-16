@@ -18,6 +18,8 @@ from __future__ import annotations
 # =============================================================================
 from botragram.exchanges.base.client import BaseExchangeClient
 
+__all__ = ["OkxClient"]
+
 
 # =============================================================================
 # Client Class

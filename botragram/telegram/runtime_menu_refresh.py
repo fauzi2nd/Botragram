@@ -32,6 +32,13 @@ from botragram.telegram.messages import (
 from botragram.telegram.strategy_switch import strategy_switch_command
 
 logger: Final[logging.Logger] = logging.getLogger(__name__)
+
+__all__ = [
+    "menu_message_handler_with_runtime_refresh",
+    "pause_bot_command_with_menu_refresh",
+    "start_bot_command_with_menu_refresh",
+]
+
 _DATA_UNAVAILABLE_MESSAGE: Final[str] = (
     "⚠️ <b>Data sementara tidak tersedia.</b> Silakan coba lagi."
 )

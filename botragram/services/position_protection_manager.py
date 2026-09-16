@@ -10,6 +10,13 @@ from decimal import Decimal
 from time import monotonic
 from typing import Final, Protocol
 
+from botragram.engine.risk_engine import (
+    DEFAULT_BREAKEVEN_FEE_BUFFER,
+    DEFAULT_BREAKEVEN_ROI_THRESHOLD,
+    LOCKED_PROGRESS_LAG,
+    PROGRESS_THRESHOLDS,
+    RiskEngine,
+)
 from botragram.enums import (
     NotificationType,
     OrderSide,
@@ -48,16 +55,10 @@ _POSITION_REFRESH_SECONDS: Final[float] = 1.0
 _FAILURE_RETRY_SECONDS: Final[float] = 5.0
 _PENDING_RECONCILIATION_ATTEMPTS: Final[int] = 2
 _PENDING_RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
-_BREAKEVEN_ROI_THRESHOLD: Final[Decimal] = Decimal("0.30")
-_BREAKEVEN_FEE_BUFFER: Final[Decimal] = Decimal("0.0016")
-_PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = (
-    Decimal("0.30"),
-    Decimal("0.45"),
-    Decimal("0.60"),
-    Decimal("0.75"),
-    Decimal("0.90"),
-)
-_LOCKED_PROGRESS_LAG: Final[Decimal] = Decimal("0.20")
+_BREAKEVEN_ROI_THRESHOLD: Final[Decimal] = DEFAULT_BREAKEVEN_ROI_THRESHOLD
+_BREAKEVEN_FEE_BUFFER: Final[Decimal] = DEFAULT_BREAKEVEN_FEE_BUFFER
+_PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = PROGRESS_THRESHOLDS
+_LOCKED_PROGRESS_LAG: Final[Decimal] = LOCKED_PROGRESS_LAG
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
@@ -805,22 +806,10 @@ class PositionProtectionManager:
         current_price: Decimal,
     ) -> Decimal:
         """Return favorable price movement as a ratio of the TP distance."""
-        take_profit = position.take_profit
-
-        if take_profit is None:
-            return _DECIMAL_ZERO
-
-        target_distance = abs(take_profit - position.entry_price)
-
-        if target_distance <= _DECIMAL_ZERO:
-            return _DECIMAL_ZERO
-
-        favorable_move = (
-            current_price - position.entry_price
-            if position.side is PositionSide.LONG
-            else position.entry_price - current_price
+        return RiskEngine.calculate_tp_progress(
+            position=position,
+            current_price=current_price,
         )
-        return max(favorable_move / target_distance, _DECIMAL_ZERO)
 
     @staticmethod
     def _calculate_roi(
@@ -829,15 +818,10 @@ class PositionProtectionManager:
         current_price: Decimal,
     ) -> Decimal:
         """Return return-on-equity (ROI) ratio based on position leverage."""
-        if position.entry_price <= _DECIMAL_ZERO or position.leverage <= 0:
-            return _DECIMAL_ZERO
-
-        if position.side is PositionSide.LONG:
-            price_change = (current_price - position.entry_price) / position.entry_price
-        else:
-            price_change = (position.entry_price - current_price) / position.entry_price
-
-        return price_change * Decimal(position.leverage)
+        return RiskEngine.calculate_position_roi(
+            position=position,
+            current_price=current_price,
+        )
 
     @classmethod
     def _resolve_step(
@@ -847,18 +831,12 @@ class PositionProtectionManager:
         roi: Decimal,
         breakeven_roi_threshold: Decimal = _BREAKEVEN_ROI_THRESHOLD,
     ) -> int:
-        """Return the highest crossed protection step number.
-
-        Step 1: Breakeven lock activated when ROI >= breakeven_roi_threshold.
-        Steps 2..6: Stepped profit protection based on TP progress
-        (30%, 45%, 60%, 75%, 90%).
-        """
-        tp_steps = sum(progress >= threshold for threshold in _PROGRESS_THRESHOLDS)
-        if tp_steps > 0:
-            return tp_steps + 1
-        if roi >= breakeven_roi_threshold:
-            return 1
-        return 0
+        """Return the highest crossed protection step number."""
+        return RiskEngine.resolve_protection_step(
+            progress=progress,
+            roi=roi,
+            breakeven_roi_threshold=breakeven_roi_threshold,
+        )
 
     @classmethod
     def _calculate_stop_loss(
@@ -869,27 +847,11 @@ class PositionProtectionManager:
         breakeven_fee_buffer: Decimal = _BREAKEVEN_FEE_BUFFER,
     ) -> Decimal:
         """Calculate the profit-lock price for a specific protection step."""
-        if step == 1:
-            buffer = position.entry_price * breakeven_fee_buffer
-            if position.side is PositionSide.LONG:
-                return position.entry_price + buffer
-            return position.entry_price - buffer
-
-        take_profit = position.take_profit
-        if take_profit is None:
-            raise ValueError("Profit protection requires a take-profit price")
-
-        threshold_idx = step - 2
-        if not (0 <= threshold_idx < len(_PROGRESS_THRESHOLDS)):
-            raise ValueError(f"Invalid protection step: {step}")
-
-        locked_progress = _PROGRESS_THRESHOLDS[threshold_idx] - _LOCKED_PROGRESS_LAG
-        locked_distance = abs(take_profit - position.entry_price) * locked_progress
-
-        if position.side is PositionSide.LONG:
-            return position.entry_price + locked_distance
-
-        return position.entry_price - locked_distance
+        return RiskEngine.calculate_stepped_stop_loss(
+            position=position,
+            step=step,
+            breakeven_fee_buffer=breakeven_fee_buffer,
+        )
 
     @staticmethod
     def _is_tighter_stop(

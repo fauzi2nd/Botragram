@@ -945,3 +945,94 @@ def test_risk_engine_dynamic_leverage_incorporates_volatility() -> None:
     )
     assert high_vol.position.leverage < 20
     assert high_vol.position.leverage >= 5
+
+
+def test_risk_engine_stepped_profit_protection() -> None:
+    """Verify deterministic stepped protection calculations in RiskEngine."""
+    long_pos = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+
+    # Progress & ROI calculation
+    assert RiskEngine.calculate_tp_progress(
+        position=long_pos, current_price=Decimal("103")
+    ) == Decimal("0.3")
+    assert RiskEngine.calculate_position_roi(
+        position=long_pos, current_price=Decimal("103")
+    ) == Decimal("0.03")
+
+    # Step resolution
+    assert (
+        RiskEngine.resolve_protection_step(
+            progress=Decimal("0.10"), roi=Decimal("0.10")
+        )
+        == 0
+    )
+    assert (
+        RiskEngine.resolve_protection_step(
+            progress=Decimal("0.10"), roi=Decimal("0.30")
+        )
+        == 1
+    )
+    assert (
+        RiskEngine.resolve_protection_step(
+            progress=Decimal("0.30"), roi=Decimal("0.10")
+        )
+        == 2
+    )
+    assert (
+        RiskEngine.resolve_protection_step(
+            progress=Decimal("0.95"), roi=Decimal("0.10")
+        )
+        == 6
+    )
+
+    # Stop price calculation for Long:
+    # Step 1 (breakeven + fee buffer: 100 * 0.0016 = 0.16 -> 100.16)
+    assert RiskEngine.calculate_stepped_stop_loss(position=long_pos, step=1) == Decimal(
+        "100.16"
+    )
+
+    # Step 2: locked progress = 30% - 20% lag = 10% -> 100 + 10 * 0.10 = 101.0
+    assert RiskEngine.calculate_stepped_stop_loss(position=long_pos, step=2) == Decimal(
+        "101.0"
+    )
+
+    # Short position
+    short_pos = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        stop_loss=Decimal("105"),
+        take_profit=Decimal("90"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+
+    # Step 1 for Short: 100 - 0.16 = 99.84
+    assert RiskEngine.calculate_stepped_stop_loss(
+        position=short_pos, step=1
+    ) == Decimal("99.84")
+
+    # Step 2 for Short: locked progress = 10% -> 100 - 10 * 0.10 = 99.0
+    assert RiskEngine.calculate_stepped_stop_loss(
+        position=short_pos, step=2
+    ) == Decimal("99.0")
+
+    # Invalid step raises ValueError
+    with pytest.raises(ValueError, match="Invalid protection step"):
+        RiskEngine.calculate_stepped_stop_loss(position=long_pos, step=7)

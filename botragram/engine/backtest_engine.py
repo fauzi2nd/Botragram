@@ -61,14 +61,6 @@ _DECIMAL_HUNDRED: Final[Decimal] = Decimal("100")
 _STRATEGY_WINDOW: Final[int] = 500
 _BREAKEVEN_ROI_THRESHOLD: Final[Decimal] = Decimal("0.30")
 _BREAKEVEN_FEE_BUFFER: Final[Decimal] = Decimal("0.001")
-_PROGRESS_THRESHOLDS: Final[tuple[Decimal, ...]] = (
-    Decimal("0.30"),
-    Decimal("0.45"),
-    Decimal("0.60"),
-    Decimal("0.75"),
-    Decimal("0.90"),
-)
-_LOCKED_PROGRESS_LAG: Final[Decimal] = Decimal("0.20")
 _PROTECTION_WARNING: Final[str] = (
     "Stepped SL+ uses conservative next-candle activation because OHLC does not "
     "encode intrabar high/low order"
@@ -288,53 +280,32 @@ class BacktestEngine:
         step = position.protection_step
 
         if tp_distance > _DECIMAL_ZERO:
-            if position.side is PositionSide.LONG:
-                progress = (candle.high_price - position.entry_price) / tp_distance
-                pnl_pct = (
-                    (candle.high_price - position.entry_price) / position.entry_price
-                    if position.entry_price > _DECIMAL_ZERO
-                    else _DECIMAL_ZERO
-                )
-            else:
-                progress = (position.entry_price - candle.low_price) / tp_distance
-                pnl_pct = (
-                    (position.entry_price - candle.low_price) / position.entry_price
-                    if position.entry_price > _DECIMAL_ZERO
-                    else _DECIMAL_ZERO
-                )
-
-            roi = pnl_pct * Decimal(position.leverage)
-
-            tp_steps = sum(
-                1 for threshold in _PROGRESS_THRESHOLDS if progress >= threshold
+            current_price = (
+                candle.high_price
+                if position.side is PositionSide.LONG
+                else candle.low_price
             )
-            if tp_steps > 0:
-                resolved_step = tp_steps + 1
-            elif roi >= self.risk_settings.breakeven_roi_threshold:
-                resolved_step = 1
-            else:
-                resolved_step = 0
-
+            progress = RiskEngine.calculate_tp_progress(
+                position=position,
+                current_price=current_price,
+            )
+            roi = RiskEngine.calculate_position_roi(
+                position=position,
+                current_price=current_price,
+            )
+            resolved_step = RiskEngine.resolve_protection_step(
+                progress=progress,
+                roi=roi,
+                breakeven_roi_threshold=self.risk_settings.breakeven_roi_threshold,
+            )
             if resolved_step > position.protection_step:
                 step = resolved_step
-                if step == 1:
-                    buffer = position.entry_price * _BREAKEVEN_FEE_BUFFER
-                    if position.side is PositionSide.LONG:
-                        candidate_stops.append(position.entry_price + buffer)
-                    else:
-                        candidate_stops.append(position.entry_price - buffer)
-                else:
-                    locked_progress = (
-                        _PROGRESS_THRESHOLDS[step - 2] - _LOCKED_PROGRESS_LAG
-                    )
-                    if position.side is PositionSide.LONG:
-                        candidate_stops.append(
-                            position.entry_price + tp_distance * locked_progress
-                        )
-                    else:
-                        candidate_stops.append(
-                            position.entry_price - tp_distance * locked_progress
-                        )
+                stop_price = RiskEngine.calculate_stepped_stop_loss(
+                    position=position,
+                    step=step,
+                    breakeven_fee_buffer=_BREAKEVEN_FEE_BUFFER,
+                )
+                candidate_stops.append(stop_price)
         if not candidate_stops:
             return
 

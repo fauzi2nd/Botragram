@@ -18,6 +18,8 @@ from __future__ import annotations
 # =============================================================================
 from botragram.exchanges.base.stream import BaseStreamClient
 
+__all__ = ["OkxStreamClient"]
+
 
 # =============================================================================
 # Stream Client Class

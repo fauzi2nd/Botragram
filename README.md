@@ -25,9 +25,9 @@ Botragram adalah sistem trading algoritmik otomatis berbasis Python (3.14+) deng
 - 🌐 **Multi-Exchange Support**: Mendukung **Binance** (Spot & USD(S)-M Futures) dan **Bybit** (Spot, Linear USDT Perpetual Futures, Demo Trading `api-demo.bybit.com`, Testnet, dan Mainnet).
 - 🧠 **Smart Money Concepts & 16 Multi-Strategy Engine**: Dilengkapi 16 strategi bawaan mulai dari Smart Money Concepts (CHoCH + FVG), Candlestick Price Action (Pinbar & Engulfing + EMA/RSI), Confluence Multi-Indikator, Scalping, Trend Following, hingga Swing Trading.
 - ⚡ **Autonomous Market-Wide Discovery**: Memindai dan meranking seluruh universe koin USDT perpetual aktif berdasarkan volume 24 jam dengan rotasi batch bertahap, filter likuiditas/ekstrem volatilitas, serta batas plafon (`DISCOVERY_MAX_UNIVERSE_SYMBOLS`).
-- 🔄 **Stepped Trailing Profit Protection (SL+)**: Mengunci profit bertahap (30% → 90% progress target) secara otomatis via real-time WebSocket market stream.
+- 🔄 **Stepped Profit Protection (SL+)**: Mengunci profit bertahap (30% → 90% progress target) secara otomatis via real-time WebSocket market stream.
 - 📊 **Real-Time ROI & Responsive Terminal**: Dashboard terminal interaktif (Rich) dengan kalkulasi persentase ROI presisi terhadap margin, mendukung tampilan compact/portrait.
-- 📱 **Telegram Control Plane**: Navigasi menu modern, notifikasi instan eksekusi & trailing SL, penggantian strategi dinamis, pengaturan risk limit, dan operator close position.
+- 📱 **Telegram Control Plane**: Navigasi menu modern, notifikasi instan eksekusi & SL+ stepped profit lock, penggantian strategi dinamis, pengaturan risk limit, dan operator close position.
 - 💾 **Persistent Runtime State**: Pilihan strategi dan konfigurasi runtime tersimpan permanen di SQLite sehingga tidak hilang saat restart atau crash.
 - 🛑 **Instant Operator Exit**: Tutup posisi kapan saja secara langsung tanpa perlu jeda manual (*auto-pause gating*).
 

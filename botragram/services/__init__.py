@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from botragram.services.account_service import AccountService
 from botragram.services.autonomous_live_entry_execution_service import (
     AutonomousLiveEntryExecutionService,

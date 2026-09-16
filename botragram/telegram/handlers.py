@@ -69,6 +69,8 @@ from botragram.telegram.strategy_switch import (
     strategy_switch_command,
 )
 
+__all__ = ["register_handlers"]
+
 
 def register_handlers(app: Any) -> None:
     """Register command and callback handlers on Telegram app."""
