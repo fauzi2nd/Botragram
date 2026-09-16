@@ -831,15 +831,9 @@ async def test_emergency_stage_failure_preserves_identity_for_restart_retry() ->
 async def test_restart_reconciles_existing_emergency_exit_into_one_lifecycle() -> None:
     """Record a previously FILLED deterministic recovery close without duplicate."""
 
+    @dataclass(slots=True, kw_only=True)
     class RecoveryOrderLookup(OrderLookup):
-        def __init__(
-            self,
-            *,
-            orders: dict[str, Order],
-            positions: PositionVisibility,
-        ) -> None:
-            super().__init__(orders=orders)
-            self.positions = positions
+        positions: PositionVisibility
 
         async def get_by_client_order_id(
             self,
