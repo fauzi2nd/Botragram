@@ -314,6 +314,28 @@ class StrategySettings:
     morph_min_short_funding_rate: Decimal = Decimal("-0.0005")
     morph_require_funding_sentiment: bool = True
 
+    # ============================================================================
+    # NY 4H Range Scalping
+    # ============================================================================
+    ny_range_risk_reward_ratio: Decimal = Decimal("0.8")
+    ny_range_max_sl_pct: Decimal = Decimal("0.03")
+    ny_range_min_sl_pct: Decimal = Decimal("0.015")
+    ny_range_fallback_sl_pct: Decimal = Decimal("0.015")
+    ny_range_max_breakout_bars: int = 12
+    ny_range_min_confidence: Decimal = Decimal("0.75")
+    ny_range_base_confidence: Decimal = Decimal("0.70")
+    ny_range_use_volume_filter: bool = True
+    ny_range_volume_period: int = 20
+    ny_range_volume_multiplier: Decimal = Decimal("1.0")
+    ny_range_volume_confidence_bonus: Decimal = Decimal("0.10")
+    ny_range_require_volume_confirmation: bool = False
+    ny_range_require_trend_filter: bool = True
+    ny_range_trend_ema_period: int = 50
+    ny_range_use_rsi_filter: bool = True
+    ny_range_rsi_period: int = 14
+    ny_range_rsi_long_max: Decimal = Decimal("54.0")
+    ny_range_rsi_short_min: Decimal = Decimal("44.0")
+
     def __post_init__(self) -> None:
         """Validate bounded strategy settings."""
         if not self.min_signal_confidence.is_finite():
@@ -601,3 +623,33 @@ class StrategySettings:
             raise ValueError("discovery_volume_sma_period must be positive")
         if self.discovery_min_24h_turnover_usdt < Decimal("0"):
             raise ValueError("discovery_min_24h_turnover_usdt must not be negative")
+        if self.ny_range_risk_reward_ratio <= Decimal("0"):
+            raise ValueError("ny_range_risk_reward_ratio must be positive")
+        if self.ny_range_max_sl_pct <= Decimal("0"):
+            raise ValueError("ny_range_max_sl_pct must be positive")
+        if self.ny_range_min_sl_pct < Decimal("0"):
+            raise ValueError("ny_range_min_sl_pct must not be negative")
+        if self.ny_range_min_sl_pct > self.ny_range_max_sl_pct:
+            raise ValueError("ny_range_min_sl_pct cannot exceed ny_range_max_sl_pct")
+        if self.ny_range_fallback_sl_pct <= Decimal("0"):
+            raise ValueError("ny_range_fallback_sl_pct must be positive")
+        if self.ny_range_max_breakout_bars <= 0:
+            raise ValueError("ny_range_max_breakout_bars must be positive")
+        if not (Decimal("0.0") <= self.ny_range_min_confidence <= Decimal("1.0")):
+            raise ValueError("ny_range_min_confidence must be between 0.0 and 1.0")
+        if not (Decimal("0.0") <= self.ny_range_base_confidence <= Decimal("1.0")):
+            raise ValueError("ny_range_base_confidence must be between 0.0 and 1.0")
+        if self.ny_range_volume_period <= 0:
+            raise ValueError("ny_range_volume_period must be positive")
+        if self.ny_range_volume_multiplier < Decimal("0"):
+            raise ValueError("ny_range_volume_multiplier must not be negative")
+        if self.ny_range_volume_confidence_bonus < Decimal("0"):
+            raise ValueError("ny_range_volume_confidence_bonus must not be negative")
+        if self.ny_range_trend_ema_period <= 0:
+            raise ValueError("ny_range_trend_ema_period must be positive")
+        if self.ny_range_rsi_period <= 0:
+            raise ValueError("ny_range_rsi_period must be positive")
+        if not (Decimal("0.0") <= self.ny_range_rsi_long_max <= Decimal("100.0")):
+            raise ValueError("ny_range_rsi_long_max must be between 0.0 and 100.0")
+        if not (Decimal("0.0") <= self.ny_range_rsi_short_min <= Decimal("100.0")):
+            raise ValueError("ny_range_rsi_short_min must be between 0.0 and 100.0")

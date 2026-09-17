@@ -55,6 +55,7 @@ def get_strategy_default_interval(strategy_type: StrategyType) -> Interval:
             | StrategyType.EMA_SCALPING
             | StrategyType.HIGH_CONFLUENCE_EXHAUSTION
             | StrategyType.LIQUIDITY_SWEEP_EXHAUSTION
+            | StrategyType.NY_4H_RANGE_SCALPING
             | StrategyType.RSI_BB_SCALPING
             | StrategyType.VWAP_BREAKOUT
         ):
@@ -85,7 +86,7 @@ def get_strategy_default_exit_rates(
             return (Decimal("0.012"), Decimal("0.024"))
         case StrategyType.MORPH:
             return (Decimal("0.010"), Decimal("0.020"))
-        case StrategyType.QUAD_CONFLUENCE:
+        case StrategyType.NY_4H_RANGE_SCALPING | StrategyType.QUAD_CONFLUENCE:
             return (Decimal("0.01"), Decimal("0.02"))
         case (
             StrategyType.HIGH_CONFLUENCE_EXHAUSTION

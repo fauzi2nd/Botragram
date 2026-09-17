@@ -1021,6 +1021,11 @@ def get_strategy_message(
             lines.append("<b>Value Zone:</b> Dynamic Pullback to EMA 21")
             lines.append("<b>Trigger:</b> Rejection Pinbar (60% wick) or Engulfing")
             lines.append("<b>Filters:</b> RSI Pullback Zone + Volume Spike")
+        case StrategyType.NY_4H_RANGE_SCALPING:
+            lines.append("<b>Concept:</b> NY 4H Range Scalping (EST/EDT)")
+            lines.append("<b>Anchor:</b> 1st Closed 4H Candle (00:00-04:00 NY)")
+            lines.append("<b>Trigger:</b> 5M Breakout & Re-entry Confirmation")
+            lines.append("<b>Risk:</b> Swing SL & 1:2 Minimum Risk-Reward")
         case _:
             lines.append(f"<b>Fast EMA period:</b> {fast_period}")
             lines.append(f"<b>Slow EMA period:</b> {slow_period}")

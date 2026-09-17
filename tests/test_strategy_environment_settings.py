@@ -156,3 +156,85 @@ def test_btc_trend_environment_settings(
     assert settings.btc_trend_filter_enabled is True
     assert settings.btc_trend_interval is Interval.M15
     assert settings.btc_trend_ema_period == 50
+
+
+def test_ny_range_environment_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify NY_RANGE_* environment variables are parsed correctly."""
+    monkeypatch.setenv("STRATEGY_TYPE", "ny_4h_range_scalping")
+    monkeypatch.setenv("NY_RANGE_RISK_REWARD_RATIO", "2.5")
+    monkeypatch.setenv("NY_RANGE_MAX_SL_PCT", "0.03")
+    monkeypatch.setenv("NY_RANGE_MIN_SL_PCT", "0.005")
+    monkeypatch.setenv("NY_RANGE_FALLBACK_SL_PCT", "0.015")
+    monkeypatch.setenv("NY_RANGE_MAX_BREAKOUT_BARS", "8")
+    monkeypatch.setenv("NY_RANGE_MIN_CONFIDENCE", "0.80")
+    monkeypatch.setenv("NY_RANGE_BASE_CONFIDENCE", "0.85")
+    monkeypatch.setenv("NY_RANGE_USE_VOLUME_FILTER", "true")
+    monkeypatch.setenv("NY_RANGE_VOLUME_PERIOD", "25")
+    monkeypatch.setenv("NY_RANGE_VOLUME_MULTIPLIER", "1.5")
+    monkeypatch.setenv("NY_RANGE_VOLUME_CONFIDENCE_BONUS", "0.15")
+    monkeypatch.setenv("NY_RANGE_REQUIRE_VOLUME_CONFIRMATION", "true")
+    monkeypatch.setenv("NY_RANGE_REQUIRE_TREND_FILTER", "false")
+    monkeypatch.setenv("NY_RANGE_TREND_EMA_PERIOD", "100")
+    monkeypatch.setenv("NY_RANGE_USE_RSI_FILTER", "true")
+    monkeypatch.setenv("NY_RANGE_RSI_PERIOD", "21")
+    monkeypatch.setenv("NY_RANGE_RSI_LONG_MAX", "50.0")
+    monkeypatch.setenv("NY_RANGE_RSI_SHORT_MIN", "40.0")
+
+    manager = _create_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        strategy_type="ny_4h_range_scalping",
+    )
+    settings = manager.load_strategy_settings()
+    assert settings.strategy_type is StrategyType.NY_4H_RANGE_SCALPING
+    assert settings.ny_range_risk_reward_ratio == Decimal("2.5")
+    assert settings.ny_range_max_sl_pct == Decimal("0.03")
+    assert settings.ny_range_min_sl_pct == Decimal("0.005")
+    assert settings.ny_range_fallback_sl_pct == Decimal("0.015")
+    assert settings.ny_range_max_breakout_bars == 8
+    assert settings.ny_range_min_confidence == Decimal("0.80")
+    assert settings.ny_range_base_confidence == Decimal("0.85")
+    assert settings.ny_range_use_volume_filter is True
+    assert settings.ny_range_volume_period == 25
+    assert settings.ny_range_volume_multiplier == Decimal("1.5")
+    assert settings.ny_range_volume_confidence_bonus == Decimal("0.15")
+    assert settings.ny_range_require_volume_confirmation is True
+    assert settings.ny_range_require_trend_filter is False
+    assert settings.ny_range_trend_ema_period == 100
+    assert settings.ny_range_use_rsi_filter is True
+    assert settings.ny_range_rsi_period == 21
+    assert settings.ny_range_rsi_long_max == Decimal("50.0")
+    assert settings.ny_range_rsi_short_min == Decimal("40.0")
+
+
+def test_ny_range_environment_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify default values for NY_RANGE_* when environment variables are unset."""
+    manager = _create_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        strategy_type="ny_4h_range_scalping",
+    )
+    settings = manager.load_strategy_settings()
+    assert settings.ny_range_risk_reward_ratio == Decimal("0.8")
+    assert settings.ny_range_max_sl_pct == Decimal("0.03")
+    assert settings.ny_range_min_sl_pct == Decimal("0.015")
+    assert settings.ny_range_fallback_sl_pct == Decimal("0.015")
+    assert settings.ny_range_min_confidence == Decimal("0.75")
+    assert settings.ny_range_base_confidence == Decimal("0.70")
+    assert settings.ny_range_use_volume_filter is True
+    assert settings.ny_range_volume_period == 20
+    assert settings.ny_range_volume_multiplier == Decimal("1.0")
+    assert settings.ny_range_volume_confidence_bonus == Decimal("0.10")
+    assert settings.ny_range_require_volume_confirmation is False
+    assert settings.ny_range_require_trend_filter is True
+    assert settings.ny_range_trend_ema_period == 50
+    assert settings.ny_range_use_rsi_filter is True
+    assert settings.ny_range_rsi_period == 14
+    assert settings.ny_range_rsi_long_max == Decimal("54.0")
+    assert settings.ny_range_rsi_short_min == Decimal("44.0")

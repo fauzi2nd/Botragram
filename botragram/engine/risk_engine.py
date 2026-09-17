@@ -263,7 +263,13 @@ class RiskEngine:
                     entry_price=signal.price,
                     reason="Explicit sell stop-loss must be above entry price",
                 )
-            stop_loss = signal.stop_loss
+            max_sl_distance = signal.price * stop_loss_pct
+            if signal.signal_type is SignalType.BUY:
+                min_allowed_sl = signal.price - max_sl_distance
+                stop_loss = max(signal.stop_loss, min_allowed_sl)
+            else:
+                max_allowed_sl = signal.price + max_sl_distance
+                stop_loss = min(signal.stop_loss, max_allowed_sl)
         else:
             stop_loss = self._calculate_stop_loss(
                 signal_type=signal.signal_type,
@@ -296,7 +302,13 @@ class RiskEngine:
                     entry_price=signal.price,
                     reason="Explicit sell take-profit must be below entry price",
                 )
-            take_profit = signal.take_profit
+            max_tp_distance = signal.price * take_profit_pct
+            if signal.signal_type is SignalType.BUY:
+                max_allowed_tp = signal.price + max_tp_distance
+                take_profit = min(signal.take_profit, max_allowed_tp)
+            else:
+                min_allowed_tp = signal.price - max_tp_distance
+                take_profit = max(signal.take_profit, min_allowed_tp)
         else:
             take_profit = self._calculate_take_profit(
                 signal_type=signal.signal_type,
@@ -609,6 +621,7 @@ class RiskEngine:
                 | StrategyType.LIQUIDITY_SWEEP_EXHAUSTION
                 | StrategyType.CHOCH_RSI_BB_HYBRID
                 | StrategyType.MORPH
+                | StrategyType.NY_4H_RANGE_SCALPING
                 | StrategyType.QUAD_CONFLUENCE
             ):
                 return get_strategy_default_exit_rates(strategy_type)

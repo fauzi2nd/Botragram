@@ -11,7 +11,10 @@ from botragram.strategies.price_action import (
     LiquiditySweepExhaustionStrategy,
     MorphStrategy,
 )
-from botragram.strategies.scalping import EMAScalpingStrategy
+from botragram.strategies.scalping import (
+    EMAScalpingStrategy,
+    NY4HRangeScalpingStrategy,
+)
 from botragram.strategies.swing import (
     MACDSwingStrategy,
 )
@@ -38,6 +41,7 @@ __all__ = [
     "LiquiditySweepExhaustionStrategy",
     "MACDSwingStrategy",
     "MorphStrategy",
+    "NY4HRangeScalpingStrategy",
     "StrategyFactory",
     "StrategyResolver",
     "SupertrendStrategy",

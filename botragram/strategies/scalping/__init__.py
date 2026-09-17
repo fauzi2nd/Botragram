@@ -13,6 +13,9 @@ from __future__ import annotations
 from botragram.strategies.scalping.ema_scalping import (
     EMAScalpingStrategy,
 )
+from botragram.strategies.scalping.ny_4h_range_scalping import (
+    NY4HRangeScalpingStrategy,
+)
 from botragram.strategies.scalping.rsi_bb_scalping import (
     RSIBBScalpingStrategy,
 )
@@ -22,6 +25,7 @@ from botragram.strategies.scalping.vwap_breakout import (
 
 __all__ = [
     "EMAScalpingStrategy",
+    "NY4HRangeScalpingStrategy",
     "RSIBBScalpingStrategy",
     "VWAPBreakoutStrategy",
 ]

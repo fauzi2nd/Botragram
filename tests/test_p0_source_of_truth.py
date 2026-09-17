@@ -82,16 +82,17 @@ def test_signal_model_accepts_explicit_sl_and_tp() -> None:
 # RiskEngine Source-of-Truth Tests
 # =============================================================================
 def test_risk_engine_adopts_explicit_pier_buy_sl_tp() -> None:
-    """Verify RiskEngine preserves explicit PIER SL/TP instead of static percentages."""
-    engine = RiskEngine(settings=RiskSettings())
+    """Verify RiskEngine preserves explicit PIER SL/TP when within configured limits."""
+    engine = RiskEngine(
+        settings=RiskSettings(
+            pier_stop_loss_pct=Decimal("0.05"),
+            pier_take_profit_pct=Decimal("0.10"),
+        )
+    )
 
     entry_price = Decimal("100.0")
-    explicit_sl = Decimal(
-        "97.5"
-    )  # 2.5% risk (different from pier_stop_loss_pct = 1.2%)
-    explicit_tp = Decimal(
-        "105.0"
-    )  # 5.0% reward (different from pier_take_profit_pct = 2.4%)
+    explicit_sl = Decimal("97.5")  # 2.5% risk (within pier_stop_loss_pct = 5.0%)
+    explicit_tp = Decimal("105.0")  # 5.0% reward (within pier_take_profit_pct = 10.0%)
 
     signal = Signal(
         symbol="ETHUSDT",
@@ -120,8 +121,13 @@ def test_risk_engine_adopts_explicit_pier_buy_sl_tp() -> None:
 
 
 def test_risk_engine_adopts_explicit_pier_sell_sl_tp() -> None:
-    """Verify RiskEngine preserves explicit PIER SELL SL/TP."""
-    engine = RiskEngine(settings=RiskSettings())
+    """Verify RiskEngine preserves explicit PIER SELL SL/TP within limits."""
+    engine = RiskEngine(
+        settings=RiskSettings(
+            pier_stop_loss_pct=Decimal("0.05"),
+            pier_take_profit_pct=Decimal("0.10"),
+        )
+    )
 
     entry_price = Decimal("100.0")
     explicit_sl = Decimal("103.0")  # 3.0% risk above entry
@@ -146,6 +152,41 @@ def test_risk_engine_adopts_explicit_pier_sell_sl_tp() -> None:
     assert result.approved is True
     assert result.metrics.stop_loss == explicit_sl
     assert result.metrics.take_profit == explicit_tp
+
+
+def test_risk_engine_caps_explicit_sl_tp_to_configured_rates() -> None:
+    """Verify RiskEngine caps explicit SL/TP when exceeding strategy rates."""
+    engine = RiskEngine(
+        settings=RiskSettings(
+            pier_stop_loss_pct=Decimal("0.018"),
+            pier_take_profit_pct=Decimal("0.036"),
+        )
+    )
+
+    entry_price = Decimal("100.0")
+    # Explicit SL is 4% away (wider than 1.8% configured cap)
+    # Explicit TP is 8% away (wider than 3.6% configured cap)
+    signal = Signal(
+        symbol="ETHUSDT",
+        signal_type=SignalType.SELL,
+        price=entry_price,
+        confidence=Decimal("0.80"),
+        strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
+        generated_at=_NOW,
+        stop_loss=Decimal("104.0"),
+        take_profit=Decimal("92.0"),
+    )
+
+    result = engine.evaluate(
+        signal=signal,
+        account_balance=Decimal("1000.0"),
+    )
+
+    assert result.approved is True
+    # Capped at entry + 1.8% = 101.8
+    assert result.metrics.stop_loss == Decimal("101.8000")
+    # Capped at entry - 3.6% = 96.4
+    assert result.metrics.take_profit == Decimal("96.4000")
 
 
 def test_risk_engine_choch_fvg_fallback_to_configured_rates() -> None:
@@ -387,7 +428,12 @@ async def test_paper_trading_service_adopts_explicit_signal_sl_tp() -> None:
         trade_repository=trades,
         position_repository=positions,
         trading_engine=TradingEngine(
-            risk_engine=RiskEngine(settings=RiskSettings()),
+            risk_engine=RiskEngine(
+                settings=RiskSettings(
+                    pier_stop_loss_pct=Decimal("0.05"),
+                    pier_take_profit_pct=Decimal("0.10"),
+                )
+            ),
         ),
         pnl_engine=PnLEngine(),
         initial_balance=Decimal("10000"),

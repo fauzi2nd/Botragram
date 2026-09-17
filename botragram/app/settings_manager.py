@@ -622,6 +622,126 @@ class SettingsManager:
             ),
             pier_use_macd=environment.get_pier_use_macd(),
             pier_use_stoch_rsi=environment.get_pier_use_stoch_rsi(),
+            ny_range_risk_reward_ratio=(
+                self._parse_decimal(
+                    raw_value=environment.get_ny_range_risk_reward_ratio(),
+                    setting_name="NY_RANGE_RISK_REWARD_RATIO",
+                )
+                if environment.get_ny_range_risk_reward_ratio()
+                else Decimal("0.8")
+            ),
+            ny_range_max_sl_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_ny_range_max_sl_pct(),
+                    setting_name="NY_RANGE_MAX_SL_PCT",
+                )
+                if environment.get_ny_range_max_sl_pct()
+                else Decimal("0.03")
+            ),
+            ny_range_min_sl_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_ny_range_min_sl_pct(),
+                    setting_name="NY_RANGE_MIN_SL_PCT",
+                )
+                if environment.get_ny_range_min_sl_pct()
+                else Decimal("0.015")
+            ),
+            ny_range_fallback_sl_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_ny_range_fallback_sl_pct(),
+                    setting_name="NY_RANGE_FALLBACK_SL_PCT",
+                )
+                if environment.get_ny_range_fallback_sl_pct()
+                else Decimal("0.015")
+            ),
+            ny_range_max_breakout_bars=(
+                self._parse_positive_int(
+                    raw_value=environment.get_ny_range_max_breakout_bars(),
+                    setting_name="NY_RANGE_MAX_BREAKOUT_BARS",
+                )
+                if environment.get_ny_range_max_breakout_bars()
+                else 12
+            ),
+            ny_range_min_confidence=(
+                self._parse_decimal(
+                    raw_value=environment.get_ny_range_min_confidence(),
+                    setting_name="NY_RANGE_MIN_CONFIDENCE",
+                )
+                if environment.get_ny_range_min_confidence()
+                else Decimal("0.75")
+            ),
+            ny_range_base_confidence=(
+                self._parse_decimal(
+                    raw_value=environment.get_ny_range_base_confidence(),
+                    setting_name="NY_RANGE_BASE_CONFIDENCE",
+                )
+                if environment.get_ny_range_base_confidence()
+                else Decimal("0.70")
+            ),
+            ny_range_use_volume_filter=environment.get_ny_range_use_volume_filter(),
+            ny_range_volume_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_ny_range_volume_period(),
+                    setting_name="NY_RANGE_VOLUME_PERIOD",
+                )
+                if environment.get_ny_range_volume_period()
+                else 20
+            ),
+            ny_range_volume_multiplier=(
+                self._parse_decimal(
+                    raw_value=environment.get_ny_range_volume_multiplier(),
+                    setting_name="NY_RANGE_VOLUME_MULTIPLIER",
+                )
+                if environment.get_ny_range_volume_multiplier()
+                else Decimal("1.0")
+            ),
+            ny_range_volume_confidence_bonus=(
+                self._parse_decimal(
+                    raw_value=environment.get_ny_range_volume_confidence_bonus(),
+                    setting_name="NY_RANGE_VOLUME_CONFIDENCE_BONUS",
+                )
+                if environment.get_ny_range_volume_confidence_bonus()
+                else Decimal("0.10")
+            ),
+            ny_range_require_volume_confirmation=(
+                environment.get_ny_range_require_volume_confirmation()
+            ),
+            ny_range_require_trend_filter=(
+                environment.get_ny_range_require_trend_filter()
+            ),
+            ny_range_trend_ema_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_ny_range_trend_ema_period(),
+                    setting_name="NY_RANGE_TREND_EMA_PERIOD",
+                )
+                if environment.get_ny_range_trend_ema_period()
+                else 50
+            ),
+            ny_range_use_rsi_filter=environment.get_ny_range_use_rsi_filter(),
+            ny_range_rsi_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_ny_range_rsi_period(),
+                    setting_name="NY_RANGE_RSI_PERIOD",
+                )
+                if environment.get_ny_range_rsi_period()
+                else 14
+            ),
+            ny_range_rsi_long_max=(
+                self._parse_decimal(
+                    raw_value=environment.get_ny_range_rsi_long_max(),
+                    setting_name="NY_RANGE_RSI_LONG_MAX",
+                )
+                if environment.get_ny_range_rsi_long_max()
+                else Decimal("54.0")
+            ),
+            ny_range_rsi_short_min=(
+                self._parse_decimal(
+                    raw_value=environment.get_ny_range_rsi_short_min(),
+                    setting_name="NY_RANGE_RSI_SHORT_MIN",
+                )
+                if environment.get_ny_range_rsi_short_min()
+                else Decimal("44.0")
+            ),
         )
 
     def load_logging_settings(self) -> LoggingSettings:

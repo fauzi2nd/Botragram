@@ -42,6 +42,7 @@ from botragram.strategies.price_action import (
 )
 from botragram.strategies.scalping import (
     EMAScalpingStrategy,
+    NY4HRangeScalpingStrategy,
     RSIBBScalpingStrategy,
     VWAPBreakoutStrategy,
 )
@@ -180,6 +181,7 @@ def _create_strategy_settings(
             LiquiditySweepExhaustionStrategy,
         ),
         (StrategyType.MACD_SWING, MACDSwingStrategy),
+        (StrategyType.NY_4H_RANGE_SCALPING, NY4HRangeScalpingStrategy),
         (StrategyType.QUAD_CONFLUENCE, QuadConfluenceStrategy),
         (StrategyType.RSI_BB_SCALPING, RSIBBScalpingStrategy),
         (StrategyType.SUPERTREND, SupertrendStrategy),

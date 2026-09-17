@@ -38,6 +38,7 @@ from botragram.strategies.price_action import (
 )
 from botragram.strategies.scalping import (
     EMAScalpingStrategy,
+    NY4HRangeScalpingStrategy,
     RSIBBScalpingStrategy,
     VWAPBreakoutStrategy,
 )
@@ -312,6 +313,33 @@ class StrategyFactory:
                         settings.morph_require_funding_sentiment
                         and settings.require_funding_sentiment
                     ),
+                )
+
+            case StrategyType.NY_4H_RANGE_SCALPING:
+                return NY4HRangeScalpingStrategy(
+                    risk_reward_ratio=settings.ny_range_risk_reward_ratio,
+                    max_sl_pct=settings.ny_range_max_sl_pct,
+                    min_sl_pct=settings.ny_range_min_sl_pct,
+                    fallback_sl_pct=settings.ny_range_fallback_sl_pct,
+                    max_breakout_bars=settings.ny_range_max_breakout_bars,
+                    min_confidence=settings.ny_range_min_confidence,
+                    base_confidence=settings.ny_range_base_confidence,
+                    use_volume_filter=settings.ny_range_use_volume_filter,
+                    volume_period=settings.ny_range_volume_period,
+                    volume_multiplier=settings.ny_range_volume_multiplier,
+                    volume_confidence_bonus=(settings.ny_range_volume_confidence_bonus),
+                    require_volume_confirmation=(
+                        settings.ny_range_require_volume_confirmation
+                    ),
+                    require_trend_filter=settings.ny_range_require_trend_filter,
+                    trend_ema_period=settings.ny_range_trend_ema_period,
+                    use_rsi_filter=settings.ny_range_use_rsi_filter,
+                    rsi_period=settings.ny_range_rsi_period,
+                    rsi_long_max=settings.ny_range_rsi_long_max,
+                    rsi_short_min=settings.ny_range_rsi_short_min,
+                    use_open_interest=settings.use_open_interest,
+                    min_oi_change_pct=settings.min_oi_change_pct,
+                    require_oi_confluence=settings.require_oi_confluence,
                 )
 
             case StrategyType.PINBAR_ENGULFING_EMA_RSI:

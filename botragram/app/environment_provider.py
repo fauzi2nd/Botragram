@@ -111,6 +111,24 @@ from botragram.constants.env import (
     ENV_MTF_CONFIRMATION_ENABLED,
     ENV_MTF_EMA_PERIOD,
     ENV_MTF_TIMEFRAME,
+    ENV_NY_RANGE_BASE_CONFIDENCE,
+    ENV_NY_RANGE_FALLBACK_SL_PCT,
+    ENV_NY_RANGE_MAX_BREAKOUT_BARS,
+    ENV_NY_RANGE_MAX_SL_PCT,
+    ENV_NY_RANGE_MIN_CONFIDENCE,
+    ENV_NY_RANGE_MIN_SL_PCT,
+    ENV_NY_RANGE_REQUIRE_TREND_FILTER,
+    ENV_NY_RANGE_REQUIRE_VOLUME_CONFIRMATION,
+    ENV_NY_RANGE_RISK_REWARD_RATIO,
+    ENV_NY_RANGE_RSI_LONG_MAX,
+    ENV_NY_RANGE_RSI_PERIOD,
+    ENV_NY_RANGE_RSI_SHORT_MIN,
+    ENV_NY_RANGE_TREND_EMA_PERIOD,
+    ENV_NY_RANGE_USE_RSI_FILTER,
+    ENV_NY_RANGE_USE_VOLUME_FILTER,
+    ENV_NY_RANGE_VOLUME_CONFIDENCE_BONUS,
+    ENV_NY_RANGE_VOLUME_MULTIPLIER,
+    ENV_NY_RANGE_VOLUME_PERIOD,
     ENV_OKX_API_KEY,
     ENV_OKX_API_SECRET,
     ENV_OKX_PASSPHRASE,
@@ -818,6 +836,78 @@ class EnvironmentProvider:
     def get_pier_use_stoch_rsi(self) -> bool:
         """Return whether PIER uses Stochastic RSI timing guard."""
         return self._get_bool(ENV_PIER_USE_STOCH_RSI, default=True)
+
+    def get_ny_range_risk_reward_ratio(self) -> str:
+        """Return the configured Risk-Reward Ratio for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_RISK_REWARD_RATIO, default="")
+
+    def get_ny_range_max_sl_pct(self) -> str:
+        """Return the configured maximum SL percentage for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_MAX_SL_PCT, default="")
+
+    def get_ny_range_min_sl_pct(self) -> str:
+        """Return the configured minimum SL percentage for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_MIN_SL_PCT, default="")
+
+    def get_ny_range_fallback_sl_pct(self) -> str:
+        """Return the configured fallback SL percentage for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_FALLBACK_SL_PCT, default="")
+
+    def get_ny_range_max_breakout_bars(self) -> str:
+        """Return the maximum breakout candles count for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_MAX_BREAKOUT_BARS, default="")
+
+    def get_ny_range_min_confidence(self) -> str:
+        """Return the minimum confidence threshold for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_MIN_CONFIDENCE, default="")
+
+    def get_ny_range_base_confidence(self) -> str:
+        """Return the base confidence score for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_BASE_CONFIDENCE, default="")
+
+    def get_ny_range_use_volume_filter(self) -> bool:
+        """Return whether NY 4H range scalping uses volume confirmation."""
+        return self._get_bool(ENV_NY_RANGE_USE_VOLUME_FILTER, default=True)
+
+    def get_ny_range_volume_period(self) -> str:
+        """Return volume SMA period for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_VOLUME_PERIOD, default="")
+
+    def get_ny_range_volume_multiplier(self) -> str:
+        """Return volume threshold multiplier for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_VOLUME_MULTIPLIER, default="")
+
+    def get_ny_range_volume_confidence_bonus(self) -> str:
+        """Return volume confidence bonus for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_VOLUME_CONFIDENCE_BONUS, default="")
+
+    def get_ny_range_require_volume_confirmation(self) -> bool:
+        """Return whether NY 4H range scalping strictly requires volume."""
+        return self._get_bool(ENV_NY_RANGE_REQUIRE_VOLUME_CONFIRMATION, default=False)
+
+    def get_ny_range_require_trend_filter(self) -> bool:
+        """Return whether NY 4H range scalping requires EMA trend filter."""
+        return self._get_bool(ENV_NY_RANGE_REQUIRE_TREND_FILTER, default=True)
+
+    def get_ny_range_trend_ema_period(self) -> str:
+        """Return trend EMA period for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_TREND_EMA_PERIOD, default="")
+
+    def get_ny_range_use_rsi_filter(self) -> bool:
+        """Return whether NY 4H range scalping uses RSI momentum filter."""
+        return self._get_bool(ENV_NY_RANGE_USE_RSI_FILTER, default=True)
+
+    def get_ny_range_rsi_period(self) -> str:
+        """Return RSI period for NY 4H range scalping."""
+        return self._get_var(ENV_NY_RANGE_RSI_PERIOD, default="")
+
+    def get_ny_range_rsi_long_max(self) -> str:
+        """Return maximum RSI allowed for long re-entries."""
+        return self._get_var(ENV_NY_RANGE_RSI_LONG_MAX, default="")
+
+    def get_ny_range_rsi_short_min(self) -> str:
+        """Return minimum RSI allowed for short re-entries."""
+        return self._get_var(ENV_NY_RANGE_RSI_SHORT_MIN, default="")
 
     def get_max_open_positions(self) -> str:
         """Return the configured limit for concurrently open positions."""
