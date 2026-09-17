@@ -65,6 +65,7 @@ Botragram mendukung 16 strategi trading yang secara otomatis menerapkan Timefram
 | **Price Action** | `choch_rsi_bb_hybrid` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **SMC + Mean Reversion**: CHoCH structural breakout terkonfirmasi RSI oversold/overbought dan Bollinger Bands boundary bounce. |
 | **Price Action** | `liquidity_sweep_exhaustion` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **Liquidity Grab**: Sweep swing high/low palsu diikuti penolakan cepat (exhaustion wick), volume spike, dan ATR risk levels. |
 | **Price Action** | `high_confluence_exhaustion` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **Exhaustion Mean Reversion**: Konvergensi ekstrem Bollinger Bands, RSI threshold, low ADX trendiness, dan volume spike. |
+| **Price Action** | `botragram_origin` | **5m / 15m** | **3.0% / 4.5%** | **1 : 1.5** | **Candlestick Patterns & TA Hooks**: Pola Single, Dual, & Triple dengan quality scoring, confluence deduplication, volume baseline exclusion, dan filter TA (EMA, RSI, BB, MACD, PSAR). |
 | **Scalping** | `rsi_bb_scalping` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Mean reversion oversold/overbought pada Bollinger Bands & RSI. |
 | **Scalping** | `ema_scalping` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Fast EMA momentum scalping dengan konfirmasi body ratio candle dan dynamic ATR. |
 | **Scalping** | `vwap_breakout` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Breakout intraday di atas/bawah Volume Weighted Average Price (VWAP). |

@@ -688,3 +688,308 @@ def test_origin_strategy_ta_confluence_bonus() -> None:
     assert sig_norm.signal_type is SignalType.BUY
     # Surge volume should receive +0.03 confluence bonus
     assert sig_surge.confidence > sig_norm.confidence
+
+
+# =============================================================================
+# Hardened Auditing and Regression Tests
+# =============================================================================
+def test_origin_strategy_validation_invariants_extended() -> None:
+    """Verify strict validation for min_sl, max_sl, fallback_sl, and volume."""
+    with pytest.raises(ValueError, match="min_sl_pct must be positive"):
+        BotragramOriginStrategy(min_sl_pct=Decimal("0"))
+
+    with pytest.raises(ValueError, match="max_sl_pct must be positive"):
+        BotragramOriginStrategy(min_sl_pct=Decimal("0.01"), max_sl_pct=Decimal("0"))
+
+    with pytest.raises(ValueError, match="max_sl_pct .* must be less than 0.50"):
+        BotragramOriginStrategy(max_sl_pct=Decimal("0.55"))
+
+    with pytest.raises(ValueError, match="fallback_sl_pct .* must be between"):
+        BotragramOriginStrategy(
+            min_sl_pct=Decimal("0.010"),
+            max_sl_pct=Decimal("0.030"),
+            fallback_sl_pct=Decimal("0.005"),
+        )
+
+    with pytest.raises(ValueError, match="fallback_sl_pct .* must be between"):
+        BotragramOriginStrategy(
+            min_sl_pct=Decimal("0.010"),
+            max_sl_pct=Decimal("0.030"),
+            fallback_sl_pct=Decimal("0.035"),
+        )
+
+    with pytest.raises(ValueError, match="min_confidence must be between 0.0"):
+        BotragramOriginStrategy(min_confidence=Decimal("0"))
+
+    with pytest.raises(ValueError, match="volume_multiplier must be positive"):
+        BotragramOriginStrategy(volume_multiplier=Decimal("0"))
+
+
+def test_origin_strategy_tweezer_quality_bonus_triggers() -> None:
+    """Verify that extreme tweezer low/high alignment awards the quality bonus."""
+    strategy = BotragramOriginStrategy(min_confidence=Decimal("0.70"))
+    baseline = _generate_baseline_candles(count=5)
+
+    # Tweezer Bottom:
+    # prev candle: red candle, low 100.000, close 101.0, open 105.0
+    c1 = _make_candle(
+        open_price="105.0",
+        high_price="106.0",
+        low_price="100.000",
+        close_price="101.0",
+        minutes_offset=25,
+    )
+    # curr candle: green candle, identical low 100.000, open 101.0, close 105.0
+    # low_diff = 0.000 -> diff_pct = 0.0 <= 0.0003 -> triggers quality bonus!
+    c2 = _make_candle(
+        open_price="101.0",
+        high_price="106.0",
+        low_price="100.000",
+        close_price="105.0",
+        minutes_offset=30,
+    )
+    signal = strategy.generate_signal(candles=[*baseline, c1, c2])
+    assert signal.signal_type is SignalType.BUY
+    assert "tweezer_bottom" in (signal.reason or "")
+    # Base dual pattern is 0.80, quality bonus +0.02, intra-tier harami +0.01 -> 0.83
+    assert signal.confidence == Decimal("0.83")
+
+
+def test_origin_strategy_confidence_scoring_correlation_and_cap() -> None:
+    """Verify independent tiers vs intra-tier confluence bonus and maximum cap."""
+    strategy = BotragramOriginStrategy(min_confidence=Decimal("0.70"))
+    baseline = _generate_baseline_candles(count=5)
+
+    # Standard single pinbar gives 0.70 base + 0.03 quality bonus + 0.01 intra-tier doji
+    pinbar = _make_candle(
+        open_price="100.0",
+        high_price="101.0",
+        low_price="90.0",
+        close_price="100.8",
+        minutes_offset=25,
+    )
+    sig_single = strategy.generate_signal(candles=[*baseline, pinbar])
+    assert sig_single.signal_type is SignalType.BUY
+    assert sig_single.confidence == Decimal("0.74")
+
+
+def test_origin_strategy_exits_buy_scenarios() -> None:
+    """Verify structural invalidation, fallback SL, and clamping for BUY signals."""
+    strategy = BotragramOriginStrategy(
+        min_sl_pct=Decimal("0.010"),
+        max_sl_pct=Decimal("0.030"),
+        fallback_sl_pct=Decimal("0.015"),
+        risk_reward_ratio=Decimal("2.0"),
+    )
+
+    current_price = Decimal("100.0")
+
+    # 1. Valid structural level within [min_sl_pct, max_sl_pct]
+    # (distance = 2.0%, price = 98.0)
+    sl, tp = strategy.calculate_exits(
+        signal_type=SignalType.BUY,
+        current_price=current_price,
+        rejection_level=Decimal("98.0"),
+    )
+    assert sl == Decimal("98.0")
+    # actual_dist = 2.0, RRR=2.0 -> TP = 100.0 + 4.0 = 104.0
+    assert tp == Decimal("104.0")
+
+    # 2. Structural level too close (distance = 0.5% < 1.0%, price = 99.5)
+    # -> clamped to min_sl_pct (1.0% -> 99.0)
+    sl, tp = strategy.calculate_exits(
+        signal_type=SignalType.BUY,
+        current_price=current_price,
+        rejection_level=Decimal("99.5"),
+    )
+    assert sl == Decimal("99.0")
+    assert tp == Decimal("102.0")
+
+    # 3. Structural level too far (distance = 5.0% > 3.0%, price = 95.0)
+    # -> clamped to max_sl_pct (3.0% -> 97.0)
+    sl, tp = strategy.calculate_exits(
+        signal_type=SignalType.BUY,
+        current_price=current_price,
+        rejection_level=Decimal("95.0"),
+    )
+    assert sl == Decimal("97.0")
+    assert tp == Decimal("106.0")
+
+    # 4. Rejection level on the wrong side (>= current_price, e.g. 102.0)
+    # -> uses fallback_sl_pct (1.5% -> 98.5)
+    sl, tp = strategy.calculate_exits(
+        signal_type=SignalType.BUY,
+        current_price=current_price,
+        rejection_level=Decimal("102.0"),
+    )
+    assert sl == Decimal("98.5")
+    assert tp == Decimal("103.0")
+
+    # 5. Rejection level non-positive (0.0) -> uses fallback_sl_pct (1.5% -> 98.5)
+    sl, tp = strategy.calculate_exits(
+        signal_type=SignalType.BUY,
+        current_price=current_price,
+        rejection_level=Decimal("0.0"),
+    )
+    assert sl == Decimal("98.5")
+    assert tp == Decimal("103.0")
+
+
+def test_origin_strategy_exits_sell_scenarios() -> None:
+    """Verify structural invalidation, fallback SL, and clamping for SELL signals."""
+    strategy = BotragramOriginStrategy(
+        min_sl_pct=Decimal("0.010"),
+        max_sl_pct=Decimal("0.030"),
+        fallback_sl_pct=Decimal("0.015"),
+        risk_reward_ratio=Decimal("2.0"),
+    )
+
+    current_price = Decimal("100.0")
+
+    # 1. Valid structural level within [min_sl_pct, max_sl_pct]
+    # (distance = 2.0%, price = 102.0)
+    sl, tp = strategy.calculate_exits(
+        signal_type=SignalType.SELL,
+        current_price=current_price,
+        rejection_level=Decimal("102.0"),
+    )
+    assert sl == Decimal("102.0")
+    # actual_dist = 2.0, RRR=2.0 -> TP = 100.0 - 4.0 = 96.0
+    assert tp == Decimal("96.0")
+
+    # 2. Structural level too close (distance = 0.5% < 1.0%, price = 100.5)
+    # -> clamped to min_sl_pct (1.0% -> 101.0)
+    sl, tp = strategy.calculate_exits(
+        signal_type=SignalType.SELL,
+        current_price=current_price,
+        rejection_level=Decimal("100.5"),
+    )
+    assert sl == Decimal("101.0")
+    assert tp == Decimal("98.0")
+
+    # 3. Structural level too far (distance = 5.0% > 3.0%, price = 105.0)
+    # -> clamped to max_sl_pct (3.0% -> 103.0)
+    sl, tp = strategy.calculate_exits(
+        signal_type=SignalType.SELL,
+        current_price=current_price,
+        rejection_level=Decimal("105.0"),
+    )
+    assert sl == Decimal("103.0")
+    assert tp == Decimal("94.0")
+
+    # 4. Rejection level on wrong side (<= current_price, e.g. 98.0)
+    # -> uses fallback_sl_pct (1.5% -> 101.5)
+    sl, tp = strategy.calculate_exits(
+        signal_type=SignalType.SELL,
+        current_price=current_price,
+        rejection_level=Decimal("98.0"),
+    )
+    assert sl == Decimal("101.5")
+    assert tp == Decimal("97.0")
+
+    # 5. Rejection level non-positive (0.0) -> uses fallback_sl_pct (1.5% -> 101.5)
+    sl, tp = strategy.calculate_exits(
+        signal_type=SignalType.SELL,
+        current_price=current_price,
+        rejection_level=Decimal("0.0"),
+    )
+    assert sl == Decimal("101.5")
+    assert tp == Decimal("97.0")
+
+
+def test_origin_strategy_volume_filter_strictly_excludes_current_candle() -> None:
+    """Verify that current signal candle's volume does not pollute baseline average."""
+    # Build 9 baseline candles with volume 100.0 each (baseline average = 100.0)
+    baseline_candles: list[Candle] = []
+    for i in range(9):
+        baseline_candles.append(
+            _make_candle(
+                open_price="100.0",
+                high_price="101.0",
+                low_price="99.0",
+                close_price="100.0",
+                volume="100.0",
+                minutes_offset=i * 5,
+            )
+        )
+
+    # Current candle has volume 95.0.
+    # If baseline is only previous 5 candles: avg = 100.0.
+    # With multiplier 1.0, required = 100.0. 95.0 < 100.0 -> must be rejected!
+    hammer = _make_candle(
+        open_price="100.0",
+        high_price="100.5",
+        low_price="90.0",
+        close_price="100.2",
+        volume="95.0",
+        minutes_offset=45,
+    )
+
+    strategy = BotragramOriginStrategy(
+        use_volume_filter=True,
+        volume_period=5,
+        volume_multiplier=Decimal("1.0"),
+        min_confidence=Decimal("0.70"),
+    )
+
+    signal = strategy.generate_signal(candles=[*baseline_candles, hammer])
+    assert signal.signal_type is SignalType.HOLD
+    assert "Volume 95.00 below required SMA threshold 100.00" in (signal.reason or "")
+
+
+def test_origin_strategy_volume_filter_handles_zero_baseline_volume() -> None:
+    """Zero or non-positive baseline volume safely rejects entry with HOLD."""
+    candles: list[Candle] = []
+    for i in range(10):
+        candles.append(
+            _make_candle(
+                open_price="100.0",
+                high_price="101.0",
+                low_price="99.0",
+                close_price="100.0",
+                volume="0.0",
+                minutes_offset=i * 5,
+            )
+        )
+    hammer = _make_candle(
+        open_price="100.0",
+        high_price="100.5",
+        low_price="90.0",
+        close_price="100.2",
+        volume="100.0",
+        minutes_offset=50,
+    )
+
+    strategy = BotragramOriginStrategy(
+        use_volume_filter=True,
+        volume_period=5,
+        min_confidence=Decimal("0.70"),
+    )
+    signal = strategy.generate_signal(candles=[*candles, hammer])
+    assert signal.signal_type is SignalType.HOLD
+    assert "baseline volume average is zero or invalid" in (signal.reason or "")
+
+
+def test_origin_strategy_disabled_filters_do_not_interfere() -> None:
+    """Disabled filters do not reject valid signals."""
+    strategy = BotragramOriginStrategy(
+        use_trend_filter=False,
+        use_volume_filter=False,
+        use_rsi_filter=False,
+        use_bb_filter=False,
+        use_macd_filter=False,
+        use_psar_filter=False,
+        min_confidence=Decimal("0.70"),
+    )
+    candles = _generate_baseline_candles(count=5)
+    hammer = _make_candle(
+        open_price="100.0",
+        high_price="100.5",
+        low_price="90.0",
+        close_price="100.2",
+        volume="1.0",  # tiny volume
+        minutes_offset=25,
+    )
+    signal = strategy.generate_signal(candles=[*candles, hammer])
+    assert signal.signal_type is SignalType.BUY
+    assert signal.confidence >= Decimal("0.70")

@@ -683,22 +683,34 @@ class StrategySettings:
             raise ValueError("ny_range_rsi_short_min must be between 0.0 and 100.0")
         if self.origin_risk_reward_ratio <= Decimal("0"):
             raise ValueError("origin_risk_reward_ratio must be positive")
+        if self.origin_min_sl_pct <= Decimal("0"):
+            raise ValueError("origin_min_sl_pct must be positive")
         if self.origin_max_sl_pct <= Decimal("0"):
             raise ValueError("origin_max_sl_pct must be positive")
-        if self.origin_min_sl_pct < Decimal("0"):
-            raise ValueError("origin_min_sl_pct must not be negative")
         if self.origin_min_sl_pct > self.origin_max_sl_pct:
             raise ValueError("origin_min_sl_pct cannot exceed origin_max_sl_pct")
-        if self.origin_fallback_sl_pct <= Decimal("0"):
-            raise ValueError("origin_fallback_sl_pct must be positive")
-        if not (Decimal("0.0") <= self.origin_min_confidence <= Decimal("1.0")):
-            raise ValueError("origin_min_confidence must be between 0.0 and 1.0")
+        if self.origin_max_sl_pct >= Decimal("0.50"):
+            raise ValueError("origin_max_sl_pct must be less than 0.50 (50%)")
+        if not (
+            self.origin_min_sl_pct
+            <= self.origin_fallback_sl_pct
+            <= self.origin_max_sl_pct
+        ):
+            raise ValueError(
+                f"origin_fallback_sl_pct ({self.origin_fallback_sl_pct}) "
+                f"must be between origin_min_sl_pct ({self.origin_min_sl_pct}) "
+                f"and origin_max_sl_pct ({self.origin_max_sl_pct})"
+            )
+        if not (Decimal("0.0") < self.origin_min_confidence <= Decimal("1.0")):
+            raise ValueError(
+                "origin_min_confidence must be between 0.0 (exclusive) and 1.0"
+            )
         if self.origin_trend_ema_period <= 0:
             raise ValueError("origin_trend_ema_period must be positive")
         if self.origin_volume_period <= 0:
             raise ValueError("origin_volume_period must be positive")
-        if self.origin_volume_multiplier < Decimal("0"):
-            raise ValueError("origin_volume_multiplier must not be negative")
+        if self.origin_volume_multiplier <= Decimal("0"):
+            raise ValueError("origin_volume_multiplier must be positive")
         if self.origin_rsi_period <= 0:
             raise ValueError("origin_rsi_period must be positive")
         if not (Decimal("0.0") <= self.origin_rsi_long_max <= Decimal("100.0")):

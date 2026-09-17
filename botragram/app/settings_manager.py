@@ -429,8 +429,8 @@ class SettingsManager:
         environment = self._environment_provider
         raw_val = (
             environment.get_origin_stop_loss_pct()
-            or environment.get_origin_fallback_sl_pct()
             or environment.get_origin_max_sl_pct()
+            or environment.get_origin_fallback_sl_pct()
         )
         return (
             self._parse_decimal(
@@ -438,7 +438,7 @@ class SettingsManager:
                 setting_name="ORIGIN_STOP_LOSS_PCT",
             )
             if raw_val
-            else Decimal("0.015")
+            else Decimal("0.030")
         )
 
     def _resolve_origin_take_profit_pct(self) -> Decimal:

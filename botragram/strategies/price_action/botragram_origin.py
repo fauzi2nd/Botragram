@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -51,7 +52,12 @@ __all__ = [
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DECIMAL_ONE: Final[Decimal] = Decimal("1")
 _DECIMAL_MAX_CONFIDENCE: Final[Decimal] = Decimal("0.95")
+_MAX_CONFLUENCE_BONUS: Final[Decimal] = Decimal("0.06")
+_MAX_TA_BONUS: Final[Decimal] = Decimal("0.05")
+_MAX_SAFE_SL_PCT: Final[Decimal] = Decimal("0.50")
 _DEFAULT_MINIMUM_CANDLES: Final[int] = 5
+
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 _TRIPLE_PATTERNS: Final[frozenset[str]] = frozenset(
     {
@@ -135,20 +141,28 @@ class BotragramOriginStrategy(BaseStrategy):
         if self.risk_reward_ratio <= _DECIMAL_ZERO:
             raise ValueError("risk_reward_ratio must be positive")
 
+        if self.min_sl_pct <= _DECIMAL_ZERO:
+            raise ValueError("min_sl_pct must be positive")
+
         if self.max_sl_pct <= _DECIMAL_ZERO:
             raise ValueError("max_sl_pct must be positive")
 
-        if self.min_sl_pct < _DECIMAL_ZERO:
-            raise ValueError("min_sl_pct must not be negative")
-
-        if self.min_sl_pct > self.max_sl_pct:
+        if self.max_sl_pct < self.min_sl_pct:
             raise ValueError("min_sl_pct cannot exceed max_sl_pct")
 
-        if self.fallback_sl_pct <= _DECIMAL_ZERO:
-            raise ValueError("fallback_sl_pct must be positive")
+        if self.max_sl_pct >= _MAX_SAFE_SL_PCT:
+            raise ValueError(
+                f"max_sl_pct ({self.max_sl_pct}) must be less than {_MAX_SAFE_SL_PCT}"
+            )
 
-        if not (_DECIMAL_ZERO <= self.min_confidence <= _DECIMAL_ONE):
-            raise ValueError("min_confidence must be between 0.0 and 1.0")
+        if not (self.min_sl_pct <= self.fallback_sl_pct <= self.max_sl_pct):
+            raise ValueError(
+                f"fallback_sl_pct ({self.fallback_sl_pct}) must be between "
+                f"min_sl_pct ({self.min_sl_pct}) and max_sl_pct ({self.max_sl_pct})"
+            )
+
+        if not (_DECIMAL_ZERO < self.min_confidence <= _DECIMAL_ONE):
+            raise ValueError("min_confidence must be between 0.0 (exclusive) and 1.0")
 
         if self.trend_ema_period <= 0:
             raise ValueError("trend_ema_period must be greater than zero")
@@ -156,8 +170,8 @@ class BotragramOriginStrategy(BaseStrategy):
         if self.volume_period <= 0:
             raise ValueError("volume_period must be greater than zero")
 
-        if self.volume_multiplier < _DECIMAL_ZERO:
-            raise ValueError("volume_multiplier must not be negative")
+        if self.volume_multiplier <= _DECIMAL_ZERO:
+            raise ValueError("volume_multiplier must be positive")
 
         if self.rsi_period <= 0:
             raise ValueError("rsi_period must be greater than zero")
@@ -249,6 +263,14 @@ class BotragramOriginStrategy(BaseStrategy):
 
         # Check for conflicting patterns
         if long_matches and short_matches:
+            long_names = ", ".join(m.pattern_name for m in long_matches)
+            short_names = ", ".join(m.pattern_name for m in short_matches)
+            _LOGGER.debug(
+                "Conflicting patterns detected for %s: Long=[%s] vs Short=[%s]",
+                latest_candle.symbol,
+                long_names,
+                short_names,
+            )
             return Signal(
                 symbol=latest_candle.symbol,
                 signal_type=SignalType.HOLD,
@@ -258,7 +280,10 @@ class BotragramOriginStrategy(BaseStrategy):
                 generated_at=latest_candle.close_time,
                 stop_loss=None,
                 take_profit=None,
-                reason="Conflicting candlestick patterns detected",
+                reason=(
+                    f"Conflicting candlestick patterns detected: "
+                    f"Long=[{long_names}] vs Short=[{short_names}]"
+                ),
             )
 
         active_matches = long_matches if long_matches else short_matches
@@ -308,36 +333,45 @@ class BotragramOriginStrategy(BaseStrategy):
 
     @staticmethod
     def _pattern_quality_bonus(match: CandlestickMatch) -> Decimal:
-        """Calculate quality bonus based on candlestick geometric ratios."""
+        """Calculate quality bonus based on candlestick geometric ratios.
+
+        Args:
+            match: CandlestickMatch containing pattern name and calculated ratios.
+
+        Returns:
+            Decimal quality bonus between 0.00 and 0.03.
+        """
         name = match.pattern_name
         bonus = _DECIMAL_ZERO
 
         # 1. Pinbar / Hammer / Shooting Star: wick dominance
-        if "pinbar" in name:
+        if name in ("bullish_pinbar", "bearish_pinbar"):
             if match.wick_ratio >= Decimal("0.75"):
                 bonus += Decimal("0.03")
         # 2. Doji: long wick rejection
-        elif "doji" in name:
+        elif name in ("dragonfly_doji", "gravestone_doji"):
             if match.wick_ratio >= Decimal("0.80"):
                 bonus += Decimal("0.02")
         # 3. Engulfing: overwhelming body size
-        elif "engulfing" in name:
+        elif name in ("bullish_engulfing", "bearish_engulfing"):
             if match.pattern_ratio >= Decimal("1.50"):
                 bonus += Decimal("0.03")
         # 4. Stars: deep penetration
-        elif "star" in name:
+        elif name in ("morning_star", "evening_star"):
             if match.pattern_ratio >= Decimal("0.70"):
                 bonus += Decimal("0.03")
         # 5. Piercing line / Dark cloud cover: deep penetration
         elif name in ("piercing_line", "dark_cloud_cover"):
             if match.pattern_ratio >= Decimal("0.70"):
                 bonus += Decimal("0.03")
-        # 6. Tweezers: extreme level alignment
-        elif "tweezer" in name:
-            if _DECIMAL_ZERO < match.pattern_ratio <= Decimal("0.0003"):
+        # 6. Tweezers: extreme level alignment (wick_ratio is diff_pct <= 0.0003)
+        elif name in ("tweezer_bottom", "tweezer_top"):
+            if match.wick_ratio <= Decimal("0.0003") or match.pattern_ratio >= Decimal(
+                "0.9997"
+            ):
                 bonus += Decimal("0.02")
         # 7. Marubozu: pure momentum body
-        elif "marubozu" in name:
+        elif name in ("bullish_marubozu", "bearish_marubozu"):
             if match.body_ratio >= Decimal("0.92"):
                 bonus += Decimal("0.03")
 
@@ -347,8 +381,20 @@ class BotragramOriginStrategy(BaseStrategy):
         self,
         matches: Sequence[CandlestickMatch],
     ) -> tuple[CandlestickMatch, Decimal]:
-        """Score detected candlestick matches and calculate aggregate confidence."""
-        scored: list[tuple[CandlestickMatch, Decimal]] = []
+        """Score detected candlestick matches and calculate aggregate setup confidence.
+
+        Note:
+            Confidence is an uncalibrated heuristic setup score indicating
+            structural clarity and technical alignment, not a calibrated
+            statistical win probability.
+
+        Args:
+            matches: Sequence of non-conflicting directional CandlestickMatches.
+
+        Returns:
+            Tuple of (primary_candlestick_match, final_confidence).
+        """
+        scored: list[tuple[CandlestickMatch, Decimal, Decimal]] = []
         for m in matches:
             if m.pattern_name in _TRIPLE_PATTERNS:
                 base = Decimal("0.85")
@@ -362,31 +408,88 @@ class BotragramOriginStrategy(BaseStrategy):
                 base = Decimal("0.65")
 
             quality = self._pattern_quality_bonus(m)
-            scored.append((m, base + quality))
+            scored.append((m, base, quality))
 
-        scored.sort(key=lambda item: item[1], reverse=True)
-        best_match, base_conf = scored[0]
+        scored.sort(key=lambda item: item[1] + item[2], reverse=True)
+        best_match, best_base, best_quality = scored[0]
+        primary_confidence = best_base + best_quality
 
-        # Multi-pattern confluence bonus
-        if len(scored) > 1:
-            confluence_bonus = Decimal("0.05") * Decimal(str(len(scored) - 1))
-            final_conf = min(base_conf + confluence_bonus, _DECIMAL_MAX_CONFIDENCE)
+        # Group matches by candle span to prevent double-counting patterns
+        # derived from the same candle information:
+        # - Triple: 3-candle span
+        # - Dual / Harami: 2-candle span
+        # - Single: 1-candle span
+        primary_tier: str
+        if best_match.pattern_name in _TRIPLE_PATTERNS:
+            primary_tier = "triple"
+        elif best_match.pattern_name in (_DUAL_PATTERNS | _HARAMI_PATTERNS):
+            primary_tier = "dual"
         else:
-            final_conf = min(base_conf, _DECIMAL_MAX_CONFIDENCE)
+            primary_tier = "single"
 
+        # Multi-pattern confluence bonus:
+        # Distinct temporal evidence tiers contribute +0.05.
+        # Correlated intra-tier secondary patterns contribute a discounted +0.01.
+        # Total confluence bonus is strictly capped at _MAX_CONFLUENCE_BONUS (0.06).
+        confluence_bonus = _DECIMAL_ZERO
+        seen_tiers: set[str] = {primary_tier}
+
+        for m, _, _ in scored[1:]:
+            tier: str
+            if m.pattern_name in _TRIPLE_PATTERNS:
+                tier = "triple"
+            elif m.pattern_name in (_DUAL_PATTERNS | _HARAMI_PATTERNS):
+                tier = "dual"
+            else:
+                tier = "single"
+
+            if tier not in seen_tiers:
+                confluence_bonus += Decimal("0.05")
+                seen_tiers.add(tier)
+            else:
+                confluence_bonus += Decimal("0.01")
+
+        bounded_confluence = min(confluence_bonus, _MAX_CONFLUENCE_BONUS)
+        final_conf = min(
+            primary_confidence + bounded_confluence,
+            _DECIMAL_MAX_CONFIDENCE,
+        )
         return best_match, final_conf
 
-    def _calculate_exits(
+    def calculate_exits(
         self,
         *,
         signal_type: SignalType,
         current_price: Decimal,
         rejection_level: Decimal,
     ) -> tuple[Decimal, Decimal]:
-        """Calculate bounded Stop Loss and Take Profit levels."""
+        """Calculate bounded Stop Loss and Take Profit levels.
+
+        Separates structural invalidation level, fallback risk distance,
+        and clamped minimum/maximum risk boundaries.
+
+        Args:
+            signal_type: BUY or SELL signal.
+            current_price: Evaluated closed entry price.
+            rejection_level: Geometric structural invalidation level from pattern.
+
+        Returns:
+            Tuple of (stop_loss_price, take_profit_price).
+        """
+        if not current_price.is_finite() or current_price <= _DECIMAL_ZERO:
+            raise ValueError(
+                f"Invalid current price for exit calculation: {current_price}"
+            )
+
+        is_rejection_valid = (
+            rejection_level.is_finite() and rejection_level > _DECIMAL_ZERO
+        )
+
         if signal_type is SignalType.BUY:
-            if rejection_level >= current_price:
-                sl_price = current_price * (_DECIMAL_ONE - self.fallback_sl_pct)
+            # Structural rejection must be strictly below entry price for BUY
+            if not is_rejection_valid or rejection_level >= current_price:
+                sl_distance = current_price * self.fallback_sl_pct
+                sl_price = current_price - sl_distance
             else:
                 sl_distance = current_price - rejection_level
                 sl_pct = sl_distance / current_price
@@ -402,8 +505,10 @@ class BotragramOriginStrategy(BaseStrategy):
             return sl_price, tp_price
 
         # SELL
-        if rejection_level <= current_price:
-            sl_price = current_price * (_DECIMAL_ONE + self.fallback_sl_pct)
+        # Structural rejection must be strictly above entry price for SELL
+        if not is_rejection_valid or rejection_level <= current_price:
+            sl_distance = current_price * self.fallback_sl_pct
+            sl_price = current_price + sl_distance
         else:
             sl_distance = rejection_level - current_price
             sl_pct = sl_distance / current_price
@@ -417,6 +522,8 @@ class BotragramOriginStrategy(BaseStrategy):
         actual_sl_dist = sl_price - current_price
         tp_price = current_price - (self.risk_reward_ratio * actual_sl_dist)
         return sl_price, tp_price
+
+    _calculate_exits = calculate_exits
 
     def _apply_ta_filters(
         self,
@@ -472,11 +579,28 @@ class BotragramOriginStrategy(BaseStrategy):
                 ta_confidence_bonus += Decimal("0.02")
 
         # 2. Volume Filter
-        if self.use_volume_filter and len(candles) >= self.volume_period:
-            vols = [c.volume for c in candles[-self.volume_period :]]
-            avg_vol = sum(vols, _DECIMAL_ZERO) / Decimal(str(len(vols)))
+        if self.use_volume_filter and len(candles) >= self.volume_period + 1:
+            baseline_vols = [c.volume for c in candles[-(self.volume_period + 1) : -1]]
+            avg_vol = sum(baseline_vols, _DECIMAL_ZERO) / Decimal(
+                str(len(baseline_vols))
+            )
             current_vol = candles[-1].volume
-            if current_vol < (avg_vol * self.volume_multiplier):
+
+            if avg_vol <= _DECIMAL_ZERO or not avg_vol.is_finite():
+                return Signal(
+                    symbol=signal.symbol,
+                    signal_type=SignalType.HOLD,
+                    price=signal.price,
+                    confidence=_DECIMAL_ZERO,
+                    strategy_name=self.strategy_type.value,
+                    generated_at=signal.generated_at,
+                    stop_loss=None,
+                    take_profit=None,
+                    reason="Volume filter: baseline volume average is zero or invalid",
+                )
+
+            threshold_vol = avg_vol * self.volume_multiplier
+            if current_vol < threshold_vol:
                 return Signal(
                     symbol=signal.symbol,
                     signal_type=SignalType.HOLD,
@@ -488,7 +612,7 @@ class BotragramOriginStrategy(BaseStrategy):
                     take_profit=None,
                     reason=(
                         f"Volume {current_vol:.2f} below required SMA threshold "
-                        f"{avg_vol * self.volume_multiplier:.2f}"
+                        f"{threshold_vol:.2f}"
                     ),
                 )
             if current_vol >= avg_vol * Decimal("1.5"):
@@ -683,12 +807,14 @@ class BotragramOriginStrategy(BaseStrategy):
                 slow_period=self.macd_slow_period,
                 signal_period=self.macd_signal_period,
             )
-            if len(macd_res.macd) >= 2:
+            if len(macd_res.macd) >= 2 and len(macd_res.histogram) >= 2:
                 current_macd = macd_res.macd[-1]
                 prev_macd = macd_res.macd[-2]
+                curr_hist = macd_res.histogram[-1]
+                prev_hist = macd_res.histogram[-2]
 
                 if signal.signal_type == SignalType.SELL:
-                    # MACD harus menunjukkan penurunan (misal 1.0 -> 0.9)
+                    # MACD must show downward slope
                     if current_macd >= prev_macd:
                         return Signal(
                             symbol=signal.symbol,
@@ -704,10 +830,11 @@ class BotragramOriginStrategy(BaseStrategy):
                                 f"declining ({current_macd:.4f} >= {prev_macd:.4f})"
                             ),
                         )
-                    ta_confidence_bonus += Decimal("0.02")
+                    if curr_hist < _DECIMAL_ZERO and curr_hist < prev_hist:
+                        ta_confidence_bonus += Decimal("0.02")
 
                 elif signal.signal_type == SignalType.BUY:
-                    # MACD harus menunjukkan kenaikan untuk sinyal BUY
+                    # MACD must show upward slope
                     if current_macd <= prev_macd:
                         return Signal(
                             symbol=signal.symbol,
@@ -723,7 +850,8 @@ class BotragramOriginStrategy(BaseStrategy):
                                 f"({current_macd:.4f} <= {prev_macd:.4f})"
                             ),
                         )
-                    ta_confidence_bonus += Decimal("0.02")
+                    if curr_hist > _DECIMAL_ZERO and curr_hist > prev_hist:
+                        ta_confidence_bonus += Decimal("0.02")
 
         # 6. Parabolic SAR Filter (Pendekatan 2: Proximity Tolerance)
         if self.use_psar_filter and len(candles) >= 2:
@@ -779,8 +907,9 @@ class BotragramOriginStrategy(BaseStrategy):
                     ta_confidence_bonus += Decimal("0.02")
 
         if ta_confidence_bonus > _DECIMAL_ZERO:
+            bounded_bonus = min(ta_confidence_bonus, _MAX_TA_BONUS)
             new_confidence = min(
-                signal.confidence + ta_confidence_bonus,
+                signal.confidence + bounded_bonus,
                 _DECIMAL_MAX_CONFIDENCE,
             )
             return replace(signal, confidence=new_confidence)

@@ -84,7 +84,7 @@ def get_strategy_default_exit_rates(
     """Return the default (stop_loss_pct, take_profit_pct) for a strategy."""
     match strategy_type:
         case StrategyType.BOTRAGRAM_ORIGIN:
-            return (Decimal("0.015"), Decimal("0.0225"))
+            return (Decimal("0.030"), Decimal("0.045"))
         case StrategyType.PINBAR_ENGULFING_EMA_RSI:
             return (Decimal("0.012"), Decimal("0.024"))
         case StrategyType.MORPH:

@@ -69,8 +69,8 @@ class RiskSettings:
     pier_take_profit_pct: Decimal = Decimal("0.024")
 
     # Botragram Origin Exits
-    origin_stop_loss_pct: Decimal = Decimal("0.015")
-    origin_take_profit_pct: Decimal = Decimal("0.0225")
+    origin_stop_loss_pct: Decimal = Decimal("0.030")
+    origin_take_profit_pct: Decimal = Decimal("0.045")
 
     # Stepped Position Protection
     breakeven_roi_threshold: Decimal = Decimal("0.30")
