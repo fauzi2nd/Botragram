@@ -35,6 +35,7 @@ class StrategyType(BaseEnum):
 
     ADX_TREND = "adx_trend"
     BOLLINGER_BREAKOUT = "bollinger_breakout"
+    BOTRAGRAM_ORIGIN = "botragram_origin"
     CHOCH_FVG = "choch_fvg"
     CHOCH_RSI_BB_HYBRID = "choch_rsi_bb_hybrid"
     EMA_CROSS = "ema_cross"

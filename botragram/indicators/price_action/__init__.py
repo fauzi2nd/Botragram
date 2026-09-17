@@ -18,9 +18,17 @@ from __future__ import annotations
 # =============================================================================
 from botragram.indicators.price_action.candlesticks import (
     CandlestickMatch,
+    detect_all_candlestick_patterns,
+    detect_doji,
     detect_engulfing,
+    detect_harami,
+    detect_marubozu,
+    detect_piercing_or_cloud,
     detect_pinbar,
     detect_star,
+    detect_three_inside,
+    detect_three_soldiers_or_crows,
+    detect_tweezers,
 )
 from botragram.indicators.price_action.choch_fvg import (
     ChochFvgResult,
@@ -35,9 +43,17 @@ __all__ = [
     "ChochFvgResult",
     "FvgZone",
     "calculate_choch_fvg",
+    "detect_all_candlestick_patterns",
+    "detect_doji",
     "detect_engulfing",
     "detect_fvg_zones",
+    "detect_harami",
+    "detect_marubozu",
+    "detect_piercing_or_cloud",
     "detect_pinbar",
     "detect_star",
+    "detect_three_inside",
+    "detect_three_soldiers_or_crows",
+    "detect_tweezers",
     "find_swing_levels",
 ]

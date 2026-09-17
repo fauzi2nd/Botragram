@@ -610,6 +610,8 @@ def test_new_strategy_messages_and_keyboard() -> None:
     assert "cb_strategy_vwap_breakout" in callbacks
     assert "cb_strategy_choch_fvg" in callbacks
     assert "cb_strategy_pinbar_engulfing_ema_rsi" in callbacks
+    assert "cb_strategy_botragram_origin" in callbacks
+    assert "cb_strategy_ny_4h_range_scalping" in callbacks
 
 
 def test_trading_menu_keyboard_sync_with_pause_state() -> None:

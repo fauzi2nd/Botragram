@@ -742,6 +742,151 @@ class SettingsManager:
                 if environment.get_ny_range_rsi_short_min()
                 else Decimal("44.0")
             ),
+            origin_risk_reward_ratio=(
+                self._parse_decimal(
+                    raw_value=environment.get_origin_risk_reward_ratio(),
+                    setting_name="ORIGIN_RISK_REWARD_RATIO",
+                )
+                if environment.get_origin_risk_reward_ratio()
+                else Decimal("1.5")
+            ),
+            origin_min_sl_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_origin_min_sl_pct(),
+                    setting_name="ORIGIN_MIN_SL_PCT",
+                )
+                if environment.get_origin_min_sl_pct()
+                else Decimal("0.010")
+            ),
+            origin_max_sl_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_origin_max_sl_pct(),
+                    setting_name="ORIGIN_MAX_SL_PCT",
+                )
+                if environment.get_origin_max_sl_pct()
+                else Decimal("0.030")
+            ),
+            origin_fallback_sl_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_origin_fallback_sl_pct(),
+                    setting_name="ORIGIN_FALLBACK_SL_PCT",
+                )
+                if environment.get_origin_fallback_sl_pct()
+                else Decimal("0.015")
+            ),
+            origin_min_confidence=(
+                self._parse_decimal(
+                    raw_value=environment.get_origin_min_confidence(),
+                    setting_name="ORIGIN_MIN_CONFIDENCE",
+                )
+                if environment.get_origin_min_confidence()
+                else Decimal("0.70")
+            ),
+            origin_use_trend_filter=environment.get_origin_use_trend_filter(),
+            origin_trend_ema_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_origin_trend_ema_period(),
+                    setting_name="ORIGIN_TREND_EMA_PERIOD",
+                )
+                if environment.get_origin_trend_ema_period()
+                else 50
+            ),
+            origin_use_volume_filter=environment.get_origin_use_volume_filter(),
+            origin_volume_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_origin_volume_period(),
+                    setting_name="ORIGIN_VOLUME_PERIOD",
+                )
+                if environment.get_origin_volume_period()
+                else 20
+            ),
+            origin_volume_multiplier=(
+                self._parse_decimal(
+                    raw_value=environment.get_origin_volume_multiplier(),
+                    setting_name="ORIGIN_VOLUME_MULTIPLIER",
+                )
+                if environment.get_origin_volume_multiplier()
+                else Decimal("1.0")
+            ),
+            origin_use_rsi_filter=environment.get_origin_use_rsi_filter(),
+            origin_rsi_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_origin_rsi_period(),
+                    setting_name="ORIGIN_RSI_PERIOD",
+                )
+                if environment.get_origin_rsi_period()
+                else 14
+            ),
+            origin_rsi_long_max=(
+                self._parse_decimal(
+                    raw_value=environment.get_origin_rsi_long_max(),
+                    setting_name="ORIGIN_RSI_LONG_MAX",
+                )
+                if environment.get_origin_rsi_long_max()
+                else Decimal("70.0")
+            ),
+            origin_rsi_short_min=(
+                self._parse_decimal(
+                    raw_value=environment.get_origin_rsi_short_min(),
+                    setting_name="ORIGIN_RSI_SHORT_MIN",
+                )
+                if environment.get_origin_rsi_short_min()
+                else Decimal("30.0")
+            ),
+            origin_require_rsi_direction=(
+                environment.get_origin_require_rsi_direction()
+            ),
+            origin_use_bb_filter=environment.get_origin_use_bb_filter(),
+            origin_bb_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_origin_bb_period(),
+                    setting_name="ORIGIN_BB_PERIOD",
+                )
+                if environment.get_origin_bb_period()
+                else 20
+            ),
+            origin_bb_std_dev=(
+                self._parse_decimal(
+                    raw_value=environment.get_origin_bb_std_dev(),
+                    setting_name="ORIGIN_BB_STD_DEV",
+                )
+                if environment.get_origin_bb_std_dev()
+                else Decimal("2.0")
+            ),
+            origin_use_macd_filter=environment.get_origin_use_macd_filter(),
+            origin_macd_fast_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_origin_macd_fast_period(),
+                    setting_name="ORIGIN_MACD_FAST_PERIOD",
+                )
+                if environment.get_origin_macd_fast_period()
+                else 12
+            ),
+            origin_macd_slow_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_origin_macd_slow_period(),
+                    setting_name="ORIGIN_MACD_SLOW_PERIOD",
+                )
+                if environment.get_origin_macd_slow_period()
+                else 26
+            ),
+            origin_macd_signal_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_origin_macd_signal_period(),
+                    setting_name="ORIGIN_MACD_SIGNAL_PERIOD",
+                )
+                if environment.get_origin_macd_signal_period()
+                else 9
+            ),
+            origin_use_psar_filter=environment.get_origin_use_psar_filter(),
+            origin_psar_max_proximity_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_origin_psar_max_proximity_pct(),
+                    setting_name="ORIGIN_PSAR_MAX_PROXIMITY_PCT",
+                )
+                if environment.get_origin_psar_max_proximity_pct()
+                else Decimal("0.008")
+            ),
         )
 
     def load_logging_settings(self) -> LoggingSettings:

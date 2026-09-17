@@ -723,6 +723,8 @@ def get_strategy_keyboard(
         ("High Confluence", "high_confluence_exhaustion"),
         ("Quad-Confluence", "quad_confluence"),
         ("Pinbar + Engulfing", "pinbar_engulfing_ema_rsi"),
+        ("Botragram Origin", "botragram_origin"),
+        ("NY 4H Range", "ny_4h_range_scalping"),
         ("MACD Swing", "macd_swing"),
         ("Supertrend", "supertrend"),
         ("Bollinger Breakout", "bollinger_breakout"),

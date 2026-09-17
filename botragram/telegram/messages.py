@@ -1026,6 +1026,15 @@ def get_strategy_message(
             lines.append("<b>Anchor:</b> 1st Closed 4H Candle (00:00-04:00 NY)")
             lines.append("<b>Trigger:</b> 5M Breakout & Re-entry Confirmation")
             lines.append("<b>Risk:</b> Swing SL & 1:2 Minimum Risk-Reward")
+        case StrategyType.BOTRAGRAM_ORIGIN:
+            lines.append(
+                "<b>Concept:</b> Botragram Origin (Candlestick Pattern Engine)"
+            )
+            lines.append(
+                "<b>Patterns:</b> Single, Dual & Triple Japanese Candlestick Patterns"
+            )
+            lines.append("<b>Trigger:</b> Rejection / Momentum / Reversal Confluence")
+            lines.append("<b>Risk:</b> Pattern Swing SL & 1:1.5 Target RRR")
         case _:
             lines.append(f"<b>Fast EMA period:</b> {fast_period}")
             lines.append(f"<b>Slow EMA period:</b> {slow_period}")

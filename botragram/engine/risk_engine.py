@@ -616,7 +616,8 @@ class RiskEngine:
                     self.settings.pier_take_profit_pct,
                 )
             case (
-                StrategyType.HIGH_CONFLUENCE_EXHAUSTION
+                StrategyType.BOTRAGRAM_ORIGIN
+                | StrategyType.HIGH_CONFLUENCE_EXHAUSTION
                 | StrategyType.CHOCH_FVG
                 | StrategyType.LIQUIDITY_SWEEP_EXHAUSTION
                 | StrategyType.CHOCH_RSI_BB_HYBRID

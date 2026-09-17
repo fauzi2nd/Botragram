@@ -1341,3 +1341,182 @@ async def test_unowned_manual_protection_orders_are_cancelled_and_replaced() -> 
         protected.stop_loss_client_algo_id,
         protected.take_profit_client_algo_id,
     ]
+
+
+@pytest.mark.asyncio
+async def test_adoptable_manual_sl_tp_are_adopted_and_not_cancelled() -> None:
+    """Adopt valid user manual SL and TP orders matching risk parameters."""
+    exchange = RestartProtectionExchange()
+    # User manually placed SL at 98 and TP at 104 with standard client IDs
+    exchange.orders = [
+        _order(
+            order_id="user-manual-sl-1",
+            client_id="manual-sl-client-id",
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_MARKET,
+            trigger=Decimal("98"),
+        ),
+        _order(
+            order_id="user-manual-tp-1",
+            client_id="manual-tp-client-id",
+            side=OrderSide.SELL,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            trigger=Decimal("104"),
+        ),
+    ]
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(
+            settings=replace(
+                RiskSettings(),
+                ema_cross_stop_loss_pct=Decimal("0.02"),
+                ema_cross_take_profit_pct=Decimal("0.04"),
+            )
+        ),
+    )
+    position = _position(
+        stop_loss=None,
+        take_profit=None,
+        stop_id=None,
+        tp_id=None,
+    )
+
+    protected = await service.ensure(position=position)
+
+    # Valid manual orders must NOT be cancelled
+    assert "manual-sl-client-id" not in exchange.cancelled
+    assert "manual-tp-client-id" not in exchange.cancelled
+    assert "user-manual-sl-1" not in exchange.cancelled
+    assert "user-manual-tp-1" not in exchange.cancelled
+
+    # No new orders should be posted to exchange
+    assert exchange.posts == []
+
+    # Position should adopt the manual order client algo IDs
+    assert protected.stop_loss == Decimal("98")
+    assert protected.take_profit == Decimal("104")
+    assert protected.stop_loss_client_algo_id == "manual-sl-client-id"
+    assert protected.take_profit_client_algo_id == "manual-tp-client-id"
+
+
+@pytest.mark.asyncio
+async def test_superfluous_duplicate_protection_orders_are_cancelled() -> None:
+    """Cancel duplicate SL orders while preserving the primary one."""
+    exchange = RestartProtectionExchange()
+    stop_id = "bsl-0123456789abcdef0123456789abcdef"
+    tp_id = "btp-0123456789abcdef0123456789abcdef"
+    exchange.orders = [
+        _order(
+            order_id="sl-primary",
+            client_id=stop_id,
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_MARKET,
+            trigger=Decimal("98"),
+        ),
+        _order(
+            order_id="sl-duplicate",
+            client_id="bsl-duplicate000000000000000000000",
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_MARKET,
+            trigger=Decimal("98"),
+        ),
+        _order(
+            order_id="tp-primary",
+            client_id=tp_id,
+            side=OrderSide.SELL,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            trigger=Decimal("104"),
+        ),
+    ]
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(
+            settings=replace(
+                RiskSettings(),
+                ema_cross_stop_loss_pct=Decimal("0.02"),
+                ema_cross_take_profit_pct=Decimal("0.04"),
+            )
+        ),
+    )
+    position = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id=stop_id,
+        tp_id=tp_id,
+    )
+
+    protected = await service.ensure(position=position)
+
+    # Primary orders must be preserved
+    assert stop_id not in exchange.cancelled
+    assert tp_id not in exchange.cancelled
+    assert protected.stop_loss_client_algo_id == stop_id
+    assert protected.take_profit_client_algo_id == tp_id
+
+    # Duplicate must be cancelled
+    assert (
+        "sl-duplicate" in exchange.cancelled
+        or "bsl-duplicate000000000000000000000" in exchange.cancelled
+    )
+
+
+@pytest.mark.asyncio
+async def test_wrong_side_protection_orders_are_cancelled() -> None:
+    """Cancel dangerous wrong-side protection orders on active position."""
+    exchange = RestartProtectionExchange()
+    stop_id = "bsl-0123456789abcdef0123456789abcdef"
+    tp_id = "btp-0123456789abcdef0123456789abcdef"
+    # LONG position requires SELL protection. Here a BUY stop order is present!
+    exchange.orders = [
+        _order(
+            order_id="sl-primary",
+            client_id=stop_id,
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_MARKET,
+            trigger=Decimal("98"),
+        ),
+        _order(
+            order_id="wrong-side-order",
+            client_id="wrong-side-client-id",
+            side=OrderSide.BUY,
+            order_type=OrderType.STOP_MARKET,
+            trigger=Decimal("95"),
+        ),
+        _order(
+            order_id="tp-primary",
+            client_id=tp_id,
+            side=OrderSide.SELL,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            trigger=Decimal("104"),
+        ),
+    ]
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(
+            settings=replace(
+                RiskSettings(),
+                ema_cross_stop_loss_pct=Decimal("0.02"),
+                ema_cross_take_profit_pct=Decimal("0.04"),
+            )
+        ),
+    )
+    position = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id=stop_id,
+        tp_id=tp_id,
+    )
+
+    await service.ensure(position=position)
+
+    # Wrong-side order must have been cancelled
+    assert (
+        "wrong-side-order" in exchange.cancelled
+        or "wrong-side-client-id" in exchange.cancelled
+    )

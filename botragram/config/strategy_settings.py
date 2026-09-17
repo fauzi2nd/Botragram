@@ -336,6 +336,34 @@ class StrategySettings:
     ny_range_rsi_long_max: Decimal = Decimal("54.0")
     ny_range_rsi_short_min: Decimal = Decimal("44.0")
 
+    # ============================================================================
+    # Botragram Origin (Pure Candlestick Patterns + Extensible TA)
+    # ============================================================================
+    origin_risk_reward_ratio: Decimal = Decimal("1.5")
+    origin_min_sl_pct: Decimal = Decimal("0.010")
+    origin_max_sl_pct: Decimal = Decimal("0.030")
+    origin_fallback_sl_pct: Decimal = Decimal("0.015")
+    origin_min_confidence: Decimal = Decimal("0.70")
+    origin_use_trend_filter: bool = False
+    origin_trend_ema_period: int = 50
+    origin_use_volume_filter: bool = False
+    origin_volume_period: int = 20
+    origin_volume_multiplier: Decimal = Decimal("1.0")
+    origin_use_rsi_filter: bool = False
+    origin_rsi_period: int = 14
+    origin_rsi_long_max: Decimal = Decimal("70.0")
+    origin_rsi_short_min: Decimal = Decimal("30.0")
+    origin_require_rsi_direction: bool = False
+    origin_use_bb_filter: bool = False
+    origin_bb_period: int = 20
+    origin_bb_std_dev: Decimal = Decimal("2.0")
+    origin_use_macd_filter: bool = False
+    origin_macd_fast_period: int = 12
+    origin_macd_slow_period: int = 26
+    origin_macd_signal_period: int = 9
+    origin_use_psar_filter: bool = False
+    origin_psar_max_proximity_pct: Decimal = Decimal("0.008")
+
     def __post_init__(self) -> None:
         """Validate bounded strategy settings."""
         if not self.min_signal_confidence.is_finite():
@@ -653,3 +681,43 @@ class StrategySettings:
             raise ValueError("ny_range_rsi_long_max must be between 0.0 and 100.0")
         if not (Decimal("0.0") <= self.ny_range_rsi_short_min <= Decimal("100.0")):
             raise ValueError("ny_range_rsi_short_min must be between 0.0 and 100.0")
+        if self.origin_risk_reward_ratio <= Decimal("0"):
+            raise ValueError("origin_risk_reward_ratio must be positive")
+        if self.origin_max_sl_pct <= Decimal("0"):
+            raise ValueError("origin_max_sl_pct must be positive")
+        if self.origin_min_sl_pct < Decimal("0"):
+            raise ValueError("origin_min_sl_pct must not be negative")
+        if self.origin_min_sl_pct > self.origin_max_sl_pct:
+            raise ValueError("origin_min_sl_pct cannot exceed origin_max_sl_pct")
+        if self.origin_fallback_sl_pct <= Decimal("0"):
+            raise ValueError("origin_fallback_sl_pct must be positive")
+        if not (Decimal("0.0") <= self.origin_min_confidence <= Decimal("1.0")):
+            raise ValueError("origin_min_confidence must be between 0.0 and 1.0")
+        if self.origin_trend_ema_period <= 0:
+            raise ValueError("origin_trend_ema_period must be positive")
+        if self.origin_volume_period <= 0:
+            raise ValueError("origin_volume_period must be positive")
+        if self.origin_volume_multiplier < Decimal("0"):
+            raise ValueError("origin_volume_multiplier must not be negative")
+        if self.origin_rsi_period <= 0:
+            raise ValueError("origin_rsi_period must be positive")
+        if not (Decimal("0.0") <= self.origin_rsi_long_max <= Decimal("100.0")):
+            raise ValueError("origin_rsi_long_max must be between 0.0 and 100.0")
+        if not (Decimal("0.0") <= self.origin_rsi_short_min <= Decimal("100.0")):
+            raise ValueError("origin_rsi_short_min must be between 0.0 and 100.0")
+        if self.origin_bb_period <= 0:
+            raise ValueError("origin_bb_period must be positive")
+        if self.origin_bb_std_dev <= Decimal("0"):
+            raise ValueError("origin_bb_std_dev must be positive")
+        if self.origin_macd_fast_period <= 0:
+            raise ValueError("origin_macd_fast_period must be positive")
+        if self.origin_macd_slow_period <= 0:
+            raise ValueError("origin_macd_slow_period must be positive")
+        if self.origin_macd_signal_period <= 0:
+            raise ValueError("origin_macd_signal_period must be positive")
+        if self.origin_macd_fast_period >= self.origin_macd_slow_period:
+            raise ValueError(
+                "origin_macd_fast_period must be less than origin_macd_slow_period"
+            )
+        if self.origin_psar_max_proximity_pct <= Decimal("0"):
+            raise ValueError("origin_psar_max_proximity_pct must be positive")

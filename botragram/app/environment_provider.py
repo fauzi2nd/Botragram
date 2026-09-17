@@ -135,6 +135,30 @@ from botragram.constants.env import (
     ENV_OKX_TESTNET,
     ENV_OPENAI_API_KEY,
     ENV_OPENROUTER_API_KEY,
+    ENV_ORIGIN_BB_PERIOD,
+    ENV_ORIGIN_BB_STD_DEV,
+    ENV_ORIGIN_FALLBACK_SL_PCT,
+    ENV_ORIGIN_MACD_FAST_PERIOD,
+    ENV_ORIGIN_MACD_SIGNAL_PERIOD,
+    ENV_ORIGIN_MACD_SLOW_PERIOD,
+    ENV_ORIGIN_MAX_SL_PCT,
+    ENV_ORIGIN_MIN_CONFIDENCE,
+    ENV_ORIGIN_MIN_SL_PCT,
+    ENV_ORIGIN_PSAR_MAX_PROXIMITY_PCT,
+    ENV_ORIGIN_REQUIRE_RSI_DIRECTION,
+    ENV_ORIGIN_RISK_REWARD_RATIO,
+    ENV_ORIGIN_RSI_LONG_MAX,
+    ENV_ORIGIN_RSI_PERIOD,
+    ENV_ORIGIN_RSI_SHORT_MIN,
+    ENV_ORIGIN_TREND_EMA_PERIOD,
+    ENV_ORIGIN_USE_BB_FILTER,
+    ENV_ORIGIN_USE_MACD_FILTER,
+    ENV_ORIGIN_USE_PSAR_FILTER,
+    ENV_ORIGIN_USE_RSI_FILTER,
+    ENV_ORIGIN_USE_TREND_FILTER,
+    ENV_ORIGIN_USE_VOLUME_FILTER,
+    ENV_ORIGIN_VOLUME_MULTIPLIER,
+    ENV_ORIGIN_VOLUME_PERIOD,
     ENV_PARTIAL_TP_ENABLED,
     ENV_PARTIAL_TP_RATIO,
     ENV_PARTIAL_TP_TRIGGER_PROGRESS,
@@ -387,7 +411,12 @@ class EnvironmentProvider:
     def _build_profile_path(self, profile: EnvironmentProfile) -> Path:
         """Build the credential profile path beside the base dotenv file."""
         base_path = Path(self._env_path)
-        return base_path.with_name(f"{base_path.name}.{profile.value}")
+        profile_path = base_path.with_name(f"{base_path.name}.{profile.value}")
+        if not profile_path.is_file() and base_path.name != ".env":
+            root_profile_path = base_path.with_name(f".env.{profile.value}")
+            if root_profile_path.is_file():
+                return root_profile_path
+        return profile_path
 
     @staticmethod
     def _read_profile_values(profile_path: Path) -> dict[str, str | None]:
@@ -908,6 +937,102 @@ class EnvironmentProvider:
     def get_ny_range_rsi_short_min(self) -> str:
         """Return minimum RSI allowed for short re-entries."""
         return self._get_var(ENV_NY_RANGE_RSI_SHORT_MIN, default="")
+
+    def get_origin_risk_reward_ratio(self) -> str:
+        """Return the configured Risk-Reward Ratio for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_RISK_REWARD_RATIO, default="")
+
+    def get_origin_min_sl_pct(self) -> str:
+        """Return the configured minimum SL percentage for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_MIN_SL_PCT, default="")
+
+    def get_origin_max_sl_pct(self) -> str:
+        """Return the configured maximum SL percentage for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_MAX_SL_PCT, default="")
+
+    def get_origin_fallback_sl_pct(self) -> str:
+        """Return the fallback SL percentage for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_FALLBACK_SL_PCT, default="")
+
+    def get_origin_min_confidence(self) -> str:
+        """Return the minimum confidence threshold for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_MIN_CONFIDENCE, default="")
+
+    def get_origin_use_trend_filter(self) -> bool:
+        """Return whether Botragram Origin strategy uses trend filter."""
+        return self._get_bool(ENV_ORIGIN_USE_TREND_FILTER, default=False)
+
+    def get_origin_trend_ema_period(self) -> str:
+        """Return trend EMA period for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_TREND_EMA_PERIOD, default="")
+
+    def get_origin_use_volume_filter(self) -> bool:
+        """Return whether Botragram Origin strategy uses volume filter."""
+        return self._get_bool(ENV_ORIGIN_USE_VOLUME_FILTER, default=False)
+
+    def get_origin_volume_period(self) -> str:
+        """Return volume SMA period for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_VOLUME_PERIOD, default="")
+
+    def get_origin_volume_multiplier(self) -> str:
+        """Return volume multiplier for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_VOLUME_MULTIPLIER, default="")
+
+    def get_origin_use_rsi_filter(self) -> bool:
+        """Return whether Botragram Origin strategy uses RSI filter."""
+        return self._get_bool(ENV_ORIGIN_USE_RSI_FILTER, default=False)
+
+    def get_origin_rsi_period(self) -> str:
+        """Return RSI period for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_RSI_PERIOD, default="")
+
+    def get_origin_rsi_long_max(self) -> str:
+        """Return maximum RSI allowed for long entry in Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_RSI_LONG_MAX, default="")
+
+    def get_origin_rsi_short_min(self) -> str:
+        """Return minimum RSI allowed for short entry in Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_RSI_SHORT_MIN, default="")
+
+    def get_origin_require_rsi_direction(self) -> bool:
+        """Return whether Botragram Origin strategy requires RSI momentum direction."""
+        return self._get_bool(ENV_ORIGIN_REQUIRE_RSI_DIRECTION, default=False)
+
+    def get_origin_use_bb_filter(self) -> bool:
+        """Return whether Botragram Origin strategy uses Bollinger Bands filter."""
+        return self._get_bool(ENV_ORIGIN_USE_BB_FILTER, default=False)
+
+    def get_origin_bb_period(self) -> str:
+        """Return Bollinger Bands period for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_BB_PERIOD, default="")
+
+    def get_origin_bb_std_dev(self) -> str:
+        """Return Bollinger Bands standard deviation for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_BB_STD_DEV, default="")
+
+    def get_origin_use_macd_filter(self) -> bool:
+        """Return whether Botragram Origin strategy uses MACD filter."""
+        return self._get_bool(ENV_ORIGIN_USE_MACD_FILTER, default=False)
+
+    def get_origin_macd_fast_period(self) -> str:
+        """Return MACD fast period for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_MACD_FAST_PERIOD, default="")
+
+    def get_origin_macd_slow_period(self) -> str:
+        """Return MACD slow period for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_MACD_SLOW_PERIOD, default="")
+
+    def get_origin_macd_signal_period(self) -> str:
+        """Return MACD signal period for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_MACD_SIGNAL_PERIOD, default="")
+
+    def get_origin_use_psar_filter(self) -> bool:
+        """Return whether Botragram Origin strategy uses Parabolic SAR filter."""
+        return self._get_bool(ENV_ORIGIN_USE_PSAR_FILTER, default=False)
+
+    def get_origin_psar_max_proximity_pct(self) -> str:
+        """Return the maximum allowed PSAR proximity distance for Botragram Origin."""
+        return self._get_var(ENV_ORIGIN_PSAR_MAX_PROXIMITY_PCT, default="")
 
     def get_max_open_positions(self) -> str:
         """Return the configured limit for concurrently open positions."""

@@ -50,7 +50,8 @@ def get_strategy_default_interval(strategy_type: StrategyType) -> Interval:
     """Return the natural, optimal candlestick interval for one strategy."""
     match strategy_type:
         case (
-            StrategyType.CHOCH_FVG
+            StrategyType.BOTRAGRAM_ORIGIN
+            | StrategyType.CHOCH_FVG
             | StrategyType.CHOCH_RSI_BB_HYBRID
             | StrategyType.EMA_SCALPING
             | StrategyType.HIGH_CONFLUENCE_EXHAUSTION
@@ -82,6 +83,8 @@ def get_strategy_default_exit_rates(
 ) -> tuple[Decimal, Decimal]:
     """Return the default (stop_loss_pct, take_profit_pct) for a strategy."""
     match strategy_type:
+        case StrategyType.BOTRAGRAM_ORIGIN:
+            return (Decimal("0.015"), Decimal("0.0225"))
         case StrategyType.PINBAR_ENGULFING_EMA_RSI:
             return (Decimal("0.012"), Decimal("0.024"))
         case StrategyType.MORPH:

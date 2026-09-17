@@ -35,6 +35,7 @@ from botragram.strategies import StrategyFactory
 from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
 from botragram.strategies.price_action import (
+    BotragramOriginStrategy,
     ChochFvgStrategy,
     ChochRsiBbHybridStrategy,
     HighConfluenceExhaustionStrategy,
@@ -166,6 +167,7 @@ def _create_strategy_settings(
     (
         (StrategyType.ADX_TREND, ADXTrendStrategy),
         (StrategyType.BOLLINGER_BREAKOUT, BollingerBreakoutStrategy),
+        (StrategyType.BOTRAGRAM_ORIGIN, BotragramOriginStrategy),
         (StrategyType.CHOCH_FVG, ChochFvgStrategy),
         (StrategyType.CHOCH_RSI_BB_HYBRID, ChochRsiBbHybridStrategy),
         (StrategyType.EMA_CROSS, EMACrossStrategy),
@@ -220,6 +222,8 @@ def test_strategy_resolver_returns_exact_reusable_instances() -> None:
 
     assert isinstance(btc_strategy, EMACrossStrategy)
     assert isinstance(eth_strategy, EMAScalpingStrategy)
+    origin_strategy = resolver.resolve(strategy_type=StrategyType.BOTRAGRAM_ORIGIN)
+    assert isinstance(origin_strategy, BotragramOriginStrategy)
     assert resolver.resolve(strategy_type=StrategyType.EMA_CROSS) is btc_strategy
     with pytest.raises(ValueError, match="Unsupported strategy type"):
         resolver.resolve(strategy_type=StrategyType.CUSTOM)

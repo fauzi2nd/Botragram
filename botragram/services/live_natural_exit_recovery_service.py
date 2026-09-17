@@ -271,12 +271,40 @@ class LiveNaturalExitRecoveryService:
                 orphan_groups.setdefault(symbol, []).append(order)
         for symbol in sorted(orphan_groups):
             stored_position = stored_by_symbol.get(symbol)
+            orders = tuple(orphan_groups[symbol])
             if stored_position is None:
+                if all(
+                    (
+                        Position.is_generated_stop_loss_client_algo_id(
+                            order.client_order_id
+                        )
+                        or Position.is_generated_take_profit_client_algo_id(
+                            order.client_order_id
+                        )
+                    )
+                    for order in orders
+                    if order.client_order_id is not None
+                ) and all(order.client_order_id is not None for order in orders):
+                    _LOGGER.warning(
+                        "LIVE orphan protection belongs to Botragram but has no "
+                        "local position; canceling orphaned bot protection to "
+                        "prevent naked exposure: symbol=%s count=%d",
+                        symbol,
+                        len(orders),
+                    )
+                    for order in sorted(
+                        orders,
+                        key=lambda candidate: (
+                            candidate.order_type.value,
+                            candidate.client_order_id or "",
+                        ),
+                    ):
+                        await self._cancel_and_reconcile(order=order)
+                    continue
                 raise RuntimeError(
                     "LIVE orphan protection has no durable position identity: "
                     f"symbol={symbol}"
                 )
-            orders = tuple(orphan_groups[symbol])
             for order in orders:
                 self._validate_owned_orphan(order=order, position=stored_position)
             for order in sorted(
@@ -929,8 +957,10 @@ class LiveNaturalExitRecoveryService:
             if order_type in (OrderType.STOP_MARKET, OrderType.STOP)
             else {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
         )
-        valid_quantity = order.quantity == position.quantity or (
-            position.partial_tp_executed and order.quantity >= position.quantity
+        valid_quantity = (
+            order.quantity == position.quantity
+            or (position.partial_tp_executed and order.quantity >= position.quantity)
+            or order.quantity > Decimal("0")
         )
         if (
             trigger is None
@@ -940,10 +970,17 @@ class LiveNaturalExitRecoveryService:
             or order.order_type not in expected_types
             or not valid_quantity
             or order.stop_price is None
-            or order.stop_price != trigger
         ):
             raise RuntimeError(
                 "Persisted LIVE protection does not match its durable position leg"
+            )
+        if order.stop_price != trigger:
+            _LOGGER.warning(
+                "Persisted LIVE protection trigger differs from stored trigger "
+                "(order=%s stored=%s) for symbol=%s; reconciling deletion",
+                order.stop_price,
+                trigger,
+                position.symbol,
             )
 
     async def _cancel_and_reconcile(self, *, order: Order) -> None:
@@ -1017,6 +1054,12 @@ class LiveNaturalExitRecoveryService:
         elif client_id == position.pending_stop_loss_client_algo_id:
             expected_types = {OrderType.STOP_MARKET, OrderType.STOP}
             expected_trigger = position.pending_stop_loss
+        elif Position.is_generated_stop_loss_client_algo_id(client_id):
+            expected_types = {OrderType.STOP_MARKET, OrderType.STOP}
+            expected_trigger = order.stop_price
+        elif Position.is_generated_take_profit_client_algo_id(client_id):
+            expected_types = {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
+            expected_trigger = order.stop_price
 
         if expected_types is None:
             raise RuntimeError(
@@ -1026,8 +1069,10 @@ class LiveNaturalExitRecoveryService:
         expected_side = (
             OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
-        valid_quantity = order.quantity == position.quantity or (
-            position.partial_tp_executed and order.quantity >= position.quantity
+        valid_quantity = (
+            order.quantity == position.quantity
+            or (position.partial_tp_executed and order.quantity >= position.quantity)
+            or order.quantity > Decimal("0")
         )
 
         if (
@@ -1038,8 +1083,17 @@ class LiveNaturalExitRecoveryService:
             or not valid_quantity
             or order.stop_price is None
             or expected_trigger is None
-            or order.stop_price != expected_trigger
         ):
             raise RuntimeError(
                 "LIVE orphan protection does not match its durable position leg"
+            )
+
+        if order.stop_price != expected_trigger:
+            _LOGGER.warning(
+                "LIVE orphan protection trigger differs from stored trigger "
+                "(order=%s stored=%s) for symbol=%s; canceling to prevent "
+                "naked exposure",
+                order.stop_price,
+                expected_trigger,
+                position.symbol,
             )

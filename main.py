@@ -49,6 +49,7 @@ from botragram.enums import (
     ExecutionPolicy,
     MarketType,
     StrategyType,
+    TradeMode,
 )
 from botragram.utils.logger import configure_logging, shutdown_logging
 from botragram.utils.retry import CappedExponentialBackoff
@@ -204,6 +205,22 @@ async def _run_trading(
         else:
             await dependency_provider.runtime_recovery_service.recover(
                 activate_runtime=activate_runtime,
+            )
+        if (
+            activate_runtime
+            and dependency_provider.runtime_control.is_paused
+            and (
+                settings.app.effective_execution_policy
+                is ExecutionPolicy.AUTONOMOUS_PAPER
+                or (
+                    settings.app.trade_mode is TradeMode.PAPER
+                    and not settings.telegram.enabled
+                )
+            )
+        ):
+            dependency_provider.runtime_control.resume_global_cycle()
+            _LOGGER.info(
+                "Paper trading runtime auto-resumed (headless/autonomous mode)"
             )
         if restart_coordinator.has_committed_restart:
             _LOGGER.info(

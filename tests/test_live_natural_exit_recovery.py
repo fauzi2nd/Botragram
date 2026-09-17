@@ -1543,3 +1543,108 @@ async def test_reconcile_cancels_partial_tp_orphan_and_deletes_legacy_pos() -> N
     assert exchange.cancel_calls == [(_SYMBOL, _TP_ID)]
     assert exchange.protections == []
     assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletes_stale_position_with_reduced_tp_qty() -> None:
+    """Allow stale deletion when filled TP protection has reduced quantity."""
+    repository = MemoryPositionRepository()
+    pos = replace(
+        _position(),
+        quantity=Decimal("130"),
+        partial_tp_executed=False,
+        entry_client_order_id=None,
+    )
+    await repository.save(position=pos)
+    filled_tp = replace(
+        _protection(
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            client_id=_TP_ID,
+            trigger="0.01084",
+            quantity="70",
+        ),
+        order_id="filled-reduced-tp",
+        status=OrderStatus.FILLED,
+        executed_quantity=Decimal("70"),
+    )
+    canceled_sl = replace(
+        _protection(
+            order_type=OrderType.STOP_MARKET,
+            client_id=_STOP_ID,
+            trigger="0.01151",
+            quantity="130",
+        ),
+        order_id="canceled-sl",
+        status=OrderStatus.CANCELED,
+    )
+    exchange = FakeNaturalExitExchange(
+        exact_only_protections=(filled_tp, canceled_sl),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    await service.reconcile()
+
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_cancels_bot_orphans_when_stored_position_is_none() -> None:
+    """Safely cancel bot-generated orphan orders when local position was wiped."""
+    repository = MemoryPositionRepository()  # Stored position is None
+    exchange = FakeNaturalExitExchange(
+        protections=(
+            _protection(
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                client_id=_TP_ID,
+                trigger="0.01084",
+            ),
+            _protection(
+                order_type=OrderType.STOP_MARKET,
+                client_id=_STOP_ID,
+                trigger="0.01151",
+            ),
+        )
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    await service.reconcile()
+
+    assert exchange.cancel_calls == [
+        (_SYMBOL, _STOP_ID),
+        (_SYMBOL, _TP_ID),
+    ]
+    assert exchange.protections == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_permits_orphan_cancel_when_trigger_modified() -> None:
+    """Cancel owned orphan protection even if user modified trigger price."""
+    repository = await _repository()
+    # User adjusted trigger on exchange from 0.01151 to 0.01140 while position was open
+    modified_sl = _protection(
+        order_type=OrderType.STOP_MARKET,
+        client_id=_STOP_ID,
+        trigger="0.01140",
+    )
+    exchange = FakeNaturalExitExchange(
+        protections=(modified_sl,),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    await service.reconcile()
+
+    assert exchange.cancel_calls == [(_SYMBOL, _STOP_ID)]
+    assert exchange.protections == []
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None

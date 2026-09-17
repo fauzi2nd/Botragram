@@ -166,62 +166,152 @@ class LivePositionProtectionService:
                 take_profit_order = candidate_tp
 
         closing_side = self._closing_side(position.side)
+
+        # Adopt valid manual stop loss or take profit matching planned triggers
+        planned_stop: Decimal | None = None
+        planned_tp: Decimal | None = None
+        if stop_order is None or take_profit_order is None:
+            planned_stop, planned_tp = await self._normalize_missing_protection_plan(
+                position=position,
+                needs_stop_loss=stop_order is None,
+                needs_take_profit=take_profit_order is None,
+            )
+
+        if stop_order is None and planned_stop is not None:
+            ref_price = await self.exchange_client.get_reference_price(
+                symbol=position.symbol
+            )
+            adoptable_stop = self._find_adoptable_protection_order(
+                orders=protection_orders,
+                position=position,
+                order_types={OrderType.STOP_MARKET, OrderType.STOP},
+                reference_price=ref_price,
+                is_stop_loss=True,
+                expected_trigger=planned_stop,
+            )
+            if adoptable_stop is not None:
+                _LOGGER.info(
+                    "Adopting valid manual/external STOP order from venue: "
+                    "symbol=%s order_id=%s client_id=%s trigger=%s",
+                    position.symbol,
+                    adoptable_stop.order_id,
+                    adoptable_stop.client_order_id,
+                    adoptable_stop.stop_price,
+                )
+                stop_order = adoptable_stop
+                position = replace(
+                    position,
+                    stop_loss=adoptable_stop.stop_price,
+                    stop_loss_client_algo_id=(
+                        adoptable_stop.client_order_id
+                        if adoptable_stop.client_order_id
+                        else f"adopted-{adoptable_stop.order_id}"
+                    ),
+                )
+                await self.position_repository.save(position=position)
+
+        if take_profit_order is None and planned_tp is not None:
+            ref_price = await self.exchange_client.get_reference_price(
+                symbol=position.symbol
+            )
+            adoptable_tp = self._find_adoptable_protection_order(
+                orders=protection_orders,
+                position=position,
+                order_types={OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT},
+                reference_price=ref_price,
+                is_stop_loss=False,
+                expected_trigger=planned_tp,
+            )
+            if adoptable_tp is not None:
+                _LOGGER.info(
+                    "Adopting valid manual/external TAKE_PROFIT order from venue: "
+                    "symbol=%s order_id=%s client_id=%s trigger=%s",
+                    position.symbol,
+                    adoptable_tp.order_id,
+                    adoptable_tp.client_order_id,
+                    adoptable_tp.stop_price,
+                )
+                take_profit_order = adoptable_tp
+                position = replace(
+                    position,
+                    take_profit=adoptable_tp.stop_price,
+                    take_profit_client_algo_id=(
+                        adoptable_tp.client_order_id
+                        if adoptable_tp.client_order_id
+                        else f"adopted-{adoptable_tp.order_id}"
+                    ),
+                )
+                await self.position_repository.save(position=position)
+
         for order in protection_orders:
-            if (
-                order.symbol.upper() == position.symbol.upper()
-                and order.side is closing_side
-                and order.status is OrderStatus.NEW
+            if order.symbol.upper() != position.symbol.upper():
+                continue
+            if order.status is not OrderStatus.NEW:
+                continue
+
+            if order.side is not closing_side:
+                _LOGGER.warning(
+                    "Canceling dangerous wrong-side protection order on venue: "
+                    "symbol=%s order_id=%s side=%s (expected closing=%s)",
+                    position.symbol,
+                    order.order_id,
+                    order.side.value,
+                    closing_side.value,
+                )
+                await self._cancel_superfluous_protection_order(
+                    symbol=position.symbol,
+                    order=order,
+                )
+                continue
+
+            is_owned_stop = (
+                position.stop_loss_client_algo_id is not None
+                and order.client_order_id == position.stop_loss_client_algo_id
+            )
+            is_owned_tp = (
+                position.take_profit_client_algo_id is not None
+                and order.client_order_id == position.take_profit_client_algo_id
+            )
+            is_adopted_stop = stop_order is not None and (
+                order.order_id == stop_order.order_id
+                or (
+                    bool(stop_order.client_order_id)
+                    and order.client_order_id == stop_order.client_order_id
+                )
+            )
+            is_adopted_tp = take_profit_order is not None and (
+                order.order_id == take_profit_order.order_id
+                or (
+                    bool(take_profit_order.client_order_id)
+                    and order.client_order_id == take_profit_order.client_order_id
+                )
+            )
+            is_replacement_stop = Position.is_generated_stop_loss_client_algo_id(
+                order.client_order_id
+            )
+            is_replacement_tp = Position.is_generated_take_profit_client_algo_id(
+                order.client_order_id
+            )
+            if not (
+                is_owned_stop
+                or is_owned_tp
+                or is_adopted_stop
+                or is_adopted_tp
+                or is_replacement_stop
+                or is_replacement_tp
             ):
-                is_owned_stop = (
-                    position.stop_loss_client_algo_id is not None
-                    and order.client_order_id == position.stop_loss_client_algo_id
+                _LOGGER.info(
+                    "Canceling superfluous duplicate protection order on venue: "
+                    "symbol=%s order_id=%s client_id=%s type=%s",
+                    position.symbol,
+                    order.order_id,
+                    order.client_order_id,
+                    order.order_type.value,
                 )
-                is_owned_tp = (
-                    position.take_profit_client_algo_id is not None
-                    and order.client_order_id == position.take_profit_client_algo_id
+                await self._cancel_superfluous_protection_order(
+                    symbol=position.symbol,
+                    order=order,
                 )
-                is_adopted_stop = (
-                    stop_order is not None and order.order_id == stop_order.order_id
-                )
-                is_adopted_tp = (
-                    take_profit_order is not None
-                    and order.order_id == take_profit_order.order_id
-                )
-                is_replacement_stop = Position.is_generated_stop_loss_client_algo_id(
-                    order.client_order_id
-                )
-                is_replacement_tp = Position.is_generated_take_profit_client_algo_id(
-                    order.client_order_id
-                )
-                if not (
-                    is_owned_stop
-                    or is_owned_tp
-                    or is_adopted_stop
-                    or is_adopted_tp
-                    or is_replacement_stop
-                    or is_replacement_tp
-                ):
-                    _LOGGER.info(
-                        "Canceling unowned / manual protection order on venue: "
-                        "symbol=%s order_id=%s client_id=%s type=%s",
-                        position.symbol,
-                        order.order_id,
-                        order.client_order_id,
-                        order.order_type.value,
-                    )
-                    try:
-                        await self.exchange_client.cancel_order(
-                            symbol=position.symbol,
-                            order_id=order.order_id,
-                        )
-                    except Exception as error:
-                        _LOGGER.warning(
-                            "Failed to cancel unowned protection order: "
-                            "symbol=%s order_id=%s error=%s",
-                            position.symbol,
-                            order.order_id,
-                            error,
-                        )
 
         if stop_order is None or take_profit_order is None:
             (
@@ -999,9 +1089,7 @@ class LivePositionProtectionService:
                 continue
 
             if order.quantity < position.quantity:
-                raise RuntimeError(
-                    f"{order_type.value} quantity does not cover the live position"
-                )
+                continue
 
             if order.stop_price is not None:
                 matching.append(order)
@@ -1014,6 +1102,99 @@ class LivePositionProtectionService:
             if position.side is PositionSide.LONG
             else min(matching, key=lambda order: order.stop_price or Decimal("0"))
         )
+
+    @staticmethod
+    def _find_adoptable_protection_order(
+        *,
+        orders: Sequence[Order],
+        position: Position,
+        order_types: set[OrderType],
+        reference_price: Decimal,
+        is_stop_loss: bool,
+        expected_trigger: Decimal | None = None,
+    ) -> Order | None:
+        """Find the best valid external/manual protection order on venue."""
+        closing_side = LivePositionProtectionService._closing_side(position.side)
+        candidates: list[Order] = []
+
+        for order in orders:
+            if (
+                order.symbol.upper() != position.symbol.upper()
+                or order.side is not closing_side
+                or order.order_type not in order_types
+                or order.status is not OrderStatus.NEW
+                or order.stop_price is None
+                or order.stop_price <= _DECIMAL_ZERO
+            ):
+                continue
+
+            if order.quantity < position.quantity:
+                continue
+
+            trigger = order.stop_price
+            if expected_trigger is not None and trigger != expected_trigger:
+                continue
+
+            if is_stop_loss:
+                if position.side is PositionSide.LONG and trigger >= reference_price:
+                    continue
+                if position.side is PositionSide.SHORT and trigger <= reference_price:
+                    continue
+            else:
+                if position.side is PositionSide.LONG and trigger <= reference_price:
+                    continue
+                if position.side is PositionSide.SHORT and trigger >= reference_price:
+                    continue
+
+            candidates.append(order)
+
+        if not candidates:
+            return None
+
+        if is_stop_loss:
+            return (
+                max(candidates, key=lambda o: o.stop_price or _DECIMAL_ZERO)
+                if position.side is PositionSide.LONG
+                else min(candidates, key=lambda o: o.stop_price or _DECIMAL_ZERO)
+            )
+
+        return (
+            min(candidates, key=lambda o: o.stop_price or _DECIMAL_ZERO)
+            if position.side is PositionSide.LONG
+            else max(candidates, key=lambda o: o.stop_price or _DECIMAL_ZERO)
+        )
+
+    async def _cancel_superfluous_protection_order(
+        self,
+        *,
+        symbol: str,
+        order: Order,
+    ) -> None:
+        """Cancel an extra or invalid protection order on venue safely."""
+        try:
+            await self.exchange_client.cancel_order(
+                symbol=symbol,
+                order_id=order.order_id,
+            )
+            return
+        except Exception:
+            pass
+
+        client_id = order.client_order_id
+        if client_id:
+            try:
+                await self.exchange_client.cancel_protection_order(
+                    symbol=symbol,
+                    client_id=client_id,
+                )
+            except Exception as error:
+                _LOGGER.warning(
+                    "Failed to cancel superfluous protection order: "
+                    "symbol=%s order_id=%s error=%s",
+                    symbol,
+                    order.order_id,
+                    error,
+                )
 
     @staticmethod
     def _find_owned_active_stop_replacement(

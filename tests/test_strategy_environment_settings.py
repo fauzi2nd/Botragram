@@ -238,3 +238,102 @@ def test_ny_range_environment_defaults(
     assert settings.ny_range_rsi_period == 14
     assert settings.ny_range_rsi_long_max == Decimal("54.0")
     assert settings.ny_range_rsi_short_min == Decimal("44.0")
+
+
+def test_origin_environment_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify all ORIGIN_* environment settings can be loaded."""
+    monkeypatch.setenv("ORIGIN_RISK_REWARD_RATIO", "2.0")
+    monkeypatch.setenv("ORIGIN_MIN_SL_PCT", "0.012")
+    monkeypatch.setenv("ORIGIN_MAX_SL_PCT", "0.040")
+    monkeypatch.setenv("ORIGIN_FALLBACK_SL_PCT", "0.020")
+    monkeypatch.setenv("ORIGIN_MIN_CONFIDENCE", "0.65")
+    monkeypatch.setenv("ORIGIN_USE_TREND_FILTER", "true")
+    monkeypatch.setenv("ORIGIN_TREND_EMA_PERIOD", "30")
+    monkeypatch.setenv("ORIGIN_USE_VOLUME_FILTER", "true")
+    monkeypatch.setenv("ORIGIN_VOLUME_PERIOD", "15")
+    monkeypatch.setenv("ORIGIN_VOLUME_MULTIPLIER", "1.3")
+    monkeypatch.setenv("ORIGIN_USE_RSI_FILTER", "true")
+    monkeypatch.setenv("ORIGIN_RSI_PERIOD", "10")
+    monkeypatch.setenv("ORIGIN_RSI_LONG_MAX", "45.0")
+    monkeypatch.setenv("ORIGIN_RSI_SHORT_MIN", "60.0")
+    monkeypatch.setenv("ORIGIN_REQUIRE_RSI_DIRECTION", "true")
+    monkeypatch.setenv("ORIGIN_USE_BB_FILTER", "true")
+    monkeypatch.setenv("ORIGIN_BB_PERIOD", "25")
+    monkeypatch.setenv("ORIGIN_BB_STD_DEV", "2.5")
+    monkeypatch.setenv("ORIGIN_USE_MACD_FILTER", "true")
+    monkeypatch.setenv("ORIGIN_MACD_FAST_PERIOD", "8")
+    monkeypatch.setenv("ORIGIN_MACD_SLOW_PERIOD", "21")
+    monkeypatch.setenv("ORIGIN_MACD_SIGNAL_PERIOD", "5")
+    monkeypatch.setenv("ORIGIN_USE_PSAR_FILTER", "true")
+    monkeypatch.setenv("ORIGIN_PSAR_MAX_PROXIMITY_PCT", "0.015")
+
+    manager = _create_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        strategy_type="botragram_origin",
+    )
+    settings = manager.load_strategy_settings()
+    assert settings.origin_risk_reward_ratio == Decimal("2.0")
+    assert settings.origin_min_sl_pct == Decimal("0.012")
+    assert settings.origin_max_sl_pct == Decimal("0.040")
+    assert settings.origin_fallback_sl_pct == Decimal("0.020")
+    assert settings.origin_min_confidence == Decimal("0.65")
+    assert settings.origin_use_trend_filter is True
+    assert settings.origin_trend_ema_period == 30
+    assert settings.origin_use_volume_filter is True
+    assert settings.origin_volume_period == 15
+    assert settings.origin_volume_multiplier == Decimal("1.3")
+    assert settings.origin_use_rsi_filter is True
+    assert settings.origin_rsi_period == 10
+    assert settings.origin_rsi_long_max == Decimal("45.0")
+    assert settings.origin_rsi_short_min == Decimal("60.0")
+    assert settings.origin_require_rsi_direction is True
+    assert settings.origin_use_bb_filter is True
+    assert settings.origin_bb_period == 25
+    assert settings.origin_bb_std_dev == Decimal("2.5")
+    assert settings.origin_use_macd_filter is True
+    assert settings.origin_macd_fast_period == 8
+    assert settings.origin_macd_slow_period == 21
+    assert settings.origin_macd_signal_period == 5
+    assert settings.origin_use_psar_filter is True
+    assert settings.origin_psar_max_proximity_pct == Decimal("0.015")
+
+
+def test_origin_environment_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify default values for ORIGIN_* when environment variables are unset."""
+    manager = _create_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        strategy_type="botragram_origin",
+    )
+    settings = manager.load_strategy_settings()
+    assert settings.origin_risk_reward_ratio == Decimal("1.5")
+    assert settings.origin_min_sl_pct == Decimal("0.010")
+    assert settings.origin_max_sl_pct == Decimal("0.030")
+    assert settings.origin_fallback_sl_pct == Decimal("0.015")
+    assert settings.origin_min_confidence == Decimal("0.70")
+    assert settings.origin_use_trend_filter is False
+    assert settings.origin_trend_ema_period == 50
+    assert settings.origin_use_volume_filter is False
+    assert settings.origin_volume_period == 20
+    assert settings.origin_volume_multiplier == Decimal("1.0")
+    assert settings.origin_use_rsi_filter is False
+    assert settings.origin_rsi_period == 14
+    assert settings.origin_rsi_long_max == Decimal("70.0")
+    assert settings.origin_rsi_short_min == Decimal("30.0")
+    assert settings.origin_require_rsi_direction is False
+    assert settings.origin_use_bb_filter is False
+    assert settings.origin_bb_period == 20
+    assert settings.origin_bb_std_dev == Decimal("2.0")
+    assert settings.origin_use_macd_filter is False
+    assert settings.origin_macd_fast_period == 12
+    assert settings.origin_macd_slow_period == 26
+    assert settings.origin_macd_signal_period == 9
+    assert settings.origin_use_psar_filter is False
+    assert settings.origin_psar_max_proximity_pct == Decimal("0.008")

@@ -24,9 +24,17 @@ from decimal import Decimal
 # =============================================================================
 from botragram.enums import Interval, PositionSide
 from botragram.indicators.price_action.candlesticks import (
+    detect_all_candlestick_patterns,
+    detect_doji,
     detect_engulfing,
+    detect_harami,
+    detect_marubozu,
+    detect_piercing_or_cloud,
     detect_pinbar,
     detect_star,
+    detect_three_inside,
+    detect_three_soldiers_or_crows,
+    detect_tweezers,
 )
 from botragram.models import Candle
 
@@ -352,3 +360,322 @@ def test_detect_star_zero_range_safely() -> None:
 
     assert not result.matched
     assert result.side is None
+
+
+def test_detect_marubozu_bullish_and_bearish() -> None:
+    """Detect full-bodied marubozu candles with negligible wicks."""
+    bull_maru = _make_candle(
+        open_price="100.0",
+        high_price="110.0",
+        low_price="99.9",
+        close_price="109.8",
+    )
+    res_bull = detect_marubozu(candle=bull_maru)
+    assert res_bull.matched
+    assert res_bull.side is PositionSide.LONG
+    assert res_bull.pattern_name == "bullish_marubozu"
+
+    bear_maru = _make_candle(
+        open_price="110.0",
+        high_price="110.1",
+        low_price="100.0",
+        close_price="100.2",
+    )
+    res_bear = detect_marubozu(candle=bear_maru)
+    assert res_bear.matched
+    assert res_bear.side is PositionSide.SHORT
+    assert res_bear.pattern_name == "bearish_marubozu"
+
+    normal_candle = _make_candle(
+        open_price="100.0",
+        high_price="120.0",
+        low_price="80.0",
+        close_price="105.0",
+    )
+    res_none = detect_marubozu(candle=normal_candle)
+    assert not res_none.matched
+
+
+def test_detect_doji_types() -> None:
+    """Detect Dragonfly, Gravestone, and Neutral Doji."""
+    dragonfly = _make_candle(
+        open_price="100.0",
+        high_price="100.2",
+        low_price="90.0",
+        close_price="100.1",
+    )
+    res_df = detect_doji(candle=dragonfly)
+    assert res_df.matched
+    assert res_df.side is PositionSide.LONG
+    assert res_df.pattern_name == "dragonfly_doji"
+
+    gravestone = _make_candle(
+        open_price="90.0",
+        high_price="100.0",
+        low_price="89.8",
+        close_price="90.1",
+    )
+    res_gs = detect_doji(candle=gravestone)
+    assert res_gs.matched
+    assert res_gs.side is PositionSide.SHORT
+    assert res_gs.pattern_name == "gravestone_doji"
+
+    neutral = _make_candle(
+        open_price="100.0",
+        high_price="105.0",
+        low_price="95.0",
+        close_price="100.1",
+    )
+    res_neutral = detect_doji(candle=neutral)
+    assert res_neutral.matched
+    assert res_neutral.side is None
+    assert res_neutral.pattern_name == "neutral_doji"
+
+
+def test_detect_piercing_and_dark_cloud() -> None:
+    """Detect Piercing Line (bullish) and Dark Cloud Cover (bearish)."""
+    # Piercing line: c1 red, c2 opens lower and closes > 50% into c1 body
+    c1 = _make_candle(
+        open_price="110.0",
+        high_price="111.0",
+        low_price="99.0",
+        close_price="100.0",
+        minutes_offset=0,
+    )
+    c2 = _make_candle(
+        open_price="98.0",
+        high_price="108.0",
+        low_price="97.0",
+        close_price="106.0",  # midpoint = 105, 106 > 105
+        minutes_offset=15,
+    )
+    res_piercing = detect_piercing_or_cloud(prev_candle=c1, curr_candle=c2)
+    assert res_piercing.matched
+    assert res_piercing.side is PositionSide.LONG
+    assert res_piercing.pattern_name == "piercing_line"
+
+    # Dark cloud cover: c1 green, c2 opens higher and closes < 50% into c1 body
+    d1 = _make_candle(
+        open_price="100.0",
+        high_price="111.0",
+        low_price="99.0",
+        close_price="110.0",
+        minutes_offset=0,
+    )
+    d2 = _make_candle(
+        open_price="112.0",
+        high_price="113.0",
+        low_price="102.0",
+        close_price="104.0",  # midpoint = 105, 104 < 105
+        minutes_offset=15,
+    )
+    res_cloud = detect_piercing_or_cloud(prev_candle=d1, curr_candle=d2)
+    assert res_cloud.matched
+    assert res_cloud.side is PositionSide.SHORT
+    assert res_cloud.pattern_name == "dark_cloud_cover"
+
+
+def test_detect_harami() -> None:
+    """Detect Bullish Harami and Bearish Harami."""
+    # Bullish Harami: c1 large red, c2 small green inside c1
+    c1 = _make_candle(
+        open_price="120.0",
+        high_price="121.0",
+        low_price="99.0",
+        close_price="100.0",
+        minutes_offset=0,
+    )
+    c2 = _make_candle(
+        open_price="105.0",
+        high_price="112.0",
+        low_price="104.0",
+        close_price="110.0",
+        minutes_offset=15,
+    )
+    res_bull = detect_harami(prev_candle=c1, curr_candle=c2)
+    assert res_bull.matched
+    assert res_bull.side is PositionSide.LONG
+    assert res_bull.pattern_name == "bullish_harami"
+
+    # Bearish Harami: c1 large green, c2 small red inside c1
+    d1 = _make_candle(
+        open_price="100.0",
+        high_price="121.0",
+        low_price="99.0",
+        close_price="120.0",
+        minutes_offset=0,
+    )
+    d2 = _make_candle(
+        open_price="115.0",
+        high_price="116.0",
+        low_price="108.0",
+        close_price="110.0",
+        minutes_offset=15,
+    )
+    res_bear = detect_harami(prev_candle=d1, curr_candle=d2)
+    assert res_bear.matched
+    assert res_bear.side is PositionSide.SHORT
+    assert res_bear.pattern_name == "bearish_harami"
+
+
+def test_detect_tweezers() -> None:
+    """Detect Tweezer Bottom and Tweezer Top."""
+    # Tweezer bottom: identical lows
+    c1 = _make_candle(
+        open_price="110.0",
+        high_price="112.0",
+        low_price="100.0",
+        close_price="102.0",
+        minutes_offset=0,
+    )
+    c2 = _make_candle(
+        open_price="102.0",
+        high_price="110.0",
+        low_price="100.0",
+        close_price="108.0",
+        minutes_offset=15,
+    )
+    res_bottom = detect_tweezers(prev_candle=c1, curr_candle=c2)
+    assert res_bottom.matched
+    assert res_bottom.side is PositionSide.LONG
+    assert res_bottom.pattern_name == "tweezer_bottom"
+
+    # Tweezer top: identical highs
+    d1 = _make_candle(
+        open_price="100.0",
+        high_price="115.0",
+        low_price="98.0",
+        close_price="112.0",
+        minutes_offset=0,
+    )
+    d2 = _make_candle(
+        open_price="112.0",
+        high_price="115.0",
+        low_price="102.0",
+        close_price="105.0",
+        minutes_offset=15,
+    )
+    res_top = detect_tweezers(prev_candle=d1, curr_candle=d2)
+    assert res_top.matched
+    assert res_top.side is PositionSide.SHORT
+    assert res_top.pattern_name == "tweezer_top"
+
+
+def test_detect_three_soldiers_and_crows() -> None:
+    """Detect Three White Soldiers and Three Black Crows."""
+    # Three white soldiers: consecutive rising green candles
+    c1 = _make_candle(
+        open_price="100.0",
+        high_price="106.0",
+        low_price="99.0",
+        close_price="105.0",
+        minutes_offset=0,
+    )
+    c2 = _make_candle(
+        open_price="104.0",
+        high_price="111.0",
+        low_price="103.0",
+        close_price="110.0",
+        minutes_offset=15,
+    )
+    c3 = _make_candle(
+        open_price="109.0",
+        high_price="116.0",
+        low_price="108.0",
+        close_price="115.0",
+        minutes_offset=30,
+    )
+    res_soldiers = detect_three_soldiers_or_crows(
+        first_candle=c1, second_candle=c2, third_candle=c3
+    )
+    assert res_soldiers.matched
+    assert res_soldiers.side is PositionSide.LONG
+    assert res_soldiers.pattern_name == "three_white_soldiers"
+
+    # Three black crows: consecutive falling red candles
+    d1 = _make_candle(
+        open_price="115.0",
+        high_price="116.0",
+        low_price="109.0",
+        close_price="110.0",
+        minutes_offset=0,
+    )
+    d2 = _make_candle(
+        open_price="111.0",
+        high_price="112.0",
+        low_price="104.0",
+        close_price="105.0",
+        minutes_offset=15,
+    )
+    d3 = _make_candle(
+        open_price="106.0",
+        high_price="107.0",
+        low_price="99.0",
+        close_price="100.0",
+        minutes_offset=30,
+    )
+    res_crows = detect_three_soldiers_or_crows(
+        first_candle=d1, second_candle=d2, third_candle=d3
+    )
+    assert res_crows.matched
+    assert res_crows.side is PositionSide.SHORT
+    assert res_crows.pattern_name == "three_black_crows"
+
+
+def test_detect_three_inside() -> None:
+    """Detect Three Inside Up and Three Inside Down."""
+    # Three Inside Up: c1 red, c2 harami, c3 breaks above c1 open
+    c1 = _make_candle(
+        open_price="110.0",
+        high_price="111.0",
+        low_price="99.0",
+        close_price="100.0",
+        minutes_offset=0,
+    )
+    c2 = _make_candle(
+        open_price="103.0",
+        high_price="108.0",
+        low_price="102.0",
+        close_price="107.0",
+        minutes_offset=15,
+    )
+    c3 = _make_candle(
+        open_price="107.0",
+        high_price="115.0",
+        low_price="106.0",
+        close_price="112.0",
+        minutes_offset=30,
+    )
+    res_up = detect_three_inside(first_candle=c1, second_candle=c2, third_candle=c3)
+    assert res_up.matched
+    assert res_up.side is PositionSide.LONG
+    assert res_up.pattern_name == "three_inside_up"
+
+
+def test_detect_all_candlestick_patterns() -> None:
+    """Verify unified pattern scanner returns all active matches."""
+    c1 = _make_candle(
+        open_price="110.0",
+        high_price="111.0",
+        low_price="99.0",
+        close_price="100.0",
+        minutes_offset=0,
+    )
+    c2 = _make_candle(
+        open_price="103.0",
+        high_price="108.0",
+        low_price="102.0",
+        close_price="107.0",
+        minutes_offset=15,
+    )
+    c3 = _make_candle(
+        open_price="107.0",
+        high_price="115.0",
+        low_price="106.0",
+        close_price="112.0",
+        minutes_offset=30,
+    )
+    matches = detect_all_candlestick_patterns(candles=(c1, c2, c3))
+    assert len(matches) >= 1
+    pattern_names = [m.pattern_name for m in matches]
+    assert "three_inside_up" in pattern_names

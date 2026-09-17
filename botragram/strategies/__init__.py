@@ -4,6 +4,7 @@ from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
 from botragram.strategies.factory import StrategyFactory, StrategyResolver
 from botragram.strategies.price_action import (
+    BotragramOriginStrategy,
     ChochFvgStrategy,
     ChochRsiBbHybridStrategy,
     DailyHybridScalpingStrategy,
@@ -30,6 +31,7 @@ __all__ = [
     "ADXTrendStrategy",
     "BaseStrategy",
     "BollingerBreakoutStrategy",
+    "BotragramOriginStrategy",
     "ChochFvgStrategy",
     "ChochRsiBbHybridStrategy",
     "DailyHybridScalpingStrategy",

@@ -29,6 +29,7 @@ from botragram.enums import StrategyType
 from botragram.strategies.base import BaseStrategy
 from botragram.strategies.breakout import BollingerBreakoutStrategy
 from botragram.strategies.price_action import (
+    BotragramOriginStrategy,
     ChochFvgStrategy,
     ChochRsiBbHybridStrategy,
     HighConfluenceExhaustionStrategy,
@@ -139,6 +140,34 @@ class StrategyFactory:
                 return BollingerBreakoutStrategy(
                     period=settings.bb_period,
                     standard_deviation=settings.bb_standard_deviation,
+                )
+
+            case StrategyType.BOTRAGRAM_ORIGIN:
+                return BotragramOriginStrategy(
+                    risk_reward_ratio=settings.origin_risk_reward_ratio,
+                    min_sl_pct=settings.origin_min_sl_pct,
+                    max_sl_pct=settings.origin_max_sl_pct,
+                    fallback_sl_pct=settings.origin_fallback_sl_pct,
+                    min_confidence=settings.origin_min_confidence,
+                    use_trend_filter=settings.origin_use_trend_filter,
+                    trend_ema_period=settings.origin_trend_ema_period,
+                    use_volume_filter=settings.origin_use_volume_filter,
+                    volume_period=settings.origin_volume_period,
+                    volume_multiplier=settings.origin_volume_multiplier,
+                    use_rsi_filter=settings.origin_use_rsi_filter,
+                    rsi_period=settings.origin_rsi_period,
+                    rsi_long_max=settings.origin_rsi_long_max,
+                    rsi_short_min=settings.origin_rsi_short_min,
+                    require_rsi_direction=settings.origin_require_rsi_direction,
+                    use_bb_filter=settings.origin_use_bb_filter,
+                    bb_period=settings.origin_bb_period,
+                    bb_std_dev=settings.origin_bb_std_dev,
+                    use_macd_filter=settings.origin_use_macd_filter,
+                    macd_fast_period=settings.origin_macd_fast_period,
+                    macd_slow_period=settings.origin_macd_slow_period,
+                    macd_signal_period=settings.origin_macd_signal_period,
+                    use_psar_filter=settings.origin_use_psar_filter,
+                    psar_max_proximity_pct=settings.origin_psar_max_proximity_pct,
                 )
 
             case StrategyType.CHOCH_FVG:
