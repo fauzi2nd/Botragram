@@ -296,6 +296,28 @@ def test_risk_engine_exit_rates_per_strategy_category() -> None:
     assert res_swing.metrics.take_profit == Decimal("104.8")  # +4.8%
 
 
+def test_risk_engine_uses_dedicated_origin_exit_rates() -> None:
+    """Ensure BOTRAGRAM_ORIGIN exit rates are taken from origin settings."""
+    engine = RiskEngine(
+        settings=RiskSettings(
+            origin_stop_loss_pct=Decimal("0.012"),
+            origin_take_profit_pct=Decimal("0.0216"),
+        )
+    )
+
+    result = engine.evaluate(
+        signal=_create_signal(
+            strategy_name=StrategyType.BOTRAGRAM_ORIGIN.value,
+            price=Decimal("100"),
+        ),
+        account_balance=Decimal("1000"),
+    )
+
+    assert result.metrics.stop_loss == Decimal("98.800")
+    assert result.metrics.take_profit == Decimal("102.1600")
+    assert result.metrics.risk_reward_ratio == Decimal("1.8")
+
+
 @pytest.mark.parametrize(
     ("signal_type", "drawdown", "reason"),
     (

@@ -14,7 +14,6 @@ from botragram.exceptions import ExecutionPolicySwitchBlockedError
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
 from botragram.telegram.keyboards import get_strategy_keyboard
-from botragram.telegram.messages import get_strategy_message
 
 __all__ = ["strategy_switch_callback", "strategy_switch_command"]
 
@@ -120,7 +119,7 @@ async def strategy_switch_command(
     bot_context = _get_context(context)
     strategy = _current_strategy(bot_context)
     await update.message.reply_text(
-        get_strategy_message(
+        bot_context.format_strategy_message(
             strategy.value,
             _FAST_PERIOD,
             _SLOW_PERIOD,
@@ -143,7 +142,7 @@ async def strategy_switch_callback(
         bot_context = _get_context(context)
         strategy = _current_strategy(bot_context)
         await query.edit_message_text(
-            get_strategy_message(
+            bot_context.format_strategy_message(
                 strategy.value,
                 _FAST_PERIOD,
                 _SLOW_PERIOD,
@@ -192,7 +191,7 @@ async def strategy_switch_callback(
                 else f"\n\nStrategy {status} untuk siklus berikutnya."
             )
             await query.edit_message_text(
-                get_strategy_message(
+                bot_context.format_strategy_message(
                     control.strategy_type.value,
                     _FAST_PERIOD,
                     _SLOW_PERIOD,
@@ -253,7 +252,7 @@ async def strategy_switch_callback(
 
     if not changed:
         await query.edit_message_text(
-            get_strategy_message(
+            bot_context.format_strategy_message(
                 current.value,
                 _FAST_PERIOD,
                 _SLOW_PERIOD,

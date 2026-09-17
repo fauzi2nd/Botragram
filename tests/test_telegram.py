@@ -22,6 +22,9 @@ from decimal import Decimal
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.config.risk_settings import RiskSettings
+from botragram.config.strategy_settings import StrategySettings
 from botragram.constants.telegram import (
     MENU_CONFIGURATION,
     MENU_EXCHANGE,
@@ -37,12 +40,14 @@ from botragram.constants.telegram import (
 from botragram.enums import (
     AuthorizationStatus,
     ExecutionPolicy,
+    Interval,
     MarketType,
     OrderSide,
     OrderStatus,
     OrderType,
     PositionSide,
     SignalType,
+    StrategyType,
 )
 from botragram.models import ExecutionAuthorization, Order, Position, Signal, Trade
 from botragram.telegram.bot import get_bot_commands
@@ -710,3 +715,47 @@ def test_get_partial_tp_message_formats_correctly() -> None:
     assert "0.05 (50%)" in msg
     assert "50050.00 USDT" in msg
     assert "Risk-Free Position" in msg
+
+
+def test_get_strategy_message_active_interval_and_dynamic_rrr() -> None:
+    """Verify strategy message reflects runtime interval and dynamic RRR."""
+    msg = get_strategy_message(
+        "botragram_origin",
+        active_interval=Interval.M3,
+        stop_loss_pct=Decimal("0.012"),
+        take_profit_pct=Decimal("0.0216"),
+        risk_reward_ratio=Decimal("1.8"),
+        confirmed=True,
+    )
+    assert "Timeframe:</b> <code>3m</code> (Default: <code>5m</code>)" in msg
+    assert "Target RRR:</b> <code>1:1.8</code> (SL 1.2% | TP 2.2%)" in msg
+    assert "Risk:</b> Pattern Swing SL & Adaptive TP" in msg
+    assert "1:1.5 Target RRR" not in msg
+    assert "Auto Timeframe:</b> 5m" not in msg
+
+
+def test_bot_context_format_strategy_message_syncs_with_runtime_and_env() -> None:
+    """Verify BotContext formats strategy message using runtime control and settings."""
+    runtime_control = TradingRuntimeControl(
+        interval=Interval.M3,
+        strategy_type=StrategyType.BOTRAGRAM_ORIGIN,
+    )
+    risk_settings = RiskSettings(
+        origin_stop_loss_pct=Decimal("0.012"),
+        origin_take_profit_pct=Decimal("0.0216"),
+    )
+    strategy_settings = StrategySettings(
+        origin_risk_reward_ratio=Decimal("1.8"),
+    )
+    context = BotContext(
+        runtime_control=runtime_control,
+        risk_settings=risk_settings,
+        strategy_settings=strategy_settings,
+    )
+
+    msg = context.format_strategy_message(
+        StrategyType.BOTRAGRAM_ORIGIN,
+        confirmed=True,
+    )
+    assert "Timeframe:</b> <code>3m</code> (Default: <code>5m</code>)" in msg
+    assert "Target RRR:</b> <code>1:1.8</code> (SL 1.2% | TP 2.2%)" in msg

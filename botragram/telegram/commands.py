@@ -105,7 +105,6 @@ from botragram.telegram.messages import (
     get_settings_message,
     get_startup_configuration_message,
     get_status_message,
-    get_strategy_message,
     get_stream_message,
     get_test_message,
     get_welcome_message,
@@ -862,7 +861,7 @@ async def strategy_command(
             if not ctx.is_autonomous_live
             else True
         )
-        msg = get_strategy_message(
+        msg = ctx.format_strategy_message(
             strategy_name,
             fast_period,
             slow_period,

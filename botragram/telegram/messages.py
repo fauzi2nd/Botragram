@@ -30,6 +30,7 @@ from botragram.constants.strategy import (
 )
 from botragram.enums import (
     AuthorizationStatus,
+    Interval,
     LiveRuntimeHealthStatus,
     MarketType,
     PositionSide,
@@ -925,6 +926,10 @@ def get_strategy_message(
     slow_period: int = 21,
     *,
     confirmed: bool = False,
+    active_interval: Interval | str | None = None,
+    stop_loss_pct: Decimal | None = None,
+    take_profit_pct: Decimal | None = None,
+    risk_reward_ratio: Decimal | None = None,
 ) -> str:
     """Return current strategy details formatted for Telegram."""
     if not confirmed:
@@ -1034,17 +1039,49 @@ def get_strategy_message(
                 "<b>Patterns:</b> Single, Dual & Triple Japanese Candlestick Patterns"
             )
             lines.append("<b>Trigger:</b> Rejection / Momentum / Reversal Confluence")
-            lines.append("<b>Risk:</b> Pattern Swing SL & 1:1.5 Target RRR")
+            lines.append("<b>Risk:</b> Pattern Swing SL & Adaptive TP")
         case _:
             lines.append(f"<b>Fast EMA period:</b> {fast_period}")
             lines.append(f"<b>Slow EMA period:</b> {slow_period}")
 
     if strategy_type is not None:
         opt_interval = get_strategy_default_interval(strategy_type)
-        sl_pct, tp_pct = get_strategy_default_exit_rates(strategy_type)
-        lines.append(f"<b>Auto Timeframe:</b> <code>{opt_interval.value}</code>")
+        default_sl, default_tp = get_strategy_default_exit_rates(strategy_type)
+        sl_pct = stop_loss_pct if stop_loss_pct is not None else default_sl
+        tp_pct = take_profit_pct if take_profit_pct is not None else default_tp
+
+        if risk_reward_ratio is not None and risk_reward_ratio > Decimal("0"):
+            rrr_val = risk_reward_ratio
+        elif sl_pct > Decimal("0"):
+            rrr_val = tp_pct / sl_pct
+        else:
+            rrr_val = Decimal("2.0")
+
+        rrr_float = float(rrr_val)
+        rrr_str = (
+            f"1:{rrr_float:.2f}".rstrip("0").rstrip(".")
+            if rrr_float % 1 != 0
+            else f"1:{int(rrr_float)}"
+        )
+
+        if active_interval is not None:
+            act_val = (
+                active_interval.value
+                if isinstance(active_interval, Interval)
+                else str(active_interval)
+            )
+            if act_val != opt_interval.value:
+                lines.append(
+                    f"<b>Timeframe:</b> <code>{act_val}</code> "
+                    f"(Default: <code>{opt_interval.value}</code>)"
+                )
+            else:
+                lines.append(f"<b>Timeframe:</b> <code>{act_val}</code>")
+        else:
+            lines.append(f"<b>Auto Timeframe:</b> <code>{opt_interval.value}</code>")
+
         lines.append(
-            f"<b>Target RRR:</b> <code>1:2</code> "
+            f"<b>Target RRR:</b> <code>{rrr_str}</code> "
             f"(SL {sl_pct * 100:.1f}% | TP {tp_pct * 100:.1f}%)"
         )
 

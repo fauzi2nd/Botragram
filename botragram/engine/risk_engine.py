@@ -615,9 +615,13 @@ class RiskEngine:
                     self.settings.pier_stop_loss_pct,
                     self.settings.pier_take_profit_pct,
                 )
+            case StrategyType.BOTRAGRAM_ORIGIN:
+                return (
+                    self.settings.origin_stop_loss_pct,
+                    self.settings.origin_take_profit_pct,
+                )
             case (
-                StrategyType.BOTRAGRAM_ORIGIN
-                | StrategyType.HIGH_CONFLUENCE_EXHAUSTION
+                StrategyType.HIGH_CONFLUENCE_EXHAUSTION
                 | StrategyType.CHOCH_FVG
                 | StrategyType.LIQUIDITY_SWEEP_EXHAUSTION
                 | StrategyType.CHOCH_RSI_BB_HYBRID

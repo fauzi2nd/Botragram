@@ -336,6 +336,8 @@ class SettingsManager:
                 raw_value=environment.get_pier_take_profit_pct(),
                 setting_name="PIER_TAKE_PROFIT_PCT",
             ),
+            origin_stop_loss_pct=self._resolve_origin_stop_loss_pct(),
+            origin_take_profit_pct=self._resolve_origin_take_profit_pct(),
             max_open_positions=self._parse_positive_int(
                 raw_value=environment.get_max_open_positions(),
                 setting_name="MAX_OPEN_POSITIONS",
@@ -422,6 +424,41 @@ class SettingsManager:
                 setting_name="MIN_ORDER_NOTIONAL_USDT",
             ),
         )
+
+    def _resolve_origin_stop_loss_pct(self) -> Decimal:
+        environment = self._environment_provider
+        raw_val = (
+            environment.get_origin_stop_loss_pct()
+            or environment.get_origin_fallback_sl_pct()
+            or environment.get_origin_max_sl_pct()
+        )
+        return (
+            self._parse_decimal(
+                raw_value=raw_val,
+                setting_name="ORIGIN_STOP_LOSS_PCT",
+            )
+            if raw_val
+            else Decimal("0.015")
+        )
+
+    def _resolve_origin_take_profit_pct(self) -> Decimal:
+        environment = self._environment_provider
+        raw_tp = environment.get_origin_take_profit_pct()
+        if raw_tp:
+            return self._parse_decimal(
+                raw_value=raw_tp,
+                setting_name="ORIGIN_TAKE_PROFIT_PCT",
+            )
+        raw_rrr = environment.get_origin_risk_reward_ratio()
+        rrr = (
+            self._parse_decimal(
+                raw_value=raw_rrr,
+                setting_name="ORIGIN_RISK_REWARD_RATIO",
+            )
+            if raw_rrr
+            else Decimal("1.5")
+        )
+        return self._resolve_origin_stop_loss_pct() * rrr
 
     @staticmethod
     def get_scoped_database_path(

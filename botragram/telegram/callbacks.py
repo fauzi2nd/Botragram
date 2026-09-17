@@ -97,7 +97,6 @@ from botragram.telegram.messages import (
     get_runtime_pause_message,
     get_settings_message,
     get_status_message,
-    get_strategy_message,
     get_stream_message,
     get_tpsl_ratio_message,
 )
@@ -1377,7 +1376,7 @@ async def handle_callback_query(
             else True
         )
         await query.edit_message_text(
-            get_strategy_message(
+            bot_context.format_strategy_message(
                 strategy_val,
                 9,
                 21,
@@ -1730,7 +1729,7 @@ async def handle_callback_query(
         except Exception:
             pass
         await query.edit_message_text(
-            get_strategy_message(
+            bot_context.format_strategy_message(
                 control.strategy_type.value,
                 9,
                 21,

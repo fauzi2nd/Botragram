@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final, Protocol
 
+from botragram.config.risk_settings import RiskSettings
+from botragram.config.strategy_settings import StrategySettings
+from botragram.constants.strategy import get_strategy_default_exit_rates
 from botragram.enums import (
     ExchangeType,
     ExecutionPolicy,
@@ -399,6 +402,137 @@ class BotContext:
     execution_authorization_service: BotExecutionAuthorizationProvider | None = None
     runtime_risk_limit_service: BotRuntimeRiskLimitProvider | None = None
     operator_exit_service: BotOperatorExitProvider | None = None
+    risk_settings: RiskSettings | None = None
+    strategy_settings: StrategySettings | None = None
+
+    @property
+    def active_interval(self) -> Interval:
+        """Return the active candle interval from runtime control or config."""
+        control = self.runtime_control
+        return control.interval if control is not None else self.configured_interval
+
+    def get_strategy_exit_rates(
+        self,
+        strategy_type: StrategyType,
+    ) -> tuple[Decimal, Decimal]:
+        """Resolve strategy-specific exit rates from settings or defaults."""
+        settings = self.risk_settings
+        if settings is None:
+            return get_strategy_default_exit_rates(strategy_type)
+
+        match strategy_type:
+            case (
+                StrategyType.EMA_SCALPING
+                | StrategyType.RSI_BB_SCALPING
+                | StrategyType.VWAP_BREAKOUT
+            ):
+                return (
+                    settings.scalping_stop_loss_pct,
+                    settings.scalping_take_profit_pct,
+                )
+            case StrategyType.EMA_CROSS:
+                return (
+                    settings.ema_cross_stop_loss_pct,
+                    settings.ema_cross_take_profit_pct,
+                )
+            case (
+                StrategyType.EMA_RSI
+                | StrategyType.ICHIMOKU_CLOUD
+                | StrategyType.SUPERTREND
+                | StrategyType.ADX_TREND
+                | StrategyType.BOLLINGER_BREAKOUT
+            ):
+                return (
+                    settings.trend_stop_loss_pct,
+                    settings.trend_take_profit_pct,
+                )
+            case StrategyType.MACD_SWING:
+                return (
+                    settings.swing_stop_loss_pct,
+                    settings.swing_take_profit_pct,
+                )
+            case StrategyType.PINBAR_ENGULFING_EMA_RSI:
+                return (
+                    settings.pier_stop_loss_pct,
+                    settings.pier_take_profit_pct,
+                )
+            case StrategyType.BOTRAGRAM_ORIGIN:
+                return (
+                    settings.origin_stop_loss_pct,
+                    settings.origin_take_profit_pct,
+                )
+
+            case (
+                StrategyType.HIGH_CONFLUENCE_EXHAUSTION
+                | StrategyType.CHOCH_FVG
+                | StrategyType.LIQUIDITY_SWEEP_EXHAUSTION
+                | StrategyType.CHOCH_RSI_BB_HYBRID
+                | StrategyType.MORPH
+                | StrategyType.NY_4H_RANGE_SCALPING
+                | StrategyType.QUAD_CONFLUENCE
+            ):
+                return get_strategy_default_exit_rates(strategy_type)
+            case _:
+                return settings.stop_loss_pct, settings.take_profit_pct
+
+    def get_strategy_risk_reward_ratio(
+        self,
+        strategy_type: StrategyType,
+    ) -> Decimal:
+        """Resolve strategy-specific Target Risk-Reward Ratio."""
+        if self.strategy_settings is not None:
+            match strategy_type:
+                case StrategyType.BOTRAGRAM_ORIGIN:
+                    return self.strategy_settings.origin_risk_reward_ratio
+                case StrategyType.MORPH:
+                    return self.strategy_settings.morph_risk_reward_ratio
+                case StrategyType.NY_4H_RANGE_SCALPING:
+                    return self.strategy_settings.ny_range_risk_reward_ratio
+                case StrategyType.PINBAR_ENGULFING_EMA_RSI:
+                    return self.strategy_settings.pier_risk_reward_ratio
+                case _:
+                    pass
+        sl, tp = self.get_strategy_exit_rates(strategy_type)
+        if sl > Decimal("0"):
+            return tp / sl
+        return Decimal("2.0")
+
+    def format_strategy_message(
+        self,
+        strategy_name: str,
+        fast_period: int = 9,
+        slow_period: int = 21,
+        *,
+        confirmed: bool = False,
+    ) -> str:
+        """Return strategy details formatted with active interval and RRR."""
+        from botragram.telegram.messages import get_strategy_message
+
+        try:
+            strategy_type = StrategyType(strategy_name.casefold())
+        except ValueError:
+            strategy_type = None
+
+        sl_pct, tp_pct = (
+            self.get_strategy_exit_rates(strategy_type)
+            if strategy_type is not None
+            else (None, None)
+        )
+        rrr = (
+            self.get_strategy_risk_reward_ratio(strategy_type)
+            if strategy_type is not None
+            else None
+        )
+        return get_strategy_message(
+            strategy_name,
+            fast_period,
+            slow_period,
+            confirmed=confirmed,
+            active_interval=self.active_interval,
+            stop_loss_pct=sl_pct,
+            take_profit_pct=tp_pct,
+            risk_reward_ratio=rrr,
+        )
 
     @property
     def is_discovery_workflow(self) -> bool:

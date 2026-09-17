@@ -150,6 +150,8 @@ from botragram.constants.env import (
     ENV_ORIGIN_RSI_LONG_MAX,
     ENV_ORIGIN_RSI_PERIOD,
     ENV_ORIGIN_RSI_SHORT_MIN,
+    ENV_ORIGIN_STOP_LOSS_PCT,
+    ENV_ORIGIN_TAKE_PROFIT_PCT,
     ENV_ORIGIN_TREND_EMA_PERIOD,
     ENV_ORIGIN_USE_BB_FILTER,
     ENV_ORIGIN_USE_MACD_FILTER,
@@ -941,6 +943,14 @@ class EnvironmentProvider:
     def get_origin_risk_reward_ratio(self) -> str:
         """Return the configured Risk-Reward Ratio for Botragram Origin strategy."""
         return self._get_var(ENV_ORIGIN_RISK_REWARD_RATIO, default="")
+
+    def get_origin_stop_loss_pct(self) -> str:
+        """Return the configured Stop Loss pct for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_STOP_LOSS_PCT, default="")
+
+    def get_origin_take_profit_pct(self) -> str:
+        """Return the configured Take Profit pct for Botragram Origin strategy."""
+        return self._get_var(ENV_ORIGIN_TAKE_PROFIT_PCT, default="")
 
     def get_origin_min_sl_pct(self) -> str:
         """Return the configured minimum SL percentage for Botragram Origin strategy."""

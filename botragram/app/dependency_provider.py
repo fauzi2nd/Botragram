@@ -697,6 +697,8 @@ class DependencyProvider:
                     ),
                     runtime_risk_limit_service=self._runtime_risk_limit_service,
                     operator_exit_service=self.operator_exit_service,
+                    risk_settings=self._settings.risk,
+                    strategy_settings=self._settings.strategy,
                 )
             )
             try:

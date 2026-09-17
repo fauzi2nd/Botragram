@@ -68,6 +68,10 @@ class RiskSettings:
     pier_stop_loss_pct: Decimal = Decimal("0.012")
     pier_take_profit_pct: Decimal = Decimal("0.024")
 
+    # Botragram Origin Exits
+    origin_stop_loss_pct: Decimal = Decimal("0.015")
+    origin_take_profit_pct: Decimal = Decimal("0.0225")
+
     # Stepped Position Protection
     breakeven_roi_threshold: Decimal = Decimal("0.30")
 
@@ -120,6 +124,8 @@ class RiskSettings:
             ("ema_cross_take_profit_pct", self.ema_cross_take_profit_pct),
             ("pier_stop_loss_pct", self.pier_stop_loss_pct),
             ("pier_take_profit_pct", self.pier_take_profit_pct),
+            ("origin_stop_loss_pct", self.origin_stop_loss_pct),
+            ("origin_take_profit_pct", self.origin_take_profit_pct),
         )
 
         for name, value in ratios:
