@@ -38,15 +38,18 @@ Botragram/
 botragram/
 |-- __init__.py
 |-- app/
+|   |-- application.py
+|   |-- backfill_command.py  # Historical candle backfill CLI runner
 |   |-- backtest_command.py  # Isolated backtest CLI composition dan report
 |   |-- connectivity.py      # Backward-compatible classifier re-export
-|   |-- application.py
 |   |-- dependency_provider.py # Composition root dan manual wiring container
 |   |-- environment_provider.py
 |   |-- global_discovery_telemetry.py # Read-only ranked discovery phase/outcome snapshot
 |   |-- lifecycle.py
 |   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
 |   |-- market_type_switch.py # Guarded MarketType/ExecutionPolicy in-process reconfiguration/soft restart
+|   |-- operator_terminal_monitor.py # Operator dashboard monitor adapter
+|   |-- responsive_terminal_monitor.py # Terminal monitor responsive layout
 |   |-- runtime_control.py
 |   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
 |   |-- runtime_limited_autonomous_live_executor.py # Dynamic durable capacity adapter
@@ -84,6 +87,7 @@ botragram/
 |   |-- pnl_engine.py
 |   |-- portfolio_engine.py
 |   |-- position_engine.py
+|   |-- position_exit_engine.py
 |   |-- risk_engine.py
 |   |-- signal_engine.py
 |   `-- trading_engine.py
@@ -111,6 +115,7 @@ botragram/
 |   |-- bybit/
 |   `-- okx/
 |-- indicators/
+|   |-- derivatives/
 |   |-- momentum/
 |   |-- overlap/
 |   |-- price_action/         # Deterministic price action & SMC calculations (CHoCH, FVG)
@@ -160,6 +165,8 @@ botragram/
 |   |-- autonomous_live_recovery_observability_service.py # Read-only recovery view
 |   |-- autonomous_paper_execution_service.py # Ranked PAPER candidate execution
 |   |-- backtest_service.py   # Paginated historical candle orchestration
+|   |-- candle_retention_service.py
+|   |-- candle_sync_service.py
 |   |-- closed_position_lifecycle_service.py # Exact-order gross/fee/net enrichment
 |   |-- execution_authorization_service.py # PAPER human-approval boundary
 |   |-- health_service.py
@@ -185,11 +192,13 @@ botragram/
 |   |-- operator_exit_service.py # Guarded PAPER/LIVE close + flatten-and-switch orchestration
 |   |-- order_service.py
 |   |-- paper_trading_service.py
+|   |-- position_exit_service.py
 |   |-- position_protection_manager.py # Stream-driven stepped SL+
 |   |-- position_service.py
 |   |-- runtime_recovery_service.py # Restart recovery dan live protection gate
 |   |-- runtime_reporter.py
 |   |-- runtime_risk_limit_service.py # Durable runtime canary-limit authority
+|   |-- stored_resampled_candle_provider.py
 |   |-- strategy_service.py
 |   |-- trading_service.py
 |   `-- volume_ranked_discovery_universe_service.py # Full ranked snapshot, bounded rotation
@@ -225,6 +234,7 @@ botragram/
 |   |-- context.py
 |   |-- handlers.py
 |   |-- keyboards.py
+|   |-- leverage_commands.py
 |   |-- messages.py
 |   |-- operator_exit_commands.py # Explicit chat-bound portfolio exit controls
 |   |-- operator_exit_progress.py # Real-time progress updates during operator exit
@@ -234,6 +244,8 @@ botragram/
 |   |-- strategy_flatten_switch.py # Guarded flatten-and-strategy soft restart
 |   `-- strategy_switch.py     # Interactive strategy selection and routing
 `-- utils/
+    |-- candle_aggregator.py
+    |-- candle_resampler.py
     |-- connectivity.py       # Shared transient dependency-failure classification
     |-- datetime.py
     |-- decimal.py

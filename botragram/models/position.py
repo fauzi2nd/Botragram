@@ -100,6 +100,14 @@ class Position:
                 )
             if self.pending_partial_tp_quantity <= Decimal("0"):
                 raise ValueError("Pending partial TP quantity must be positive")
+            if self.pending_partial_tp_client_order_id in {
+                self.stop_loss_client_algo_id,
+                self.take_profit_client_algo_id,
+                self.pending_stop_loss_client_algo_id,
+            }:
+                raise ValueError(
+                    "Pending partial TP identity must be distinct from protection legs"
+                )
 
         pending_id = self.pending_stop_loss_client_algo_id
         has_pending = (

@@ -168,6 +168,11 @@ class PositionProtectionManager:
                     ticker=ticker,
                     progress=progress,
                 )
+                if (
+                    position.pending_partial_tp_client_order_id is not None
+                    or position.pending_stop_loss_client_algo_id is not None
+                ):
+                    return
 
             roi = self._calculate_roi(
                 position=position,
@@ -512,8 +517,9 @@ class PositionProtectionManager:
                 if exchange_pos.quantity < position.quantity:
                     executed_qty = position.quantity - exchange_pos.quantity
                     if (
-                        _DECIMAL_ZERO < executed_qty <= requested_qty
+                        executed_qty == requested_qty
                         and executed_qty <= position.quantity
+                        and executed_qty > _DECIMAL_ZERO
                     ):
                         _LOGGER.info(
                             "Reconciled executed partial TP from position reduction: "
@@ -528,6 +534,15 @@ class PositionProtectionManager:
                             ptp_order_id=f"reconciled-{client_order_id}",
                             ticker=ticker,
                         )
+                    _LOGGER.warning(
+                        "Exchange position reduction (%s) for %s does not match "
+                        "pending partial TP requested quantity (%s) or violates "
+                        "invariants. Failing closed to avoid false attribution; "
+                        "retaining intent.",
+                        executed_qty,
+                        position.symbol,
+                        requested_qty,
+                    )
                 elif exchange_pos.quantity == position.quantity:
                     cleared = replace(
                         position,
@@ -544,6 +559,14 @@ class PositionProtectionManager:
                         position.symbol,
                     )
                     return cleared
+                else:
+                    _LOGGER.warning(
+                        "Exchange position quantity (%s) exceeds local quantity (%s) "
+                        "for %s. Failing closed; retaining pending intent.",
+                        exchange_pos.quantity,
+                        position.quantity,
+                        position.symbol,
+                    )
 
             self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
             return position
@@ -765,6 +788,8 @@ class PositionProtectionManager:
             )
             return position
 
+        should_replace_stop = False
+        final_stop: Decimal | None = None
         try:
             be_stop = self._calculate_stop_loss(
                 position=position,
@@ -779,11 +804,8 @@ class PositionProtectionManager:
             except VenueRuleValidationError:
                 final_stop = be_stop
 
-            new_stop = (
-                final_stop
-                if self._is_tighter_stop(position=position, replacement_stop=final_stop)
-                else position.stop_loss
-            )
+            if self._is_tighter_stop(position=position, replacement_stop=final_stop):
+                should_replace_stop = True
         except ValueError as err:
             _LOGGER.warning(
                 "Cannot calculate BE stop after partial TP for %s: %s. "
@@ -791,33 +813,85 @@ class PositionProtectionManager:
                 position.symbol,
                 err,
             )
-            new_stop = position.stop_loss
-        new_stop_id = Position.create_stop_loss_client_algo_id()
 
-        pending_stop_pos = replace(
+        if should_replace_stop and final_stop is not None:
+            new_stop_id = Position.create_stop_loss_client_algo_id()
+
+            pending_stop_pos = replace(
+                position,
+                quantity=remaining_qty,
+                current_price=ticker.last_price,
+                pending_stop_loss=final_stop,
+                pending_stop_loss_client_algo_id=new_stop_id,
+                pending_protection_step=max(position.protection_step, 1),
+                partial_tp_executed=True,
+                partial_tp_order_id=ptp_order_id,
+                pending_partial_tp_client_order_id=None,
+                pending_partial_tp_quantity=None,
+                updated_at=ticker.timestamp,
+            )
+            await self.position_repository.update(position=pending_stop_pos)
+            self._cached_position = pending_stop_pos
+
+            _LOGGER.info(
+                "LIVE partial TP fill verified: symbol=%s executed=%s remaining=%s "
+                "order_id=%s. Armed pending stop=%s",
+                position.symbol,
+                executed_qty,
+                remaining_qty,
+                ptp_order_id,
+                final_stop,
+            )
+
+            await self._publish_partial_tp_notification(
+                position=position,
+                close_qty=executed_qty,
+                remaining_qty=remaining_qty,
+                ticker=ticker,
+                stop_loss=final_stop,
+            )
+
+            try:
+                await self._complete_pending_stop_replacement(
+                    position=pending_stop_pos,
+                    timestamp=ticker.timestamp,
+                    current_price=ticker.last_price,
+                )
+                return self._cached_position or pending_stop_pos
+            except Exception as err:
+                _LOGGER.warning(
+                    "Stop replacement after partial TP failed for %s: %s. "
+                    "Previous stop remains active; pending stop queued.",
+                    position.symbol,
+                    err,
+                )
+                return pending_stop_pos
+
+        updated_pos = replace(
             position,
             quantity=remaining_qty,
             current_price=ticker.last_price,
-            pending_stop_loss=new_stop,
-            pending_stop_loss_client_algo_id=new_stop_id,
-            pending_protection_step=max(position.protection_step, 1),
             partial_tp_executed=True,
             partial_tp_order_id=ptp_order_id,
             pending_partial_tp_client_order_id=None,
             pending_partial_tp_quantity=None,
+            pending_stop_loss=None,
+            pending_stop_loss_client_algo_id=None,
+            pending_protection_step=0,
             updated_at=ticker.timestamp,
         )
-        await self.position_repository.update(position=pending_stop_pos)
-        self._cached_position = pending_stop_pos
+        await self.position_repository.update(position=updated_pos)
+        self._cached_position = updated_pos
 
         _LOGGER.info(
             "LIVE partial TP fill verified: symbol=%s executed=%s remaining=%s "
-            "order_id=%s. Armed pending stop=%s",
+            "order_id=%s. Retained active stop=%s (step=%s)",
             position.symbol,
             executed_qty,
             remaining_qty,
             ptp_order_id,
-            new_stop,
+            updated_pos.stop_loss,
+            updated_pos.protection_step,
         )
 
         await self._publish_partial_tp_notification(
@@ -825,24 +899,10 @@ class PositionProtectionManager:
             close_qty=executed_qty,
             remaining_qty=remaining_qty,
             ticker=ticker,
-            stop_loss=new_stop,
+            stop_loss=updated_pos.stop_loss,
         )
 
-        try:
-            await self._complete_pending_stop_replacement(
-                position=pending_stop_pos,
-                timestamp=ticker.timestamp,
-                current_price=ticker.last_price,
-            )
-            return self._cached_position or pending_stop_pos
-        except Exception as err:
-            _LOGGER.warning(
-                "Stop replacement after partial TP failed for %s: %s. "
-                "Previous stop remains active; pending stop queued.",
-                position.symbol,
-                err,
-            )
-            return pending_stop_pos
+        return updated_pos
 
     async def _publish_partial_tp_notification(
         self,

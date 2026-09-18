@@ -631,18 +631,24 @@ Botragram/
 |   |-- app/
 |   |   |-- __init__.py
 |   |   |-- application.py
+|   |   |-- backfill_command.py       # Historical candle backfill CLI runner
 |   |   |-- backtest_command.py       # Backtest CLI composition dan report
 |   |   |-- connectivity.py           # Backward-compatible classifier re-export
-|   |   |-- dependency_provider.py`n|   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
+|   |   |-- dependency_provider.py    # Composition root dan manual wiring container
 |   |   |-- environment_provider.py
+|   |   |-- global_discovery_telemetry.py # Read-only ranked discovery snapshot
 |   |   |-- lifecycle.py
+|   |   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
 |   |   |-- market_type_switch.py     # Guarded Spot/Futures soft restart
+|   |   |-- operator_terminal_monitor.py # Operator dashboard monitor adapter
+|   |   |-- responsive_terminal_monitor.py # Terminal monitor responsive layout
 |   |   |-- runtime_control.py
-|   |   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
+|   |   |-- runtime_instance_lock.py  # One runtime per database-scoped deployment
+|   |   |-- runtime_limited_autonomous_live_executor.py # Dynamic capacity adapter
 |   |   |-- settings_manager.py
 |   |   |-- shutdown.py
 |   |   |-- startup.py
-|   |   |-- terminal_monitor.py        # Rich status/stream/log dashboard
+|   |   |-- terminal_monitor.py       # Rich status/stream/log dashboard
 |   |   `-- trading_runner.py
 |   |-- config/
 |   |   |-- __init__.py
@@ -676,13 +682,15 @@ Botragram/
 |   |   |-- pnl_engine.py
 |   |   |-- portfolio_engine.py
 |   |   |-- position_engine.py
+|   |   |-- position_exit_engine.py
 |   |   |-- risk_engine.py
 |   |   |-- signal_engine.py
 |   |   `-- trading_engine.py
-|   |-- enums/`n|   |   |-- live_futures_user_data_status.py # Freshness state for private Futures cache
+|   |-- enums/
 |   |   |-- __init__.py
 |   |   |-- base.py
 |   |   |-- environment.py
+|   |   |-- live_futures_user_data_status.py # Freshness state for private Futures cache
 |   |   `-- <domain_enum>.py
 |   |-- exceptions/
 |   |   |-- __init__.py
@@ -699,8 +707,10 @@ Botragram/
 |   |   |   `-- stream.py
 |   |   |-- binance/
 |   |   |   |-- __init__.py
+|   |   |   |-- authoritative_futures_client.py # Deterministic authoritative Futures state client
 |   |   |   |-- client.py
-|   |   |   |-- futures_client.py`n|   |   |-- futures_user_data_stream.py # Binance private account User Data Stream
+|   |   |   |-- futures_client.py
+|   |   |   |-- futures_user_data_stream.py # Binance private account User Data Stream
 |   |   |   |-- mapper.py
 |   |   |   |-- rest.py
 |   |   |   `-- stream.py
@@ -714,97 +724,10 @@ Botragram/
 |   |       `-- stream.py
 |   |-- indicators/
 |   |   |-- __init__.py
-|   |   |-- momentum/
+|   |   |-- derivatives/
 |   |   |   |-- __init__.py
-|   |   |   |-- macd.py
-|   |   |   `-- rsi.py
-|   |   |-- overlap/
-|   |   |   |-- __init__.py
-|   |   |   |-- ichimoku.py
-|   |   |   `-- psar.py
-|   |   |-- trend/
-|   |   |   |-- __init__.py
-|   |   |   |-- adx.py
-|   |   |-- environment_provider.py
-|   |   |-- lifecycle.py
-|   |   |-- market_type_switch.py     # Guarded Spot/Futures soft restart
-|   |   |-- runtime_control.py
-|   |   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
-|   |   |-- settings_manager.py
-|   |   |-- shutdown.py
-|   |   |-- startup.py
-|   |   |-- terminal_monitor.py        # Rich status/stream/log dashboard
-|   |   `-- trading_runner.py
-|   |-- config/
-|   |   |-- __init__.py
-|   |   |-- ai_settings.py
-|   |   |-- app_settings.py
-|   |   |-- exchange_settings.py
-|   |   |-- logging_settings.py
-|   |   |-- market_settings.py
-|   |   |-- risk_settings.py
-|   |   |-- settings.py
-|   |   |-- strategy_settings.py
-|   |   `-- telegram_settings.py
-|   |-- constants/
-|   |   |-- __init__.py
-|   |   |-- ai.py
-|   |   |-- app.py
-|   |   |-- env.py
-|   |   |-- exchange.py
-|   |   |-- indicator.py
-|   |   |-- market.py
-|   |   |-- order.py
-|   |   |-- position.py
-|   |   |-- risk.py
-|   |   |-- strategy.py
-|   |   |-- telegram.py
-|   |   `-- time.py
-|   |-- engine/
-|   |   |-- __init__.py
-|   |   |-- backtest_engine.py
-|   |   |-- order_engine.py
-|   |   |-- pnl_engine.py
-|   |   |-- portfolio_engine.py
-|   |   |-- position_engine.py
-|   |   |-- risk_engine.py
-|   |   |-- signal_engine.py
-|   |   `-- trading_engine.py
-|   |-- enums/`n|   |   |-- live_futures_user_data_status.py # Freshness state for private Futures cache
-|   |   |-- __init__.py
-|   |   |-- base.py
-|   |   |-- environment.py
-|   |   `-- <domain_enum>.py
-|   |-- exceptions/
-|   |   |-- __init__.py
-|   |   |-- base.py
-|   |   `-- <domain_exception>.py
-|   |-- exchanges/
-|   |   |-- __init__.py
-|   |   |-- factory.py
-|   |   |-- base/
-|   |   |   |-- __init__.py
-|   |   |   |-- client.py
-|   |   |   |-- mapper.py
-|   |   |   |-- rest.py
-|   |   |   `-- stream.py
-|   |   |-- binance/
-|   |   |   |-- __init__.py
-|   |   |   |-- client.py
-|   |   |   |-- futures_client.py`n|   |   |-- futures_user_data_stream.py # Binance private account User Data Stream
-|   |   |   |-- mapper.py
-|   |   |   |-- rest.py
-|   |   |   `-- stream.py
-|   |   |-- bitget/
-|   |   |-- bybit/
-|   |   `-- okx/
-|   |       |-- __init__.py
-|   |       |-- client.py
-|   |       |-- mapper.py
-|   |       |-- rest.py
-|   |       `-- stream.py
-|   |-- indicators/
-|   |   |-- __init__.py
+|   |   |   |-- account_ratio.py
+|   |   |   `-- open_interest.py
 |   |   |-- momentum/
 |   |   |   |-- __init__.py
 |   |   |   |-- macd.py
@@ -912,6 +835,8 @@ Botragram/
 |   |   `-- query_service.py
 |   `-- utils/
 |       |-- __init__.py
+|       |-- candle_aggregator.py
+|       |-- candle_resampler.py
 |       |-- connectivity.py            # Shared transient dependency-failure classification
 |       |-- datetime.py
 |       |-- decimal.py
