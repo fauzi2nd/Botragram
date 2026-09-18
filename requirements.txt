@@ -4,6 +4,7 @@ aiosqlite>=0.22.1
 python-dotenv>=1.2.3
 python-telegram-bot>=22.8
 rich>=15.0.0
+tzdata>=2026.3; sys_platform == 'win32'
 
 # Development, Quality Gates & Testing
 mypy>=2.3.0
