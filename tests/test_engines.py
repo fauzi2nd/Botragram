@@ -1192,6 +1192,29 @@ def test_stepped_stop_loss_fee_buffer_invariant_and_monotonicity() -> None:
             position=pos_too_small_short, step=2, breakeven_fee_buffer=fee_buf
         )
 
+    # 5. Exactly equal TP distance (tp_dist == fee_dist == 0.16) must fail closed
+    pos_exact_fee_dist = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=entry,
+        current_price=entry,
+        unrealized_pnl=Decimal("0"),
+        stop_loss=Decimal("99"),
+        take_profit=Decimal("100.16"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+    with pytest.raises(ValueError, match="too small to form a valid protection level"):
+        RiskEngine.calculate_stepped_stop_loss(
+            position=pos_exact_fee_dist, step=1, breakeven_fee_buffer=fee_buf
+        )
+    with pytest.raises(ValueError, match="too small to form a valid protection level"):
+        RiskEngine.calculate_stepped_stop_loss(
+            position=pos_exact_fee_dist, step=2, breakeven_fee_buffer=fee_buf
+        )
+
 
 def test_stepped_protection_comprehensive_matrix_and_parity() -> None:
     """Verify full step resolution matrix, BE ROI rules, and live/backtest parity."""
@@ -1199,7 +1222,7 @@ def test_stepped_protection_comprehensive_matrix_and_parity() -> None:
     thresh = Decimal("0.30")
     assert (
         RiskEngine.resolve_breakeven_step(
-            roi=Decimal("0.29"), breakeven_roi_threshold=thresh
+            roi=Decimal("0.299"), breakeven_roi_threshold=thresh
         )
         == 0
     )
@@ -1211,12 +1234,12 @@ def test_stepped_protection_comprehensive_matrix_and_parity() -> None:
     )
     assert (
         RiskEngine.resolve_breakeven_step(
-            roi=Decimal("0.50"), breakeven_roi_threshold=thresh
+            roi=Decimal("1.00"), breakeven_roi_threshold=thresh
         )
         == 1
     )
 
-    # 2. Leverage triggers BE faster via ROI, but leaves progress untouched
+    # 2. Leverage impact on BE vs Invariance on Steps 2..6 (1x, 5x, 10x, 20x, 50x)
     pos_1x = Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -1230,30 +1253,45 @@ def test_stepped_protection_comprehensive_matrix_and_parity() -> None:
         opened_at=_NOW,
         updated_at=_NOW,
     )
+    pos_5x = replace(pos_1x, leverage=5)
     pos_10x = replace(pos_1x, leverage=10)
+    pos_20x = replace(pos_1x, leverage=20)
+    pos_50x = replace(pos_1x, leverage=50)
 
     # 1.5% price increase:
     # 1x ROI = 1.5% (< 30% -> BE Step 0)
+    # 5x ROI = 7.5% (< 30% -> BE Step 0)
     # 10x ROI = 15.0% (< 30% -> BE Step 0)
     # 20x ROI = 30.0% (== 30% -> BE Step 1)
+    # 50x ROI = 75.0% (> 30% -> BE Step 1)
     roi_1x = RiskEngine.calculate_position_roi(
         position=pos_1x, current_price=Decimal("101.5")
+    )
+    roi_5x = RiskEngine.calculate_position_roi(
+        position=pos_5x, current_price=Decimal("101.5")
     )
     roi_10x = RiskEngine.calculate_position_roi(
         position=pos_10x, current_price=Decimal("101.5")
     )
-    pos_20x = replace(pos_1x, leverage=20)
     roi_20x = RiskEngine.calculate_position_roi(
         position=pos_20x, current_price=Decimal("101.5")
     )
+    roi_50x = RiskEngine.calculate_position_roi(
+        position=pos_50x, current_price=Decimal("101.5")
+    )
 
     assert RiskEngine.resolve_breakeven_step(roi=roi_1x) == 0
+    assert RiskEngine.resolve_breakeven_step(roi=roi_5x) == 0
     assert RiskEngine.resolve_breakeven_step(roi=roi_10x) == 0
     assert RiskEngine.resolve_breakeven_step(roi=roi_20x) == 1
+    assert RiskEngine.resolve_breakeven_step(roi=roi_50x) == 1
 
     # But price progress is IDENTICAL for all leverage levels:
     prog_1x = RiskEngine.calculate_tp_progress(
         position=pos_1x, current_price=Decimal("101.5")
+    )
+    prog_5x = RiskEngine.calculate_tp_progress(
+        position=pos_5x, current_price=Decimal("101.5")
     )
     prog_10x = RiskEngine.calculate_tp_progress(
         position=pos_10x, current_price=Decimal("101.5")
@@ -1261,9 +1299,12 @@ def test_stepped_protection_comprehensive_matrix_and_parity() -> None:
     prog_20x = RiskEngine.calculate_tp_progress(
         position=pos_20x, current_price=Decimal("101.5")
     )
-    assert prog_1x == prog_10x == prog_20x == Decimal("0.15")
+    prog_50x = RiskEngine.calculate_tp_progress(
+        position=pos_50x, current_price=Decimal("101.5")
+    )
+    assert prog_1x == prog_5x == prog_10x == prog_20x == prog_50x == Decimal("0.15")
     assert RiskEngine.resolve_protection_step(progress=prog_1x) == 0
-    assert RiskEngine.resolve_protection_step(progress=prog_20x) == 0
+    assert RiskEngine.resolve_protection_step(progress=prog_50x) == 0
 
     # 3. Pure price progress steps (Steps 2..6)
     assert RiskEngine.resolve_protection_step(progress=Decimal("0.299")) == 0

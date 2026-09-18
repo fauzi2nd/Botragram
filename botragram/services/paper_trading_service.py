@@ -420,14 +420,18 @@ class PaperTradingService:
                 reason=reason,
             )
 
-            updated_position = replace(
+            remaining_position = replace(
                 position,
                 quantity=remaining_qty,
                 current_price=fill_price,
-                unrealized_pnl=self.pnl_engine.calculate_unrealized(
-                    position=position,
-                    current_price=fill_price,
-                ),
+            )
+            unrealized_pnl = self.pnl_engine.calculate_unrealized(
+                position=remaining_position,
+                current_price=fill_price,
+            )
+            updated_position = replace(
+                remaining_position,
+                unrealized_pnl=unrealized_pnl,
                 stop_loss=new_stop_loss,
                 protection_step=new_protection_step,
                 partial_tp_executed=True,

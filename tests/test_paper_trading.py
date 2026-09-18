@@ -17,6 +17,8 @@ from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine import PnLEngine, RiskEngine, TradingEngine
 from botragram.enums import OrderSide, PositionSide, SignalType
@@ -390,3 +392,111 @@ async def _run_sqlite_position_metadata_test() -> None:
             assert stored_position == position
         finally:
             await database.close()
+
+
+@pytest.mark.asyncio
+async def test_paper_partial_close_unrealized_pnl_uses_remaining_quantity_long() -> (
+    None
+):
+    """Verify stored unrealized PnL is based on remaining quantity for LONG."""
+    fixture = _create_fixture()
+    entry = Decimal("100")
+    original_qty = Decimal("10")
+    close_qty = Decimal("5")
+    remaining_qty = Decimal("5")
+
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=original_qty,
+        entry_price=entry,
+        current_price=entry,
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+    )
+    await fixture.positions.save(position=position)
+
+    ref_price = Decimal("105")
+    result = await fixture.service.execute_partial_close(
+        symbol="BTCUSDT",
+        close_quantity=close_qty,
+        reference_price=ref_price,
+        new_stop_loss=Decimal("100.16"),
+        new_protection_step=1,
+        executed_at=_NOW + timedelta(minutes=5),
+    )
+    assert result is not None
+    assert result.executed is True
+
+    stored = await fixture.positions.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    assert stored.quantity == remaining_qty
+    assert stored.partial_tp_executed is True
+
+    pnl_engine = PnLEngine()
+    expected_unrealized = pnl_engine.calculate_unrealized(
+        position=stored,
+        current_price=stored.current_price,
+    )
+    # Stored unrealized PnL must strictly equal the PnL for remaining quantity 5
+    assert stored.unrealized_pnl == expected_unrealized
+    # Stored unrealized PnL must NOT equal the PnL calculated on original quantity 10
+    old_unrealized = (stored.current_price - entry) * original_qty
+    assert stored.unrealized_pnl != old_unrealized
+
+
+@pytest.mark.asyncio
+async def test_paper_partial_close_unrealized_pnl_uses_remaining_quantity_short() -> (
+    None
+):
+    """Verify stored unrealized PnL is based on remaining quantity for SHORT."""
+    fixture = _create_fixture()
+    entry = Decimal("100")
+    original_qty = Decimal("10")
+    close_qty = Decimal("5")
+    remaining_qty = Decimal("5")
+
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.SHORT,
+        quantity=original_qty,
+        entry_price=entry,
+        current_price=entry,
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("105"),
+        take_profit=Decimal("90"),
+    )
+    await fixture.positions.save(position=position)
+
+    ref_price = Decimal("95")
+    result = await fixture.service.execute_partial_close(
+        symbol="BTCUSDT",
+        close_quantity=close_qty,
+        reference_price=ref_price,
+        new_stop_loss=Decimal("99.84"),
+        new_protection_step=1,
+        executed_at=_NOW + timedelta(minutes=5),
+    )
+    assert result is not None
+    assert result.executed is True
+
+    stored = await fixture.positions.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    assert stored.quantity == remaining_qty
+    assert stored.partial_tp_executed is True
+
+    pnl_engine = PnLEngine()
+    expected_unrealized = pnl_engine.calculate_unrealized(
+        position=stored,
+        current_price=stored.current_price,
+    )
+    assert stored.unrealized_pnl == expected_unrealized
+    old_unrealized = (entry - stored.current_price) * original_qty
+    assert stored.unrealized_pnl != old_unrealized

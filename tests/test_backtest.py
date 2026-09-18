@@ -373,6 +373,11 @@ async def test_backtest_simulates_partial_tp_with_live_parity() -> None:
     assert res_enabled.trades[0].quantity == res_enabled.trades[1].quantity
     assert res_enabled.metrics.winning_trades == 2
     assert res_enabled.metrics.net_pnl > Decimal("0")
+    # Economic fees and PnL reconciliation
+    assert sum(t.fees for t in res_enabled.trades) == res_enabled.metrics.total_fees
+    assert (
+        sum(t.realized_pnl for t in res_enabled.trades) == res_enabled.metrics.net_pnl
+    )
 
     # 2. With partial TP DISABLED
     engine_disabled = BacktestEngine(
@@ -391,6 +396,112 @@ async def test_backtest_simulates_partial_tp_with_live_parity() -> None:
     assert res_disabled.trades[0].quantity == res_enabled.trades[0].quantity * Decimal(
         "2"
     )
+
+
+@pytest.mark.asyncio
+async def test_backtest_partial_tp_same_candle_advances_stepped_protection() -> None:
+    """Verify partial TP and stepped protection advance correctly on same candle."""
+    candles = (
+        _create_candle(
+            minute=0,
+            open_price="100",
+            high_price="100.2",
+            low_price="99.9",
+            close_price="100",
+        ),
+        _create_candle(
+            minute=1,
+            open_price="100.1",
+            high_price="103.50",  # crosses 50% TP progress and reaches Step 3 (>= 45%)
+            low_price="100.0",
+            close_price="103.20",
+        ),
+        _create_candle(
+            minute=2,
+            open_price="103.0",
+            high_price="103.0",
+            low_price="101.40",  # Drops and hits Step 3 stop
+            close_price="101.42",
+        ),
+    )
+    request = BacktestRequest(
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+        market_type=MarketType.FUTURES,
+        start_time=_START_TIME,
+        end_time=_START_TIME + timedelta(minutes=3),
+        initial_balance=Decimal("100"),
+    )
+    engine = BacktestEngine(
+        strategy=BuyThenHoldStrategy(),
+        risk_settings=RiskSettings(
+            leverage=10,
+            scalping_stop_loss_pct=Decimal("0.02"),
+            scalping_take_profit_pct=Decimal("0.06"),
+            partial_tp_enabled=True,
+            partial_tp_ratio=Decimal("0.50"),
+            partial_tp_trigger_progress=Decimal("0.50"),
+        ),
+    )
+    res = await engine.run(request=request, candles=candles)
+    assert res.metrics.total_trades == 2
+    assert res.trades[0].reason == "Partial take-profit triggered"
+    assert res.trades[1].reason == "Paper stop-loss triggered"
+    # Exit price reflects Step 3 stop (101.5), not initial BE stop (100.16)
+    assert res.trades[1].exit_price >= Decimal("101.40")
+
+
+@pytest.mark.asyncio
+async def test_backtest_partial_tp_gap_candle_fill_behavior() -> None:
+    """Verify conservative fill price on candles that gap past the trigger level."""
+    candles_gap_long = (
+        _create_candle(
+            minute=0,
+            open_price="100",
+            high_price="100.1",
+            low_price="99.9",
+            close_price="100",
+        ),
+        _create_candle(
+            minute=1,
+            open_price="104.0",  # Gaps open above trigger 103.0
+            high_price="105.0",
+            low_price="103.8",
+            close_price="104.5",
+        ),
+        _create_candle(
+            minute=2,
+            open_price="104.5",
+            high_price="104.5",
+            low_price="99.0",
+            close_price="99.5",
+        ),
+    )
+    request = BacktestRequest(
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+        market_type=MarketType.FUTURES,
+        start_time=_START_TIME,
+        end_time=_START_TIME + timedelta(minutes=3),
+        initial_balance=Decimal("100"),
+    )
+    engine = BacktestEngine(
+        strategy=BuyThenHoldStrategy(),
+        risk_settings=RiskSettings(
+            leverage=10,
+            scalping_stop_loss_pct=Decimal("0.02"),
+            scalping_take_profit_pct=Decimal("0.06"),
+            partial_tp_enabled=True,
+            partial_tp_ratio=Decimal("0.50"),
+            partial_tp_trigger_progress=Decimal("0.50"),
+        ),
+    )
+    res_gap = await engine.run(request=request, candles=candles_gap_long)
+    assert res_gap.metrics.total_trades == 2
+    # Fill price for partial TP on gap open must be based on open price with slippage
+    assert res_gap.trades[0].exit_price == Decimal("103.94800")
 
 
 # =============================================================================
