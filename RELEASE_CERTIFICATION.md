@@ -154,16 +154,18 @@ None of these outcomes are distinguishable from the specific partial TP order wi
 ```text
 ============================================================
 RELEASE CERTIFICATION: PASS
-Target Version: v2.7.11
-Commit SHA: pending final verification
-Python version: Python 3.14.6
-Pytest count: 1575 passed (0 failed, 0 skipped)
-Pyrefly result: PASS
-Pyright result: PASS
-All 9 local gates: PASS
-Specialized protection tests: PASS (41 passed)
-Specialized partial TP tests: PASS (23 passed)
-GitHub Release Gate: PASS
-Release Ready: YES
+Target Version:          v2.7.11
+Tag SHA (annotated):     3da7c5d88b44b237e8ec73068ed9919232799363
+Commit SHA (tag^{}):     bfc461029cd66e65628a97bcec4919f6200b6b6a
+origin/main SHA:         bfc461029cd66e65628a97bcec4919f6200b6b6a
+Python version:          Python 3.14.6
+Pytest count:            1575 passed (0 failed, 0 skipped)
+Pyrefly result:          PASS (0 errors)
+Pyright result:          PASS (0 errors, 0 warnings)
+All 11 local gates:      PASS
+Specialized protection:  PASS (41 passed)
+Specialized partial TP:  PASS (23 passed)
+GitHub Release Gate:     PASS (Authoritative Release Gate #3)
+Release Ready:           YES
 ============================================================
 ```
