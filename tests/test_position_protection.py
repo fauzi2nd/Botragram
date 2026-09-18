@@ -1869,7 +1869,8 @@ async def test_partial_tp_executed_quantity_invariants_fail_closed() -> None:
 async def test_partial_tp_order_not_found_retains_intent_despite_matching_delta() -> (
     None
 ):
-    """When order lookup fails, position delta MUST NOT be used as authoritative fill evidence.
+    """When order lookup fails, position delta MUST NOT be used as
+    authoritative fill evidence.
 
     Even if the exchange position shows a reduction that matches the requested
     quantity exactly, this alone does not prove this specific order caused the
