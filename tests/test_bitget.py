@@ -505,3 +505,10 @@ async def test_bitget_futures_create_reduce_only_market_order() -> None:
     assert rest.last_data.get("side") == "sell"
     assert rest.last_data.get("size") == "0.5"
     assert rest.last_data.get("clientOid") == "bg-client-1"
+
+    with pytest.raises(ValueError, match="Order quantity must be greater than zero"):
+        await client.create_reduce_only_market_order(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            quantity=Decimal("0"),
+        )

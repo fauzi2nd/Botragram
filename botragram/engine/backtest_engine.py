@@ -27,7 +27,7 @@ from typing import Final
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine.pnl_engine import PnLEngine
-from botragram.engine.risk_engine import RiskEngine
+from botragram.engine.risk_engine import DEFAULT_BREAKEVEN_FEE_BUFFER, RiskEngine
 from botragram.engine.trading_engine import TradingEngine
 from botragram.enums import Interval, OrderSide, PositionSide, SignalType
 from botragram.models import (
@@ -60,7 +60,7 @@ _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DECIMAL_HUNDRED: Final[Decimal] = Decimal("100")
 _STRATEGY_WINDOW: Final[int] = 500
 _BREAKEVEN_ROI_THRESHOLD: Final[Decimal] = Decimal("0.30")
-_BREAKEVEN_FEE_BUFFER: Final[Decimal] = Decimal("0.001")
+_BREAKEVEN_FEE_BUFFER: Final[Decimal] = DEFAULT_BREAKEVEN_FEE_BUFFER
 _PROTECTION_WARNING: Final[str] = (
     "Stepped SL+ uses conservative next-candle activation because OHLC does not "
     "encode intrabar high/low order"
@@ -124,6 +124,19 @@ class BacktestEngine:
                     peak_equity=peak_equity,
                 )
             else:
+                ptp_reason = await self._apply_partial_take_profit(
+                    candle=candle,
+                    paper_service=paper_service,
+                    position_repository=position_repository,
+                )
+                if ptp_reason is not None:
+                    exit_reasons.append(ptp_reason)
+                    peak_equity, current_drawdown = await self._equity_state(
+                        paper_service=paper_service,
+                        initial_balance=request.initial_balance,
+                        peak_equity=peak_equity,
+                    )
+
                 await self._advance_stepped_protection(
                     candle=candle,
                     position_repository=position_repository,
@@ -264,6 +277,93 @@ class BacktestEngine:
         still_open = await position_repository.get_by_symbol(symbol=candle.symbol)
         return reason if still_open is None else None
 
+    async def _apply_partial_take_profit(
+        self,
+        *,
+        candle: Candle,
+        paper_service: PaperTradingService,
+        position_repository: MemoryPositionRepository,
+    ) -> str | None:
+        """Trigger intrabar partial TP without lookahead if enabled and configured."""
+        if not self.risk_settings.partial_tp_enabled:
+            return None
+
+        position = await position_repository.get_by_symbol(symbol=candle.symbol)
+        if (
+            position is None
+            or position.partial_tp_executed
+            or position.take_profit is None
+        ):
+            return None
+
+        tp_distance = abs(position.take_profit - position.entry_price)
+        if tp_distance <= _DECIMAL_ZERO:
+            return None
+
+        favorable_price = (
+            candle.high_price
+            if position.side is PositionSide.LONG
+            else candle.low_price
+        )
+        progress = RiskEngine.calculate_tp_progress(
+            position=position,
+            current_price=favorable_price,
+        )
+        if progress < self.risk_settings.partial_tp_trigger_progress:
+            return None
+
+        close_qty = (
+            position.quantity * self.risk_settings.partial_tp_ratio
+        ).normalize()
+        if close_qty <= _DECIMAL_ZERO or close_qty >= position.quantity:
+            return None
+
+        if position.side is PositionSide.LONG:
+            nominal_trigger = (
+                position.entry_price
+                + tp_distance * self.risk_settings.partial_tp_trigger_progress
+            )
+            trigger_price = max(candle.open_price, nominal_trigger)
+        else:
+            nominal_trigger = (
+                position.entry_price
+                - tp_distance * self.risk_settings.partial_tp_trigger_progress
+            )
+            trigger_price = min(candle.open_price, nominal_trigger)
+
+        be_stop = RiskEngine.calculate_stepped_stop_loss(
+            position=position,
+            step=1,
+            breakeven_fee_buffer=_BREAKEVEN_FEE_BUFFER,
+        )
+        if position.side is PositionSide.LONG:
+            new_stop = (
+                be_stop
+                if (position.stop_loss is None or be_stop > position.stop_loss)
+                else position.stop_loss
+            )
+        else:
+            new_stop = (
+                be_stop
+                if (position.stop_loss is None or be_stop < position.stop_loss)
+                else position.stop_loss
+            )
+
+        new_step = max(position.protection_step, 1)
+
+        result = await paper_service.execute_partial_close(
+            symbol=position.symbol,
+            close_quantity=close_qty,
+            reference_price=trigger_price,
+            new_stop_loss=new_stop,
+            new_protection_step=new_step,
+            executed_at=candle.open_time + timedelta(microseconds=2),
+            reason="Partial take-profit triggered",
+        )
+        if result is not None and result.executed:
+            return "Partial take-profit triggered"
+        return None
+
     async def _advance_stepped_protection(
         self,
         *,
@@ -359,11 +459,15 @@ class BacktestEngine:
         """Pair entry and exit fills into completed position records."""
         completed: list[BacktestTrade] = []
         entry: Trade | None = None
+        entry_remaining_qty = _DECIMAL_ZERO
+        entry_original_qty = _DECIMAL_ZERO
         reason_index = 0
 
         for fill in fills:
             if fill.realized_pnl is None:
                 entry = fill
+                entry_original_qty = fill.quantity
+                entry_remaining_qty = fill.quantity
                 continue
             if entry is None:
                 raise RuntimeError("Backtest exit fill has no matching entry fill")
@@ -373,6 +477,13 @@ class BacktestEngine:
                 if reason_index < len(exit_reasons)
                 else "Position closed"
             )
+            fee_fraction = (
+                min(fill.quantity / entry_original_qty, Decimal("1"))
+                if entry_original_qty > _DECIMAL_ZERO
+                else _DECIMAL_ZERO
+            )
+            allocated_entry_fee = entry.fee * fee_fraction
+
             completed.append(
                 BacktestTrade(
                     side=(
@@ -385,13 +496,15 @@ class BacktestEngine:
                     entry_price=entry.price,
                     exit_price=fill.price,
                     quantity=fill.quantity,
-                    fees=entry.fee + fill.fee,
+                    fees=allocated_entry_fee + fill.fee,
                     realized_pnl=fill.realized_pnl,
                     reason=reason,
                 )
             )
-            entry = None
+            entry_remaining_qty -= fill.quantity
             reason_index += 1
+            if entry_remaining_qty <= _DECIMAL_ZERO:
+                entry = None
 
         if entry is not None:
             raise RuntimeError("Backtest finished with an unmatched entry fill")

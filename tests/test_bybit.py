@@ -1315,6 +1315,13 @@ async def test_bybit_futures_create_reduce_only_market_order_submits_reduce_only
     assert rest.last_data.get("qty") == "0.25"
     assert rest.last_data.get("orderLinkId") == "pclose-client-1"
 
+    with pytest.raises(ValueError, match="Order quantity must be greater than zero"):
+        await client.create_reduce_only_market_order(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            quantity=Decimal("0"),
+        )
+
 
 @pytest.mark.asyncio
 async def test_bybit_futures_get_order_by_client_id_falls_back_to_history() -> None:

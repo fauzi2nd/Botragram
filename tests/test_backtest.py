@@ -310,6 +310,89 @@ async def _run_breakeven_protection_backtest() -> BacktestResult:
     return await engine.run(request=request, candles=candles)
 
 
+@pytest.mark.asyncio
+async def test_backtest_simulates_partial_tp_with_live_parity() -> None:
+    """Verify BacktestEngine triggers partial TP, reduces quantity,
+
+    records realized PnL, adjusts protection stop to BE, and reflects in metrics.
+    """
+    candles = (
+        _create_candle(
+            minute=0,
+            open_price="100",
+            high_price="100.2",
+            low_price="99.9",
+            close_price="100",
+        ),
+        _create_candle(
+            minute=1,
+            open_price="100.1",
+            high_price="103.50",  # crosses 50% TP progress (103.0)
+            low_price="100.0",
+            close_price="103.20",
+        ),
+        _create_candle(
+            minute=2,
+            open_price="103.0",
+            high_price="103.0",
+            low_price="100.10",  # drops to trigger tightened BE stop
+            close_price="100.12",
+        ),
+    )
+    request = BacktestRequest(
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+        market_type=MarketType.FUTURES,
+        start_time=_START_TIME,
+        end_time=_START_TIME + timedelta(minutes=3),
+        initial_balance=Decimal("100"),
+    )
+
+    # 1. With partial TP ENABLED
+    engine_enabled = BacktestEngine(
+        strategy=BuyThenHoldStrategy(),
+        risk_settings=RiskSettings(
+            leverage=10,
+            scalping_stop_loss_pct=Decimal("0.02"),
+            scalping_take_profit_pct=Decimal("0.06"),
+            partial_tp_enabled=True,
+            partial_tp_ratio=Decimal("0.50"),
+            partial_tp_trigger_progress=Decimal("0.50"),
+        ),
+    )
+    res_enabled = await engine_enabled.run(request=request, candles=candles)
+    assert res_enabled.candle_count == 3
+    # Two completed trades: 1 partial TP + 1 final BE stop exit
+    assert res_enabled.metrics.total_trades == 2
+    assert res_enabled.trades[0].reason == "Partial take-profit triggered"
+    assert res_enabled.trades[0].exit_price >= Decimal("102.99")
+    assert res_enabled.trades[0].realized_pnl > Decimal("0")
+    assert res_enabled.trades[1].reason == "Paper stop-loss triggered"
+    # Remaining quantity was half of original
+    assert res_enabled.trades[0].quantity == res_enabled.trades[1].quantity
+    assert res_enabled.metrics.winning_trades == 2
+    assert res_enabled.metrics.net_pnl > Decimal("0")
+
+    # 2. With partial TP DISABLED
+    engine_disabled = BacktestEngine(
+        strategy=BuyThenHoldStrategy(),
+        risk_settings=RiskSettings(
+            leverage=10,
+            scalping_stop_loss_pct=Decimal("0.02"),
+            scalping_take_profit_pct=Decimal("0.06"),
+            partial_tp_enabled=False,
+        ),
+    )
+    res_disabled = await engine_disabled.run(request=request, candles=candles)
+    assert res_disabled.candle_count == 3
+    # Without partial TP, only 1 full trade
+    assert res_disabled.metrics.total_trades == 1
+    assert res_disabled.trades[0].quantity == res_enabled.trades[0].quantity * Decimal(
+        "2"
+    )
+
+
 # =============================================================================
 # CLI Tests
 # =============================================================================

@@ -207,6 +207,14 @@ class RiskEngine:
         fee_buffer_distance = position.entry_price * breakeven_fee_buffer
 
         if step == 1:
+            if position.take_profit is not None:
+                tp_distance = abs(position.take_profit - position.entry_price)
+                if tp_distance <= fee_buffer_distance:
+                    raise ValueError(
+                        f"Take-profit distance ({tp_distance}) is too small to "
+                        f"form a valid protection level with breakeven fee buffer "
+                        f"({fee_buffer_distance})"
+                    )
             if position.side is PositionSide.LONG:
                 return position.entry_price + fee_buffer_distance
             return position.entry_price - fee_buffer_distance
@@ -215,12 +223,21 @@ class RiskEngine:
         if take_profit is None:
             raise ValueError("Profit protection requires a take-profit price")
 
+        tp_distance = abs(take_profit - position.entry_price)
+        if tp_distance <= fee_buffer_distance:
+            raise ValueError(
+                f"Take-profit distance ({tp_distance}) is too small to "
+                f"form a valid protection level with breakeven fee buffer "
+                f"({fee_buffer_distance})"
+            )
+
         threshold_idx = step - 2
         if not (0 <= threshold_idx < len(PROGRESS_THRESHOLDS)):
             raise ValueError(f"Invalid protection step: {step}")
 
         locked_progress = PROGRESS_THRESHOLDS[threshold_idx] - LOCKED_PROGRESS_LAG
-        locked_distance = abs(take_profit - position.entry_price) * locked_progress
+        nominal_distance = tp_distance * locked_progress
+        locked_distance = max(fee_buffer_distance, nominal_distance)
 
         if position.side is PositionSide.LONG:
             return position.entry_price + locked_distance

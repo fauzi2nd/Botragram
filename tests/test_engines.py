@@ -1053,6 +1053,146 @@ def test_risk_engine_stepped_profit_protection() -> None:
         RiskEngine.calculate_stepped_stop_loss(position=long_pos, step=7)
 
 
+def test_stepped_stop_loss_fee_buffer_invariant_and_monotonicity() -> None:
+    """Verify that Steps >= 2 never lock less profit than Step 1 BE fee buffer.
+
+    Also verifies monotonicity and fail-closed when TP distance is too small.
+    """
+    fee_buf = Decimal("0.0016")  # 0.16%
+    entry = Decimal("100")
+
+    # 1. Normal TP distance (tp_dist = 10, nominal step 2 = 1.0 > 0.16)
+    pos_normal = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=entry,
+        current_price=entry,
+        unrealized_pnl=Decimal("0"),
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+    stops_normal = [
+        RiskEngine.calculate_stepped_stop_loss(
+            position=pos_normal, step=s, breakeven_fee_buffer=fee_buf
+        )
+        for s in range(1, 7)
+    ]
+    # Monotonicity check: step 1 <= step 2 <= ... <= step 6 < TP
+    for i in range(len(stops_normal) - 1):
+        assert stops_normal[i] <= stops_normal[i + 1]
+    assert stops_normal[-1] < Decimal("110")
+
+    # 2. Small but valid TP distance (entry=100, tp=101.5, tp_dist=1.5 > 0.16)
+    # Nominal Step 2: 1.5 * 0.10 = 0.15 (< 0.16 fee buffer)
+    # Invariant requires Step 2 lock >= fee_dist (0.16) -> stop = 100.16
+    pos_small_valid = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=entry,
+        current_price=entry,
+        unrealized_pnl=Decimal("0"),
+        stop_loss=Decimal("99"),
+        take_profit=Decimal("101.5"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+    s1 = RiskEngine.calculate_stepped_stop_loss(
+        position=pos_small_valid, step=1, breakeven_fee_buffer=fee_buf
+    )
+    s2 = RiskEngine.calculate_stepped_stop_loss(
+        position=pos_small_valid, step=2, breakeven_fee_buffer=fee_buf
+    )
+    s3 = RiskEngine.calculate_stepped_stop_loss(
+        position=pos_small_valid, step=3, breakeven_fee_buffer=fee_buf
+    )
+    assert s1 == Decimal("100.16")
+    # Step 2 locked distance must be at least 0.16 (never less than Step 1)
+    assert s2 == Decimal("100.16")
+    # Step 3 nominal is 1.5 * 0.25 = 0.375 (> 0.16)
+    assert s3 == Decimal("100.375")
+    assert s1 <= s2 <= s3 < Decimal("101.5")
+
+    # 3. Short position small but valid TP distance (tp_dist=1.5 > 0.16)
+    pos_short_small = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("1"),
+        entry_price=entry,
+        current_price=entry,
+        unrealized_pnl=Decimal("0"),
+        stop_loss=Decimal("101"),
+        take_profit=Decimal("98.5"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+    sh1 = RiskEngine.calculate_stepped_stop_loss(
+        position=pos_short_small, step=1, breakeven_fee_buffer=fee_buf
+    )
+    sh2 = RiskEngine.calculate_stepped_stop_loss(
+        position=pos_short_small, step=2, breakeven_fee_buffer=fee_buf
+    )
+    sh3 = RiskEngine.calculate_stepped_stop_loss(
+        position=pos_short_small, step=3, breakeven_fee_buffer=fee_buf
+    )
+    assert sh1 == Decimal("99.84")
+    assert sh2 == Decimal("99.84")
+    assert sh3 == Decimal("99.625")
+    assert sh1 >= sh2 >= sh3 > Decimal("98.5")
+
+    # 4. TP distance too small for BE fee buffer (fail closed with ValueError)
+    # tp_dist = 0.10 <= fee_dist 0.16
+    pos_too_small_long = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=entry,
+        current_price=entry,
+        unrealized_pnl=Decimal("0"),
+        stop_loss=Decimal("99"),
+        take_profit=Decimal("100.10"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+    with pytest.raises(ValueError, match="too small to form a valid protection level"):
+        RiskEngine.calculate_stepped_stop_loss(
+            position=pos_too_small_long, step=1, breakeven_fee_buffer=fee_buf
+        )
+    with pytest.raises(ValueError, match="too small to form a valid protection level"):
+        RiskEngine.calculate_stepped_stop_loss(
+            position=pos_too_small_long, step=2, breakeven_fee_buffer=fee_buf
+        )
+
+    pos_too_small_short = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("1"),
+        entry_price=entry,
+        current_price=entry,
+        unrealized_pnl=Decimal("0"),
+        stop_loss=Decimal("101"),
+        take_profit=Decimal("99.90"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+    with pytest.raises(ValueError, match="too small to form a valid protection level"):
+        RiskEngine.calculate_stepped_stop_loss(
+            position=pos_too_small_short, step=1, breakeven_fee_buffer=fee_buf
+        )
+    with pytest.raises(ValueError, match="too small to form a valid protection level"):
+        RiskEngine.calculate_stepped_stop_loss(
+            position=pos_too_small_short, step=2, breakeven_fee_buffer=fee_buf
+        )
+
+
 def test_stepped_protection_comprehensive_matrix_and_parity() -> None:
     """Verify full step resolution matrix, BE ROI rules, and live/backtest parity."""
     # 1. Breakeven Step 1 ROI boundary tests

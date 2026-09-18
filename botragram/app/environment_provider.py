@@ -945,11 +945,11 @@ class EnvironmentProvider:
         return self._get_var(ENV_ORIGIN_RISK_REWARD_RATIO, default="")
 
     def get_origin_stop_loss_pct(self) -> str:
-        """Return the configured Stop Loss pct for Botragram Origin strategy."""
+        """Return safety boundary / fallback Stop Loss pct for Botragram Origin."""
         return self._get_var(ENV_ORIGIN_STOP_LOSS_PCT, default="")
 
     def get_origin_take_profit_pct(self) -> str:
-        """Return the configured Take Profit pct for Botragram Origin strategy."""
+        """Return safety boundary / fallback Take Profit pct for Botragram Origin."""
         return self._get_var(ENV_ORIGIN_TAKE_PROFIT_PCT, default="")
 
     def get_origin_min_sl_pct(self) -> str:

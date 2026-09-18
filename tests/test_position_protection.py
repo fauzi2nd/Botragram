@@ -477,9 +477,9 @@ async def test_live_protection_verifies_exchange_before_persisting_step() -> Non
 
     position = await repository.get_by_symbol(symbol="BTCUSDT")
     assert position is not None
-    assert exchange.stop_replacements == [Decimal("99.90")]
+    assert exchange.stop_replacements == [Decimal("99.84")]
     assert exchange.stop_client_algo_ids[0] is not None
-    assert position.stop_loss == Decimal("99.90")
+    assert position.stop_loss == Decimal("99.84")
     assert position.stop_loss_client_algo_id == exchange.stop_client_algo_ids[0]
     assert position.protection_step == 2
 
@@ -532,12 +532,12 @@ async def test_live_stepped_long_stop_uses_canonical_price_filter_normalization(
 
     stored = await repository.get_by_symbol(symbol=position.symbol)
     assert stored is not None
-    assert exchange.stop_replacements == [Decimal("0.0022600")]
+    assert exchange.stop_replacements == [Decimal("0.0022610")]
     pending = repository.updated_positions[0]
     assert pending.stop_loss == Decimal("0.0022490")
-    assert pending.pending_stop_loss == Decimal("0.0022600")
+    assert pending.pending_stop_loss == Decimal("0.0022610")
     assert pending.pending_stop_loss_client_algo_id is not None
-    assert stored.stop_loss == Decimal("0.0022600")
+    assert stored.stop_loss == Decimal("0.0022610")
     assert stored.stop_loss_client_algo_id == pending.pending_stop_loss_client_algo_id
     assert stored.pending_stop_loss is None
     assert stored.pending_stop_loss_client_algo_id is None
@@ -567,8 +567,8 @@ async def test_live_stepped_short_stop_uses_inverse_price_filter_normalization()
 
     stored = await repository.get_by_symbol(symbol=position.symbol)
     assert stored is not None
-    assert exchange.stop_replacements == [Decimal("0.0022600")]
-    assert stored.stop_loss == Decimal("0.0022600")
+    assert exchange.stop_replacements == [Decimal("0.0022590")]
+    assert stored.stop_loss == Decimal("0.0022590")
 
 
 @pytest.mark.asyncio
@@ -629,8 +629,8 @@ async def test_invalid_live_stepped_stop_defers_without_losing_protection() -> N
 
     stored = await repository.get_by_symbol(symbol=position.symbol)
     assert stored is not None
-    assert exchange.stop_replacements == [Decimal("0.0022600")]
-    assert stored.stop_loss == Decimal("0.0022600")
+    assert exchange.stop_replacements == [Decimal("0.0022610")]
+    assert stored.stop_loss == Decimal("0.0022610")
     assert stored.protection_step == 3
 
 
@@ -775,7 +775,7 @@ async def test_live_immediate_trigger_rejection_clears_only_proven_pending_stop(
 
     advanced = await repository.get_by_symbol(symbol=position.symbol)
     assert advanced is not None
-    assert advanced.stop_loss == Decimal("99.90")
+    assert advanced.stop_loss == Decimal("99.84")
     assert advanced.stop_loss_client_algo_id is not None
     assert (
         advanced.stop_loss_client_algo_id
@@ -818,7 +818,7 @@ async def test_live_immediate_rejection_keeps_pending_when_current_unproven() ->
         assert pending.stop_loss == position.stop_loss
         assert pending.stop_loss_client_algo_id == current_id
         assert pending.protection_step == 0
-        assert pending.pending_stop_loss == Decimal("99.90")
+        assert pending.pending_stop_loss == Decimal("99.84")
         assert pending.pending_stop_loss_client_algo_id is not None
         assert pending.pending_protection_step == 2
 
@@ -880,7 +880,7 @@ async def test_live_failed_step_keeps_current_stop_and_pending_intent() -> None:
     assert pending.stop_loss == Decimal("100.5")
     assert pending.stop_loss_client_algo_id == current_id
     assert pending.protection_step == 0
-    assert pending.pending_stop_loss == Decimal("99.90")
+    assert pending.pending_stop_loss == Decimal("99.84")
     assert pending.pending_stop_loss_client_algo_id is not None
     assert pending.pending_protection_step == 2
 
@@ -889,7 +889,7 @@ async def test_live_failed_step_keeps_current_stop_and_pending_intent() -> None:
 
     promoted = await repository.get_by_symbol(symbol=position.symbol)
     assert promoted is not None
-    assert promoted.stop_loss == Decimal("99.90")
+    assert promoted.stop_loss == Decimal("99.84")
     assert promoted.stop_loss_client_algo_id == pending.pending_stop_loss_client_algo_id
     assert promoted.protection_step == 2
     assert promoted.pending_stop_loss is None
@@ -938,7 +938,7 @@ async def test_live_absent_invalid_pending_stop_is_retired_without_churn() -> No
 
     advanced = await repository.get_by_symbol(symbol=position.symbol)
     assert advanced is not None
-    assert advanced.stop_loss == Decimal("99.900000")
+    assert advanced.stop_loss == Decimal("99.8400000")
     assert advanced.stop_loss_client_algo_id is not None
     assert advanced.stop_loss_client_algo_id != stale_pending_id
     assert advanced.protection_step == 2
@@ -1790,6 +1790,228 @@ async def test_partial_tp_order_not_found_clears_safely_when_untouched() -> None
             updated_at=_NOW,
         )
     ]
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=1))
+
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.quantity == Decimal("10")
+    assert pos.partial_tp_executed is False
+    assert pos.pending_partial_tp_client_order_id is None
+
+
+@pytest.mark.asyncio
+async def test_partial_tp_cancel_race_returns_filled_processed_as_full_fill() -> None:
+    """When order is PARTIALLY_FILLED, cancel requested, but order fills (cancel race),
+
+    verify full fill is processed using final executed quantity.
+    """
+    initial_order = Order(
+        order_id="ptp-part-race-1",
+        client_order_id="ptp-client-race-1",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.PARTIALLY_FILLED,
+        quantity=Decimal("5"),
+        executed_quantity=Decimal("2"),
+        price=Decimal("105"),
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    # Order fills completely before cancel takes effect
+    post_cancel_order = Order(
+        order_id="ptp-part-race-1",
+        client_order_id="ptp-client-race-1",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("5"),
+        executed_quantity=Decimal("5"),
+        price=Decimal("105"),
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+    class CancelRaceExchange(RecordingProtectionExchange):
+        async def create_reduce_only_market_order(
+            self,
+            *,
+            symbol: str,
+            side: OrderSide,
+            quantity: Decimal,
+            client_order_id: str | None = None,
+        ) -> Order:
+            return initial_order
+
+        async def get_order_by_client_order_id(
+            self, *, symbol: str, client_order_id: str
+        ) -> Order:
+            return post_cancel_order
+
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = CancelRaceExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=1))
+
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    # Position reduced by full executed quantity 5 (remaining 5)
+    assert pos.quantity == Decimal("5")
+    assert pos.partial_tp_executed is True
+    assert pos.pending_partial_tp_client_order_id is None
+
+
+@pytest.mark.asyncio
+async def test_partial_tp_cancel_remains_non_terminal_retains_intent() -> None:
+    """When cancel is requested but order remains non-terminal (e.g.
+
+    still PARTIALLY_FILLED or NEW), retain durable intent without local
+    mutation.
+    """
+    initial_order = Order(
+        order_id="ptp-part-hang-1",
+        client_order_id="ptp-client-hang-1",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.PARTIALLY_FILLED,
+        quantity=Decimal("0.5"),
+        executed_quantity=Decimal("0.2"),
+        price=None,
+        stop_price=None,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+    class NonTerminalExchange(RecordingProtectionExchange):
+        async def create_reduce_only_market_order(
+            self,
+            *,
+            symbol: str,
+            side: OrderSide,
+            quantity: Decimal,
+            client_order_id: str | None = None,
+        ) -> Order:
+            return initial_order
+
+        async def get_order_by_client_order_id(
+            self, *, symbol: str, client_order_id: str
+        ) -> Order:
+            return initial_order
+
+    exchange = NonTerminalExchange()
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+    # Ticker at trigger level
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=1))
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    # Must NOT deduct quantity or mark executed when outcome remains non-terminal
+    assert pos.quantity == Decimal("10")
+    assert pos.partial_tp_executed is False
+    assert pos.pending_partial_tp_client_order_id is not None
+
+
+@pytest.mark.asyncio
+async def test_partial_tp_expired_clears_intent_without_mutating_quantity() -> None:
+    """Clear intent without mutating position quantity when expired with zero fill."""
+
+    class ExpiredExchange(RecordingProtectionExchange):
+        async def create_reduce_only_market_order(
+            self,
+            *,
+            symbol: str,
+            side: OrderSide,
+            quantity: Decimal,
+            client_order_id: str | None = None,
+        ) -> Order:
+            return Order(
+                order_id="ptp-expired-123",
+                client_order_id=client_order_id,
+                symbol=symbol,
+                side=side,
+                order_type=OrderType.MARKET,
+                status=OrderStatus.EXPIRED,
+                quantity=quantity,
+                executed_quantity=Decimal("0"),
+                price=None,
+                stop_price=None,
+                created_at=_NOW,
+                updated_at=_NOW,
+            )
+
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = ExpiredExchange()
     manager = PositionProtectionManager(
         trade_mode=TradeMode.LIVE,
         position_repository=repository,

@@ -168,6 +168,9 @@ class BitgetFuturesExchangeClient(BitgetClient):
         client_order_id: str | None = None,
     ) -> Order:
         """Create a reduce-only market order for Futures position reduction."""
+        if quantity <= 0:
+            raise ValueError("Order quantity must be greater than zero")
+
         return await self.create_order(
             symbol=symbol,
             side=side,

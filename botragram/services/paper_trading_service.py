@@ -318,6 +318,134 @@ class PaperTradingService:
                 price=current_price,
             )
 
+    async def execute_partial_close(
+        self,
+        *,
+        symbol: str,
+        close_quantity: Decimal,
+        reference_price: Decimal,
+        new_stop_loss: Decimal | None,
+        new_protection_step: int,
+        executed_at: datetime,
+        reason: str = "Partial take-profit triggered",
+    ) -> TradingResult | None:
+        """Execute deterministic partial position exit in PAPER trading."""
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            raise ValueError("Partial exit symbol must not be empty")
+        if close_quantity <= _DECIMAL_ZERO:
+            raise ValueError("Partial exit quantity must be greater than zero")
+        if reference_price <= _DECIMAL_ZERO:
+            raise ValueError("Partial exit reference price must be greater than zero")
+        if executed_at.tzinfo is None or executed_at.utcoffset() is None:
+            raise ValueError("Partial exit time must be timezone-aware")
+
+        async with self._execution_lock:
+            position = await self.position_repository.get_by_symbol(
+                symbol=normalized_symbol,
+            )
+            if position is None:
+                return None
+
+            if close_quantity >= position.quantity:
+                raise ValueError(
+                    f"Partial exit quantity {close_quantity} must be strictly less "
+                    f"than active position quantity {position.quantity}"
+                )
+
+            remaining_qty = position.quantity - close_quantity
+            order_side = (
+                OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+            )
+            fill_price = self._apply_slippage(price=reference_price, side=order_side)
+            quote_quantity = fill_price * close_quantity
+            entry_fee = position.entry_price * close_quantity * self.fee_rate
+            exit_fee = quote_quantity * self.fee_rate
+            realized_pnl = self.pnl_engine.calculate_realized(
+                side=position.side,
+                entry_price=position.entry_price,
+                exit_price=fill_price,
+                quantity=close_quantity,
+                entry_fee=entry_fee,
+                exit_fee=exit_fee,
+            )
+
+            timestamp_micros = int(executed_at.timestamp() * 1_000_000)
+            order_id = f"paper-ptp-order-{normalized_symbol}-{timestamp_micros}"
+            trade_id = f"paper-ptp-trade-{normalized_symbol}-{timestamp_micros}"
+
+            order = Order(
+                order_id=order_id,
+                symbol=normalized_symbol,
+                side=order_side,
+                order_type=OrderType.MARKET,
+                status=OrderStatus.FILLED,
+                quantity=close_quantity,
+                executed_quantity=close_quantity,
+                price=fill_price,
+                created_at=executed_at,
+                updated_at=executed_at,
+            )
+            trade = Trade(
+                trade_id=trade_id,
+                order_id=order_id,
+                symbol=normalized_symbol,
+                side=order_side,
+                price=fill_price,
+                quantity=close_quantity,
+                quote_quantity=quote_quantity,
+                fee=exit_fee,
+                fee_asset="USDT",
+                executed_at=executed_at,
+                realized_pnl=realized_pnl,
+            )
+
+            signal = Signal(
+                symbol=normalized_symbol,
+                signal_type=SignalType.HOLD,
+                price=reference_price,
+                confidence=_DECIMAL_ZERO,
+                strategy_name=(
+                    position.strategy_type.value
+                    if position.strategy_type is not None
+                    else "partial_tp"
+                ),
+                generated_at=executed_at,
+                reason=reason,
+            )
+            decision = TradingDecision(
+                should_execute=True,
+                signal=signal,
+                risk_result=None,
+                reason=reason,
+            )
+
+            updated_position = replace(
+                position,
+                quantity=remaining_qty,
+                current_price=fill_price,
+                unrealized_pnl=self.pnl_engine.calculate_unrealized(
+                    position=position,
+                    current_price=fill_price,
+                ),
+                stop_loss=new_stop_loss,
+                protection_step=new_protection_step,
+                partial_tp_executed=True,
+                partial_tp_order_id=order_id,
+                updated_at=executed_at,
+            )
+
+            await self.order_repository.save(order=order)
+            await self.trade_repository.save(trade=trade)
+            await self.position_repository.update(position=updated_position)
+
+            return TradingResult(
+                executed=True,
+                decision=decision,
+                order=order,
+                reason=reason,
+            )
+
     async def _execute_unlocked(
         self,
         *,
