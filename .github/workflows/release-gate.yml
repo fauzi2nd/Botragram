@@ -74,6 +74,7 @@ jobs:
       - name: Git diff whitespace check (git diff --check)
         id: git_diff_check
         continue-on-error: true
+        working-directory: ${{ github.workspace }}
         run: git diff --check
 
       - name: Specialized suite - Position Protection

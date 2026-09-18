@@ -557,7 +557,7 @@ python -m pytest tests/test_partial_tp_hardening.py -q
 - `.github/workflows/release-gate.yml` bertindak sebagai authoritative automated verification di lingkungan CI (`runs-on: [self-hosted, botragram-ci]`).
 - Mandatory gate: Seluruh step wajib dijalankan dan failure pada satu mandatory gate WAJIB membuat release gate job dan workflow berakhir **FAILURE** (`exit 1`).
 - Workflow mengevaluasi seluruh gate hingga selesai agar audit report komprehensif selalu tersedia pada log sebelum status akhir diputuskan.
-- `.github/workflows/quality.yml` hanya berstatus sebagai sinyal CI supplemental non-blocking dan DILARANG dianggap sebagai release certification authority.
+- `.github/workflows/release-gate.yml` adalah **satu-satunya** CI gate yang aktif. Tidak ada workflow supplemental lain.
 
 Kriteria lulus:
 
@@ -634,8 +634,7 @@ di bawah WAJIB tetap konsisten dengannya.
 Botragram/
 |-- .github/
 |   `-- workflows/
-|       |-- quality.yml           # Supplemental non-blocking quality signal
-|       `-- release-gate.yml      # Authoritative blocking release gate verification
+|       `-- release-gate.yml      # Authoritative blocking release gate verification (sole CI gate)
 |-- botragram/
 |   |-- __init__.py
 |   |-- app/
