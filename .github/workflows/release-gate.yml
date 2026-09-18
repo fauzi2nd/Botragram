@@ -23,6 +23,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
+      - name: Configure git safe.directory (self-hosted Windows runner)
+        shell: powershell
+        run: git config --global --add safe.directory $env:GITHUB_WORKSPACE
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v6
         with:
