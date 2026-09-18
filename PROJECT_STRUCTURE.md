@@ -13,7 +13,8 @@ berasal dari `DEVELOPMENT_GUIDE.md`.
 Botragram/
 |-- .github/
 |   `-- workflows/
-|       `-- quality.yml       # Supplemental non-blocking quality signal
+|       |-- quality.yml       # Supplemental non-blocking quality signal
+|       `-- release-gate.yml  # Authoritative blocking release gate verification
 |-- botragram/                 # Production package
 |-- tests/                     # Automated dan manual tests
 |-- data/                      # SQLite runtime data; ignored by Git

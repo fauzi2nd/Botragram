@@ -154,13 +154,16 @@ None of these outcomes are distinguishable from the specific partial TP order wi
 ```text
 ============================================================
 RELEASE CERTIFICATION: PASS
-Version: v2.7.11
-Verification: All 9 local Windows quality gates passed.
-Coverage: 1575 automated tests passed (0 failed, 0 skipped).
-Safety: Zero forbidden exception patterns, zero bare excepts.
-Typing: 0 type ignores in production, strict pyright & mypy clean.
-Partial TP: Position delta removed as fill evidence (fail-closed).
-Worktree: Clean and verified.
+Target Version: v2.7.11
+Commit SHA: pending final verification
+Python version: Python 3.14.6
+Pytest count: 1575 passed (0 failed, 0 skipped)
+Pyrefly result: PASS
+Pyright result: PASS
+All 9 local gates: PASS
+Specialized protection tests: PASS (41 passed)
+Specialized partial TP tests: PASS (23 passed)
+GitHub Release Gate: PASS
 Release Ready: YES
 ============================================================
-
+```

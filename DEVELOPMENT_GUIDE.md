@@ -528,9 +528,11 @@ Perbedaan fitur terhadap PAPER/LIVE runtime WAJIB muncul sebagai warning report.
 
 ## 19. Quality Gates
 
-Full local Windows release gates adalah satu-satunya release authority. Sebelum
-perubahan dinyatakan selesai, jalankan dari root repository pada terminal
-Windows deployment:
+Arsitektur release certification Botragram memiliki dua pilar otoritas verifikasi:
+
+### LOCAL RELEASE AUTHORITY
+
+Semua 9 local Windows release gates wajib dijalankan dan PASS dari root repository pada terminal Windows deployment sebelum perubahan dinyatakan siap rilis:
 
 ```powershell
 python -m compileall -q botragram tests main.py
@@ -544,11 +546,18 @@ python -m pytest
 git diff --check
 ```
 
-`.github/workflows/quality.yml` hanya menyediakan sinyal CI supplemental yang
-non-blocking pada standard GitHub-hosted runner. Workflow tersebut bukan release
-authority dan tidak boleh dijadikan required check atau branch-protection
-blocker. Kegagalan CI tetap harus ditinjau, tetapi tidak menggantikan satu run
-lengkap gates Windows di atas dari worktree bersih.
+Dan specialized safety suites:
+```powershell
+python -m pytest tests/test_position_protection.py -q
+python -m pytest tests/test_partial_tp_hardening.py -q
+```
+
+### GITHUB RELEASE GATE
+
+- `.github/workflows/release-gate.yml` bertindak sebagai authoritative automated verification di lingkungan CI (`runs-on: [self-hosted, botragram-ci]`).
+- Mandatory gate: Seluruh step wajib dijalankan dan failure pada satu mandatory gate WAJIB membuat release gate job dan workflow berakhir **FAILURE** (`exit 1`).
+- Workflow mengevaluasi seluruh gate hingga selesai agar audit report komprehensif selalu tersedia pada log sebelum status akhir diputuskan.
+- `.github/workflows/quality.yml` hanya berstatus sebagai sinyal CI supplemental non-blocking dan DILARANG dianggap sebagai release certification authority.
 
 Kriteria lulus:
 
@@ -625,7 +634,8 @@ di bawah WAJIB tetap konsisten dengannya.
 Botragram/
 |-- .github/
 |   `-- workflows/
-|       `-- quality.yml           # Supplemental non-blocking quality signal
+|       |-- quality.yml           # Supplemental non-blocking quality signal
+|       `-- release-gate.yml      # Authoritative blocking release gate verification
 |-- botragram/
 |   |-- __init__.py
 |   |-- app/
