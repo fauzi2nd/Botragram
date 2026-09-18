@@ -9,30 +9,28 @@ description = "Asynchronous algorithmic trading framework."
 requires-python = ">=3.14"
 
 dependencies = [
-    "aiohttp",
-    "aiosqlite",
-    "python-dotenv",
-    "python-telegram-bot",
-    "rich==15.0.0",
+    "aiohttp>=3.14.3",
+    "aiosqlite>=0.22.1",
+    "python-dotenv>=1.2.3",
+    "python-telegram-bot>=22.8",
+    "rich>=15.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "mypy",
-    "pyrefly",
-    "pyright",
-    "pytest",
-    "pytest-asyncio",
-    "pytest-cov",
-    "ruff",
+    "mypy>=2.3.0",
+    "pyrefly>=1.2.0",
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.2",
 ]
 
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 include = ["botragram", "tests", "main.py"]
-# venvPath = "."
-# venv = ".venv"
 
 [tool.mypy]
 python_version = "3.14"
