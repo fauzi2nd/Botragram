@@ -182,11 +182,23 @@ class PositionProtectionManager:
             if step <= position.protection_step:
                 return
 
-            replacement_stop = self._calculate_stop_loss(
-                position=position,
-                step=step,
-                breakeven_fee_buffer=self.breakeven_fee_buffer,
-            )
+            try:
+                replacement_stop = self._calculate_stop_loss(
+                    position=position,
+                    step=step,
+                    breakeven_fee_buffer=self.breakeven_fee_buffer,
+                )
+            except ValueError as err:
+                _LOGGER.warning(
+                    "Invalid protection geometry for %s at step %s: %s. "
+                    "Retaining current protection.",
+                    position.symbol,
+                    step,
+                    err,
+                )
+                self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
+                return
+
             new_step = step
             final_stop = replacement_stop
 
@@ -203,54 +215,76 @@ class PositionProtectionManager:
                     )
                     return
 
-                if not self._is_tighter_stop(
+                is_same_stop = (
+                    position.stop_loss is not None and final_stop == position.stop_loss
+                )
+                if is_same_stop and new_step > position.protection_step:
+                    protected_position = replace(
+                        position,
+                        protection_step=new_step,
+                        updated_at=ticker.timestamp,
+                    )
+                elif not self._is_tighter_stop(
                     position=position,
                     replacement_stop=final_stop,
                 ):
                     return
-
-                pending = replace(
-                    position,
-                    pending_stop_loss=final_stop,
-                    pending_stop_loss_client_algo_id=(
-                        Position.create_stop_loss_client_algo_id()
-                    ),
-                    pending_protection_step=new_step,
-                )
-                await self.position_repository.update(position=pending)
-                self._cached_position = pending
-
-                try:
-                    replacement_submitted = await self._submit_pending_stop_replacement(
-                        position=pending
+                else:
+                    pending = replace(
+                        position,
+                        pending_stop_loss=final_stop,
+                        pending_stop_loss_client_algo_id=(
+                            Position.create_stop_loss_client_algo_id()
+                        ),
+                        pending_protection_step=new_step,
                     )
-                except Exception:
-                    self._retry_after_monotonic = (
-                        monotonic() + self.failure_retry_seconds
+                    await self.position_repository.update(position=pending)
+                    self._cached_position = pending
+
+                    try:
+                        replacement_submitted = (
+                            await self._submit_pending_stop_replacement(
+                                position=pending
+                            )
+                        )
+                    except Exception:
+                        self._retry_after_monotonic = (
+                            monotonic() + self.failure_retry_seconds
+                        )
+                        raise
+
+                    if not replacement_submitted:
+                        return
+
+                    protected_position = self._promote_pending_stop_replacement(
+                        position=pending,
+                        timestamp=ticker.timestamp,
+                        current_price=ticker.last_price,
                     )
-                    raise
-
-                if not replacement_submitted:
-                    return
-
-                protected_position = self._promote_pending_stop_replacement(
-                    position=pending,
-                    timestamp=ticker.timestamp,
-                    current_price=ticker.last_price,
-                )
             else:
-                if not self._is_tighter_stop(
+                is_same_stop = (
+                    position.stop_loss is not None and final_stop == position.stop_loss
+                )
+                if is_same_stop and new_step > position.protection_step:
+                    protected_position = replace(
+                        position,
+                        current_price=ticker.last_price,
+                        protection_step=new_step,
+                        updated_at=ticker.timestamp,
+                    )
+                elif not self._is_tighter_stop(
                     position=position,
                     replacement_stop=final_stop,
                 ):
                     return
-                protected_position = replace(
-                    position,
-                    current_price=ticker.last_price,
-                    stop_loss=final_stop,
-                    protection_step=new_step,
-                    updated_at=ticker.timestamp,
-                )
+                else:
+                    protected_position = replace(
+                        position,
+                        current_price=ticker.last_price,
+                        stop_loss=final_stop,
+                        protection_step=new_step,
+                        updated_at=ticker.timestamp,
+                    )
 
             await self.position_repository.update(position=protected_position)
             self._cached_position = protected_position
@@ -731,24 +765,33 @@ class PositionProtectionManager:
             )
             return position
 
-        be_stop = self._calculate_stop_loss(
-            position=position,
-            step=1,
-            breakeven_fee_buffer=self.breakeven_fee_buffer,
-        )
         try:
-            final_stop = await self._normalize_live_replacement_stop(
+            be_stop = self._calculate_stop_loss(
                 position=position,
-                raw_stop=be_stop,
+                step=1,
+                breakeven_fee_buffer=self.breakeven_fee_buffer,
             )
-        except VenueRuleValidationError:
-            final_stop = be_stop
+            try:
+                final_stop = await self._normalize_live_replacement_stop(
+                    position=position,
+                    raw_stop=be_stop,
+                )
+            except VenueRuleValidationError:
+                final_stop = be_stop
 
-        new_stop = (
-            final_stop
-            if self._is_tighter_stop(position=position, replacement_stop=final_stop)
-            else position.stop_loss
-        )
+            new_stop = (
+                final_stop
+                if self._is_tighter_stop(position=position, replacement_stop=final_stop)
+                else position.stop_loss
+            )
+        except ValueError as err:
+            _LOGGER.warning(
+                "Cannot calculate BE stop after partial TP for %s: %s. "
+                "Retaining current verified stop.",
+                position.symbol,
+                err,
+            )
+            new_stop = position.stop_loss
         new_stop_id = Position.create_stop_loss_client_algo_id()
 
         pending_stop_pos = replace(

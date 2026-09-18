@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
@@ -56,6 +57,7 @@ __all__ = [
 # =============================================================================
 # Constants
 # =============================================================================
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DECIMAL_HUNDRED: Final[Decimal] = Decimal("100")
 _STRATEGY_WINDOW: Final[int] = 500
@@ -331,25 +333,36 @@ class BacktestEngine:
             )
             trigger_price = min(candle.open_price, nominal_trigger)
 
-        be_stop = RiskEngine.calculate_stepped_stop_loss(
-            position=position,
-            step=1,
-            breakeven_fee_buffer=_BREAKEVEN_FEE_BUFFER,
-        )
-        if position.side is PositionSide.LONG:
-            new_stop = (
-                be_stop
-                if (position.stop_loss is None or be_stop > position.stop_loss)
-                else position.stop_loss
+        new_stop: Decimal | None
+        new_step: int
+        try:
+            be_stop = RiskEngine.calculate_stepped_stop_loss(
+                position=position,
+                step=1,
+                breakeven_fee_buffer=_BREAKEVEN_FEE_BUFFER,
             )
-        else:
-            new_stop = (
-                be_stop
-                if (position.stop_loss is None or be_stop < position.stop_loss)
-                else position.stop_loss
+            if position.side is PositionSide.LONG:
+                new_stop = (
+                    be_stop
+                    if (position.stop_loss is None or be_stop > position.stop_loss)
+                    else position.stop_loss
+                )
+            else:
+                new_stop = (
+                    be_stop
+                    if (position.stop_loss is None or be_stop < position.stop_loss)
+                    else position.stop_loss
+                )
+            new_step = max(position.protection_step, 1)
+        except ValueError as err:
+            _LOGGER.warning(
+                "Backtest cannot calculate BE stop after partial TP for %s: %s. "
+                "Retaining current stop.",
+                position.symbol,
+                err,
             )
-
-        new_step = max(position.protection_step, 1)
+            new_stop = position.stop_loss
+            new_step = position.protection_step
 
         result = await paper_service.execute_partial_close(
             symbol=position.symbol,
@@ -400,29 +413,44 @@ class BacktestEngine:
             )
             if resolved_step > position.protection_step:
                 step = resolved_step
-                stop_price = RiskEngine.calculate_stepped_stop_loss(
-                    position=position,
-                    step=step,
-                    breakeven_fee_buffer=_BREAKEVEN_FEE_BUFFER,
-                )
-                candidate_stops.append(stop_price)
+                try:
+                    stop_price = RiskEngine.calculate_stepped_stop_loss(
+                        position=position,
+                        step=step,
+                        breakeven_fee_buffer=_BREAKEVEN_FEE_BUFFER,
+                    )
+                    candidate_stops.append(stop_price)
+                except ValueError as err:
+                    _LOGGER.warning(
+                        "Backtest cannot calculate stepped stop loss for %s "
+                        "step %s: %s",
+                        position.symbol,
+                        step,
+                        err,
+                    )
         if not candidate_stops:
             return
 
         if position.side is PositionSide.LONG:
             replacement_stop = max(candidate_stops)
-            if (
-                position.stop_loss is not None
-                and replacement_stop <= position.stop_loss
-            ):
-                return
+            if position.stop_loss is not None:
+                if replacement_stop < position.stop_loss:
+                    return
+                if (
+                    replacement_stop == position.stop_loss
+                    and step <= position.protection_step
+                ):
+                    return
         else:
             replacement_stop = min(candidate_stops)
-            if (
-                position.stop_loss is not None
-                and replacement_stop >= position.stop_loss
-            ):
-                return
+            if position.stop_loss is not None:
+                if replacement_stop > position.stop_loss:
+                    return
+                if (
+                    replacement_stop == position.stop_loss
+                    and step <= position.protection_step
+                ):
+                    return
 
         await position_repository.update(
             position=replace(

@@ -93,6 +93,36 @@ class BuyThenHoldStrategy(BaseStrategy):
         )
 
 
+class SellThenHoldStrategy(BaseStrategy):
+    """Open short once and hold so candle protection controls the exit."""
+
+    __slots__ = ()
+
+    @property
+    def strategy_type(self) -> StrategyType:
+        """Return the strategy profile used for risk levels."""
+        return StrategyType.EMA_SCALPING
+
+    @property
+    def minimum_candles(self) -> int:
+        """Allow a signal from the first replay candle."""
+        return 1
+
+    def generate_signal(self, *, candles: Sequence[Candle]) -> Signal:
+        """Sell on the first candle and hold on later candles."""
+        self.validate_candles(candles=candles)
+        candle = candles[-1]
+        return Signal(
+            symbol=candle.symbol,
+            signal_type=(SignalType.SELL if len(candles) == 1 else SignalType.HOLD),
+            price=candle.close_price,
+            confidence=Decimal("1"),
+            strategy_name=self.strategy_type.value,
+            generated_at=candle.close_time,
+            reason="Deterministic backtest short signal",
+        )
+
+
 @dataclass(slots=True, kw_only=True)
 class HistoricalCandleStub:
     """Return deterministic pages while recording pagination cursors."""
@@ -502,6 +532,46 @@ async def test_backtest_partial_tp_gap_candle_fill_behavior() -> None:
     assert res_gap.metrics.total_trades == 2
     # Fill price for partial TP on gap open must be based on open price with slippage
     assert res_gap.trades[0].exit_price == Decimal("103.94800")
+
+    candles_gap_short = (
+        _create_candle(
+            minute=0,
+            open_price="100",
+            high_price="100.1",
+            low_price="99.9",
+            close_price="100",
+        ),
+        _create_candle(
+            minute=1,
+            open_price="96.0",  # Gaps open below trigger 97.0
+            high_price="96.2",
+            low_price="95.0",
+            close_price="95.5",
+        ),
+        _create_candle(
+            minute=2,
+            open_price="95.5",
+            high_price="103.0",
+            low_price="95.5",
+            close_price="102.5",
+        ),
+    )
+    engine_short = BacktestEngine(
+        strategy=SellThenHoldStrategy(),
+        risk_settings=RiskSettings(
+            leverage=10,
+            scalping_stop_loss_pct=Decimal("0.02"),
+            scalping_take_profit_pct=Decimal("0.06"),
+            partial_tp_enabled=True,
+            partial_tp_ratio=Decimal("0.50"),
+            partial_tp_trigger_progress=Decimal("0.50"),
+        ),
+    )
+    res_gap_short = await engine_short.run(request=request, candles=candles_gap_short)
+    assert res_gap_short.metrics.total_trades == 2
+    # Fill price for partial TP on gap down open must be based on open
+    # price with buy slippage
+    assert res_gap_short.trades[0].exit_price == Decimal("96.04800")
 
 
 # =============================================================================

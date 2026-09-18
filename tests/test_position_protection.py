@@ -420,8 +420,9 @@ def _stepped_position(
     current_stop: str,
     entry_price: str,
     take_profit: str,
+    protection_step: int = 0,
 ) -> Position:
-    """Return a step-one position whose raw replacement is off the price grid."""
+    """Return a stepped position whose raw replacement is off the price grid."""
     return Position(
         symbol="BTCUSDT",
         side=side,
@@ -434,6 +435,7 @@ def _stepped_position(
         updated_at=_NOW,
         stop_loss=Decimal(current_stop),
         take_profit=Decimal(take_profit),
+        protection_step=protection_step,
     )
 
 
@@ -579,6 +581,7 @@ async def test_live_stepped_same_tick_normalization_does_not_create_mutation() -
         current_stop="0.0022610",
         entry_price="0.00225712",
         take_profit="0.00226712",
+        protection_step=3,
     )
     repository = RecordingUpdateRepository()
     await repository.save(position=position)
@@ -693,6 +696,166 @@ def test_live_stepped_cancellation_before_identity_propagates() -> None:
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(run())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "side",
+        "entry",
+        "tp",
+        "step1_stop",
+        "step2_stop",
+        "step3_stop",
+        "step2_price",
+        "step3_price",
+    ),
+    [
+        (
+            PositionSide.LONG,
+            "100",
+            "101.5",
+            Decimal("100.16"),
+            Decimal("100.16"),
+            Decimal("100.375"),
+            Decimal("100.45"),
+            Decimal("100.70"),
+        ),
+        (
+            PositionSide.SHORT,
+            "100",
+            "98.5",
+            Decimal("99.84"),
+            Decimal("99.84"),
+            Decimal("99.625"),
+            Decimal("99.55"),
+            Decimal("99.30"),
+        ),
+    ],
+)
+async def test_stepped_protection_milestone_advances_when_stop_price_is_equal_clamped(
+    side: PositionSide,
+    entry: str,
+    tp: str,
+    step1_stop: Decimal,
+    step2_stop: Decimal,
+    step3_stop: Decimal,
+    step2_price: Decimal,
+    step3_price: Decimal,
+) -> None:
+    """Advance step 2 milestone without churn when clamped, then step 3."""
+    calc_step1 = RiskEngine.calculate_stepped_stop_loss(
+        position=_stepped_position(
+            side=side,
+            current_stop=str(step1_stop),
+            entry_price=entry,
+            take_profit=tp,
+            protection_step=0,
+        ),
+        step=1,
+        breakeven_fee_buffer=Decimal("0.0016"),
+    )
+    assert calc_step1 == step1_stop
+
+    calc_step2 = RiskEngine.calculate_stepped_stop_loss(
+        position=_stepped_position(
+            side=side,
+            current_stop=str(step1_stop),
+            entry_price=entry,
+            take_profit=tp,
+            protection_step=1,
+        ),
+        step=2,
+        breakeven_fee_buffer=Decimal("0.0016"),
+    )
+    assert calc_step2 == step2_stop
+    assert calc_step2 == step1_stop
+
+    calc_step3 = RiskEngine.calculate_stepped_stop_loss(
+        position=_stepped_position(
+            side=side,
+            current_stop=str(step2_stop),
+            entry_price=entry,
+            take_profit=tp,
+            protection_step=2,
+        ),
+        step=3,
+        breakeven_fee_buffer=Decimal("0.0016"),
+    )
+    assert calc_step3 == step3_stop
+    if side is PositionSide.LONG:
+        assert calc_step3 > step1_stop
+    else:
+        assert calc_step3 < step1_stop
+
+    # Test Live PositionProtectionManager
+    position = _stepped_position(
+        side=side,
+        current_stop=str(step1_stop),
+        entry_price=entry,
+        take_profit=tp,
+        protection_step=1,
+    )
+    repository = RecordingUpdateRepository()
+    await repository.save(position=position)
+    exchange = SteppedPriceFilterExchange(mark_price=step2_price)
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        breakeven_fee_buffer=Decimal("0.0016"),
+    )
+
+    # Tick reaching Step 2 (30% progress)
+    await manager.on_market_tick(ticker=_ticker(price=str(step2_price), seconds=1))
+
+    stored = await repository.get_by_symbol(symbol=position.symbol)
+    assert stored is not None
+    assert stored.protection_step == 2
+    assert stored.stop_loss == step1_stop
+    # No exchange order replacement churn!
+    assert exchange.stop_replacements == []
+
+    # Tick reaching Step 3 (45% progress)
+    exchange.mark_price = step3_price
+    await manager.on_market_tick(ticker=_ticker(price=str(step3_price), seconds=2))
+
+    stored_step3 = await repository.get_by_symbol(symbol=position.symbol)
+    assert stored_step3 is not None
+    assert stored_step3.protection_step == 3
+    assert stored_step3.stop_loss == step3_stop
+    # Exchange order replacement occurred for Step 3
+    assert exchange.stop_replacements == [step3_stop]
+
+
+@pytest.mark.asyncio
+async def test_live_invalid_protection_geometry_defers_without_crashing() -> None:
+    """Retain verified current stop when stepped calculation raises ValueError."""
+    position = _stepped_position(
+        side=PositionSide.LONG,
+        current_stop="99.0",
+        entry_price="100.0",
+        take_profit="100.10",
+        protection_step=0,
+    )
+    repository = RecordingUpdateRepository()
+    await repository.save(position=position)
+    exchange = SteppedPriceFilterExchange(mark_price=Decimal("100.05"))
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        breakeven_fee_buffer=Decimal("0.0016"),
+        failure_retry_seconds=1.0,
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="100.05", seconds=1))
+
+    stored = await repository.get_by_symbol(symbol=position.symbol)
+    assert stored is not None
+    assert stored.stop_loss == Decimal("99.0")
+    assert stored.protection_step == 0
+    assert exchange.stop_replacements == []
 
 
 @pytest.mark.asyncio
