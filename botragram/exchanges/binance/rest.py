@@ -403,10 +403,11 @@ class BinanceRateLimitGovernor:
         snapshot: BinanceRateLimitSnapshot,
     ) -> BinanceRateLimitWindow | None:
         """Return the most utilized active window for transition logging."""
+        if not snapshot.windows:
+            return None
         return max(
             snapshot.windows,
             key=lambda window: (window.used * 1_000_000) // window.limit,
-            default=None,
         )
 
     def _get_active_windows(

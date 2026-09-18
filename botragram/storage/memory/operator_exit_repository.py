@@ -69,10 +69,11 @@ class MemoryOperatorExitRepository(OperatorExitRepository):
     async def get_latest_operation(self) -> OperatorExitOperation | None:
         """Return the most recently updated operation."""
         async with self._lock:
+            if not self._operations:
+                return None
             return max(
                 self._operations.values(),
                 key=lambda item: item.updated_at,
-                default=None,
             )
 
     async def reserve_attempt(self, *, attempt: OperatorExitAttempt) -> bool:
