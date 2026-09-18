@@ -1866,7 +1866,9 @@ async def test_partial_tp_executed_quantity_invariants_fail_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_partial_tp_order_not_found_retains_intent_despite_matching_delta() -> None:
+async def test_partial_tp_order_not_found_retains_intent_despite_matching_delta() -> (
+    None
+):
     """When order lookup fails, position delta MUST NOT be used as authoritative fill evidence.
 
     Even if the exchange position shows a reduction that matches the requested
@@ -1927,7 +1929,9 @@ async def test_partial_tp_order_not_found_retains_intent_despite_matching_delta(
 
 
 @pytest.mark.asyncio
-async def test_partial_tp_order_not_found_retains_intent_when_position_unchanged() -> None:
+async def test_partial_tp_order_not_found_retains_intent_when_position_unchanged() -> (
+    None
+):
     """When order not found and exchange position appears untouched, MUST retain intent.
 
     "Unchanged position" does not prove the order never filled. Indexing or

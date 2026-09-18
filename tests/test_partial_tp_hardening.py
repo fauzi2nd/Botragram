@@ -1521,7 +1521,9 @@ async def test_exact_once_invariant_verified_fill_applied_exactly_once() -> None
     assert after_tick_1.pending_partial_tp_client_order_id is None
 
     # Tick 2 — same manager, same price → quantity must remain 5
-    await asyncio.sleep(0.01)  # exceeds position_refresh_seconds and failure_retry_seconds
+    await asyncio.sleep(
+        0.01
+    )  # exceeds position_refresh_seconds and failure_retry_seconds
     await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=2))
     after_tick_2 = await repo.get_by_symbol(symbol="BTCUSDT")
     assert after_tick_2 is not None
