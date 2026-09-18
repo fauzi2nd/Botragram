@@ -476,6 +476,31 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         )
         return await self._post_order(params=params)
 
+    async def create_reduce_only_market_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        client_order_id: str | None = None,
+    ) -> Order:
+        """Create a reduce-only market order for Futures position reduction."""
+        if quantity <= 0:
+            raise ValueError("Order quantity must be greater than zero")
+
+        params: RequestParams = {
+            "symbol": self._normalize_symbol(symbol),
+            "side": side.value,
+            "type": OrderType.MARKET.value.upper(),
+            "quantity": self._format_decimal(quantity),
+            "reduceOnly": "true",
+        }
+        if client_order_id is not None:
+            params["newClientOrderId"] = self._normalize_client_order_id(
+                client_order_id
+            )
+        return await self._post_order(params=params)
+
     async def create_protection_orders(
         self,
         *,

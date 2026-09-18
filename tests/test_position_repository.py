@@ -520,3 +520,93 @@ async def test_position_service_sync_preserves_partial_tp_order_id() -> None:
     assert len(synced) == 1
     assert synced[0].partial_tp_executed is True
     assert synced[0].partial_tp_order_id == "ptp-order-999"
+
+
+def test_sqlite_v21_to_v22_adds_pending_partial_tp_columns() -> None:
+    """Upgrade existing schema to v22 adding pending_partial_tp columns."""
+    asyncio.run(_run_v21_to_v22_pending_partial_tp_migration())
+
+
+async def _run_v21_to_v22_pending_partial_tp_migration() -> None:
+    with TemporaryDirectory() as temporary_directory:
+        database = SQLiteDatabase(
+            database_path=Path(temporary_directory) / "migration-v21-v22.db",
+        )
+        await database.connect()
+        try:
+            manager = SQLiteMigrationManager(database=database)
+            assert await manager.initialize(target_version=21) == 21
+            columns_before = await database.fetch_all(
+                statement="PRAGMA table_info(positions)",
+            )
+            names_before = {str(row["name"]) for row in columns_before}
+            assert "pending_partial_tp_client_order_id" not in names_before
+            assert "pending_partial_tp_quantity" not in names_before
+
+            assert await manager.initialize(target_version=22) == 22
+            columns_after = await database.fetch_all(
+                statement="PRAGMA table_info(positions)",
+            )
+            names_after = {str(row["name"]) for row in columns_after}
+            assert "pending_partial_tp_client_order_id" in names_after
+            assert "pending_partial_tp_quantity" in names_after
+        finally:
+            await database.close()
+
+
+def test_sqlite_position_pending_partial_tp_fields_round_trip() -> None:
+    """Persist and restore a position with pending partial TP fields."""
+    asyncio.run(_run_sqlite_pending_partial_tp_fields_round_trip())
+
+
+async def _run_sqlite_pending_partial_tp_fields_round_trip() -> None:
+    with TemporaryDirectory() as temporary_directory:
+        database = SQLiteDatabase(
+            database_path=Path(temporary_directory) / "positions-ptp-pending.db",
+        )
+        await database.connect()
+        try:
+            await SQLiteMigrationManager(database=database).initialize()
+            repository = SQLitePositionRepository(database=database)
+            pos = replace(
+                _position(),
+                pending_partial_tp_client_order_id="ptp-pending-client-123",
+                pending_partial_tp_quantity=Decimal("0.5"),
+            )
+            await repository.save(position=pos)
+
+            loaded = await repository.get_by_symbol(symbol=pos.symbol)
+            assert loaded is not None
+            assert loaded.pending_partial_tp_client_order_id == "ptp-pending-client-123"
+            assert loaded.pending_partial_tp_quantity == Decimal("0.5")
+        finally:
+            await database.close()
+
+
+@pytest.mark.asyncio
+async def test_position_service_sync_preserves_pending_partial_tp_fields() -> None:
+    """Verify position service sync preserves pending partial TP fields."""
+    from unittest.mock import AsyncMock
+
+    from botragram.services.position_service import PositionService
+
+    stored = replace(
+        _position(),
+        pending_partial_tp_client_order_id="ptp-pending-sync-999",
+        pending_partial_tp_quantity=Decimal("1.25"),
+    )
+    exchange = _position()
+
+    mock_repo = AsyncMock()
+    mock_repo.get_all.return_value = [stored]
+    mock_engine = AsyncMock()
+    mock_engine.get_positions.return_value = [exchange]
+
+    svc = PositionService(
+        position_repository=mock_repo,
+        position_engine=mock_engine,
+    )
+    synced = await svc.sync()
+    assert len(synced) == 1
+    assert synced[0].pending_partial_tp_client_order_id == "ptp-pending-sync-999"
+    assert synced[0].pending_partial_tp_quantity == Decimal("1.25")

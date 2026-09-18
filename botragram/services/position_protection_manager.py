@@ -126,6 +126,16 @@ class PositionProtectionManager:
 
             if (
                 self.trade_mode is TradeMode.LIVE
+                and position.pending_partial_tp_client_order_id is not None
+            ):
+                await self._resume_pending_partial_take_profit(
+                    position=position,
+                    ticker=ticker,
+                )
+                return
+
+            if (
+                self.trade_mode is TradeMode.LIVE
                 and position.pending_stop_loss_client_algo_id is not None
             ):
                 await self._resume_pending_stop_replacement(
@@ -302,12 +312,21 @@ class PositionProtectionManager:
                 self._cached_position = updated_position
                 return updated_position
 
-            client_order_id = f"ptp-{Position.create_stop_loss_client_algo_id()}"
+            client_order_id = Position.create_partial_tp_client_order_id()
+            intent_pos = replace(
+                position,
+                pending_partial_tp_client_order_id=client_order_id,
+                pending_partial_tp_quantity=close_qty,
+                updated_at=ticker.timestamp,
+            )
+            await self.position_repository.update(position=intent_pos)
+            self._cached_position = intent_pos
+            position = intent_pos
+
             try:
-                ptp_order = await self.exchange_client.create_order(
+                ptp_order = await self.exchange_client.create_reduce_only_market_order(
                     symbol=position.symbol,
                     side=closing_side,
-                    order_type=OrderType.MARKET,
                     quantity=close_qty,
                     client_order_id=client_order_id,
                 )
@@ -320,77 +339,62 @@ class PositionProtectionManager:
                 self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
                 return position
 
-            be_stop = self._calculate_stop_loss(
-                position=position,
-                step=1,
-                breakeven_fee_buffer=self.breakeven_fee_buffer,
-            )
-            try:
-                final_stop = await self._normalize_live_replacement_stop(
-                    position=position,
-                    raw_stop=be_stop,
+            if ptp_order.status in {
+                OrderStatus.CANCELED,
+                OrderStatus.REJECTED,
+                OrderStatus.EXPIRED,
+            }:
+                _LOGGER.warning(
+                    "LIVE partial TP order %s for %s was terminal (%s)",
+                    ptp_order.order_id,
+                    position.symbol,
+                    ptp_order.status.value,
                 )
-            except VenueRuleValidationError:
-                final_stop = be_stop
+                cleared = replace(
+                    position,
+                    pending_partial_tp_client_order_id=None,
+                    pending_partial_tp_quantity=None,
+                    updated_at=ticker.timestamp,
+                )
+                await self.position_repository.update(position=cleared)
+                self._cached_position = cleared
+                return cleared
 
-            new_stop = (
-                final_stop
-                if self._is_tighter_stop(position=position, replacement_stop=final_stop)
-                else position.stop_loss
-            )
+            if ptp_order.status is OrderStatus.NEW:
+                return position
 
-            new_stop_id = Position.create_stop_loss_client_algo_id()
-            if new_stop is not None:
-                try:
-                    await self.exchange_client.ensure_stop_loss_order(
-                        symbol=position.symbol,
-                        side=closing_side,
-                        quantity=remaining_qty,
-                        stop_loss=new_stop,
-                        client_algo_id=new_stop_id,
-                        previous_client_algo_id=position.stop_loss_client_algo_id,
-                    )
-                except Exception as err:
-                    _LOGGER.warning(
-                        "Failed to update LIVE stop loss after partial TP for %s: %s",
-                        position.symbol,
-                        err,
-                    )
+            executed_qty = ptp_order.executed_quantity
+            if executed_qty <= _DECIMAL_ZERO:
+                executed_qty = close_qty
 
-            updated_position = replace(
-                position,
-                quantity=remaining_qty,
-                current_price=ticker.last_price,
-                stop_loss=new_stop,
-                stop_loss_client_algo_id=new_stop_id,
-                protection_step=max(position.protection_step, 1),
-                partial_tp_executed=True,
-                partial_tp_order_id=ptp_order.order_id,
-                updated_at=ticker.timestamp,
-            )
-        else:
-            close_qty = (position.quantity * self.partial_tp_ratio).normalize()
-            remaining_qty = position.quantity - close_qty
-            be_stop = self._calculate_stop_loss(
+            return await self._transition_after_partial_fill(
                 position=position,
-                step=1,
-                breakeven_fee_buffer=self.breakeven_fee_buffer,
-            )
-            new_stop = (
-                be_stop
-                if self._is_tighter_stop(position=position, replacement_stop=be_stop)
-                else position.stop_loss
-            )
-            updated_position = replace(
-                position,
-                quantity=remaining_qty,
-                current_price=ticker.last_price,
-                stop_loss=new_stop,
-                protection_step=max(position.protection_step, 1),
-                partial_tp_executed=True,
-                updated_at=ticker.timestamp,
+                executed_qty=executed_qty,
+                ptp_order_id=ptp_order.order_id,
+                ticker=ticker,
             )
 
+        close_qty = (position.quantity * self.partial_tp_ratio).normalize()
+        remaining_qty = position.quantity - close_qty
+        be_stop = self._calculate_stop_loss(
+            position=position,
+            step=1,
+            breakeven_fee_buffer=self.breakeven_fee_buffer,
+        )
+        new_stop = (
+            be_stop
+            if self._is_tighter_stop(position=position, replacement_stop=be_stop)
+            else position.stop_loss
+        )
+        updated_position = replace(
+            position,
+            quantity=remaining_qty,
+            current_price=ticker.last_price,
+            stop_loss=new_stop,
+            protection_step=max(position.protection_step, 1),
+            partial_tp_executed=True,
+            updated_at=ticker.timestamp,
+        )
         await self.position_repository.update(position=updated_position)
         self._cached_position = updated_position
 
@@ -404,31 +408,211 @@ class PositionProtectionManager:
             updated_position.stop_loss,
         )
 
-        if self.notification_publisher is not None:
-            try:
-                msg = get_partial_tp_message(
-                    position=position,
-                    closed_quantity=close_qty,
-                    remaining_quantity=remaining_qty,
-                    exit_price=ticker.last_price,
-                    new_stop_loss=updated_position.stop_loss,
-                    mode=self.trade_mode.value.upper(),
-                )
-                await self.notification_publisher.publish(
-                    notification=Notification(
-                        title=f"Partial TP Executed: {position.symbol}",
-                        message=msg,
-                        level=NotificationType.INFO,
-                        created_at=datetime.now(UTC),
-                    )
-                )
-            except Exception:
-                _LOGGER.exception(
-                    "Failed to deliver partial TP notification for %s",
-                    position.symbol,
-                )
+        await self._publish_partial_tp_notification(
+            position=position,
+            close_qty=close_qty,
+            remaining_qty=remaining_qty,
+            ticker=ticker,
+            stop_loss=updated_position.stop_loss,
+        )
 
         return updated_position
+
+    async def _resume_pending_partial_take_profit(
+        self,
+        *,
+        position: Position,
+        ticker: Ticker,
+    ) -> Position:
+        """Reconcile and resume one durable pending LIVE partial TP mutation."""
+        client_order_id = position.pending_partial_tp_client_order_id
+        if client_order_id is None:
+            return position
+
+        try:
+            ptp_order = await self.exchange_client.get_order_by_client_order_id(
+                symbol=position.symbol,
+                client_order_id=client_order_id,
+            )
+        except ExchangeOrderNotFoundError:
+            cleared = replace(
+                position,
+                pending_partial_tp_client_order_id=None,
+                pending_partial_tp_quantity=None,
+            )
+            await self.position_repository.update(position=cleared)
+            self._cached_position = cleared
+            _LOGGER.info(
+                "Pending partial TP order %s not found on exchange for %s; "
+                "cleared intent",
+                client_order_id,
+                position.symbol,
+            )
+            return cleared
+        except ExchangeOrderOutcomeUnknownError:
+            self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
+            return position
+        except Exception as err:
+            _LOGGER.warning(
+                "Failed to reconcile pending LIVE partial TP for %s: %s",
+                position.symbol,
+                err,
+            )
+            self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
+            return position
+
+        if ptp_order.status in {
+            OrderStatus.CANCELED,
+            OrderStatus.REJECTED,
+            OrderStatus.EXPIRED,
+        }:
+            cleared = replace(
+                position,
+                pending_partial_tp_client_order_id=None,
+                pending_partial_tp_quantity=None,
+            )
+            await self.position_repository.update(position=cleared)
+            self._cached_position = cleared
+            _LOGGER.info(
+                "Pending partial TP order %s was %s; cleared intent for %s",
+                client_order_id,
+                ptp_order.status.value,
+                position.symbol,
+            )
+            return cleared
+
+        if ptp_order.status is OrderStatus.NEW:
+            return position
+
+        executed_qty = ptp_order.executed_quantity
+        if executed_qty <= _DECIMAL_ZERO:
+            executed_qty = position.pending_partial_tp_quantity or _DECIMAL_ZERO
+
+        if executed_qty <= _DECIMAL_ZERO:
+            return position
+
+        return await self._transition_after_partial_fill(
+            position=position,
+            executed_qty=executed_qty,
+            ptp_order_id=ptp_order.order_id,
+            ticker=ticker,
+        )
+
+    async def _transition_after_partial_fill(
+        self,
+        *,
+        position: Position,
+        executed_qty: Decimal,
+        ptp_order_id: str,
+        ticker: Ticker,
+    ) -> Position:
+        """Atomically deduct filled quantity and arm replacement stop."""
+        remaining_qty = max(_DECIMAL_ZERO, position.quantity - executed_qty)
+        be_stop = self._calculate_stop_loss(
+            position=position,
+            step=1,
+            breakeven_fee_buffer=self.breakeven_fee_buffer,
+        )
+        try:
+            final_stop = await self._normalize_live_replacement_stop(
+                position=position,
+                raw_stop=be_stop,
+            )
+        except VenueRuleValidationError:
+            final_stop = be_stop
+
+        new_stop = (
+            final_stop
+            if self._is_tighter_stop(position=position, replacement_stop=final_stop)
+            else position.stop_loss
+        )
+        new_stop_id = Position.create_stop_loss_client_algo_id()
+
+        pending_stop_pos = replace(
+            position,
+            quantity=remaining_qty,
+            current_price=ticker.last_price,
+            pending_stop_loss=new_stop,
+            pending_stop_loss_client_algo_id=new_stop_id,
+            pending_protection_step=max(position.protection_step, 1),
+            partial_tp_executed=True,
+            partial_tp_order_id=ptp_order_id,
+            pending_partial_tp_client_order_id=None,
+            pending_partial_tp_quantity=None,
+            updated_at=ticker.timestamp,
+        )
+        await self.position_repository.update(position=pending_stop_pos)
+        self._cached_position = pending_stop_pos
+
+        _LOGGER.info(
+            "LIVE partial TP fill verified: symbol=%s executed=%s remaining=%s "
+            "order_id=%s. Armed pending stop=%s",
+            position.symbol,
+            executed_qty,
+            remaining_qty,
+            ptp_order_id,
+            new_stop,
+        )
+
+        await self._publish_partial_tp_notification(
+            position=position,
+            close_qty=executed_qty,
+            remaining_qty=remaining_qty,
+            ticker=ticker,
+            stop_loss=new_stop,
+        )
+
+        try:
+            await self._complete_pending_stop_replacement(
+                position=pending_stop_pos,
+                timestamp=ticker.timestamp,
+                current_price=ticker.last_price,
+            )
+            return self._cached_position or pending_stop_pos
+        except Exception as err:
+            _LOGGER.warning(
+                "Stop replacement after partial TP failed for %s: %s. "
+                "Previous stop remains active; pending stop queued.",
+                position.symbol,
+                err,
+            )
+            return pending_stop_pos
+
+    async def _publish_partial_tp_notification(
+        self,
+        *,
+        position: Position,
+        close_qty: Decimal,
+        remaining_qty: Decimal,
+        ticker: Ticker,
+        stop_loss: Decimal | None,
+    ) -> None:
+        """Publish partial TP notification safely."""
+        if self.notification_publisher is None:
+            return
+
+        try:
+            msg = get_partial_tp_message(
+                position=position,
+                closed_quantity=close_qty,
+                remaining_quantity=remaining_qty,
+                exit_price=ticker.last_price,
+                new_stop_loss=stop_loss,
+                mode=self.trade_mode.value.upper(),
+            )
+            await self.notification_publisher.publish(
+                notification=Notification(
+                    title=f"Partial TP Executed: {position.symbol}",
+                    message=msg,
+                    level=NotificationType.INFO,
+                    created_at=datetime.now(UTC),
+                )
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Failed to deliver partial TP notification for %s",
+                position.symbol,
+            )
 
     async def _resume_pending_stop_replacement(
         self,
@@ -832,8 +1016,12 @@ class PositionProtectionManager:
         breakeven_roi_threshold: Decimal = _BREAKEVEN_ROI_THRESHOLD,
     ) -> int:
         """Return the highest crossed protection step number."""
-        return RiskEngine.resolve_protection_step(
+        stepped_step = RiskEngine.resolve_protection_step(
             progress=progress,
+        )
+        if stepped_step > 0:
+            return stepped_step
+        return RiskEngine.resolve_breakeven_step(
             roi=roi,
             breakeven_roi_threshold=breakeven_roi_threshold,
         )

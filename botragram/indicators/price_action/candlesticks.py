@@ -657,7 +657,15 @@ def detect_tweezers(
     curr_candle: Candle,
     max_diff_pct: Decimal = _DEFAULT_MAX_TWEEZER_DIFF_PCT,
 ) -> CandlestickMatch:
-    """Detect Tweezer Bottom (bullish) or Tweezer Top (bearish) rejection."""
+    """Detect Tweezer Bottom (bullish) or Tweezer Top (bearish) rejection.
+
+    Args:
+        prev_candle: Preceding candle.
+        curr_candle: Current evaluated candle.
+        max_diff_pct: Maximum relative price difference tolerance between lows
+            (bottom) or highs (top), expressed as a fraction of current close
+            price (e.g. 0.001 = 0.1%). Default is 0.1%.
+    """
     curr_range = curr_candle.high_price - curr_candle.low_price
     if curr_range <= _DECIMAL_ZERO or curr_candle.close_price <= _DECIMAL_ZERO:
         return CandlestickMatch(

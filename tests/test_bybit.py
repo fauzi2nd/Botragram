@@ -1281,3 +1281,36 @@ async def test_bybit_client_get_mark_price_prefers_last_price() -> None:
     assert price == Decimal("50500.5")
     ref_price = await client.get_reference_price(symbol="BTCUSDT")
     assert ref_price == Decimal("50500.5")
+
+
+@pytest.mark.asyncio
+async def test_bybit_futures_create_reduce_only_market_order_submits_reduce_only() -> (
+    None
+):
+    """Submit market order with reduceOnly=True on Bybit Futures."""
+    rest = MockBybitRestClient()
+    rest.canned_response = {
+        "retCode": 0,
+        "retMsg": "OK",
+        "result": {"orderId": "pclose-ord-1"},
+        "retExtInfo": {},
+        "time": 1700000000000,
+    }
+    mapper = BybitExchangeMapper()
+    client = BybitFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    order = await client.create_reduce_only_market_order(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("0.25"),
+        client_order_id="pclose-client-1",
+    )
+
+    assert order.order_id == "pclose-ord-1"
+    assert rest.last_data is not None
+    assert rest.last_data.get("category") == "linear"
+    assert rest.last_data.get("reduceOnly") is True
+    assert rest.last_data.get("orderType") == "Market"
+    assert rest.last_data.get("side") == "Sell"
+    assert rest.last_data.get("qty") == "0.25"
+    assert rest.last_data.get("orderLinkId") == "pclose-client-1"

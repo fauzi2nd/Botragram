@@ -1391,3 +1391,51 @@ async def test_futures_client_connect_synchronizes_time() -> None:
     await client.connect()
 
     assert rest.requests == [("GET", _TIME_ENDPOINT, None, False)]
+
+
+@pytest.mark.asyncio
+async def test_futures_client_create_reduce_only_order_payload() -> None:
+    """Submit reduceOnly=true market order with client identity on Binance Futures."""
+    rest = RecordingBinanceRestClient()
+    rest.response = {
+        "orderId": 88,
+        "clientOrderId": "pclose-test-123",
+        "symbol": "BTCUSDT",
+        "side": "SELL",
+        "type": "MARKET",
+        "status": "FILLED",
+        "origQty": "0.5",
+        "executedQty": "0.5",
+        "price": "0",
+        "stopPrice": "0",
+        "updateTime": 1_700_000_000_000,
+        "time": 1_700_000_000_000,
+    }
+    client = _create_client(rest)
+
+    order = await client.create_reduce_only_market_order(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("0.5"),
+        client_order_id="pclose-test-123",
+    )
+
+    assert order.order_id == "88"
+    assert order.client_order_id == "pclose-test-123"
+    assert order.status is OrderStatus.FILLED
+    assert order.executed_quantity == Decimal("0.5")
+    assert rest.requests == [
+        (
+            "POST",
+            "/fapi/v1/order",
+            {
+                "symbol": "BTCUSDT",
+                "side": "SELL",
+                "type": "MARKET",
+                "quantity": "0.5",
+                "reduceOnly": "true",
+                "newClientOrderId": "pclose-test-123",
+            },
+            True,
+        )
+    ]

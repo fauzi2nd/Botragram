@@ -477,3 +477,31 @@ async def test_bitget_futures_exchange_client_verify_mainnet_readiness() -> None
     )
     with pytest.raises(ExchangeError, match="credentials are required"):
         await unauth_client.verify_mainnet_readiness()
+
+
+@pytest.mark.asyncio
+async def test_bitget_futures_create_reduce_only_market_order() -> None:
+    """Submit reduce-only market order on Bitget Futures with reduceOnly=YES."""
+    rest = MockBitgetRestClient()
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {"orderId": "bg-pclose-1"},
+    }
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    order = await client.create_reduce_only_market_order(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("0.5"),
+        client_order_id="bg-client-1",
+    )
+
+    assert order.order_id == "bg-pclose-1"
+    assert rest.last_data is not None
+    assert rest.last_data.get("productType") == "USDT-FUTURES"
+    assert rest.last_data.get("tradeSide") == "close"
+    assert rest.last_data.get("orderType") == "market"
+    assert rest.last_data.get("side") == "sell"
+    assert rest.last_data.get("size") == "0.5"
+    assert rest.last_data.get("clientOid") == "bg-client-1"

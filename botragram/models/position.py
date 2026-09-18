@@ -33,6 +33,7 @@ __all__ = [
 
 _STOP_LOSS_CLIENT_ALGO_ID_PREFIX = "bsl-"
 _TAKE_PROFIT_CLIENT_ALGO_ID_PREFIX = "btp-"
+_PARTIAL_TP_CLIENT_ORDER_ID_PREFIX = "ptp-"
 _CLIENT_ALGO_ID_HEX_LENGTH = 32
 _LOWER_HEX_CHARACTERS = frozenset("0123456789abcdef")
 
@@ -74,6 +75,8 @@ class Position:
     entry_client_order_id: str | None = None
     partial_tp_executed: bool = False
     partial_tp_order_id: str | None = None
+    pending_partial_tp_client_order_id: str | None = None
+    pending_partial_tp_quantity: Decimal | None = None
 
     def __post_init__(self) -> None:
         """Validate distinct current and pending protection identities."""
@@ -82,6 +85,21 @@ class Position:
             and self.stop_loss_client_algo_id == self.take_profit_client_algo_id
         ):
             raise ValueError("STOP and TP protection identities must be distinct")
+
+        has_pending_partial = (
+            self.pending_partial_tp_client_order_id is not None
+            or self.pending_partial_tp_quantity is not None
+        )
+        if has_pending_partial:
+            if (
+                self.pending_partial_tp_client_order_id is None
+                or self.pending_partial_tp_quantity is None
+            ):
+                raise ValueError(
+                    "Pending partial TP requires both client order ID and quantity"
+                )
+            if self.pending_partial_tp_quantity <= Decimal("0"):
+                raise ValueError("Pending partial TP quantity must be positive")
 
         pending_id = self.pending_stop_loss_client_algo_id
         has_pending = (
@@ -132,6 +150,11 @@ class Position:
         return f"{_TAKE_PROFIT_CLIENT_ALGO_ID_PREFIX}{uuid4().hex}"
 
     @staticmethod
+    def create_partial_tp_client_order_id() -> str:
+        """Create a stable client identity for one partial take-profit mutation."""
+        return f"{_PARTIAL_TP_CLIENT_ORDER_ID_PREFIX}{uuid4().hex}"
+
+    @staticmethod
     def is_generated_stop_loss_client_algo_id(client_id: str | None) -> bool:
         """Return whether an identity has Botragram's generated STOP form."""
         if client_id is None or not client_id.startswith(
@@ -151,6 +174,18 @@ class Position:
         ):
             return False
         suffix = client_id.removeprefix(_TAKE_PROFIT_CLIENT_ALGO_ID_PREFIX)
+        return len(suffix) == _CLIENT_ALGO_ID_HEX_LENGTH and all(
+            character in _LOWER_HEX_CHARACTERS for character in suffix
+        )
+
+    @staticmethod
+    def is_generated_partial_tp_client_order_id(client_id: str | None) -> bool:
+        """Return whether an identity has Botragram's generated partial TP form."""
+        if client_id is None or not client_id.startswith(
+            _PARTIAL_TP_CLIENT_ORDER_ID_PREFIX
+        ):
+            return False
+        suffix = client_id.removeprefix(_PARTIAL_TP_CLIENT_ORDER_ID_PREFIX)
         return len(suffix) == _CLIENT_ALGO_ID_HEX_LENGTH and all(
             character in _LOWER_HEX_CHARACTERS for character in suffix
         )

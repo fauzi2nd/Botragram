@@ -159,6 +159,24 @@ class BitgetFuturesExchangeClient(BitgetClient):
             updated_at=now,
         )
 
+    async def create_reduce_only_market_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        client_order_id: str | None = None,
+    ) -> Order:
+        """Create a reduce-only market order for Futures position reduction."""
+        return await self.create_order(
+            symbol=symbol,
+            side=side,
+            order_type=OrderType.MARKET,
+            quantity=quantity,
+            client_order_id=client_order_id,
+            reduce_only=True,
+        )
+
     async def create_protection_orders(
         self,
         *,

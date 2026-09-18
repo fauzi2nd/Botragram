@@ -134,18 +134,41 @@ class RiskEngine:
         cls,
         *,
         progress: Decimal,
-        roi: Decimal,
+        roi: Decimal | None = None,
         breakeven_roi_threshold: Decimal = DEFAULT_BREAKEVEN_ROI_THRESHOLD,
     ) -> int:
-        """Return the highest crossed protection step number.
+        """Return the highest crossed stepped profit protection step number.
 
-        Step 1: Breakeven lock activated when ROI >= breakeven_roi_threshold.
-        Steps 2..6: Stepped profit protection based on TP progress
-        (30%, 45%, 60%, 75%, 90%).
+        Stepped profit protection is strictly based on Entry -> Take Profit
+        price progress:
+        Step 2: 30% progress (locks 10%)
+        Step 3: 45% progress (locks 25%)
+        Step 4: 60% progress (locks 40%)
+        Step 5: 75% progress (locks 55%)
+        Step 6: 90% progress (locks 70%)
+
+        Returns 0 if progress < 30%.
+        Leverage-dependent ROI is prohibited as a source of stepped profit progress.
+        For independent breakeven policy, see resolve_breakeven_step().
         """
+        del roi, breakeven_roi_threshold
         tp_steps = sum(progress >= threshold for threshold in PROGRESS_THRESHOLDS)
         if tp_steps > 0:
             return tp_steps + 1
+        return 0
+
+    @classmethod
+    def resolve_breakeven_step(
+        cls,
+        *,
+        roi: Decimal,
+        breakeven_roi_threshold: Decimal = DEFAULT_BREAKEVEN_ROI_THRESHOLD,
+    ) -> int:
+        """Return Step 1 if position ROI reaches the breakeven threshold.
+
+        Note: This is an independent breakeven policy, NOT stepped profit
+        protection progress.
+        """
         if roi >= breakeven_roi_threshold:
             return 1
         return 0
@@ -263,19 +286,6 @@ class RiskEngine:
                     entry_price=signal.price,
                     reason="Explicit sell stop-loss must be above entry price",
                 )
-            max_sl_distance = signal.price * stop_loss_pct
-            if signal.signal_type is SignalType.BUY:
-                min_allowed_sl = signal.price - max_sl_distance
-                stop_loss = max(signal.stop_loss, min_allowed_sl)
-            else:
-                max_allowed_sl = signal.price + max_sl_distance
-                stop_loss = min(signal.stop_loss, max_allowed_sl)
-        else:
-            stop_loss = self._calculate_stop_loss(
-                signal_type=signal.signal_type,
-                entry_price=signal.price,
-                stop_loss_pct=stop_loss_pct,
-            )
 
         if signal.take_profit is not None:
             if (
@@ -302,19 +312,53 @@ class RiskEngine:
                     entry_price=signal.price,
                     reason="Explicit sell take-profit must be below entry price",
                 )
-            max_tp_distance = signal.price * take_profit_pct
-            if signal.signal_type is SignalType.BUY:
-                max_allowed_tp = signal.price + max_tp_distance
-                take_profit = min(signal.take_profit, max_allowed_tp)
-            else:
-                min_allowed_tp = signal.price - max_tp_distance
-                take_profit = max(signal.take_profit, min_allowed_tp)
+
+        if (
+            strategy_type is StrategyType.BOTRAGRAM_ORIGIN
+            and signal.stop_loss is not None
+            and signal.take_profit is not None
+        ):
+            # Origin strategy produces canonical structural SL and contractual RR TP.
+            # Validate safety boundary without silently truncating TP or breaking RR.
+            max_origin_sl_dist = signal.price * self.settings.origin_stop_loss_pct
+            actual_sl_dist = abs(signal.price - signal.stop_loss)
+            if actual_sl_dist > max_origin_sl_dist:
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Origin stop-loss distance exceeds maximum risk ceiling",
+                )
+            stop_loss = signal.stop_loss
+            take_profit = signal.take_profit
         else:
-            take_profit = self._calculate_take_profit(
-                signal_type=signal.signal_type,
-                entry_price=signal.price,
-                take_profit_pct=take_profit_pct,
-            )
+            if signal.stop_loss is not None:
+                max_sl_distance = signal.price * stop_loss_pct
+                if signal.signal_type is SignalType.BUY:
+                    min_allowed_sl = signal.price - max_sl_distance
+                    stop_loss = max(signal.stop_loss, min_allowed_sl)
+                else:
+                    max_allowed_sl = signal.price + max_sl_distance
+                    stop_loss = min(signal.stop_loss, max_allowed_sl)
+            else:
+                stop_loss = self._calculate_stop_loss(
+                    signal_type=signal.signal_type,
+                    entry_price=signal.price,
+                    stop_loss_pct=stop_loss_pct,
+                )
+
+            if signal.take_profit is not None:
+                max_tp_distance = signal.price * take_profit_pct
+                if signal.signal_type is SignalType.BUY:
+                    max_allowed_tp = signal.price + max_tp_distance
+                    take_profit = min(signal.take_profit, max_allowed_tp)
+                else:
+                    min_allowed_tp = signal.price - max_tp_distance
+                    take_profit = max(signal.take_profit, min_allowed_tp)
+            else:
+                take_profit = self._calculate_take_profit(
+                    signal_type=signal.signal_type,
+                    entry_price=signal.price,
+                    take_profit_pct=take_profit_pct,
+                )
 
         risk_per_unit = abs(signal.price - stop_loss)
         if risk_per_unit <= _DECIMAL_ZERO:

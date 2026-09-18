@@ -104,6 +104,42 @@ class RecordingProtectionExchange(BinanceFuturesExchangeClient):
         self.created_orders.append(order)
         return order
 
+    async def create_reduce_only_market_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        client_order_id: str | None = None,
+    ) -> Order:
+        order = Order(
+            order_id=f"order-{len(self.created_orders) + 1}",
+            client_order_id=client_order_id,
+            symbol=symbol,
+            side=side,
+            order_type=OrderType.MARKET,
+            status=OrderStatus.FILLED,
+            quantity=quantity,
+            executed_quantity=quantity,
+            price=None,
+            stop_price=None,
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+        self.created_orders.append(order)
+        return order
+
+    async def get_order_by_client_order_id(
+        self,
+        *,
+        symbol: str,
+        client_order_id: str,
+    ) -> Order:
+        for order in self.created_orders:
+            if order.client_order_id == client_order_id:
+                return order
+        raise ExchangeOrderNotFoundError(f"Order not found: {client_order_id}")
+
     async def ensure_stop_loss_order(
         self,
         *,
@@ -1283,3 +1319,200 @@ async def test_partial_take_profit_skipped_when_quantity_cannot_split_marks_exec
     assert pos is not None
     assert pos.quantity == Decimal("1")
     assert pos.partial_tp_executed is True
+
+
+@pytest.mark.asyncio
+async def test_partial_tp_stop_failure_does_not_promote_unproven_stop() -> None:
+    """Keep old stop and queue pending stop if replacement fails after partial TP."""
+
+    class FailStopExchange(RecordingProtectionExchange):
+        async def ensure_stop_loss_order(self, **kwargs: object) -> Order:
+            raise RuntimeError("Stop replacement network drop")
+
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        stop_loss_client_algo_id="bsl-old-stop-id-00000000000000000",
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = FailStopExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        failure_retry_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    # Price moves to 105.00 -> triggers partial TP
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=1))
+
+    # Market order was filled for 5 BTC
+    assert len(exchange.created_orders) == 1
+    assert exchange.created_orders[0].quantity == Decimal("5")
+
+    # Local position: quantity reduced to 5, partial TP marked executed
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.quantity == Decimal("5")
+    assert pos.partial_tp_executed is True
+
+    # Crucial: Unproven stop is NOT promoted! Old stop remains active.
+    assert pos.stop_loss == Decimal("95")
+    assert pos.stop_loss_client_algo_id == "bsl-old-stop-id-00000000000000000"
+
+    # Pending stop is preserved for retry
+    assert pos.pending_stop_loss is not None
+    assert pos.pending_stop_loss >= Decimal("100.10")
+    assert pos.pending_stop_loss_client_algo_id is not None
+
+
+@pytest.mark.asyncio
+async def test_partial_tp_idempotency_prevents_duplicate_close_on_restart() -> None:
+    """Do not place second close order when recovering with pending intent."""
+    existing_ptp_order = Order(
+        order_id="ptp-order-filled-999",
+        client_order_id="ptp-client-already-sent-111",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("5"),
+        executed_quantity=Decimal("5"),
+        price=None,
+        stop_price=None,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+    class ReconcilingExchange(RecordingProtectionExchange):
+        async def get_order_by_client_order_id(
+            self, *, symbol: str, client_order_id: str
+        ) -> Order:
+            if client_order_id == "ptp-client-already-sent-111":
+                return existing_ptp_order
+            raise ExchangeOrderNotFoundError(f"Unknown {client_order_id}")
+
+    # Position in state: pending partial TP intent already persisted before crash
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        stop_loss_client_algo_id="bsl-old-stop-id-00000000000000000",
+        pending_partial_tp_client_order_id="ptp-client-already-sent-111",
+        pending_partial_tp_quantity=Decimal("5"),
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = ReconcilingExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    # Tick arrives -> triggers resumption of pending partial TP
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=1))
+
+    # NO new market order submitted (idempotency preserved!)
+    assert len(exchange.created_orders) == 0
+
+    # Position transitioned safely to remaining quantity 5
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    assert pos.quantity == Decimal("5")
+    assert pos.partial_tp_executed is True
+    assert pos.partial_tp_order_id == "ptp-order-filled-999"
+    assert pos.pending_partial_tp_client_order_id is None
+
+
+@pytest.mark.asyncio
+async def test_partial_tp_rejected_clears_intent_without_reducing_quantity() -> None:
+    """When partial TP order is rejected, clear intent and do not mutate quantity."""
+
+    class RejectingExchange(RecordingProtectionExchange):
+        async def create_reduce_only_market_order(
+            self,
+            *,
+            symbol: str,
+            side: OrderSide,
+            quantity: Decimal,
+            client_order_id: str | None = None,
+        ) -> Order:
+            order = Order(
+                order_id="ptp-rejected-123",
+                client_order_id=client_order_id,
+                symbol=symbol,
+                side=side,
+                order_type=OrderType.MARKET,
+                status=OrderStatus.REJECTED,
+                quantity=quantity,
+                executed_quantity=Decimal("0"),
+                price=None,
+                stop_price=None,
+                created_at=_NOW,
+                updated_at=_NOW,
+            )
+            self.created_orders.append(order)
+            return order
+
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = RejectingExchange()
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=1))
+
+    pos = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert pos is not None
+    # Quantity unchanged
+    assert pos.quantity == Decimal("10")
+    # Not executed, pending intent cleared
+    assert pos.partial_tp_executed is False
+    assert pos.pending_partial_tp_client_order_id is None

@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -993,31 +994,23 @@ def test_risk_engine_stepped_profit_protection() -> None:
         position=long_pos, current_price=Decimal("103")
     ) == Decimal("0.03")
 
-    # Step resolution
-    assert (
-        RiskEngine.resolve_protection_step(
-            progress=Decimal("0.10"), roi=Decimal("0.10")
+    # Step resolution: pure Entry->TP price progress (stepped profit)
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.10")) == 0
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.30")) == 2
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.95")) == 6
+
+    # Independent breakeven policy based on ROI
+    assert RiskEngine.resolve_breakeven_step(roi=Decimal("0.10")) == 0
+    assert RiskEngine.resolve_breakeven_step(roi=Decimal("0.30")) == 1
+
+    # Leverage invariance: identical price progress yields identical stepped level
+    for lev in (1, 5, 20, 50):
+        pos_lev = replace(long_pos, leverage=lev)
+        prog = RiskEngine.calculate_tp_progress(
+            position=pos_lev, current_price=Decimal("103")
         )
-        == 0
-    )
-    assert (
-        RiskEngine.resolve_protection_step(
-            progress=Decimal("0.10"), roi=Decimal("0.30")
-        )
-        == 1
-    )
-    assert (
-        RiskEngine.resolve_protection_step(
-            progress=Decimal("0.30"), roi=Decimal("0.10")
-        )
-        == 2
-    )
-    assert (
-        RiskEngine.resolve_protection_step(
-            progress=Decimal("0.95"), roi=Decimal("0.10")
-        )
-        == 6
-    )
+        assert prog == Decimal("0.3")
+        assert RiskEngine.resolve_protection_step(progress=prog) == 2
 
     # Stop price calculation for Long:
     # Step 1 (breakeven + fee buffer: 100 * 0.0016 = 0.16 -> 100.16)

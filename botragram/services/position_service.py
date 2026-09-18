@@ -195,6 +195,10 @@ class PositionService:
                 stored_position.partial_tp_order_id
                 or exchange_position.partial_tp_order_id
             ),
+            pending_partial_tp_client_order_id=(
+                stored_position.pending_partial_tp_client_order_id
+            ),
+            pending_partial_tp_quantity=(stored_position.pending_partial_tp_quantity),
         )
 
     async def get(

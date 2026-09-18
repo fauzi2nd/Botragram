@@ -226,6 +226,21 @@ class BaseExchangeClient(ABC):
     ) -> Order:
         """Create an entry or standard exchange order."""
 
+    async def create_reduce_only_market_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        quantity: Decimal,
+        client_order_id: str | None = None,
+    ) -> Order:
+        """Create a reduce-only market order for Futures position reduction.
+
+        Connectors that do not support reduce-only futures orders fail closed.
+        """
+        del symbol, side, quantity, client_order_id
+        raise NotImplementedError("Reduce-only market orders are not supported")
+
     @abstractmethod
     async def create_protection_orders(
         self,

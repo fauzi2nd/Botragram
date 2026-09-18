@@ -275,8 +275,9 @@ def test_origin_strategy_confluence_increases_confidence() -> None:
 
     signal = strategy.generate_signal(candles=candles)
     assert signal.signal_type is SignalType.BUY
-    # Confluence bonus (+0.05 per extra pattern) boosts confidence to 0.80
-    assert signal.confidence >= Decimal("0.80")
+    # Confluence bonus: overlapping candle sub-windows contribute discounted
+    # confirmation (+0.01) instead of uncalibrated independent boost (+0.05)
+    assert signal.confidence == Decimal("0.76")
     assert signal.confidence > Decimal("0.75")
 
 

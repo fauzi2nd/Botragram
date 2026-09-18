@@ -56,6 +56,8 @@ _MAX_CONFLUENCE_BONUS: Final[Decimal] = Decimal("0.06")
 _MAX_TA_BONUS: Final[Decimal] = Decimal("0.05")
 _MAX_SAFE_SL_PCT: Final[Decimal] = Decimal("0.50")
 _DEFAULT_MINIMUM_CANDLES: Final[int] = 5
+_RSI_OVERSOLD_BONUS_THRESHOLD: Final[Decimal] = Decimal("35.0")
+_RSI_OVERBOUGHT_BONUS_THRESHOLD: Final[Decimal] = Decimal("65.0")
 
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
@@ -311,7 +313,7 @@ class BotragramOriginStrategy(BaseStrategy):
         pattern_names_str = ", ".join(m.pattern_name for m in active_matches)
 
         # Calculate Stop Loss and Take Profit
-        sl_price, tp_price = self._calculate_exits(
+        sl_price, tp_price = self.calculate_exits(
             signal_type=signal_type,
             current_price=latest_candle.close_price,
             rejection_level=best_match.rejection_level,
@@ -414,40 +416,16 @@ class BotragramOriginStrategy(BaseStrategy):
         best_match, best_base, best_quality = scored[0]
         primary_confidence = best_base + best_quality
 
-        # Group matches by candle span to prevent double-counting patterns
-        # derived from the same candle information:
-        # - Triple: 3-candle span
-        # - Dual / Harami: 2-candle span
-        # - Single: 1-candle span
-        primary_tier: str
-        if best_match.pattern_name in _TRIPLE_PATTERNS:
-            primary_tier = "triple"
-        elif best_match.pattern_name in (_DUAL_PATTERNS | _HARAMI_PATTERNS):
-            primary_tier = "dual"
-        else:
-            primary_tier = "single"
-
         # Multi-pattern confluence bonus:
-        # Distinct temporal evidence tiers contribute +0.05.
-        # Correlated intra-tier secondary patterns contribute a discounted +0.01.
+        # All candlestick patterns evaluated at the current closed candle (C0)
+        # share the final candle and its immediate sub-window (e.g., TRIPLE
+        # C-2..C0 with DUAL C-1..C0, or DUAL C-1..C0 with SINGLE C0).
+        # These represent correlated confirmation evidence (+0.01 per pattern)
+        # rather than fully independent structural evidence (+0.05).
         # Total confluence bonus is strictly capped at _MAX_CONFLUENCE_BONUS (0.06).
         confluence_bonus = _DECIMAL_ZERO
-        seen_tiers: set[str] = {primary_tier}
-
-        for m, _, _ in scored[1:]:
-            tier: str
-            if m.pattern_name in _TRIPLE_PATTERNS:
-                tier = "triple"
-            elif m.pattern_name in (_DUAL_PATTERNS | _HARAMI_PATTERNS):
-                tier = "dual"
-            else:
-                tier = "single"
-
-            if tier not in seen_tiers:
-                confluence_bonus += Decimal("0.05")
-                seen_tiers.add(tier)
-            else:
-                confluence_bonus += Decimal("0.01")
+        for _ in scored[1:]:
+            confluence_bonus += Decimal("0.01")
 
         bounded_confluence = min(confluence_bonus, _MAX_CONFLUENCE_BONUS)
         final_conf = min(
@@ -523,15 +501,13 @@ class BotragramOriginStrategy(BaseStrategy):
         tp_price = current_price - (self.risk_reward_ratio * actual_sl_dist)
         return sl_price, tp_price
 
-    _calculate_exits = calculate_exits
-
     def _apply_ta_filters(
         self,
         *,
         signal: Signal,
         candles: Sequence[Candle],
     ) -> Signal:
-        """Apply extensible Technical Analysis filters for future development."""
+        """Apply Technical Analysis filters (EMA trend, volume, RSI, BB, MACD, PSAR)."""
         ta_confidence_bonus = _DECIMAL_ZERO
 
         # 1. Trend Filter
@@ -656,7 +632,7 @@ class BotragramOriginStrategy(BaseStrategy):
                                 f"requiring rising RSI for BUY"
                             ),
                         )
-                if current_rsi <= Decimal("35.0"):
+                if current_rsi <= _RSI_OVERSOLD_BONUS_THRESHOLD:
                     ta_confidence_bonus += Decimal("0.02")
             elif signal.signal_type == SignalType.SELL:
                 if current_rsi < self.rsi_short_min:
@@ -691,7 +667,7 @@ class BotragramOriginStrategy(BaseStrategy):
                                 f"requiring falling RSI for SELL"
                             ),
                         )
-                if current_rsi >= Decimal("65.0"):
+                if current_rsi >= _RSI_OVERBOUGHT_BONUS_THRESHOLD:
                     ta_confidence_bonus += Decimal("0.02")
 
         # 4. Bollinger Bands Touch & Rejection Filter
