@@ -28,6 +28,7 @@ from typing import Final, Protocol, runtime_checkable
 # Local Imports
 # =============================================================================
 from botragram.enums import LiveMarketStreamLifecycleStatus
+from botragram.exceptions import ExchangeError
 from botragram.models import (
     LiveMarketStreamIdentity,
     LiveMarketStreamState,
@@ -250,8 +251,18 @@ class LiveMarketStreamService:
                         owned_stream.last_event_monotonic = monotonic()
                         owned_stream.first_tick_event.set()
                         return True
-                except Exception:
-                    pass
+                except (
+                    ExchangeError,
+                    TimeoutError,
+                    ConnectionError,
+                    ValueError,
+                    RuntimeError,
+                ) as error:
+                    _LOGGER.debug(
+                        "Initial ticker seed fetch for %s was unavailable: %s",
+                        identity.symbol,
+                        error,
+                    )
             return owned_stream.first_tick_event.is_set()
         finally:
             if not first_tick_task.done():
@@ -337,8 +348,18 @@ class LiveMarketStreamService:
                         owned_stream.last_price = seed_ticker.last_price
                         owned_stream.last_event_monotonic = monotonic()
                         owned_stream.first_tick_event.set()
-                except Exception:
-                    pass
+                except (
+                    ExchangeError,
+                    TimeoutError,
+                    ConnectionError,
+                    ValueError,
+                    RuntimeError,
+                ) as error:
+                    _LOGGER.debug(
+                        "Background ticker seed fetch for %s was unavailable: %s",
+                        identity.symbol,
+                        error,
+                    )
 
             async for ticker in self.market_service.stream_ticker(
                 symbol=identity.symbol

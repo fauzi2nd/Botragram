@@ -12,6 +12,7 @@ from typing import Final
 from botragram.engine import RiskEngine
 from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
 from botragram.exceptions import (
+    ExchangeError,
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderRejectedError,
@@ -746,7 +747,13 @@ class LivePositionProtectionService:
                     client_id=client_id,
                 )
             except ExchangeOrderNotFoundError:
-                pass
+                _LOGGER.debug(
+                    "Protection order %s for %s not yet visible (attempt %d/%d)",
+                    client_id,
+                    position.symbol,
+                    attempt + 1,
+                    _PROTECTION_VISIBILITY_ATTEMPTS,
+                )
             except ExchangeOrderOutcomeUnknownError as error:
                 last_unknown = error
             else:
@@ -804,7 +811,14 @@ class LivePositionProtectionService:
                     client_id=client_id,
                 )
             except ExchangeOrderNotFoundError:
-                pass
+                _LOGGER.debug(
+                    "Recovering protection leg %s for %s not yet visible "
+                    "(attempt %d/%d)",
+                    client_id,
+                    position.symbol,
+                    attempt + 1,
+                    _PROTECTION_VISIBILITY_ATTEMPTS,
+                )
             except ExchangeOrderOutcomeUnknownError as error:
                 last_unknown = error
             else:
@@ -1177,8 +1191,21 @@ class LivePositionProtectionService:
                 order_id=order.order_id,
             )
             return
-        except Exception:
-            pass
+        except asyncio.CancelledError:
+            raise
+        except (
+            ExchangeError,
+            ExchangeOrderNotFoundError,
+            RuntimeError,
+            ValueError,
+        ) as error:
+            _LOGGER.debug(
+                "Primary order cancellation failed for %s (%s): %s; "
+                "falling back to client_id",
+                order.order_id,
+                symbol,
+                error,
+            )
 
         client_id = order.client_order_id
         if client_id:

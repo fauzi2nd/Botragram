@@ -728,7 +728,9 @@ class DependencyProvider:
             try:
                 await reconnect_task
             except asyncio.CancelledError:
-                pass
+                _LOGGER.debug(
+                    "Telegram reconnect task cancelled cleanly during shutdown"
+                )
         candle_retention_service = self._candle_retention_service
         exchange_client = self._exchange_client
         stream_client = self._stream_client

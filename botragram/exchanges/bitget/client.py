@@ -366,8 +366,10 @@ class BitgetClient(BaseExchangeClient):
                         ts = datetime.fromtimestamp(
                             int(str(ts_raw)) / 1000, tz=timezone.utc
                         )
-                    except ValueError, TypeError:
-                        pass
+                    except (ValueError, TypeError) as error:
+                        _LOGGER.debug(
+                            "Could not parse Bitget OI timestamp %r: %s", ts_raw, error
+                        )
                 if isinstance(oi_list, list):
                     for item in cast(list[object], oi_list):
                         if isinstance(item, dict):
@@ -376,8 +378,12 @@ class BitgetClient(BaseExchangeClient):
                             try:
                                 oi_dec = Decimal(str(size_raw))
                                 points.append((ts, oi_dec))
-                            except InvalidOperation, TypeError, ValueError:
-                                pass
+                            except (InvalidOperation, TypeError, ValueError) as error:
+                                _LOGGER.debug(
+                                    "Could not parse Bitget OI size %r: %s",
+                                    size_raw,
+                                    error,
+                                )
 
         return tuple(points)
 

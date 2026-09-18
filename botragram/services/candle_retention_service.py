@@ -125,7 +125,9 @@ class CandleRetentionService:
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            _LOGGER.debug(
+                "Candle retention background worker cancelled cleanly during stop"
+            )
         _LOGGER.info("Candle retention service stopped")
 
     async def _run_loop(self) -> None:

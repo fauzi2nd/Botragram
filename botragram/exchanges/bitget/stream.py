@@ -200,7 +200,7 @@ class BitgetStreamClient(BaseStreamClient):
                     except Exception as error:
                         _LOGGER.warning("Bitget WebSocket heartbeat error: %s", error)
         except asyncio.CancelledError:
-            pass
+            _LOGGER.debug("Bitget WebSocket heartbeat loop cancelled cleanly")
 
     async def _supervise_connection(self) -> None:
         """Consume messages and automatically reconnect on connection drop."""

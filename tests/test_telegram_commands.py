@@ -147,8 +147,15 @@ class FakeCallbackQuery:
     answer_count: int = 0
     reply_markups: list[object | None] = field(default_factory=list[object | None])
 
-    async def answer(self) -> None:
+    async def answer(
+        self,
+        text: str | None = None,
+        *,
+        show_alert: bool | None = None,
+        **kwargs: object,
+    ) -> None:
         """Record one callback acknowledgement."""
+        del text, show_alert, kwargs
         self.answer_count += 1
 
     async def edit_message_text(

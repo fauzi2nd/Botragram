@@ -215,8 +215,12 @@ class BybitExchangeClient(BaseExchangeClient):
                                 ref_price = Decimal(str(last_val))
                                 if ref_price > _DECIMAL_ZERO:
                                     return ref_price
-                            except InvalidOperation, ValueError:
-                                pass
+                            except (InvalidOperation, ValueError) as error:
+                                _LOGGER.debug(
+                                    "Could not parse reference price %r: %s",
+                                    last_val,
+                                    error,
+                                )
         ticker = await self.get_ticker(symbol=symbol)
         return ticker.last_price
 

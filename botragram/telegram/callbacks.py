@@ -32,6 +32,7 @@ from telegram import (
     Message,
     Update,
 )
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 # =============================================================================
@@ -722,8 +723,8 @@ async def handle_callback_query(
             changed = bot_context.runtime_control.pause()
             try:
                 await query.answer("⏸️ Trading dijeda", show_alert=False)
-            except Exception:
-                pass
+            except TelegramError as error:
+                _LOGGER.debug("Telegram callback query answer failed: %s", error)
             if isinstance(query.message, Message):
                 try:
                     await query.message.reply_text(
@@ -734,8 +735,8 @@ async def handle_callback_query(
                             is_paused=True,
                         ),
                     )
-                except Exception:
-                    pass
+                except TelegramError as error:
+                    _LOGGER.warning("Telegram callback reply failed: %s", error)
         elif data == "cb_runtime_resume" and bot_context.runtime_control is not None:
             try:
                 changed = (
@@ -745,8 +746,8 @@ async def handle_callback_query(
                 )
                 try:
                     await query.answer("▶️ Trading dilanjutkan", show_alert=False)
-                except Exception:
-                    pass
+                except TelegramError as error:
+                    _LOGGER.debug("Telegram callback query answer failed: %s", error)
                 if isinstance(query.message, Message):
                     try:
                         await query.message.reply_text(
@@ -757,13 +758,15 @@ async def handle_callback_query(
                                 is_paused=False,
                             ),
                         )
-                    except Exception:
-                        pass
+                    except TelegramError as error:
+                        _LOGGER.warning("Telegram callback reply failed: %s", error)
             except RuntimeError as error:
                 try:
                     await query.answer(f"⚠️ {error}", show_alert=True)
-                except Exception:
-                    pass
+                except TelegramError as query_error:
+                    _LOGGER.debug(
+                        "Telegram callback query answer failed: %s", query_error
+                    )
                 if isinstance(query.message, Message):
                     try:
                         await query.message.reply_text(
@@ -775,13 +778,15 @@ async def handle_callback_query(
                                 is_paused=True,
                             ),
                         )
-                    except Exception:
-                        pass
+                    except TelegramError as reply_error:
+                        _LOGGER.warning(
+                            "Telegram callback reply failed: %s", reply_error
+                        )
         elif data == "cb_status_refresh":
             try:
                 await query.answer("🔄 Status diperbarui", show_alert=False)
-            except Exception:
-                pass
+            except TelegramError as error:
+                _LOGGER.debug("Telegram callback query answer failed: %s", error)
 
         last_price = bot_context.last_price
         available_balance: Decimal | None = None
@@ -1053,8 +1058,8 @@ async def handle_callback_query(
                         alert_msg,
                         show_alert=True,
                     )
-                except Exception:
-                    pass
+                except TelegramError as error:
+                    _LOGGER.debug("Telegram callback query answer failed: %s", error)
             else:
                 new_pos = current_limits.max_open_positions
                 new_size = current_limits.max_position_size_usdt
@@ -1084,20 +1089,20 @@ async def handle_callback_query(
                     try:
                         val = int(data.removeprefix("cb_risk_set_pos_"))
                         new_pos = min(max(val, 1), ceil_pos)
-                    except ValueError:
-                        pass
+                    except ValueError as error:
+                        _LOGGER.debug("Invalid pos payload in callback: %s", error)
                 elif data.startswith("cb_risk_set_size_"):
                     try:
                         val_dec = Decimal(data.removeprefix("cb_risk_set_size_"))
                         new_size = min(max(val_dec, Decimal("5")), ceil_size)
-                    except ValueError, InvalidOperation:
-                        pass
+                    except (ValueError, InvalidOperation) as error:
+                        _LOGGER.debug("Invalid size payload in callback: %s", error)
                 elif data.startswith("cb_risk_set_lev_"):
                     try:
                         val_lev = int(data.removeprefix("cb_risk_set_lev_"))
                         new_lev = min(max(val_lev, 1), lev_ceiling)
-                    except ValueError:
-                        pass
+                    except ValueError as error:
+                        _LOGGER.debug("Invalid lev payload in callback: %s", error)
 
                 user = update.effective_user
                 actor_id = user.id if user is not None else 0
@@ -1129,8 +1134,10 @@ async def handle_callback_query(
                     except (RuntimeError, ValueError) as error:
                         try:
                             await query.answer(f"⚠️ {error}", show_alert=True)
-                        except Exception:
-                            pass
+                        except TelegramError as query_error:
+                            _LOGGER.debug(
+                                "Telegram callback query answer failed: %s", query_error
+                            )
 
                 lev_status = "⚡ Adaptive" if dynamic_enabled else f"{current_lev}x Lev"
                 toast = (
@@ -1142,8 +1149,8 @@ async def handle_callback_query(
                 )
                 try:
                     await query.answer(toast, show_alert=False)
-                except Exception:
-                    pass
+                except TelegramError as error:
+                    _LOGGER.debug("Telegram callback query answer failed: %s", error)
 
         msg = get_risk_limits_message(
             limits=current_limits,
@@ -1183,8 +1190,8 @@ async def handle_callback_query(
                         "⚠️ Pause trading terlebih dahulu sebelum mengubah TP/SL!",
                         show_alert=True,
                     )
-                except Exception:
-                    pass
+                except TelegramError as error:
+                    _LOGGER.debug("Telegram callback query answer failed: %s", error)
             else:
                 sl = bot_context.stop_loss_pct
                 tp = bot_context.take_profit_pct
@@ -1214,8 +1221,8 @@ async def handle_callback_query(
                         f"✅ SL: {sl_pct:.2f}% | TP: {tp_pct:.2f}%",
                         show_alert=False,
                     )
-                except Exception:
-                    pass
+                except TelegramError as error:
+                    _LOGGER.debug("Telegram callback query answer failed: %s", error)
 
         msg = get_tpsl_ratio_message(
             stop_loss_pct=bot_context.stop_loss_pct,
@@ -1242,8 +1249,8 @@ async def handle_callback_query(
                         "⚠️ Pause trading terlebih dahulu sebelum mengubah leverage!",
                         show_alert=True,
                     )
-                except Exception:
-                    pass
+                except TelegramError as error:
+                    _LOGGER.debug("Telegram callback query answer failed: %s", error)
             else:
                 if data == "cb_leverage_mode_adaptive":
                     if control is not None:
@@ -1252,16 +1259,21 @@ async def handle_callback_query(
                         except (ValueError, RuntimeError) as error:
                             try:
                                 await query.answer(f"⚠️ {error}", show_alert=True)
-                            except Exception:
-                                pass
+                            except TelegramError as query_error:
+                                _LOGGER.debug(
+                                    "Telegram callback query answer failed: %s",
+                                    query_error,
+                                )
                     bot_context.dynamic_leverage_enabled = True
                     try:
                         await query.answer(
                             "✅ Mode Adaptive Leverage diaktifkan!",
                             show_alert=False,
                         )
-                    except Exception:
-                        pass
+                    except TelegramError as error:
+                        _LOGGER.debug(
+                            "Telegram callback query answer failed: %s", error
+                        )
                 else:
                     current_lev = bot_context.leverage
                     new_lev = current_lev
@@ -1277,7 +1289,8 @@ async def handle_callback_query(
                         try:
                             raw_val = int(data.removeprefix("cb_leverage_set_"))
                             new_lev = min(max(raw_val, 1), 100)
-                        except ValueError:
+                        except ValueError as error:
+                            _LOGGER.debug("Invalid leverage set value: %s", error)
                             new_lev = current_lev
 
                     if control is not None:
@@ -1286,8 +1299,11 @@ async def handle_callback_query(
                         except (ValueError, RuntimeError) as error:
                             try:
                                 await query.answer(f"⚠️ {error}", show_alert=True)
-                            except Exception:
-                                pass
+                            except TelegramError as query_error:
+                                _LOGGER.debug(
+                                    "Telegram callback query answer failed: %s",
+                                    query_error,
+                                )
                     bot_context.leverage = new_lev
                     bot_context.dynamic_leverage_enabled = False
                     try:
@@ -1295,8 +1311,10 @@ async def handle_callback_query(
                             f"✅ Mode Fixed Leverage: {new_lev}x",
                             show_alert=False,
                         )
-                    except Exception:
-                        pass
+                    except TelegramError as error:
+                        _LOGGER.debug(
+                            "Telegram callback query answer failed: %s", error
+                        )
 
         dynamic_enabled = (
             control.dynamic_leverage_enabled
@@ -1652,8 +1670,8 @@ async def handle_callback_query(
         status = "dipilih" if changed else "sudah aktif"
         try:
             await query.answer(f"Market {control.symbol} {status}", show_alert=False)
-        except Exception:
-            pass
+        except TelegramError as error:
+            _LOGGER.debug("Telegram callback query answer failed: %s", error)
         last_price = await _get_last_price(bot_context)
         await query.edit_message_text(
             get_market_message(
@@ -1726,8 +1744,8 @@ async def handle_callback_query(
                 f"Strategy {strategy_type.value} {status}",
                 show_alert=False,
             )
-        except Exception:
-            pass
+        except TelegramError as error:
+            _LOGGER.debug("Telegram callback query answer failed: %s", error)
         await query.edit_message_text(
             bot_context.format_strategy_message(
                 control.strategy_type.value,
@@ -1788,8 +1806,8 @@ async def handle_callback_query(
                 f"Interval {interval.value} {status}",
                 show_alert=False,
             )
-        except Exception:
-            pass
+        except TelegramError as error:
+            _LOGGER.debug("Telegram callback query answer failed: %s", error)
         await query.edit_message_text(
             get_interval_message(
                 control.interval.value,

@@ -29,6 +29,7 @@ from typing import Final, cast
 # =============================================================================
 from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
 from botragram.exceptions import (
+    ExchangeError,
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderRejectedError,
@@ -137,8 +138,17 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         if order_id:
             try:
                 return await self.get_order(symbol=normalized_symbol, order_id=order_id)
-            except Exception:
-                pass
+            except (
+                ExchangeError,
+                ExchangeOrderNotFoundError,
+                BybitRestResponseError,
+            ) as error:
+                _LOGGER.debug(
+                    "Immediate Bybit get_order for %s (%s) not available: %s",
+                    order_id,
+                    normalized_symbol,
+                    error,
+                )
 
         now = datetime.now(timezone.utc)
         return Order(
@@ -313,8 +323,17 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
             existing_order = await self.get_order(
                 symbol=normalized_symbol, order_id=order_id
             )
-        except Exception:
-            pass
+        except (
+            ExchangeError,
+            ExchangeOrderNotFoundError,
+            BybitRestResponseError,
+        ) as error:
+            _LOGGER.debug(
+                "Could not pre-fetch order %s (%s) before cancel: %s",
+                order_id,
+                normalized_symbol,
+                error,
+            )
 
         await self._rest.post(
             _ORDER_CANCEL_ENDPOINT,

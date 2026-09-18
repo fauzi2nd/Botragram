@@ -78,6 +78,8 @@ class _HardeningExchange(BinanceFuturesExchangeClient):
         self.created_orders: list[Order] = []
         self.positions: list[Position] = []
         self.fail_stop_replacement = False
+        self.fail_get_order_unknown = False
+        self.fail_get_positions = False
         self.ensure_stop_call_count = 0
         self.reference_price = Decimal("105.00")
 
@@ -170,12 +172,18 @@ class _HardeningExchange(BinanceFuturesExchangeClient):
     async def get_order_by_client_order_id(
         self, *, symbol: str, client_order_id: str
     ) -> Order:
+        if self.fail_get_order_unknown:
+            raise ExchangeOrderOutcomeUnknownError(
+                f"Simulated unknown outcome for order {client_order_id}"
+            )
         for order in self.created_orders:
             if order.client_order_id == client_order_id:
                 return order
         raise ExchangeOrderNotFoundError(f"Order not found: {client_order_id}")
 
     async def get_positions(self, *, symbol: str | None = None) -> tuple[Position, ...]:
+        if self.fail_get_positions:
+            raise RuntimeError("Simulated failure querying exchange positions")
         if symbol is None:
             return tuple(self.positions)
         return tuple(p for p in self.positions if p.symbol.upper() == symbol.upper())
@@ -845,6 +853,147 @@ async def test_fallback_reconciliation_delta_exceeds_local_quantity_fails_closed
     assert stored.partial_tp_executed is False
     assert stored.pending_partial_tp_client_order_id == "ptp-exceed-local"
     assert stored.pending_partial_tp_quantity == Decimal("6")
+
+
+@pytest.mark.asyncio
+async def test_fallback_reconciliation_order_outcome_unknown_fails_closed() -> None:
+    """Case F1: get_order raises ExchangeOrderOutcomeUnknownError -> fail closed."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        pending_partial_tp_client_order_id="ptp-unknown-outcome",
+        pending_partial_tp_quantity=Decimal("5"),
+    )
+    repo = MemoryPositionRepository()
+    await repo.save(position=position)
+    exchange = _HardeningExchange()
+    exchange.fail_get_order_unknown = True
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repo,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="105.00"))
+
+    stored = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    assert stored.quantity == Decimal("10")
+    assert stored.partial_tp_executed is False
+    assert stored.pending_partial_tp_client_order_id == "ptp-unknown-outcome"
+    assert stored.pending_partial_tp_quantity == Decimal("5")
+
+
+@pytest.mark.asyncio
+async def test_fallback_reconciliation_positions_query_failure_fails_closed() -> None:
+    """Case F2: get_positions fails on venue -> fail closed, retain intent."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        pending_partial_tp_client_order_id="ptp-pos-fail",
+        pending_partial_tp_quantity=Decimal("5"),
+    )
+    repo = MemoryPositionRepository()
+    await repo.save(position=position)
+    exchange = _HardeningExchange()
+    exchange.fail_get_positions = True
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repo,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="105.00"))
+
+    stored = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    assert stored.quantity == Decimal("10")
+    assert stored.partial_tp_executed is False
+    assert stored.pending_partial_tp_client_order_id == "ptp-pos-fail"
+    assert stored.pending_partial_tp_quantity == Decimal("5")
+
+
+@pytest.mark.asyncio
+async def test_fallback_reconciliation_untouched_position_clears_intent_safely() -> (
+    None
+):
+    """Case B & C: position quantity untouched on venue -> clear intent safely."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        pending_partial_tp_client_order_id="ptp-never-filled",
+        pending_partial_tp_quantity=Decimal("5"),
+    )
+    repo = MemoryPositionRepository()
+    await repo.save(position=position)
+    exchange = _HardeningExchange()
+    # Venue position remains untouched at 10
+    exchange.positions = [
+        Position(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            quantity=Decimal("10"),
+            entry_price=Decimal("100"),
+            current_price=Decimal("105"),
+            unrealized_pnl=Decimal("50"),
+            leverage=10,
+            opened_at=_NOW,
+            updated_at=_NOW,
+        )
+    ]
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repo,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="105.00"))
+
+    stored = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    assert stored.quantity == Decimal("10")
+    assert stored.partial_tp_executed is False
+    assert stored.pending_partial_tp_client_order_id is None
+    assert stored.pending_partial_tp_quantity is None
 
 
 # =============================================================================

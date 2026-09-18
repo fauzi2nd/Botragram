@@ -157,18 +157,18 @@ class BybitRateLimitGovernor:
             if k_lower == _HEADER_LIMIT_STATUS:
                 try:
                     parsed_remaining = max(0, int(v))
-                except ValueError, TypeError:
-                    pass
+                except (ValueError, TypeError) as error:
+                    _LOGGER.debug("Could not parse %s header %r: %s", k, v, error)
             elif k_lower == _HEADER_LIMIT:
                 try:
                     parsed_limit = max(0, int(v))
-                except ValueError, TypeError:
-                    pass
+                except (ValueError, TypeError) as error:
+                    _LOGGER.debug("Could not parse %s header %r: %s", k, v, error)
             elif k_lower == _HEADER_LIMIT_RESET:
                 try:
                     parsed_reset_ms = int(v)
-                except ValueError, TypeError:
-                    pass
+                except (ValueError, TypeError) as error:
+                    _LOGGER.debug("Could not parse %s header %r: %s", k, v, error)
 
         now = self._clock()
         with self._lock:

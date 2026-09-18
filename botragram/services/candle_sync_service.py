@@ -252,7 +252,8 @@ class CandleSyncService:
                     )
                     break
                 except TimeoutError:
-                    pass
+                    # Wait interval elapsed without stop signal; continue periodic sync
+                    _LOGGER.debug("Periodic candle sync timer elapsed normally")
             else:
                 await asyncio.sleep(float(interval_seconds))
 
@@ -329,7 +330,8 @@ class CandleSyncService:
                             )
                             break
                         except TimeoutError:
-                            pass
+                            # Wait interval elapsed without stop signal; continue sync
+                            _LOGGER.debug("Adaptive sync wait timer elapsed normally")
                     else:
                         await asyncio.sleep(delay)
 

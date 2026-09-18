@@ -525,12 +525,16 @@ class BinanceStreamClient(BaseStreamClient):
             try:
                 queue.get_nowait()
             except asyncio.QueueEmpty:
-                pass
+                _LOGGER.debug(
+                    "Queue emptied concurrently during terminal marker enqueue"
+                )
 
             try:
                 queue.put_nowait(_STREAM_CLOSED)
             except asyncio.QueueFull:
-                pass
+                _LOGGER.debug(
+                    "Could not enqueue terminal stream closed marker: queue full"
+                )
 
     async def _is_cancelled(
         self,

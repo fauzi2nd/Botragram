@@ -191,7 +191,7 @@ class BybitStreamClient(BaseStreamClient):
                     except Exception as error:
                         _LOGGER.warning("Bybit WebSocket heartbeat error: %s", error)
         except asyncio.CancelledError:
-            pass
+            _LOGGER.debug("Bybit WebSocket heartbeat loop cancelled cleanly")
 
     async def _supervise_connection(self) -> None:
         """Consume messages and automatically reconnect on connection drop."""

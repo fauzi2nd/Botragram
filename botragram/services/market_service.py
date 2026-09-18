@@ -17,10 +17,12 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Final
 
 # =============================================================================
 # Local Imports
@@ -35,6 +37,8 @@ from botragram.utils.candle_resampler import resample_candles
 __all__ = [
     "MarketService",
 ]
+
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -440,8 +444,13 @@ class MarketService:
                         as_of=as_of,
                     ):
                         return resampled
-            except ValueError:
-                pass
+            except ValueError as error:
+                _LOGGER.debug(
+                    "Stored candle resampling failed for %s %s: %s",
+                    symbol,
+                    interval,
+                    error,
+                )
 
         return None
 

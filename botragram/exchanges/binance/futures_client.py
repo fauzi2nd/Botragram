@@ -11,6 +11,7 @@ Python:
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -26,6 +27,7 @@ from botragram.enums import (
     PositionSide,
 )
 from botragram.exceptions import (
+    ExchangeError,
     ExchangeOrderImmediateTriggerRejectedError,
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
@@ -48,6 +50,8 @@ from botragram.models import (
 )
 
 __all__ = ["BinanceFuturesExchangeClient"]
+
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 type RequestValue = str | int | float | bool
 type RequestParams = dict[str, RequestValue]
@@ -1372,8 +1376,18 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
                             symbol=position.symbol,
                             client_id=client_algo_id,
                         )
-                    except Exception:
-                        pass
+                    except (
+                        ExchangeOrderNotFoundError,
+                        BinanceRestResponseError,
+                        ExchangeError,
+                    ) as error:
+                        _LOGGER.debug(
+                            "Emergency close protection order cancellation for %s "
+                            "(%s) ignored: %s",
+                            client_algo_id,
+                            position.symbol,
+                            error,
+                        )
             try:
                 return await self._post_order(params=params)
             except ExchangeOrderRejectedError:

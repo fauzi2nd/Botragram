@@ -27,6 +27,7 @@ from typing import Final, cast
 # =============================================================================
 from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
 from botragram.exceptions import (
+    ExchangeError,
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
     ExchangeOrderRejectedError,
@@ -141,8 +142,17 @@ class BitgetFuturesExchangeClient(BitgetClient):
         if order_id:
             try:
                 return await self.get_order(symbol=normalized_symbol, order_id=order_id)
-            except Exception:
-                pass
+            except (
+                ExchangeError,
+                ExchangeOrderNotFoundError,
+                BitgetRestResponseError,
+            ) as error:
+                _LOGGER.debug(
+                    "Immediate Bitget get_order for %s (%s) not available: %s",
+                    order_id,
+                    normalized_symbol,
+                    error,
+                )
 
         now = datetime.now(timezone.utc)
         return Order(
@@ -332,7 +342,17 @@ class BitgetFuturesExchangeClient(BitgetClient):
         )
         try:
             return await self.get_order(symbol=normalized_symbol, order_id=order_id)
-        except Exception:
+        except (
+            ExchangeError,
+            ExchangeOrderNotFoundError,
+            BitgetRestResponseError,
+        ) as error:
+            _LOGGER.debug(
+                "Order %s (%s) fetch after cancel failed: %s; returning canceled order",
+                order_id,
+                normalized_symbol,
+                error,
+            )
             now = datetime.now(timezone.utc)
             return Order(
                 order_id=order_id,
