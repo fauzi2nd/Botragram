@@ -1,6 +1,6 @@
 # Botragram Release Certification Report
 
-**Target Version:** `v2.7.10`<br>
+**Target Version:** `v2.7.11`<br>
 **Date:** 2026-09-18<br>
 **Environment:** Windows 11 (Python 3.14.6)<br>
 **Status:** **RELEASE CERTIFICATION: PASS**
@@ -12,6 +12,8 @@
 This certification report provides definitive, auditable verification for Botragram's protection state machine, fallback reconciliation safety, error handling patterns, typing discipline, and accounting integrity.
 
 Every metric, test count, and status claim in this document was directly executed on the local Windows worktree and verified against actual command outputs and exit codes.
+
+**Final Hardening (v2.7.11):** Removed the two remaining unsafe position-delta inference paths from `_resume_pending_partial_take_profit()` and replaced them with a strict fail-closed model. The authoritative exchange order lookup is now the exclusive source for mutating position state.
 
 ---
 
@@ -28,15 +30,15 @@ Per `DEVELOPMENT_GUIDE.md` Sections 19 & 20, all release quality gates were exec
 | 5 | `python -m pyright` | **PASS** | `0` | 0 errors, 0 warnings, 0 informations under strict type-checking configuration. | ~14.0s |
 | 6 | `python -m mypy botragram` | **PASS** | `0` | Success: no issues found in 352 source files. | ~2.5s |
 | 7 | `pyrefly check` | **PASS** | `0` | 0 errors across project configuration. | ~2.0s |
-| 8 | `python -m pytest` | **PASS** | `0` | **1571 passed** in 40.50s (100% pass rate across entire test suite). | 40.50s |
+| 8 | `python -m pytest` | **PASS** | `0` | **1575 passed** in 39.61s (100% pass rate across entire test suite). | 39.61s |
 | 9 | `git diff --check` | **PASS** | `0` | Clean diff; no whitespace errors or merge conflict markers. | ~0.5s |
 
 ### Specialized Regression Suites
 
 | Suite | Status | Exit Code | Result Summary | Duration |
 |---|:---:|:---:|---|:---:|
-| `python -m pytest tests/test_position_protection.py -q` | **PASS** | `0` | 41 passed | 1.10s |
-| `python -m pytest tests/test_partial_tp_hardening.py -q` | **PASS** | `0` | 19 passed | 1.34s |
+| `python -m pytest tests/test_position_protection.py -q` | **PASS** | `0` | 41 passed | ~1.2s |
+| `python -m pytest tests/test_partial_tp_hardening.py -q` | **PASS** | `0` | 23 passed | ~1.8s |
 
 ---
 
@@ -44,7 +46,7 @@ Per `DEVELOPMENT_GUIDE.md` Sections 19 & 20, all release quality gates were exec
 
 Per `DEVELOPMENT_GUIDE.md` Section 14, bare `except:`, `except Exception: pass`, and silently swallowed `asyncio.CancelledError` are prohibited in production packages.
 
-An AST-based exhaustive scan across all 352 production modules in `botragram/` confirms:
+An AST-based exhaustive scan across all production modules in `botragram/` confirms:
 * **Bare `except:` count:** `0`
 * **`except Exception: pass` count:** `0`
 * **`pass`-only exception handlers:** `0`
@@ -62,6 +64,10 @@ All previously discovered occurrences were remediated with specific exception ty
 9. `botragram/exchanges/bitget/stream.py` & `bybit/stream.py`: Logged `_LOGGER.debug` on heartbeat cancellation.
 10. `botragram/telegram/callbacks.py`: Replaced 20 `except Exception: pass` occurrences with `TelegramError` handling and structured `_LOGGER.debug` / `_LOGGER.warning`.
 
+The diagnostic position query in `_resume_pending_partial_take_profit()` (after the NOT_FOUND path) is wrapped in a broad `except Exception` — this is intentional and safe because:
+- The query result is logged at `DEBUG` only; no mutation decision is ever made from it.
+- The outer fail-closed path (retain intent + schedule retry) is reached regardless.
+
 ---
 
 ## 4. Type Suppression Audit
@@ -78,30 +84,56 @@ A full static analysis was conducted for type suppressions across the repository
 
 ---
 
-## 5. Partial TP Fallback Attribution Design & Invariants
+## 5. Partial TP Reconciliation Design & Invariants
 
 In `PositionProtectionManager._resume_pending_partial_take_profit()`:
 
-### Architecture & Grounding
-1. **Authoritative Priority:** Exact order lookup by durable `client_order_id` is always attempted first (`get_order_by_client_order_id`).
-2. **Fallback Justification:** On venue exchanges (Binance, Bybit, Bitget), market reduce-only orders that fill immediately may transition directly to history or experience indexing lag.
-3. **Fail-Closed Attribution Bounds:** If the exact order lookup returns `ExchangeOrderNotFoundError`:
-   * Venue position is queried via `exchange_client.get_positions()`.
-   * If `position.quantity - exchange_pos.quantity == requested_qty` AND `0 < executed_qty <= position.quantity`: the reduction matches the exact recorded intent and is safely reconciled.
-   * If `exchange_pos.quantity == position.quantity`: the order never filled; pending intent is safely cleared without mutating local quantity or marking partial TP executed.
-   * If `delta != requested` (e.g. delta < requested or delta > requested): fails closed, retains pending intent, local quantity untouched.
-   * If `delta > local_quantity`: violates domain invariant; fails closed.
-   * If order lookup returns `ExchangeOrderOutcomeUnknownError` or position query fails: fails closed, retains intent for subsequent tick retry.
+### Architecture & Safety Principle
 
-### Regression Matrix (Cases A through G)
-* **Case A:** Exact order fill proven -> reconciled (`test_partial_tp_verified_fill_and_same_tick_step_advancement`).
-* **Case B:** Position untouched on venue -> clears intent safely (`test_fallback_reconciliation_untouched_position_clears_intent_safely`).
-* **Case C:** Mismatched external reduction -> fails closed, zero false attribution (`test_fallback_reconciliation_unrelated_reduction_fails_closed`).
-* **Case D:** Delta < requested -> fails closed (`test_fallback_reconciliation_unrelated_reduction_fails_closed`).
-* **Case E:** Delta > requested -> fails closed (`test_fallback_reconciliation_delta_exceeds_requested_fails_closed`).
-* **Case F1:** Order outcome unknown -> fails closed (`test_fallback_reconciliation_order_outcome_unknown_fails_closed`).
-* **Case F2:** Venue position query failure -> fails closed (`test_fallback_reconciliation_positions_query_failure_fails_closed`).
-* **Case G:** Restart recovery -> intent preserved and resumed (`test_restart_recovery_after_partial_fill_before_stop_replacement`).
+> **`EXACT ORDER ID > POSITION DELTA INFERENCE`**
+>
+> The authoritative exchange order lookup (`get_order_by_client_order_id`) is the
+> **only** source of truth that may trigger a position state mutation.
+> Position delta is **never** used as proof of fill ownership.
+
+### Flow
+
+1. **Authoritative lookup first:** `get_order_by_client_order_id` is attempted up to `_PENDING_RECONCILIATION_ATTEMPTS` times.
+2. **On FILLED/PARTIALLY_FILLED:** `_transition_after_partial_fill` is called exactly once.
+3. **On CANCELED/REJECTED with zero fill:** pending intent is cleared; local quantity is unchanged.
+4. **On `ExchangeOrderOutcomeUnknownError`:** fails closed — retains pending intent, schedules retry.
+5. **On `ExchangeOrderNotFoundError` (all attempts exhausted):**
+   - Logs `WARNING` that outcome is unverifiable.
+   - Optionally queries positions for **diagnostic context only** (logged at `DEBUG`; no mutation made).
+   - Retains pending intent unconditionally.
+   - Schedules retry via `failure_retry_seconds`.
+
+### Why position delta is unsafe as fill evidence
+
+A position reduction matching `requested_qty` can result from:
+- Liquidation by the exchange risk engine.
+- Manual close by the operator.
+- A concurrent order by another process.
+- Exchange indexing lag (position may appear unchanged for seconds after fill).
+
+None of these outcomes are distinguishable from the specific partial TP order without an authoritative order status.
+
+### Regression Matrix (Cases A through K + exact-once §6)
+
+| Case | Condition | Correct Behavior | Test |
+|---|---|---|---|
+| A | Exact order FILLED | Quantity deducted exactly once | `test_partial_tp_verified_fill_and_same_tick_step_advancement` |
+| B | Exact order PARTIALLY_FILLED → cancel race | Fill processed at executed qty | `test_partial_tp_cancel_race_returns_filled_processed_as_full_fill` |
+| C | NOT_FOUND, delta == requested | **Retain intent** (delta not authoritative) | `test_not_found_order_delta_matches_requested_retains_intent` |
+| D | NOT_FOUND, position unchanged | **Retain intent** (unchanged ≠ non-fill) | `test_not_found_order_position_unchanged_retains_intent` |
+| E | NOT_FOUND, delta < requested | Retain intent, fail closed | `test_fallback_reconciliation_unrelated_reduction_fails_closed` |
+| F | NOT_FOUND, delta > requested | Retain intent, fail closed | `test_fallback_reconciliation_delta_exceeds_requested_fails_closed` |
+| G | `ExchangeOrderOutcomeUnknownError` | Retain intent, fail closed | `test_fallback_reconciliation_order_outcome_unknown_fails_closed` |
+| H | Position query fails | Retain intent, fail closed | `test_fallback_reconciliation_positions_query_failure_fails_closed` |
+| I | Restart while unresolved | Durable intent persists | `test_not_found_pending_intent_survives_restart` |
+| J | NOT_FOUND then FILLED | Quantity deducted exactly once on FILLED | `test_not_found_then_filled_mutates_quantity_exactly_once` |
+| K | NOT_FOUND + delta match, then CANCELED | Quantity **never** deducted | `test_not_found_matching_delta_then_canceled_no_quantity_mutation` |
+| §6 | Multiple ticks / restart after verified fill | Exact-once invariant preserved | `test_exact_once_invariant_verified_fill_applied_exactly_once` |
 
 ---
 
@@ -122,11 +154,13 @@ In `PositionProtectionManager._resume_pending_partial_take_profit()`:
 ```text
 ============================================================
 RELEASE CERTIFICATION: PASS
+Version: v2.7.11
 Verification: All 9 local Windows quality gates passed.
-Coverage: 1571 automated tests passed (0 failed, 0 skipped).
+Coverage: 1575 automated tests passed (0 failed, 0 skipped).
 Safety: Zero forbidden exception patterns, zero bare excepts.
 Typing: 0 type ignores in production, strict pyright & mypy clean.
+Partial TP: Position delta removed as fill evidence (fail-closed).
 Worktree: Clean and verified.
 Release Ready: YES
 ============================================================
-```
+

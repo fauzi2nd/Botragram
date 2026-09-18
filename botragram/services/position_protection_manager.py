@@ -491,83 +491,52 @@ class PositionProtectionManager:
                 self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
                 return position
 
-            # Order not found after bounded attempts -> Inspect exchange positions
+            # Order not found after bounded attempts.
+            # Position delta is NOT authoritative proof of this specific order's
+            # outcome. Liquidation, manual close, external mutation, or a concurrent
+            # action can produce an identical delta. "Unchanged position" equally
+            # fails to prove the order did not fill, because indexing/propagation
+            # delays may not yet be visible. Retain the durable pending intent and
+            # schedule a retry on the next cycle.
+            _LOGGER.warning(
+                "Partial TP order %s for %s not found on exchange after %d attempts. "
+                "Position delta is not authoritative evidence of fill or non-fill. "
+                "Retaining pending intent for retry.",
+                client_order_id,
+                position.symbol,
+                _PENDING_RECONCILIATION_ATTEMPTS,
+            )
+            # Query position for diagnostic context only — no mutation decision is
+            # made from this observation.
             try:
                 exchange_positions = await self.exchange_client.get_positions(
                     symbol=position.symbol,
                 )
-            except Exception as pos_err:
-                _LOGGER.warning(
-                    "Order %s not found on exchange and position check failed: %s. "
-                    "Retaining pending intent for retry.",
-                    client_order_id,
-                    pos_err,
-                )
-                self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
-                return position
-
-            matching = [
-                p
-                for p in exchange_positions
-                if p.symbol.upper() == position.symbol.upper()
-                and p.side == position.side
-            ]
-            if matching:
-                exchange_pos = matching[0]
-                if exchange_pos.quantity < position.quantity:
-                    executed_qty = position.quantity - exchange_pos.quantity
-                    if (
-                        executed_qty == requested_qty
-                        and executed_qty <= position.quantity
-                        and executed_qty > _DECIMAL_ZERO
-                    ):
-                        _LOGGER.info(
-                            "Reconciled executed partial TP from position reduction: "
-                            "symbol=%s executed=%s new_qty=%s",
-                            position.symbol,
-                            executed_qty,
-                            exchange_pos.quantity,
-                        )
-                        return await self._transition_after_partial_fill(
-                            position=position,
-                            executed_qty=executed_qty,
-                            ptp_order_id=f"reconciled-{client_order_id}",
-                            ticker=ticker,
-                        )
-                    _LOGGER.warning(
-                        "Exchange position reduction (%s) for %s does not match "
-                        "pending partial TP requested quantity (%s) or violates "
-                        "invariants. Failing closed to avoid false attribution; "
-                        "retaining intent.",
-                        executed_qty,
+                matching = [
+                    p
+                    for p in exchange_positions
+                    if p.symbol.upper() == position.symbol.upper()
+                    and p.side == position.side
+                ]
+                if matching:
+                    exchange_pos = matching[0]
+                    observed_delta = position.quantity - exchange_pos.quantity
+                    _LOGGER.debug(
+                        "Diagnostic position snapshot for %s: local_qty=%s "
+                        "exchange_qty=%s observed_delta=%s requested_qty=%s "
+                        "(not used as authoritative fill evidence)",
                         position.symbol,
+                        position.quantity,
+                        exchange_pos.quantity,
+                        observed_delta,
                         requested_qty,
                     )
-                elif exchange_pos.quantity == position.quantity:
-                    cleared = replace(
-                        position,
-                        pending_partial_tp_client_order_id=None,
-                        pending_partial_tp_quantity=None,
-                        updated_at=ticker.timestamp,
-                    )
-                    await self.position_repository.update(position=cleared)
-                    self._cached_position = cleared
-                    _LOGGER.info(
-                        "Pending partial TP order %s not found and position untouched; "
-                        "cleared intent safely for %s",
-                        client_order_id,
-                        position.symbol,
-                    )
-                    return cleared
-                else:
-                    _LOGGER.warning(
-                        "Exchange position quantity (%s) exceeds local quantity (%s) "
-                        "for %s. Failing closed; retaining pending intent.",
-                        exchange_pos.quantity,
-                        position.quantity,
-                        position.symbol,
-                    )
-
+            except Exception as pos_err:
+                _LOGGER.debug(
+                    "Position query for diagnostic context failed for %s: %s",
+                    position.symbol,
+                    pos_err,
+                )
             self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
             return position
 

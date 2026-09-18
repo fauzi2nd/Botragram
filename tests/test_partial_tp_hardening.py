@@ -17,6 +17,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -634,8 +635,13 @@ async def test_restart_recovery_after_partial_fill_before_stop_replacement() -> 
 # 9. Fallback reconciliation matrix (Cases A through G)
 # =============================================================================
 @pytest.mark.asyncio
-async def test_fallback_reconciliation_exact_requested_quantity_succeeds() -> None:
-    """Case A & D: exact order not found, delta == requested -> reconciled."""
+async def test_not_found_order_delta_matches_requested_retains_intent() -> None:
+    """Case C: exact order NOT_FOUND, delta == requested → MUST retain pending intent.
+
+    Position delta is NOT authoritative proof of order fill ownership.
+    Liquidation, manual close, or a concurrent action can produce an identical
+    delta. The system must retain durable pending intent and retry.
+    """
     position = Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -654,7 +660,8 @@ async def test_fallback_reconciliation_exact_requested_quantity_succeeds() -> No
     repo = MemoryPositionRepository()
     await repo.save(position=position)
     exchange = _HardeningExchange()
-    # Exchange position reduced by exactly 5 (from 10 to 5)
+    # Exchange position reduced by exactly 5 (matching requested) — but this
+    # alone does NOT prove this particular order caused the delta.
     exchange.positions = [
         Position(
             symbol="BTCUSDT",
@@ -682,10 +689,11 @@ async def test_fallback_reconciliation_exact_requested_quantity_succeeds() -> No
 
     stored = await repo.get_by_symbol(symbol="BTCUSDT")
     assert stored is not None
-    assert stored.quantity == Decimal("5")
-    assert stored.partial_tp_executed is True
-    assert stored.pending_partial_tp_client_order_id is None
-    assert stored.stop_loss == Decimal("100.16")
+    # Fail-closed: local quantity MUST NOT be mutated by position delta alone.
+    assert stored.quantity == Decimal("10")
+    assert stored.partial_tp_executed is False
+    assert stored.pending_partial_tp_client_order_id == "ptp-in-flight-exact"
+    assert stored.pending_partial_tp_quantity == Decimal("5")
 
 
 @pytest.mark.asyncio
@@ -940,10 +948,13 @@ async def test_fallback_reconciliation_positions_query_failure_fails_closed() ->
 
 
 @pytest.mark.asyncio
-async def test_fallback_reconciliation_untouched_position_clears_intent_safely() -> (
-    None
-):
-    """Case B & C: position quantity untouched on venue -> clear intent safely."""
+async def test_not_found_order_position_unchanged_retains_intent() -> None:
+    """Case D: exact order NOT_FOUND, position unchanged → MUST retain pending intent.
+
+    "Position unchanged" does not prove the order did not fill: indexing or
+    propagation delay at the exchange may simply not yet be visible. The system
+    must retain durable pending intent and retry on the next cycle.
+    """
     position = Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -962,7 +973,8 @@ async def test_fallback_reconciliation_untouched_position_clears_intent_safely()
     repo = MemoryPositionRepository()
     await repo.save(position=position)
     exchange = _HardeningExchange()
-    # Venue position remains untouched at 10
+    # Venue position appears untouched — but this is not authoritative proof
+    # that the order never filled (indexing delay may be the cause).
     exchange.positions = [
         Position(
             symbol="BTCUSDT",
@@ -990,10 +1002,11 @@ async def test_fallback_reconciliation_untouched_position_clears_intent_safely()
 
     stored = await repo.get_by_symbol(symbol="BTCUSDT")
     assert stored is not None
+    # Fail-closed: intent MUST NOT be cleared without authoritative order outcome.
     assert stored.quantity == Decimal("10")
     assert stored.partial_tp_executed is False
-    assert stored.pending_partial_tp_client_order_id is None
-    assert stored.pending_partial_tp_quantity is None
+    assert stored.pending_partial_tp_client_order_id == "ptp-never-filled"
+    assert stored.pending_partial_tp_quantity == Decimal("5")
 
 
 # =============================================================================
@@ -1163,3 +1176,375 @@ def test_position_invariants_pending_partial_tp_identity_clash() -> None:
             pending_partial_tp_client_order_id="tp-active-1",
             pending_partial_tp_quantity=Decimal("5"),
         )
+
+
+# =============================================================================
+# 12. Multi-tick / restart regression tests (Cases I, J, K and exact-once §6)
+# =============================================================================
+
+
+class _SequencedOrderExchange(_HardeningExchange):
+    """Exchange that returns pre-programmed per-call responses for order lookup.
+
+    Each call to ``get_order_by_client_order_id`` consumes the next entry
+    in ``order_responses``.  Pass ``ExchangeOrderNotFoundError()`` instances
+    for not-found legs, or ``Order`` instances for found-order legs.
+    """
+
+    def __init__(self, order_responses: list[Order | Exception]) -> None:
+        super().__init__()
+        self._order_responses = list(order_responses)
+        self._response_index = 0
+
+    async def get_order_by_client_order_id(
+        self,
+        *,
+        symbol: str,
+        client_order_id: str,
+    ) -> Order:
+        if self._response_index >= len(self._order_responses):
+            raise ExchangeOrderNotFoundError(
+                f"No more programmed responses for: {client_order_id}"
+            )
+        response = self._order_responses[self._response_index]
+        self._response_index += 1
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+@pytest.mark.asyncio
+async def test_not_found_pending_intent_survives_restart() -> None:
+    """Case I: durable pending intent persists across manager restart.
+
+    When the exact order lookup returns NOT_FOUND, the system retains the
+    durable pending intent.  A subsequent restart (new manager instance) that
+    also receives NOT_FOUND must again retain the intent — proving that the
+    pending state is correctly stored and recovered from the repository.
+    """
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        pending_partial_tp_client_order_id="ptp-in-flight-restart",
+        pending_partial_tp_quantity=Decimal("5"),
+    )
+    repo = MemoryPositionRepository()
+    await repo.save(position=position)
+    exchange = _HardeningExchange()
+
+    # Tick 1 — first manager instance, order not found
+    manager_1 = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repo,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        failure_retry_seconds=0.00001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+    await manager_1.on_market_tick(ticker=_ticker(price="105.00"))
+
+    stored = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    assert stored.quantity == Decimal("10")
+    assert stored.partial_tp_executed is False
+    assert stored.pending_partial_tp_client_order_id == "ptp-in-flight-restart"
+    assert stored.pending_partial_tp_quantity == Decimal("5")
+
+    # Simulate restart: new manager, re-reads from repository
+    await asyncio.sleep(0.001)
+    manager_2 = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repo,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        failure_retry_seconds=0.00001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+    await manager_2.on_market_tick(ticker=_ticker(price="105.00", seconds=2))
+
+    stored_2 = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert stored_2 is not None
+    assert stored_2.quantity == Decimal("10")
+    assert stored_2.partial_tp_executed is False
+    assert stored_2.pending_partial_tp_client_order_id == "ptp-in-flight-restart"
+    assert stored_2.pending_partial_tp_quantity == Decimal("5")
+
+
+@pytest.mark.asyncio
+async def test_not_found_then_filled_mutates_quantity_exactly_once() -> None:
+    """Case J: NOT_FOUND then FILLED → exactly one verified quantity mutation.
+
+    Tick 1: order not found → intent retained, qty unchanged.
+    Tick 2: order found as FILLED → qty deducted exactly once.
+    Tick 3: no further mutation (idempotent).
+    """
+    client_id = "ptp-j-test"
+    filled_order = Order(
+        order_id="exch-order-j",
+        client_order_id=client_id,
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("5"),
+        executed_quantity=Decimal("5"),
+        price=None,
+        stop_price=None,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        stop_loss_client_algo_id="sl-j-active",
+        take_profit=Decimal("110"),
+        pending_partial_tp_client_order_id=client_id,
+        pending_partial_tp_quantity=Decimal("5"),
+    )
+    repo = MemoryPositionRepository()
+    await repo.save(position=position)
+    # _PENDING_RECONCILIATION_ATTEMPTS = 2, so two NOT_FOUND responses for tick 1
+    exchange = _SequencedOrderExchange(
+        order_responses=[
+            ExchangeOrderNotFoundError("not found yet 1"),
+            ExchangeOrderNotFoundError("not found yet 2"),
+            filled_order,  # tick 2 first attempt succeeds
+        ]
+    )
+
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repo,
+        exchange_client=exchange,
+        position_refresh_seconds=0.00001,
+        failure_retry_seconds=0.00001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    # Tick 1 — NOT_FOUND, retain intent
+    await manager.on_market_tick(ticker=_ticker(price="105.00"))
+    after_tick_1 = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert after_tick_1 is not None
+    assert after_tick_1.quantity == Decimal("10")
+    assert after_tick_1.partial_tp_executed is False
+    assert after_tick_1.pending_partial_tp_client_order_id == client_id
+
+    # Tick 2 — FILLED, quantity deducted exactly once
+    await asyncio.sleep(0.01)  # exceeds failure_retry_seconds=0.00001
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=2))
+    after_tick_2 = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert after_tick_2 is not None
+    assert after_tick_2.quantity == Decimal("5")
+    assert after_tick_2.partial_tp_executed is True
+    assert after_tick_2.pending_partial_tp_client_order_id is None
+    assert after_tick_2.pending_partial_tp_quantity is None
+
+    # Tick 3 — no further mutation (idempotent; partial_tp_executed blocks re-trigger)
+    await asyncio.sleep(0.01)
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=3))
+    after_tick_3 = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert after_tick_3 is not None
+    assert after_tick_3.quantity == Decimal("5"), "Quantity must not be deducted twice"
+    assert after_tick_3.partial_tp_executed is True
+
+
+@pytest.mark.asyncio
+async def test_not_found_matching_delta_then_canceled_no_quantity_mutation() -> None:
+    """Case K: NOT_FOUND (delta matches request), later CANCELED → no mutation ever.
+
+    This is the key proof that position delta was NEVER used as authoritative fill
+    evidence.  If tick 1 had incorrectly inferred a fill from the delta, tick 2
+    receiving CANCELED/REJECTED would detect an inconsistency.  The correct
+    behavior is: tick 1 retains intent, tick 2 clears intent on CANCELED with
+    zero fill — and the quantity is never deducted.
+    """
+    client_id = "ptp-k-test"
+    canceled_order = Order(
+        order_id="exch-order-k",
+        client_order_id=client_id,
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.CANCELED,
+        quantity=Decimal("5"),
+        executed_quantity=Decimal("0"),  # zero fill
+        price=None,
+        stop_price=None,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        pending_partial_tp_client_order_id=client_id,
+        pending_partial_tp_quantity=Decimal("5"),
+    )
+    repo = MemoryPositionRepository()
+    await repo.save(position=position)
+    # Exchange shows position reduced by 5 (delta matches) — but order not found
+    exchange = _SequencedOrderExchange(
+        order_responses=[
+            ExchangeOrderNotFoundError("not found 1"),
+            ExchangeOrderNotFoundError("not found 2"),
+            canceled_order,  # tick 2 reveals CANCELED with zero fill
+        ]
+    )
+    # Diagnostic position shows a 5-unit reduction (matching requested_qty)
+    exchange.positions = [
+        Position(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            quantity=Decimal("5"),  # looks like a fill, but could be unrelated
+            entry_price=Decimal("100"),
+            current_price=Decimal("105"),
+            unrealized_pnl=Decimal("25"),
+            leverage=10,
+            opened_at=_NOW,
+            updated_at=_NOW,
+        )
+    ]
+
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repo,
+        exchange_client=exchange,
+        position_refresh_seconds=0.00001,
+        failure_retry_seconds=0.00001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+    )
+
+    # Tick 1 — NOT_FOUND + position delta matches requested → MUST retain intent
+    await manager.on_market_tick(ticker=_ticker(price="105.00"))
+    after_tick_1 = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert after_tick_1 is not None
+    assert after_tick_1.quantity == Decimal("10"), (
+        "Quantity must NOT have been mutated by position delta"
+    )
+    assert after_tick_1.partial_tp_executed is False
+    assert after_tick_1.pending_partial_tp_client_order_id == client_id
+
+    # Tick 2 — CANCELED with zero fill → clear intent, quantity STILL 10
+    await asyncio.sleep(0.01)  # exceeds failure_retry_seconds=0.00001
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=2))
+    after_tick_2 = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert after_tick_2 is not None
+    assert after_tick_2.quantity == Decimal("10"), (
+        "Quantity must NEVER be deducted — order was CANCELED with zero fill"
+    )
+    assert after_tick_2.partial_tp_executed is False
+    assert after_tick_2.pending_partial_tp_client_order_id is None
+    assert after_tick_2.pending_partial_tp_quantity is None
+
+
+@pytest.mark.asyncio
+async def test_exact_once_invariant_verified_fill_applied_exactly_once() -> None:
+    """§6 Exact-once invariant: a verified fill deducts quantity exactly once.
+
+    Scenario:
+    - initial quantity = 10, requested partial = 5
+    - Tick 1: order FILLED → quantity becomes 5
+    - Tick 2: repeated tick → quantity stays 5 (not deducted again)
+    - Restart (new manager): quantity stays 5 (not deducted again)
+    """
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("95"),
+        stop_loss_client_algo_id="sl-eo-active",
+        take_profit=Decimal("110"),
+        protection_step=0,
+    )
+    repo = MemoryPositionRepository()
+    await repo.save(position=position)
+    exchange = _HardeningExchange()
+    exchange.reference_price = Decimal("105.00")
+
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repo,
+        exchange_client=exchange,
+        position_refresh_seconds=0.00001,
+        failure_retry_seconds=0.00001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+        breakeven_roi_threshold=Decimal("0.50"),
+    )
+
+    # Tick 1 — partial TP fills; order is synchronously returned as FILLED
+    await manager.on_market_tick(ticker=_ticker(price="105.00"))
+    after_tick_1 = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert after_tick_1 is not None
+    assert after_tick_1.quantity == Decimal("5")
+    assert after_tick_1.partial_tp_executed is True
+    assert after_tick_1.pending_partial_tp_client_order_id is None
+
+    # Tick 2 — same manager, same price → quantity must remain 5
+    await asyncio.sleep(0.01)  # exceeds position_refresh_seconds and failure_retry_seconds
+    await manager.on_market_tick(ticker=_ticker(price="105.00", seconds=2))
+    after_tick_2 = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert after_tick_2 is not None
+    assert after_tick_2.quantity == Decimal("5"), (
+        "Must not double-deduct on second tick"
+    )
+    assert after_tick_2.partial_tp_executed is True
+
+    # Restart — new manager reads from repository; quantity must still be 5
+    manager_2 = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repo,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        failure_retry_seconds=0.00001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+        breakeven_roi_threshold=Decimal("0.50"),
+    )
+    await asyncio.sleep(0.001)
+    await manager_2.on_market_tick(ticker=_ticker(price="105.00", seconds=3))
+    after_restart = await repo.get_by_symbol(symbol="BTCUSDT")
+    assert after_restart is not None
+    assert after_restart.quantity == Decimal("5"), "Must not deduct again after restart"
+    assert after_restart.partial_tp_executed is True

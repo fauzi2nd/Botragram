@@ -1866,8 +1866,14 @@ async def test_partial_tp_executed_quantity_invariants_fail_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_partial_tp_order_not_found_reconciles_via_exchange_reduction() -> None:
-    """When order lookup fails on restart, reconcile fill via position reduction."""
+async def test_partial_tp_order_not_found_retains_intent_despite_matching_delta() -> None:
+    """When order lookup fails, position delta MUST NOT be used as authoritative fill evidence.
+
+    Even if the exchange position shows a reduction that matches the requested
+    quantity exactly, this alone does not prove this specific order caused the
+    reduction. A liquidation, manual close, or concurrent action can produce an
+    identical delta. The system MUST retain the durable pending intent for retry.
+    """
     position = Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -1913,15 +1919,21 @@ async def test_partial_tp_order_not_found_reconciles_via_exchange_reduction() ->
 
     pos = await repository.get_by_symbol(symbol="BTCUSDT")
     assert pos is not None
-    # Reconciled to remaining quantity 5
-    assert pos.quantity == Decimal("5")
-    assert pos.partial_tp_executed is True
-    assert pos.pending_partial_tp_client_order_id is None
+    # Fail-closed: local quantity MUST NOT be mutated by position delta alone.
+    assert pos.quantity == Decimal("10")
+    assert pos.partial_tp_executed is False
+    assert pos.pending_partial_tp_client_order_id == "ptp-in-flight-unknown"
+    assert pos.pending_partial_tp_quantity == Decimal("5")
 
 
 @pytest.mark.asyncio
-async def test_partial_tp_order_not_found_clears_safely_when_untouched() -> None:
-    """When order not found and exchange position is untouched, safely clear intent."""
+async def test_partial_tp_order_not_found_retains_intent_when_position_unchanged() -> None:
+    """When order not found and exchange position appears untouched, MUST retain intent.
+
+    "Unchanged position" does not prove the order never filled. Indexing or
+    propagation delay at the exchange may simply not yet be visible. The system
+    MUST retain the durable pending intent and retry on the next cycle.
+    """
     position = Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -1969,7 +1981,9 @@ async def test_partial_tp_order_not_found_clears_safely_when_untouched() -> None
     assert pos is not None
     assert pos.quantity == Decimal("10")
     assert pos.partial_tp_executed is False
-    assert pos.pending_partial_tp_client_order_id is None
+    # Fail-closed: intent MUST NOT be cleared without authoritative order outcome.
+    assert pos.pending_partial_tp_client_order_id == "ptp-unreceived-order"
+    assert pos.pending_partial_tp_quantity == Decimal("5")
 
 
 @pytest.mark.asyncio
