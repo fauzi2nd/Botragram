@@ -31,8 +31,8 @@ dev = [
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 include = ["botragram", "tests", "main.py"]
-venvPath = "."
-venv = ".venv"
+# venvPath = "."
+# venv = ".venv"
 
 [tool.mypy]
 python_version = "3.14"
@@ -68,9 +68,4 @@ preset = "legacy"
 
 [tool.pyrefly.errors]
 no-any-return = "error"
-# Already enforced by pyright strict; suppress redundant pyrefly warnings:
-redundant-cast = "ignore"
-missing-override-decorator = "ignore"
-implicit-any-empty-container = "ignore"
-implicit-any-lambda = "ignore"
-implicit-reexport = "ignore"
+
