@@ -2339,3 +2339,147 @@ async def test_partial_tp_rejected_clears_intent_without_mutating_quantity() -> 
     assert pos.quantity == Decimal("10")
     assert pos.partial_tp_executed is False
     assert pos.pending_partial_tp_client_order_id is None
+
+
+@pytest.mark.asyncio
+async def test_long_partial_tp_current_stop_equals_be_preserves_stop() -> None:
+    """LONG: when current stop is at BE, do not arm invalid pending stop."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("100.16"),
+        stop_loss_client_algo_id="sl-long-be-id-1111111111111111",
+        take_profit=Decimal("110"),
+        protection_step=1,
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = SteppedPriceFilterExchange(mark_price=Decimal("102.50"))
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.25"),
+        breakeven_roi_threshold=Decimal("0.50"),
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="102.50", seconds=1))
+
+    stored = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    assert stored.quantity == Decimal("5")
+    assert stored.partial_tp_executed is True
+    assert stored.partial_tp_order_id == "order-1"
+    assert stored.stop_loss == Decimal("100.16")
+    assert stored.stop_loss_client_algo_id == "sl-long-be-id-1111111111111111"
+    assert stored.protection_step == 1
+    assert stored.pending_stop_loss is None
+    assert stored.pending_stop_loss_client_algo_id is None
+    assert stored.pending_protection_step == 0
+    assert exchange.stop_replacements == []
+
+
+@pytest.mark.asyncio
+async def test_long_partial_tp_current_stop_tighter_than_be_preserves_stop() -> None:
+    """LONG: when current stop is tighter than BE, preserve it without widening."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("100.30"),
+        stop_loss_client_algo_id="sl-long-tight-id-222222222222",
+        take_profit=Decimal("110"),
+        protection_step=1,
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = SteppedPriceFilterExchange(mark_price=Decimal("102.50"))
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.25"),
+        breakeven_roi_threshold=Decimal("0.50"),
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="102.50", seconds=1))
+
+    stored = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    assert stored.quantity == Decimal("5")
+    assert stored.partial_tp_executed is True
+    assert stored.partial_tp_order_id == "order-1"
+    assert stored.stop_loss == Decimal("100.30")
+    assert stored.stop_loss_client_algo_id == "sl-long-tight-id-222222222222"
+    assert stored.protection_step == 1
+    assert stored.pending_stop_loss is None
+    assert stored.pending_stop_loss_client_algo_id is None
+    assert stored.pending_protection_step == 0
+    assert exchange.stop_replacements == []
+
+
+@pytest.mark.asyncio
+async def test_long_partial_tp_at_step_2_or_higher_preserves_stepped_stop() -> None:
+    """LONG: stepped stop at protection_step >= 2 does not regress after partial TP."""
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=10,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("101.00"),
+        stop_loss_client_algo_id="sl-long-step2-id-333333333333",
+        take_profit=Decimal("110"),
+        protection_step=2,
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = SteppedPriceFilterExchange(mark_price=Decimal("102.50"))
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.LIVE,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.25"),
+        breakeven_roi_threshold=Decimal("0.50"),
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="102.50", seconds=1))
+
+    stored = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    assert stored.quantity == Decimal("5")
+    assert stored.partial_tp_executed is True
+    assert stored.partial_tp_order_id == "order-1"
+    assert stored.stop_loss == Decimal("101.00")
+    assert stored.stop_loss_client_algo_id == "sl-long-step2-id-333333333333"
+    assert stored.protection_step == 2
+    assert stored.pending_stop_loss is None
+    assert stored.pending_stop_loss_client_algo_id is None
+    assert stored.pending_protection_step == 0
+    assert exchange.stop_replacements == []
