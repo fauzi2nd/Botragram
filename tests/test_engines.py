@@ -1051,3 +1051,137 @@ def test_risk_engine_stepped_profit_protection() -> None:
     # Invalid step raises ValueError
     with pytest.raises(ValueError, match="Invalid protection step"):
         RiskEngine.calculate_stepped_stop_loss(position=long_pos, step=7)
+
+
+def test_stepped_protection_comprehensive_matrix_and_parity() -> None:
+    """Verify full step resolution matrix, BE ROI rules, and live/backtest parity."""
+    # 1. Breakeven Step 1 ROI boundary tests
+    thresh = Decimal("0.30")
+    assert (
+        RiskEngine.resolve_breakeven_step(
+            roi=Decimal("0.29"), breakeven_roi_threshold=thresh
+        )
+        == 0
+    )
+    assert (
+        RiskEngine.resolve_breakeven_step(
+            roi=Decimal("0.30"), breakeven_roi_threshold=thresh
+        )
+        == 1
+    )
+    assert (
+        RiskEngine.resolve_breakeven_step(
+            roi=Decimal("0.50"), breakeven_roi_threshold=thresh
+        )
+        == 1
+    )
+
+    # 2. Leverage triggers BE faster via ROI, but leaves progress untouched
+    pos_1x = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+    )
+    pos_10x = replace(pos_1x, leverage=10)
+
+    # 1.5% price increase:
+    # 1x ROI = 1.5% (< 30% -> BE Step 0)
+    # 10x ROI = 15.0% (< 30% -> BE Step 0)
+    # 20x ROI = 30.0% (== 30% -> BE Step 1)
+    roi_1x = RiskEngine.calculate_position_roi(
+        position=pos_1x, current_price=Decimal("101.5")
+    )
+    roi_10x = RiskEngine.calculate_position_roi(
+        position=pos_10x, current_price=Decimal("101.5")
+    )
+    pos_20x = replace(pos_1x, leverage=20)
+    roi_20x = RiskEngine.calculate_position_roi(
+        position=pos_20x, current_price=Decimal("101.5")
+    )
+
+    assert RiskEngine.resolve_breakeven_step(roi=roi_1x) == 0
+    assert RiskEngine.resolve_breakeven_step(roi=roi_10x) == 0
+    assert RiskEngine.resolve_breakeven_step(roi=roi_20x) == 1
+
+    # But price progress is IDENTICAL for all leverage levels:
+    prog_1x = RiskEngine.calculate_tp_progress(
+        position=pos_1x, current_price=Decimal("101.5")
+    )
+    prog_10x = RiskEngine.calculate_tp_progress(
+        position=pos_10x, current_price=Decimal("101.5")
+    )
+    prog_20x = RiskEngine.calculate_tp_progress(
+        position=pos_20x, current_price=Decimal("101.5")
+    )
+    assert prog_1x == prog_10x == prog_20x == Decimal("0.15")
+    assert RiskEngine.resolve_protection_step(progress=prog_1x) == 0
+    assert RiskEngine.resolve_protection_step(progress=prog_20x) == 0
+
+    # 3. Pure price progress steps (Steps 2..6)
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.299")) == 0
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.30")) == 2
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.449")) == 2
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.45")) == 3
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.599")) == 3
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.60")) == 4
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.749")) == 4
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.75")) == 5
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.899")) == 5
+    assert RiskEngine.resolve_protection_step(progress=Decimal("0.90")) == 6
+    assert RiskEngine.resolve_protection_step(progress=Decimal("1.50")) == 6
+
+    # 4. Combined target step (max(be_step, profit_step))
+    # BE achieved (ROI >= 30%) but progress < 30% -> Step 1
+    assert (
+        RiskEngine.resolve_target_protection_step(
+            progress=Decimal("0.10"), roi=Decimal("0.35")
+        )
+        == 1
+    )
+
+    # Progress reaches 30% before BE ROI -> Step 2
+    assert (
+        RiskEngine.resolve_target_protection_step(
+            progress=Decimal("0.35"), roi=Decimal("0.10")
+        )
+        == 2
+    )
+
+    # Progress 45% with no BE -> Step 3
+    assert (
+        RiskEngine.resolve_target_protection_step(
+            progress=Decimal("0.50"), roi=Decimal("0.10")
+        )
+        == 3
+    )
+
+    # Both active: progress 60% (Step 4) and BE ROI (Step 1) -> max is Step 4
+    assert (
+        RiskEngine.resolve_target_protection_step(
+            progress=Decimal("0.65"), roi=Decimal("0.50")
+        )
+        == 4
+    )
+
+    # 5. Live Protection Manager and Backtest parity:
+    # Live _resolve_step delegates to resolve_target_protection_step
+    from botragram.services.position_protection_manager import PositionProtectionManager
+
+    for prog, roi in [
+        (Decimal("0.05"), Decimal("0.10")),
+        (Decimal("0.15"), Decimal("0.35")),
+        (Decimal("0.32"), Decimal("0.10")),
+        (Decimal("0.47"), Decimal("0.50")),
+        (Decimal("0.92"), Decimal("0.00")),
+    ]:
+        live_step = PositionProtectionManager.resolve_step(progress=prog, roi=roi)
+        engine_step = RiskEngine.resolve_target_protection_step(progress=prog, roi=roi)
+        assert live_step == engine_step

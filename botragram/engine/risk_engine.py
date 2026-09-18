@@ -134,8 +134,6 @@ class RiskEngine:
         cls,
         *,
         progress: Decimal,
-        roi: Decimal | None = None,
-        breakeven_roi_threshold: Decimal = DEFAULT_BREAKEVEN_ROI_THRESHOLD,
     ) -> int:
         """Return the highest crossed stepped profit protection step number.
 
@@ -151,7 +149,6 @@ class RiskEngine:
         Leverage-dependent ROI is prohibited as a source of stepped profit progress.
         For independent breakeven policy, see resolve_breakeven_step().
         """
-        del roi, breakeven_roi_threshold
         tp_steps = sum(progress >= threshold for threshold in PROGRESS_THRESHOLDS)
         if tp_steps > 0:
             return tp_steps + 1
@@ -172,6 +169,27 @@ class RiskEngine:
         if roi >= breakeven_roi_threshold:
             return 1
         return 0
+
+    @classmethod
+    def resolve_target_protection_step(
+        cls,
+        *,
+        progress: Decimal,
+        roi: Decimal,
+        breakeven_roi_threshold: Decimal = DEFAULT_BREAKEVEN_ROI_THRESHOLD,
+    ) -> int:
+        """Resolve highest crossed protection step combining BE and profit steps.
+
+        target_step = max(breakeven_step, profit_step)
+        """
+        breakeven_step = cls.resolve_breakeven_step(
+            roi=roi,
+            breakeven_roi_threshold=breakeven_roi_threshold,
+        )
+        profit_step = cls.resolve_protection_step(
+            progress=progress,
+        )
+        return max(breakeven_step, profit_step)
 
     @classmethod
     def calculate_stepped_stop_loss(

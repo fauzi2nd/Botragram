@@ -293,14 +293,11 @@ class BacktestEngine:
                 position=position,
                 current_price=current_price,
             )
-            resolved_step = RiskEngine.resolve_protection_step(
+            resolved_step = RiskEngine.resolve_target_protection_step(
                 progress=progress,
+                roi=roi,
+                breakeven_roi_threshold=self.risk_settings.breakeven_roi_threshold,
             )
-            if resolved_step == 0:
-                resolved_step = RiskEngine.resolve_breakeven_step(
-                    roi=roi,
-                    breakeven_roi_threshold=self.risk_settings.breakeven_roi_threshold,
-                )
             if resolved_step > position.protection_step:
                 step = resolved_step
                 stop_price = RiskEngine.calculate_stepped_stop_loss(

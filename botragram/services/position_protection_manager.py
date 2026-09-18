@@ -344,28 +344,87 @@ class PositionProtectionManager:
                 OrderStatus.REJECTED,
                 OrderStatus.EXPIRED,
             }:
-                _LOGGER.warning(
-                    "LIVE partial TP order %s for %s was terminal (%s)",
-                    ptp_order.order_id,
-                    position.symbol,
-                    ptp_order.status.value,
-                )
-                cleared = replace(
-                    position,
-                    pending_partial_tp_client_order_id=None,
-                    pending_partial_tp_quantity=None,
-                    updated_at=ticker.timestamp,
-                )
-                await self.position_repository.update(position=cleared)
-                self._cached_position = cleared
-                return cleared
+                if ptp_order.executed_quantity <= _DECIMAL_ZERO:
+                    _LOGGER.warning(
+                        "LIVE partial TP order %s for %s was terminal (%s), zero fill",
+                        ptp_order.order_id,
+                        position.symbol,
+                        ptp_order.status.value,
+                    )
+                    cleared = replace(
+                        position,
+                        pending_partial_tp_client_order_id=None,
+                        pending_partial_tp_quantity=None,
+                        updated_at=ticker.timestamp,
+                    )
+                    await self.position_repository.update(position=cleared)
+                    self._cached_position = cleared
+                    return cleared
 
             if ptp_order.status is OrderStatus.NEW:
+                _LOGGER.info(
+                    "LIVE partial TP order %s for %s is NEW; awaiting fill",
+                    ptp_order.order_id,
+                    position.symbol,
+                )
                 return position
 
+            if ptp_order.status is OrderStatus.PARTIALLY_FILLED:
+                _LOGGER.warning(
+                    "LIVE partial TP order %s for %s is PARTIALLY_FILLED "
+                    "(executed=%s/%s). Cancelling unfilled remainder.",
+                    ptp_order.order_id,
+                    position.symbol,
+                    ptp_order.executed_quantity,
+                    close_qty,
+                )
+                try:
+                    await self.exchange_client.cancel_order(
+                        symbol=position.symbol,
+                        order_id=ptp_order.order_id,
+                    )
+                except Exception as cancel_err:
+                    _LOGGER.warning(
+                        "Failed to cancel remaining open quantity of order %s: %s. "
+                        "Retaining durable intent.",
+                        ptp_order.order_id,
+                        cancel_err,
+                    )
+                    return position
+
+                try:
+                    ptp_order = await self.exchange_client.get_order_by_client_order_id(
+                        symbol=position.symbol,
+                        client_order_id=client_order_id,
+                    )
+                except Exception as lookup_err:
+                    _LOGGER.warning(
+                        "Failed to query order %s after cancellation: %s. "
+                        "Retaining durable intent.",
+                        client_order_id,
+                        lookup_err,
+                    )
+                    return position
+
+                if ptp_order.status is OrderStatus.PARTIALLY_FILLED:
+                    return position
+
             executed_qty = ptp_order.executed_quantity
-            if executed_qty <= _DECIMAL_ZERO:
-                executed_qty = close_qty
+            if (
+                executed_qty <= _DECIMAL_ZERO
+                or executed_qty > close_qty
+                or executed_qty > position.quantity
+            ):
+                _LOGGER.error(
+                    "Executed quantity %s violates invariants for %s "
+                    "(req=%s, pos_qty=%s). Failing closed, retaining intent.",
+                    executed_qty,
+                    position.symbol,
+                    close_qty,
+                    position.quantity,
+                )
+                self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
+                return position
 
             return await self._transition_after_partial_fill(
                 position=position,
@@ -435,20 +494,68 @@ class PositionProtectionManager:
                 client_order_id=client_order_id,
             )
         except ExchangeOrderNotFoundError:
-            cleared = replace(
-                position,
-                pending_partial_tp_client_order_id=None,
-                pending_partial_tp_quantity=None,
-            )
-            await self.position_repository.update(position=cleared)
-            self._cached_position = cleared
-            _LOGGER.info(
-                "Pending partial TP order %s not found on exchange for %s; "
-                "cleared intent",
-                client_order_id,
-                position.symbol,
-            )
-            return cleared
+            # Check authoritative exchange positions before clearing intent
+            try:
+                exchange_positions = await self.exchange_client.get_positions(
+                    symbol=position.symbol,
+                )
+            except Exception as pos_err:
+                _LOGGER.warning(
+                    "Order %s not found on exchange and position check failed: %s. "
+                    "Retaining pending intent for retry.",
+                    client_order_id,
+                    pos_err,
+                )
+                self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
+                return position
+
+            matching = [
+                p
+                for p in exchange_positions
+                if p.symbol.upper() == position.symbol.upper()
+                and p.side == position.side
+            ]
+            if matching:
+                exchange_pos = matching[0]
+                if exchange_pos.quantity < position.quantity:
+                    executed_qty = position.quantity - exchange_pos.quantity
+                    requested_qty = position.pending_partial_tp_quantity or executed_qty
+                    if (
+                        _DECIMAL_ZERO < executed_qty <= requested_qty
+                        and executed_qty <= position.quantity
+                    ):
+                        _LOGGER.info(
+                            "Reconciled executed partial TP from position reduction: "
+                            "symbol=%s executed=%s new_qty=%s",
+                            position.symbol,
+                            executed_qty,
+                            exchange_pos.quantity,
+                        )
+                        return await self._transition_after_partial_fill(
+                            position=position,
+                            executed_qty=executed_qty,
+                            ptp_order_id=f"reconciled-{client_order_id}",
+                            ticker=ticker,
+                        )
+                elif exchange_pos.quantity == position.quantity:
+                    cleared = replace(
+                        position,
+                        pending_partial_tp_client_order_id=None,
+                        pending_partial_tp_quantity=None,
+                        updated_at=ticker.timestamp,
+                    )
+                    await self.position_repository.update(position=cleared)
+                    self._cached_position = cleared
+                    _LOGGER.info(
+                        "Pending partial TP order %s not found and position untouched; "
+                        "cleared intent safely for %s",
+                        client_order_id,
+                        position.symbol,
+                    )
+                    return cleared
+
+            self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
+            return position
         except ExchangeOrderOutcomeUnknownError:
             self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
             return position
@@ -466,29 +573,68 @@ class PositionProtectionManager:
             OrderStatus.REJECTED,
             OrderStatus.EXPIRED,
         }:
-            cleared = replace(
-                position,
-                pending_partial_tp_client_order_id=None,
-                pending_partial_tp_quantity=None,
-            )
-            await self.position_repository.update(position=cleared)
-            self._cached_position = cleared
-            _LOGGER.info(
-                "Pending partial TP order %s was %s; cleared intent for %s",
-                client_order_id,
-                ptp_order.status.value,
-                position.symbol,
-            )
-            return cleared
+            if ptp_order.executed_quantity <= _DECIMAL_ZERO:
+                cleared = replace(
+                    position,
+                    pending_partial_tp_client_order_id=None,
+                    pending_partial_tp_quantity=None,
+                    updated_at=ticker.timestamp,
+                )
+                await self.position_repository.update(position=cleared)
+                self._cached_position = cleared
+                _LOGGER.info(
+                    "Pending partial TP order %s was %s with zero fill; "
+                    "cleared intent for %s",
+                    client_order_id,
+                    ptp_order.status.value,
+                    position.symbol,
+                )
+                return cleared
 
         if ptp_order.status is OrderStatus.NEW:
             return position
 
-        executed_qty = ptp_order.executed_quantity
-        if executed_qty <= _DECIMAL_ZERO:
-            executed_qty = position.pending_partial_tp_quantity or _DECIMAL_ZERO
+        if ptp_order.status is OrderStatus.PARTIALLY_FILLED:
+            _LOGGER.warning(
+                "Pending partial TP order %s is PARTIALLY_FILLED. "
+                "Cancelling unfilled remainder.",
+                client_order_id,
+            )
+            try:
+                await self.exchange_client.cancel_order(
+                    symbol=position.symbol,
+                    order_id=ptp_order.order_id,
+                )
+            except Exception:
+                return position
 
-        if executed_qty <= _DECIMAL_ZERO:
+            try:
+                ptp_order = await self.exchange_client.get_order_by_client_order_id(
+                    symbol=position.symbol,
+                    client_order_id=client_order_id,
+                )
+            except Exception:
+                return position
+
+            if ptp_order.status is OrderStatus.PARTIALLY_FILLED:
+                return position
+
+        executed_qty = ptp_order.executed_quantity
+        requested_qty = position.pending_partial_tp_quantity or position.quantity
+        if (
+            executed_qty <= _DECIMAL_ZERO
+            or executed_qty > requested_qty
+            or executed_qty > position.quantity
+        ):
+            _LOGGER.error(
+                "Reconciled executed quantity %s violates hard invariants for %s "
+                "(requested=%s, position_qty=%s). Failing closed.",
+                executed_qty,
+                position.symbol,
+                requested_qty,
+                position.quantity,
+            )
+            self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
             return position
 
         return await self._transition_after_partial_fill(
@@ -507,7 +653,24 @@ class PositionProtectionManager:
         ticker: Ticker,
     ) -> Position:
         """Atomically deduct filled quantity and arm replacement stop."""
-        remaining_qty = max(_DECIMAL_ZERO, position.quantity - executed_qty)
+        if executed_qty <= _DECIMAL_ZERO or executed_qty > position.quantity:
+            _LOGGER.error(
+                "Invalid executed_qty %s for position %s (qty=%s)",
+                executed_qty,
+                position.symbol,
+                position.quantity,
+            )
+            return position
+
+        remaining_qty = position.quantity - executed_qty
+        if remaining_qty < _DECIMAL_ZERO:
+            _LOGGER.error(
+                "Remaining quantity would be negative (%s - %s)",
+                position.quantity,
+                executed_qty,
+            )
+            return position
+
         be_stop = self._calculate_stop_loss(
             position=position,
             step=1,
@@ -1008,7 +1171,7 @@ class PositionProtectionManager:
         )
 
     @classmethod
-    def _resolve_step(
+    def resolve_step(
         cls,
         *,
         progress: Decimal,
@@ -1016,15 +1179,13 @@ class PositionProtectionManager:
         breakeven_roi_threshold: Decimal = _BREAKEVEN_ROI_THRESHOLD,
     ) -> int:
         """Return the highest crossed protection step number."""
-        stepped_step = RiskEngine.resolve_protection_step(
+        return RiskEngine.resolve_target_protection_step(
             progress=progress,
-        )
-        if stepped_step > 0:
-            return stepped_step
-        return RiskEngine.resolve_breakeven_step(
             roi=roi,
             breakeven_roi_threshold=breakeven_roi_threshold,
         )
+
+    _resolve_step = resolve_step
 
     @classmethod
     def _calculate_stop_loss(

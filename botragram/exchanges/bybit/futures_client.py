@@ -379,25 +379,26 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         return tuple(cancelled)
 
     async def get_order(self, *, symbol: str, order_id: str) -> Order:
-        """Return an order by its identifier."""
-        payload = await self._rest.get(
-            _ORDER_REALTIME_ENDPOINT,
-            params={
-                "category": "linear",
-                "symbol": symbol.strip().upper(),
-                "orderId": order_id,
-            },
-            authenticated=True,
-        )
-        if isinstance(payload, dict):
-            raw_result = payload.get("result")
-            if isinstance(raw_result, dict):
-                result_map = cast(ExchangePayload, raw_result)
-                order_list = result_map.get("list")
-                if isinstance(order_list, list) and order_list:
-                    first = cast(list[object], order_list)[0]
-                    if isinstance(first, dict):
-                        return self._mapper.map_order(cast(ExchangePayload, first))
+        """Return an order by its identifier from realtime or historical orders."""
+        for endpoint in (_ORDER_REALTIME_ENDPOINT, _ORDER_HISTORY_ENDPOINT):
+            payload = await self._rest.get(
+                endpoint,
+                params={
+                    "category": "linear",
+                    "symbol": symbol.strip().upper(),
+                    "orderId": order_id,
+                },
+                authenticated=True,
+            )
+            if isinstance(payload, dict):
+                raw_result = payload.get("result")
+                if isinstance(raw_result, dict):
+                    result_map = cast(ExchangePayload, raw_result)
+                    order_list = result_map.get("list")
+                    if isinstance(order_list, list) and order_list:
+                        first = cast(list[object], order_list)[0]
+                        if isinstance(first, dict):
+                            return self._mapper.map_order(cast(ExchangePayload, first))
 
         raise ExchangeOrderNotFoundError(
             f"Order {order_id!r} not found for symbol {symbol!r}"
@@ -406,25 +407,26 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
     async def get_order_by_client_order_id(
         self, *, symbol: str, client_order_id: str
     ) -> Order:
-        """Return an order by its client order ID."""
-        payload = await self._rest.get(
-            _ORDER_REALTIME_ENDPOINT,
-            params={
-                "category": "linear",
-                "symbol": symbol.strip().upper(),
-                "orderLinkId": client_order_id,
-            },
-            authenticated=True,
-        )
-        if isinstance(payload, dict):
-            raw_result = payload.get("result")
-            if isinstance(raw_result, dict):
-                result_map = cast(ExchangePayload, raw_result)
-                order_list = result_map.get("list")
-                if isinstance(order_list, list) and order_list:
-                    first = cast(list[object], order_list)[0]
-                    if isinstance(first, dict):
-                        return self._mapper.map_order(cast(ExchangePayload, first))
+        """Return an order by its client order ID from realtime or history."""
+        for endpoint in (_ORDER_REALTIME_ENDPOINT, _ORDER_HISTORY_ENDPOINT):
+            payload = await self._rest.get(
+                endpoint,
+                params={
+                    "category": "linear",
+                    "symbol": symbol.strip().upper(),
+                    "orderLinkId": client_order_id,
+                },
+                authenticated=True,
+            )
+            if isinstance(payload, dict):
+                raw_result = payload.get("result")
+                if isinstance(raw_result, dict):
+                    result_map = cast(ExchangePayload, raw_result)
+                    order_list = result_map.get("list")
+                    if isinstance(order_list, list) and order_list:
+                        first = cast(list[object], order_list)[0]
+                        if isinstance(first, dict):
+                            return self._mapper.map_order(cast(ExchangePayload, first))
 
         raise ExchangeOrderNotFoundError(
             f"Order with client ID {client_order_id!r} not found for symbol {symbol!r}"

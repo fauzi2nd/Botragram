@@ -1314,3 +1314,57 @@ async def test_bybit_futures_create_reduce_only_market_order_submits_reduce_only
     assert rest.last_data.get("side") == "Sell"
     assert rest.last_data.get("qty") == "0.25"
     assert rest.last_data.get("orderLinkId") == "pclose-client-1"
+
+
+@pytest.mark.asyncio
+async def test_bybit_futures_get_order_by_client_id_falls_back_to_history() -> None:
+    """Fall back to order history endpoint when realtime lookup is empty."""
+    rest = MockBybitRestClient()
+    # First response (realtime) is empty
+    rest.canned_responses = [
+        {
+            "retCode": 0,
+            "retMsg": "OK",
+            "result": {"list": []},
+            "retExtInfo": {},
+            "time": 1700000000000,
+        },
+        # Second response (history) contains the filled order
+        {
+            "retCode": 0,
+            "retMsg": "OK",
+            "result": {
+                "list": [
+                    {
+                        "orderId": "bybit-hist-1",
+                        "orderLinkId": "client-hist-1",
+                        "symbol": "BTCUSDT",
+                        "side": "Buy",
+                        "orderType": "Market",
+                        "orderStatus": "Filled",
+                        "qty": "1",
+                        "cumExecQty": "1",
+                        "price": "50000",
+                        "createdTime": "1700000000000",
+                        "updatedTime": "1700000001000",
+                    }
+                ]
+            },
+            "retExtInfo": {},
+            "time": 1700000000000,
+        },
+    ]
+    mapper = BybitExchangeMapper()
+    client = BybitFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    order = await client.get_order_by_client_order_id(
+        symbol="BTCUSDT", client_order_id="client-hist-1"
+    )
+
+    assert order.order_id == "bybit-hist-1"
+    assert order.client_order_id == "client-hist-1"
+    assert order.status is OrderStatus.FILLED
+    assert [req[1] for req in rest.history] == [
+        "/v5/order/realtime",
+        "/v5/order/history",
+    ]
