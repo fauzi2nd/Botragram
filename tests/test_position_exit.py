@@ -16,7 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -382,7 +382,7 @@ class _MockPaperTradingService:
 
 class _MockLifecycleCoordinator:
     @asynccontextmanager
-    async def hold(self, *, symbol: str):
+    async def hold(self, *, symbol: str) -> AsyncGenerator[None, None]:
         del symbol
         yield
 

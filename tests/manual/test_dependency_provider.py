@@ -74,13 +74,13 @@ async def _run_test() -> None:
             database_path=database_path,
         )
 
-        assert provider.is_initialized is False
+        assert not provider.is_initialized
 
         _assert_uninitialized_access(provider)
 
         await provider.initialize()
 
-        assert provider.is_initialized is True
+        assert provider.is_initialized
         assert database_path.exists()
 
         candle_repository = provider.candle_repository
@@ -155,11 +155,11 @@ async def _run_context_manager_test() -> None:
         async with DependencyProvider(
             database_path=database_path,
         ) as provider:
-            assert provider.is_initialized is True
+            assert provider.is_initialized
 
             assert await provider.candle_repository.count() == 0
 
-        assert provider.is_initialized is False
+        assert not provider.is_initialized
 
 
 # =============================================================================

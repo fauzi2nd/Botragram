@@ -16,7 +16,6 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
@@ -254,11 +253,27 @@ async def test_leverage_callback_rejected_when_running() -> None:
     )
 
 
-@dataclass(slots=True)
 class _FakeRuntimeRiskLimitService:
-    snapshot: RuntimeRiskLimits
-    max_open_positions_ceiling: int = 10
-    max_position_size_usdt_ceiling: Decimal = Decimal("100")
+    """Test-only stub that satisfies BotRuntimeRiskLimitProvider via @property."""
+
+    def __init__(
+        self,
+        *,
+        snapshot: RuntimeRiskLimits,
+        max_open_positions_ceiling: int = 10,
+        max_position_size_usdt_ceiling: Decimal = Decimal("100"),
+    ) -> None:
+        self.snapshot = snapshot
+        self._ceiling_positions = max_open_positions_ceiling
+        self._ceiling_size = max_position_size_usdt_ceiling
+
+    @property
+    def max_open_positions_ceiling(self) -> int:
+        return self._ceiling_positions
+
+    @property
+    def max_position_size_usdt_ceiling(self) -> Decimal:
+        return self._ceiling_size
 
     def get_snapshot(self) -> RuntimeRiskLimits:
         return self.snapshot
@@ -297,7 +312,7 @@ async def test_risk_limits_leverage_tuning_callbacks() -> None:
         leverage=5,
         leverage_ceiling=50,
         runtime_control=control,
-        runtime_risk_limit_service=risk_service,  # type: ignore[arg-type]
+        runtime_risk_limit_service=risk_service,
     )
 
     update = MagicMock()
@@ -360,7 +375,7 @@ async def test_risk_limits_leverage_callback_rejected_when_running() -> None:
         leverage=5,
         leverage_ceiling=50,
         runtime_control=control,
-        runtime_risk_limit_service=risk_service,  # type: ignore[arg-type]
+        runtime_risk_limit_service=risk_service,
     )
 
     update = MagicMock()
@@ -403,7 +418,7 @@ async def test_set_risk_limits_command_with_leverage() -> None:
         leverage=5,
         leverage_ceiling=50,
         runtime_control=control,
-        runtime_risk_limit_service=risk_service,  # type: ignore[arg-type]
+        runtime_risk_limit_service=risk_service,
     )
 
     update = MagicMock()
@@ -443,8 +458,8 @@ async def test_set_leverage_command_auto_adaptive() -> None:
 
     await set_leverage_command(update, context)
 
-    assert control.dynamic_leverage_enabled is True
-    assert bot_context.dynamic_leverage_enabled is True
+    assert control.dynamic_leverage_enabled
+    assert bot_context.dynamic_leverage_enabled
     update.effective_message.reply_text.assert_called_once()
     reply = update.effective_message.reply_text.call_args[0][0]
     assert "Mode Adaptive Leverage" in reply
@@ -478,14 +493,14 @@ async def test_leverage_callback_mode_adaptive() -> None:
 
     # 1. Switch to adaptive
     await handle_callback_query(update, context)
-    assert control.dynamic_leverage_enabled is True
-    assert bot_context.dynamic_leverage_enabled is True
+    assert control.dynamic_leverage_enabled
+    assert bot_context.dynamic_leverage_enabled
 
     # 2. Select fixed preset -> disables adaptive
     query.data = "cb_leverage_set_10"
     await handle_callback_query(update, context)
-    assert control.dynamic_leverage_enabled is False
-    assert bot_context.dynamic_leverage_enabled is False
+    assert not control.dynamic_leverage_enabled
+    assert not bot_context.dynamic_leverage_enabled
     assert control.leverage == 10
     assert bot_context.leverage == 10
 
@@ -510,7 +525,7 @@ async def test_risk_limits_adaptive_mode_callback() -> None:
         leverage_ceiling=50,
         dynamic_leverage_enabled=False,
         runtime_control=control,
-        runtime_risk_limit_service=risk_service,  # type: ignore[arg-type]
+        runtime_risk_limit_service=risk_service,
     )
 
     update = MagicMock()
@@ -528,16 +543,16 @@ async def test_risk_limits_adaptive_mode_callback() -> None:
     # 1. Toggle adaptive mode via Risk Limits menu
     query.data = "cb_risk_mode_adaptive"
     await handle_callback_query(update, context)
-    assert control.dynamic_leverage_enabled is True
-    assert bot_context.dynamic_leverage_enabled is True
+    assert control.dynamic_leverage_enabled
+    assert bot_context.dynamic_leverage_enabled
     call_args = query.edit_message_text.call_args
     assert "ADAPTIVE" in call_args[0][0]
 
     # 2. Select fixed preset -> disables adaptive
     query.data = "cb_risk_set_lev_20"
     await handle_callback_query(update, context)
-    assert control.dynamic_leverage_enabled is False
-    assert bot_context.dynamic_leverage_enabled is False
+    assert not control.dynamic_leverage_enabled
+    assert not bot_context.dynamic_leverage_enabled
     assert control.leverage == 20
     call_args = query.edit_message_text.call_args
     assert "FIXED 20x" in call_args[0][0]

@@ -275,7 +275,7 @@ def test_partial_exit_de_adopts_and_then_clears_survivor() -> None:
     assert monitors.events.count("monitor_stop:ETHUSDT") == 1
     assert control.runtime_contexts == ()
     assert control.live_management_authorization is None
-    assert control.is_position_protection_ready is True
+    assert control.is_position_protection_ready
     assert natural_exit.calls == 3
 
 

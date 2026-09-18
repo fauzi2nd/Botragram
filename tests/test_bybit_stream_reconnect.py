@@ -110,9 +110,12 @@ async def test_bybit_stream_client_reconnects_and_resubscribes() -> None:
         }
     )
 
+    called_second = False
+
     async def second_receive() -> Any:
-        if not hasattr(second_receive, "called"):
-            second_receive.called = True  # type: ignore[attr-defined]
+        nonlocal called_second
+        if not called_second:
+            called_second = True
             return ticker_msg
         await asyncio.sleep(3600)
 

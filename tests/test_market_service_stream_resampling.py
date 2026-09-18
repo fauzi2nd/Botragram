@@ -31,7 +31,7 @@ import pytest
 # =============================================================================
 from botragram.enums import Interval
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
-from botragram.models import Candle
+from botragram.models import Candle, Ticker
 from botragram.services.market_service import MarketService
 from botragram.storage.sqlite import (
     SQLiteCandleRepository,
@@ -89,7 +89,7 @@ class _MockStreamClient(BaseStreamClient):
     async def connect(self) -> None:
         pass
 
-    async def stream_ticker(self, *, symbol: str):  # type: ignore[no-untyped-def]
+    def stream_ticker(self, *, symbol: str) -> AsyncIterator[Ticker]:
         raise NotImplementedError
 
     async def stream_candles(

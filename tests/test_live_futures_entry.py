@@ -288,11 +288,6 @@ class FakeProtectionService:
         self, *, position: Position, order_type: OrderType, client_id: str
     ) -> str:
         return "not_found"
-        if isinstance(self.error, asyncio.CancelledError):
-            raise self.error
-        if self.error is not None:
-            raise self.error
-        return position
 
 
 class FailingSubmissionAttemptRepository(MemorySubmissionAttemptRepository):

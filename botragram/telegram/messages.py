@@ -1068,7 +1068,7 @@ def get_strategy_message(
             act_val = (
                 active_interval.value
                 if isinstance(active_interval, Interval)
-                else str(active_interval)
+                else active_interval
             )
             if act_val != opt_interval.value:
                 lines.append(

@@ -68,4 +68,9 @@ preset = "legacy"
 
 [tool.pyrefly.errors]
 no-any-return = "error"
-redundant-cast = "warn"
+# Already enforced by pyright strict; suppress redundant pyrefly warnings:
+redundant-cast = "ignore"
+missing-override-decorator = "ignore"
+implicit-any-empty-container = "ignore"
+implicit-any-lambda = "ignore"
+implicit-reexport = "ignore"

@@ -1566,10 +1566,10 @@ def test_select_strategy_updates_singular_runtime_context() -> None:
             ),
         )
     )
-    assert control.strategy_type is StrategyType.EMA_CROSS
+    assert control.strategy_type == StrategyType.EMA_CROSS
     assert control.select_strategy(StrategyType.SUPERTREND)
-    assert control.strategy_type is StrategyType.SUPERTREND
-    assert control.runtime_contexts[0].strategy_type is StrategyType.SUPERTREND
+    assert control.strategy_type == StrategyType.SUPERTREND
+    assert control.runtime_contexts[0].strategy_type == StrategyType.SUPERTREND
 
 
 def test_select_strategy_allowed_while_stream_is_active() -> None:

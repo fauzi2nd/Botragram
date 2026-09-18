@@ -263,7 +263,7 @@ async def test_run_adaptive_background_sync_adapts_and_stops() -> None:
         )
 
         assert stop_event.is_set()
-        assert checked_full is True
+        assert checked_full
     finally:
         await db.close()
 
