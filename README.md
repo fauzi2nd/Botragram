@@ -177,14 +177,14 @@ DISCOVERY_CANDLE_DELAY_SECONDS=0.05 # Pacing jeda antar fetch candle (rate limit
 # CHOCH_MIN_BODY_RATIO=0.50       # Minimal rasio body candle displacement (default: 0.50)
 # CHOCH_VOLUME_MULTIPLIER=1.20    # Pengali volume candle displacement vs SMA (default: 1.20)
 # PIER_INTERVAL=15m               # Timeframe khusus pinbar_engulfing_ema_rsi
-# BOTRAGRAM_INTERVAL=5m           # Timeframe khusus botragram_origin
+# ORIGIN_INTERVAL=5m             # Timeframe khusus botragram_origin
 ```
 
 ### Hierarki & Resolusi Timeframe
 
 Resolusi timeframe memiliki single source of truth yang transparan:
 1. Argumen CLI `--interval` saat menjalankan backtest (prioritas tertinggi).
-2. Konfigurasi timeframe spesifik strategi aktif di `.env` (misal `PIER_INTERVAL`, `BOTRAGRAM_INTERVAL`, `MORPH_INTERVAL`, `CHOCH_INTERVAL`, dll.).
+2. Konfigurasi timeframe spesifik strategi aktif di `.env` (misal `PIER_INTERVAL`, `ORIGIN_INTERVAL`, `MORPH_INTERVAL`, `CHOCH_INTERVAL`, dll.).
 3. Konfigurasi kategori (`SCALPING_INTERVAL`, `TREND_INTERVAL`, `SWING_INTERVAL`).
 4. `GLOBAL_MARKET_INTERVAL` (atau fallback legacy `MARKET_INTERVAL`) jika strategi tidak mengatur interval khusus.
 5. Project safe default (`5m`) bila konfigurasi sama sekali tidak tersedia.

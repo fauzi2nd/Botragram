@@ -1131,12 +1131,12 @@ class EnvironmentProvider:
             ]
         elif st_val == "botragram_origin":
             candidates = [
-                "BOTRAGRAM_INTERVAL",
                 "ORIGIN_INTERVAL",
-                "BOTRAGRAM_TIMEFRAME",
-                "BOTRAGRAM_TF",
                 "ORIGIN_TIMEFRAME",
                 "ORIGIN_TF",
+                "BOTRAGRAM_INTERVAL",
+                "BOTRAGRAM_TIMEFRAME",
+                "BOTRAGRAM_TF",
             ]
         elif st_val == "morph":
             candidates = ["MORPH_INTERVAL", "MORPH_TIMEFRAME", "MORPH_TF"]

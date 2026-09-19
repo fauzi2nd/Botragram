@@ -57,9 +57,11 @@ def _create_isolated_settings_manager(
         "PIER_TIMEFRAME",
         "PIER_TF",
         "BOTRAGRAM_INTERVAL",
-        "ORIGIN_INTERVAL",
         "BOTRAGRAM_TIMEFRAME",
         "BOTRAGRAM_TF",
+        "ORIGIN_INTERVAL",
+        "ORIGIN_TIMEFRAME",
+        "ORIGIN_TF",
         "MORPH_INTERVAL",
         "MORPH_TIMEFRAME",
         "MORPH_TF",
@@ -338,8 +340,14 @@ def test_strategy_specific_interval_botragram_origin(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """BOTRAGRAM_INTERVAL and ORIGIN_INTERVAL configure botragram_origin."""
-    for key in ("BOTRAGRAM_INTERVAL", "ORIGIN_INTERVAL", "BOTRAGRAM_TF"):
+    """ORIGIN_INTERVAL and its aliases configure botragram_origin."""
+    for key in (
+        "ORIGIN_INTERVAL",
+        "ORIGIN_TIMEFRAME",
+        "ORIGIN_TF",
+        "BOTRAGRAM_INTERVAL",
+        "BOTRAGRAM_TF",
+    ):
         manager = _create_isolated_settings_manager(
             monkeypatch=monkeypatch,
             tmp_path=tmp_path,
