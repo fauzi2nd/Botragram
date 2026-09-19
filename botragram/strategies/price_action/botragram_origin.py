@@ -838,6 +838,9 @@ class BotragramOriginStrategy(BaseStrategy):
 
             if signal.signal_type == SignalType.BUY:
                 if signal.price < current_sar:
+                    # Harga berada di zona bearish (di bawah SAR).
+                    # Tolak hanya jika terlalu jauh dari SAR; jika masih dalam
+                    # batas proximity, biarkan signal lewat tanpa bonus (toleransi).
                     dist_pct = (current_sar - signal.price) / signal.price
                     if dist_pct > self.psar_max_proximity_pct:
                         return Signal(
@@ -856,11 +859,16 @@ class BotragramOriginStrategy(BaseStrategy):
                                 f"{self.psar_max_proximity_pct * 100:.2f}%)"
                             ),
                         )
+                    # Intentional: dist <= max_proximity_pct — signal lolos tanpa bonus.
                 else:
+                    # Harga di atas SAR (zona bullish) — konfirmasi arah, beri bonus.
                     ta_confidence_bonus += Decimal("0.02")
 
             elif signal.signal_type == SignalType.SELL:
                 if signal.price > current_sar:
+                    # Harga berada di zona bullish (di atas SAR).
+                    # Tolak hanya jika terlalu jauh dari SAR; jika masih dalam
+                    # batas proximity, biarkan signal lewat tanpa bonus (toleransi).
                     dist_pct = (signal.price - current_sar) / signal.price
                     if dist_pct > self.psar_max_proximity_pct:
                         return Signal(
@@ -879,7 +887,9 @@ class BotragramOriginStrategy(BaseStrategy):
                                 f"{self.psar_max_proximity_pct * 100:.2f}%)"
                             ),
                         )
+                    # Intentional: dist <= max_proximity_pct — signal lolos tanpa bonus.
                 else:
+                    # Harga di bawah SAR (zona bearish) — konfirmasi arah, beri bonus.
                     ta_confidence_bonus += Decimal("0.02")
 
         if ta_confidence_bonus > _DECIMAL_ZERO:
