@@ -46,6 +46,7 @@ from botragram.strategies.base import BaseStrategy
 
 __all__ = [
     "PinbarEngulfingEmaRsiStrategy",
+    "check_candle_intersects_zone",
 ]
 
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
@@ -59,6 +60,48 @@ _STRONG_ENGULFING_BONUS_RATIO: Final[Decimal] = Decimal("1.25")
 _STRONG_STAR_BONUS_RATIO: Final[Decimal] = Decimal("0.80")
 _SAR_BONUS: Final[Decimal] = Decimal("0.05")
 _CONFIDENCE_STEP_BONUS: Final[Decimal] = Decimal("0.05")
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+def check_candle_intersects_zone(
+    *,
+    low: Decimal,
+    high: Decimal,
+    level: Decimal | None = None,
+    tolerance: Decimal | None = None,
+    lower_bound: Decimal | None = None,
+    upper_bound: Decimal | None = None,
+) -> bool:
+    """Return True if the [low, high] price range intersects the target zone.
+
+    Zone can be specified either symmetrically via (level, tolerance) or
+    asymmetrically via (lower_bound, upper_bound).
+
+    Args:
+        low: Lowest price of the evaluated candlestick.
+        high: Highest price of the evaluated candlestick.
+        level: Optional target reference level (e.g. EMA or swing level).
+        tolerance: Optional tolerance distance around the target level.
+        lower_bound: Optional explicit lower boundary of the target zone.
+        upper_bound: Optional explicit upper boundary of the target zone.
+
+    Returns:
+        True if the candle range intersects the zone, False otherwise.
+    """
+    if lower_bound is None:
+        if level is None or tolerance is None:
+            raise ValueError(
+                "Either (lower_bound, upper_bound) or "
+                "(level, tolerance) must be provided"
+            )
+        lower_bound = level - tolerance
+        upper_bound = level + tolerance
+    elif upper_bound is None:
+        raise ValueError("Both lower_bound and upper_bound must be provided")
+
+    return low <= upper_bound and high >= lower_bound
 
 
 # =============================================================================
@@ -92,6 +135,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     require_key_level_location: bool = True
     swing_lookback: int = 15
     location_tolerance_pct: Decimal = Decimal("0.030")
+    location_atr_multiplier: Decimal | None = None
+    pullback_proximity_pct: Decimal = _PULLBACK_PROXIMITY_PCT
+    pullback_atr_multiplier: Decimal | None = None
+    pinbar_min_range_atr: Decimal | None = None
+    engulfing_min_body_atr: Decimal | None = None
+    require_confirmation: bool = False
 
     # Structural SL/TP & Volatility/Trend Gates
     atr_period: int = 14
@@ -159,6 +208,28 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             raise ValueError("Swing lookback must be greater than 2")
         if self.location_tolerance_pct < _DECIMAL_ZERO:
             raise ValueError("Location tolerance percentage must not be negative")
+        if (
+            self.location_atr_multiplier is not None
+            and self.location_atr_multiplier <= _DECIMAL_ZERO
+        ):
+            raise ValueError("Location ATR multiplier must be positive")
+        if self.pullback_proximity_pct < _DECIMAL_ZERO:
+            raise ValueError("Pullback proximity percentage must not be negative")
+        if (
+            self.pullback_atr_multiplier is not None
+            and self.pullback_atr_multiplier <= _DECIMAL_ZERO
+        ):
+            raise ValueError("Pullback ATR multiplier must be positive")
+        if (
+            self.pinbar_min_range_atr is not None
+            and self.pinbar_min_range_atr <= _DECIMAL_ZERO
+        ):
+            raise ValueError("Pinbar minimum range ATR multiplier must be positive")
+        if (
+            self.engulfing_min_body_atr is not None
+            and self.engulfing_min_body_atr <= _DECIMAL_ZERO
+        ):
+            raise ValueError("Engulfing minimum body ATR multiplier must be positive")
         if self.atr_period <= 2 or self.atr_multiplier_sl <= _DECIMAL_ZERO:
             raise ValueError("ATR parameters must be positive")
         if self.risk_reward_ratio <= _DECIMAL_ZERO:
@@ -219,6 +290,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 + self.stoch_rsi_k_period
                 + self.stoch_rsi_d_period,
             )
+        if self.require_confirmation:
+            min_candles += 1
         return min_candles
 
     def generate_signal(
@@ -312,6 +385,15 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         prev_candle = candles[-2]
         first_star_candle = candles[-3] if len(candles) >= 3 else prev_candle
 
+        if self.require_confirmation:
+            setup_candle = prev_candle
+            setup_prev_candle = first_star_candle
+            setup_first_star = candles[-4] if len(candles) >= 4 else setup_prev_candle
+        else:
+            setup_candle = curr_candle
+            setup_prev_candle = prev_candle
+            setup_first_star = first_star_candle
+
         current_close = curr_candle.close_price
         current_trend = ema_trend[-1]
         current_pullback = ema_pullback[-1]
@@ -319,7 +401,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         current_vol_sma = volume_sma[-1]
         current_atr = atr_series[-1]
 
-        # Check NATR Dead Market Volatility Gate
+        # HARD GATE: Volatility Gate (reject dead market)
         if (
             current_close > _DECIMAL_ZERO
             and (current_atr / current_close) < self.min_natr_threshold
@@ -338,25 +420,31 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 ),
             )
 
-        # Volume threshold
+        # SOFT CONFIRMATION: Volume expansion confirmation
         volume_ok = curr_candle.volume >= (self.volume_multiplier * current_vol_sma)
 
-        # Candlestick pattern detection
+        # HARD GATE: Candlestick pattern detection on setup candle
         pinbar = detect_pinbar(
-            candle=curr_candle,
+            candle=setup_candle,
             min_wick_ratio=self.min_wick_ratio,
             max_opposite_wick_ratio=self.max_opposite_wick_ratio,
+            min_range_atr=self.pinbar_min_range_atr,
+            atr=current_atr,
         )
         engulfing = detect_engulfing(
-            prev_candle=prev_candle,
-            curr_candle=curr_candle,
+            prev_candle=setup_prev_candle,
+            curr_candle=setup_candle,
             min_body_ratio=self.min_engulfing_body_ratio,
+            min_body_atr=self.engulfing_min_body_atr,
+            atr=current_atr,
         )
-        if self.include_star_patterns and len(candles) >= 3:
+        if self.include_star_patterns and (
+            len(candles) >= 4 if self.require_confirmation else len(candles) >= 3
+        ):
             star = detect_star(
-                first_candle=first_star_candle,
-                second_candle=prev_candle,
-                third_candle=curr_candle,
+                first_candle=setup_first_star,
+                second_candle=setup_prev_candle,
+                third_candle=setup_candle,
             )
         else:
             star = CandlestickMatch(
@@ -374,6 +462,19 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         stop_loss: Decimal | None = None
         take_profit: Decimal | None = None
 
+        pullback_tolerance = (
+            self.pullback_atr_multiplier * current_atr
+            if self.pullback_atr_multiplier is not None
+            and self.pullback_atr_multiplier > _DECIMAL_ZERO
+            else current_pullback * self.pullback_proximity_pct
+        )
+        location_tolerance = (
+            self.location_atr_multiplier * current_atr
+            if self.location_atr_multiplier is not None
+            and self.location_atr_multiplier > _DECIMAL_ZERO
+            else current_pullback * self.location_tolerance_pct
+        )
+
         # Check BUY (Long) Setup with Dual EMA Alignment
         trend_dist_long = (
             (current_close - current_trend) / current_trend
@@ -386,29 +487,49 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             and (not self.require_trend_filter or current_pullback >= current_trend)
         )
         if uptrend_aligned:
-            pullback_proximity = current_pullback * (
-                _DECIMAL_ONE + _PULLBACK_PROXIMITY_PCT
+            # HARD GATE: Two-sided pullback intersection with EMA21 zone
+            long_pullback_upper = current_pullback + pullback_tolerance
+            long_pullback_lower = current_pullback - location_tolerance
+            near_pullback = check_candle_intersects_zone(
+                low=setup_candle.low_price,
+                high=setup_candle.high_price,
+                lower_bound=long_pullback_lower,
+                upper_bound=long_pullback_upper,
             )
-            near_pullback = curr_candle.low_price <= pullback_proximity
+
+            # SOFT CONFIRMATION: RSI in pullback range
             rsi_in_zone = self.rsi_long_min <= current_rsi <= self.rsi_long_max
+
+            # HARD GATE: Candlestick trigger (direct close or confirmation breakout)
             star_matched_buy = star.matched and star.side is PositionSide.LONG
-            candle_trigger = (
+            pattern_matched_buy = (
                 (pinbar.matched and pinbar.side is PositionSide.LONG)
                 or (engulfing.matched and engulfing.side is PositionSide.LONG)
                 or star_matched_buy
             )
+            if self.require_confirmation:
+                candle_trigger = (
+                    pattern_matched_buy
+                    and curr_candle.close_price > setup_candle.high_price
+                )
+            else:
+                candle_trigger = pattern_matched_buy
 
-            # Key level location check: Dynamic EMA Support or Swing Low Support
-            tolerance = current_pullback * self.location_tolerance_pct
-            at_ema_support = (
-                (curr_candle.low_price - tolerance)
-                <= current_pullback
-                <= (curr_candle.high_price + tolerance)
+            # HARD GATE: Key level location check (Dynamic EMA Support or Swing Low)
+            at_ema_support = check_candle_intersects_zone(
+                low=setup_candle.low_price,
+                high=setup_candle.high_price,
+                level=current_pullback,
+                tolerance=location_tolerance,
             )
-            at_swing_support = last_swing_low is not None and (
-                (curr_candle.low_price - tolerance)
-                <= last_swing_low
-                <= (curr_candle.high_price + tolerance)
+            at_swing_support = (
+                last_swing_low is not None
+                and check_candle_intersects_zone(
+                    low=setup_candle.low_price,
+                    high=setup_candle.high_price,
+                    level=last_swing_low,
+                    tolerance=location_tolerance,
+                )
             )
             location_ok = (
                 not self.require_key_level_location
@@ -416,7 +537,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 or at_swing_support
             )
 
-            # Stoch RSI Guard: avoid buying at overbought top and ensure turning up
+            # SOFT CONFIRMATION: Stoch RSI Guard
             stoch_rsi_long_ok = True
             stoch_rsi_long_aligned = False
             if self.use_stoch_rsi and curr_stoch_k is not None:
@@ -437,7 +558,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     and curr_stoch_k > curr_stoch_d
                 )
 
-            # MACD Guard: avoid buying into accelerating bearish momentum
+            # SOFT CONFIRMATION: MACD Guard
             macd_long_ok = True
             macd_long_aligned = False
             if self.use_macd and curr_macd_hist is not None:
@@ -463,15 +584,24 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     pattern_label = "Morning Star"
                     pattern_low = min(
                         curr_candle.low_price,
-                        prev_candle.low_price,
-                        first_star_candle.low_price,
+                        setup_candle.low_price,
+                        setup_prev_candle.low_price,
+                        setup_first_star.low_price,
                     )
                 elif pinbar.matched and pinbar.side is PositionSide.LONG:
                     pattern_label = "Bullish Pinbar"
-                    pattern_low = min(curr_candle.low_price, prev_candle.low_price)
+                    pattern_low = min(
+                        curr_candle.low_price,
+                        setup_candle.low_price,
+                        setup_prev_candle.low_price,
+                    )
                 else:
                     pattern_label = "Bullish Engulfing"
-                    pattern_low = min(curr_candle.low_price, prev_candle.low_price)
+                    pattern_low = min(
+                        curr_candle.low_price,
+                        setup_candle.low_price,
+                        setup_prev_candle.low_price,
+                    )
 
                 signal_type = SignalType.BUY
                 confidence = self._compute_confidence(
@@ -509,8 +639,9 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     if curr_macd_hist is not None
                     else ""
                 )
+                mode_str = " (Confirmed)" if self.require_confirmation else ""
                 reason = (
-                    f"{pattern_label} bounce at key location "
+                    f"{pattern_label}{mode_str} bounce at key location "
                     f"(EMA{self.pullback_period} or Swing Low) "
                     f"in EMA{self.trend_period} uptrend "
                     f"(RSI={current_rsi:.1f}{stoch_str}{macd_str}) | "
@@ -529,29 +660,49 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             and (not self.require_trend_filter or current_pullback <= current_trend)
         )
         if signal_type is SignalType.HOLD and downtrend_aligned:
-            pullback_proximity = current_pullback * (
-                _DECIMAL_ONE - _PULLBACK_PROXIMITY_PCT
+            # HARD GATE: Two-sided pullback intersection with EMA21 zone
+            short_pullback_lower = current_pullback - pullback_tolerance
+            short_pullback_upper = current_pullback + location_tolerance
+            near_pullback = check_candle_intersects_zone(
+                low=setup_candle.low_price,
+                high=setup_candle.high_price,
+                lower_bound=short_pullback_lower,
+                upper_bound=short_pullback_upper,
             )
-            near_pullback = curr_candle.high_price >= pullback_proximity
+
+            # SOFT CONFIRMATION: RSI in pullback range
             rsi_in_zone = self.rsi_short_min <= current_rsi <= self.rsi_short_max
+
+            # HARD GATE: Candlestick trigger (direct close or confirmation breakout)
             star_matched_sell = star.matched and star.side is PositionSide.SHORT
-            candle_trigger = (
+            pattern_matched_sell = (
                 (pinbar.matched and pinbar.side is PositionSide.SHORT)
                 or (engulfing.matched and engulfing.side is PositionSide.SHORT)
                 or star_matched_sell
             )
+            if self.require_confirmation:
+                candle_trigger = (
+                    pattern_matched_sell
+                    and curr_candle.close_price < setup_candle.low_price
+                )
+            else:
+                candle_trigger = pattern_matched_sell
 
-            # Key level location check: Dynamic EMA Resistance or Swing High Resistance
-            tolerance = current_pullback * self.location_tolerance_pct
-            at_ema_resistance = (
-                (curr_candle.low_price - tolerance)
-                <= current_pullback
-                <= (curr_candle.high_price + tolerance)
+            # HARD GATE: Key level location check (Dynamic EMA Resistance or Swing High)
+            at_ema_resistance = check_candle_intersects_zone(
+                low=setup_candle.low_price,
+                high=setup_candle.high_price,
+                level=current_pullback,
+                tolerance=location_tolerance,
             )
-            at_swing_resistance = last_swing_high is not None and (
-                (curr_candle.low_price - tolerance)
-                <= last_swing_high
-                <= (curr_candle.high_price + tolerance)
+            at_swing_resistance = (
+                last_swing_high is not None
+                and check_candle_intersects_zone(
+                    low=setup_candle.low_price,
+                    high=setup_candle.high_price,
+                    level=last_swing_high,
+                    tolerance=location_tolerance,
+                )
             )
             location_ok = (
                 not self.require_key_level_location
@@ -559,7 +710,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 or at_swing_resistance
             )
 
-            # Stoch RSI Guard: avoid shorting at oversold bottom and ensure turning down
+            # SOFT CONFIRMATION: Stoch RSI Guard
             stoch_rsi_short_ok = True
             stoch_rsi_short_aligned = False
             if self.use_stoch_rsi and curr_stoch_k is not None:
@@ -580,7 +731,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     and curr_stoch_k < curr_stoch_d
                 )
 
-            # MACD Guard: avoid shorting into accelerating bullish momentum
+            # SOFT CONFIRMATION: MACD Guard
             macd_short_ok = True
             macd_short_aligned = False
             if self.use_macd and curr_macd_hist is not None:
@@ -606,15 +757,24 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     pattern_label = "Evening Star"
                     pattern_high = max(
                         curr_candle.high_price,
-                        prev_candle.high_price,
-                        first_star_candle.high_price,
+                        setup_candle.high_price,
+                        setup_prev_candle.high_price,
+                        setup_first_star.high_price,
                     )
                 elif pinbar.matched and pinbar.side is PositionSide.SHORT:
                     pattern_label = "Bearish Pinbar"
-                    pattern_high = max(curr_candle.high_price, prev_candle.high_price)
+                    pattern_high = max(
+                        curr_candle.high_price,
+                        setup_candle.high_price,
+                        setup_prev_candle.high_price,
+                    )
                 else:
                     pattern_label = "Bearish Engulfing"
-                    pattern_high = max(curr_candle.high_price, prev_candle.high_price)
+                    pattern_high = max(
+                        curr_candle.high_price,
+                        setup_candle.high_price,
+                        setup_prev_candle.high_price,
+                    )
 
                 signal_type = SignalType.SELL
                 confidence = self._compute_confidence(
@@ -652,8 +812,9 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     if curr_macd_hist is not None
                     else ""
                 )
+                mode_str = " (Confirmed)" if self.require_confirmation else ""
                 reason = (
-                    f"{pattern_label} rejection at key location "
+                    f"{pattern_label}{mode_str} rejection at key location "
                     f"(EMA{self.pullback_period} or Swing High) "
                     f"in EMA{self.trend_period} downtrend "
                     f"(RSI={current_rsi:.1f}{stoch_str}{macd_str}) | "
@@ -708,7 +869,13 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         volume: Decimal,
         volume_sma: Decimal,
     ) -> Decimal:
-        """Compute composite confidence score for the detected pattern."""
+        """Compute composite deterministic signal confluence score (signal_score).
+
+        Note:
+            This metric is a deterministic, bounded heuristic confluence score
+            combining candlestick geometry, momentum, and volume confirmations.
+            It is NOT an empirical win rate probability.
+        """
         score = self.min_confidence
 
         if pinbar_matched and pinbar_ratio >= _STRONG_WICK_BONUS_RATIO:

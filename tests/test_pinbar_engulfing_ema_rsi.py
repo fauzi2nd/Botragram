@@ -846,3 +846,344 @@ def test_candlestick_match_pattern_ratio_and_confidence() -> None:
     )
     assert star.matched is True
     assert star.pattern_ratio == star.wick_ratio
+
+
+def test_check_candle_intersects_zone_unit() -> None:
+    """Validate check_candle_intersects_zone helper function."""
+    from botragram.strategies.price_action.pinbar_engulfing_ema_rsi import (
+        check_candle_intersects_zone,
+    )
+
+    # Symmetric level + tolerance: level=100, tol=5 -> zone [95, 105]
+    assert check_candle_intersects_zone(
+        low=Decimal("96"),
+        high=Decimal("102"),
+        level=Decimal("100"),
+        tolerance=Decimal("5"),
+    )
+    # Candle completely above zone
+    assert not check_candle_intersects_zone(
+        low=Decimal("106"),
+        high=Decimal("110"),
+        level=Decimal("100"),
+        tolerance=Decimal("5"),
+    )
+    # Candle completely below zone
+    assert not check_candle_intersects_zone(
+        low=Decimal("80"),
+        high=Decimal("94"),
+        level=Decimal("100"),
+        tolerance=Decimal("5"),
+    )
+
+    # Explicit lower/upper bounds
+    assert check_candle_intersects_zone(
+        low=Decimal("90"),
+        high=Decimal("96"),
+        lower_bound=Decimal("95"),
+        upper_bound=Decimal("105"),
+    )
+    assert not check_candle_intersects_zone(
+        low=Decimal("80"),
+        high=Decimal("94"),
+        lower_bound=Decimal("95"),
+        upper_bound=Decimal("105"),
+    )
+
+    # Invalid argument combinations
+    with pytest.raises(ValueError, match="Either"):
+        check_candle_intersects_zone(low=Decimal("90"), high=Decimal("100"))
+    with pytest.raises(ValueError, match="Both lower_bound and upper_bound"):
+        check_candle_intersects_zone(
+            low=Decimal("90"), high=Decimal("100"), lower_bound=Decimal("95")
+        )
+
+
+def test_hold_when_long_candle_collapses_far_below_ema() -> None:
+    """Reject long setup when price collapses far below EMA pullback zone."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        require_key_level_location=False,  # Isolate pullback zone gate
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("200.0")
+    for i in range(45):
+        price = base + Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    # Pullback candles that drop price sharply
+    for i in range(45, 55):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("0.2"),
+                low_price=prev_close - Decimal("3.0"),
+                close_price=prev_close - Decimal("2.5"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    # Candle 55: Pinbar forms way too deep below EMA10 (collapsed > 5% below EMA)
+    last_close = candles[-1].close_price - Decimal("10.0")
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=last_close,
+            high_price=last_close + Decimal("0.5"),
+            low_price=last_close - Decimal("8.0"),
+            close_price=last_close + Decimal("0.3"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+
+
+def test_hold_when_short_candle_explodes_far_above_ema() -> None:
+    """Reject short setup when price explodes far above EMA pullback zone."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        require_key_level_location=False,  # Isolate pullback zone gate
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("300.0")
+    for i in range(45):
+        price = base - Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("0.5"),
+                low_price=price - Decimal("1.5"),
+                close_price=price - Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    for i in range(45, 55):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("3.0"),
+                low_price=prev_close - Decimal("0.2"),
+                close_price=prev_close + Decimal("2.5"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    # Candle 55: Shooting star forms way too high above EMA10 (exploded > 5% above EMA)
+    last_close = candles[-1].close_price + Decimal("15.0")
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=last_close,
+            high_price=last_close + Decimal("8.0"),
+            low_price=last_close - Decimal("0.5"),
+            close_price=last_close - Decimal("0.3"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+
+
+def test_atr_relative_location_tolerance() -> None:
+    """Verify strategy respects location_atr_multiplier and pullback_atr_multiplier."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        location_atr_multiplier=Decimal("1.5"),
+        pullback_atr_multiplier=Decimal("1.0"),
+    )
+    assert strategy.location_atr_multiplier == Decimal("1.5")
+    assert strategy.pullback_atr_multiplier == Decimal("1.0")
+
+
+def test_pinbar_min_range_atr_rejection_in_strategy() -> None:
+    """Reject setup when pinbar candle range is smaller than ATR multiplier."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        pinbar_min_range_atr=Decimal("3.0"),  # Demand very large pinbar
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(45):
+        price = base + Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    for i in range(45, 55):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("0.2"),
+                low_price=prev_close - Decimal("1.5"),
+                close_price=prev_close - Decimal("1.2"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    # Moderate pinbar with 1.5 range (less than 3.0 * ATR)
+    last_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=last_close,
+            high_price=last_close + Decimal("0.2"),
+            low_price=last_close - Decimal("1.3"),
+            close_price=last_close + Decimal("0.1"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.HOLD
+
+
+def test_confirmation_mode_trigger_flow() -> None:
+    """Test Mode B confirmation trigger: setup candle forms, then breakout confirms."""
+    strategy_no_confirm = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        require_confirmation=False,
+    )
+    strategy_confirm = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        require_confirmation=True,
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(45):
+        price = base + Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    for i in range(45, 55):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("0.2"),
+                low_price=prev_close - Decimal("1.5"),
+                close_price=prev_close - Decimal("1.2"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    # Candle 55: Bullish pinbar setup candle
+    last_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=last_close,
+            high_price=last_close + Decimal("0.8"),
+            low_price=last_close - Decimal("8.0"),
+            close_price=last_close + Decimal("0.5"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    # In direct mode, candle 55 triggers immediately:
+    sig_direct = strategy_no_confirm.generate_signal(candles=candles)
+    assert sig_direct.signal_type is SignalType.BUY
+
+    # In confirmation mode, candle 55 is setup candle waiting for confirmation:
+    sig_waiting = strategy_confirm.generate_signal(candles=candles)
+    assert sig_waiting.signal_type is SignalType.HOLD
+
+    # Candle 56 fails confirmation (closes below candle 55 high):
+    candles_fail = list(candles)
+    candles_fail.append(
+        _make_candle(
+            index=56,
+            open_price=candles[-1].close_price,
+            high_price=candles[-1].high_price - Decimal("0.1"),
+            low_price=candles[-1].close_price - Decimal("0.5"),
+            close_price=candles[-1].close_price - Decimal("0.2"),
+            volume=Decimal("200.0"),
+        )
+    )
+    sig_failed = strategy_confirm.generate_signal(candles=candles_fail)
+    assert sig_failed.signal_type is SignalType.HOLD
+
+    # Candle 56 successfully confirms (closes above candle 55 high):
+    candles_confirm = list(candles)
+    candles_confirm.append(
+        _make_candle(
+            index=56,
+            open_price=candles[-1].close_price,
+            high_price=candles[-1].high_price + Decimal("2.0"),
+            low_price=candles[-1].close_price - Decimal("0.2"),
+            close_price=candles[-1].high_price + Decimal("1.0"),
+            volume=Decimal("200.0"),
+        )
+    )
+    sig_confirmed = strategy_confirm.generate_signal(candles=candles_confirm)
+    assert sig_confirmed.signal_type is SignalType.BUY
+    assert "(Confirmed)" in (sig_confirmed.reason or "")
+
+
+def test_disable_star_patterns() -> None:
+    """Verify setting include_star_patterns=False ignores Star patterns."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        include_star_patterns=False,
+    )
+    assert strategy.include_star_patterns is False

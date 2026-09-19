@@ -80,6 +80,9 @@ def detect_pinbar(
     candle: Candle,
     min_wick_ratio: Decimal = _DEFAULT_MIN_WICK_RATIO,
     max_opposite_wick_ratio: Decimal = _DEFAULT_MAX_OPPOSITE_WICK_RATIO,
+    min_range: Decimal | None = None,
+    min_range_atr: Decimal | None = None,
+    atr: Decimal | None = None,
 ) -> CandlestickMatch:
     """Detect a bullish hammer or bearish shooting-star pinbar rejection.
 
@@ -87,6 +90,9 @@ def detect_pinbar(
         candle: Candlestick to evaluate.
         min_wick_ratio: Minimum ratio of rejection wick to total candle range.
         max_opposite_wick_ratio: Maximum allowable opposite wick ratio.
+        min_range: Optional minimum absolute candle range.
+        min_range_atr: Optional minimum range multiplier relative to ATR.
+        atr: Optional current Average True Range for volatility scaling.
 
     Returns:
         A CandlestickMatch describing the detected pattern, if any.
@@ -109,6 +115,25 @@ def detect_pinbar(
 
     lower_wick_ratio = lower_wick / total_range
     upper_wick_ratio = upper_wick / total_range
+
+    effective_min_range = min_range
+    if (
+        effective_min_range is None
+        and min_range_atr is not None
+        and atr is not None
+        and atr > _DECIMAL_ZERO
+    ):
+        effective_min_range = min_range_atr * atr
+
+    if effective_min_range is not None and total_range < effective_min_range:
+        return CandlestickMatch(
+            matched=False,
+            side=None,
+            pattern_name="none",
+            rejection_level=_DECIMAL_ZERO,
+            body_ratio=body_ratio,
+            wick_ratio=max(lower_wick_ratio, upper_wick_ratio),
+        )
 
     # Bullish Pinbar (Hammer / Low Rejection)
     if (
@@ -159,6 +184,10 @@ def detect_engulfing(
     prev_candle: Candle,
     curr_candle: Candle,
     min_body_ratio: Decimal = _DEFAULT_MIN_ENGULFING_BODY_RATIO,
+    min_body: Decimal | None = None,
+    min_body_atr: Decimal | None = None,
+    atr: Decimal | None = None,
+    min_body_range_ratio: Decimal | None = None,
 ) -> CandlestickMatch:
     """Detect a bullish or bearish engulfing candlestick pattern.
 
@@ -166,6 +195,10 @@ def detect_engulfing(
         prev_candle: Preceding closed candlestick.
         curr_candle: Current evaluated closed candlestick.
         min_body_ratio: Multiplier by which current body must exceed previous.
+        min_body: Optional minimum absolute current body size.
+        min_body_atr: Optional minimum body multiplier relative to ATR.
+        atr: Optional current Average True Range for volatility scaling.
+        min_body_range_ratio: Optional minimum body-to-range ratio for current candle.
 
     Returns:
         A CandlestickMatch describing the detected pattern, if any.
@@ -186,6 +219,35 @@ def detect_engulfing(
     curr_body_ratio = curr_body / curr_range
 
     if prev_body <= _DECIMAL_ZERO:
+        return CandlestickMatch(
+            matched=False,
+            side=None,
+            pattern_name="none",
+            rejection_level=_DECIMAL_ZERO,
+            body_ratio=curr_body_ratio,
+            wick_ratio=_DECIMAL_ZERO,
+        )
+
+    effective_min_body = min_body
+    if (
+        effective_min_body is None
+        and min_body_atr is not None
+        and atr is not None
+        and atr > _DECIMAL_ZERO
+    ):
+        effective_min_body = min_body_atr * atr
+
+    if effective_min_body is not None and curr_body < effective_min_body:
+        return CandlestickMatch(
+            matched=False,
+            side=None,
+            pattern_name="none",
+            rejection_level=_DECIMAL_ZERO,
+            body_ratio=curr_body_ratio,
+            wick_ratio=_DECIMAL_ZERO,
+        )
+
+    if min_body_range_ratio is not None and curr_body_ratio < min_body_range_ratio:
         return CandlestickMatch(
             matched=False,
             side=None,

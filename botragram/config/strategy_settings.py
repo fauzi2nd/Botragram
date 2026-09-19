@@ -270,6 +270,13 @@ class StrategySettings:
     pier_require_trend_filter: bool = True
     pier_min_natr_threshold: Decimal = Decimal("0.0020")
     pier_min_sl_distance_pct: Decimal = Decimal("0.0080")
+    pier_location_tolerance_pct: Decimal = Decimal("0.030")
+    pier_location_atr_multiplier: Decimal | None = None
+    pier_pullback_proximity_pct: Decimal = Decimal("0.006")
+    pier_pullback_atr_multiplier: Decimal | None = None
+    pier_pinbar_min_range_atr: Decimal | None = None
+    pier_engulfing_min_body_atr: Decimal | None = None
+    pier_require_confirmation: bool = False
     pier_filter_account_ratio: bool = True
     pier_max_long_account_ratio: Decimal = Decimal("0.70")
     pier_min_short_account_ratio: Decimal = Decimal("0.30")
@@ -596,6 +603,30 @@ class StrategySettings:
             raise ValueError("pier_min_natr_threshold must not be negative")
         if self.pier_min_sl_distance_pct < Decimal("0"):
             raise ValueError("pier_min_sl_distance_pct must not be negative")
+        if self.pier_location_tolerance_pct < Decimal("0"):
+            raise ValueError("pier_location_tolerance_pct must not be negative")
+        if (
+            self.pier_location_atr_multiplier is not None
+            and self.pier_location_atr_multiplier <= Decimal("0")
+        ):
+            raise ValueError("pier_location_atr_multiplier must be positive")
+        if self.pier_pullback_proximity_pct < Decimal("0"):
+            raise ValueError("pier_pullback_proximity_pct must not be negative")
+        if (
+            self.pier_pullback_atr_multiplier is not None
+            and self.pier_pullback_atr_multiplier <= Decimal("0")
+        ):
+            raise ValueError("pier_pullback_atr_multiplier must be positive")
+        if (
+            self.pier_pinbar_min_range_atr is not None
+            and self.pier_pinbar_min_range_atr <= Decimal("0")
+        ):
+            raise ValueError("pier_pinbar_min_range_atr must be positive")
+        if (
+            self.pier_engulfing_min_body_atr is not None
+            and self.pier_engulfing_min_body_atr <= Decimal("0")
+        ):
+            raise ValueError("pier_engulfing_min_body_atr must be positive")
         if (
             self.pier_macd_fast_period <= 0
             or self.pier_macd_slow_period <= self.pier_macd_fast_period
