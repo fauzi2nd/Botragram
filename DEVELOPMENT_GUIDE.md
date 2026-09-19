@@ -171,15 +171,19 @@ WAJIB ditinjau sebelum file baru dibuat.
 
 ### 5.1 Timeframe Hierarchy & Resolution Precedence
 
-Resolusi timeframe mengikuti hierarki tiga level terpisah yang deterministik:
+Resolusi timeframe mengikuti hierarki terpisah yang deterministik:
 
-1. **Active Strategy Timeframe Override**:
-   Jika `STRATEGY_TIMEFRAME_OVERRIDE_ENABLED=true`, strategi menggunakan `STRATEGY_TIMEFRAME_OVERRIDE`.
-2. **Global Market Interval**:
-   Jika override dinonaktifkan (`false`), strategi menggunakan `GLOBAL_MARKET_INTERVAL` (atau fallback legacy `MARKET_INTERVAL`).
-3. **Project Safe Default**:
-   `Interval.M5` (5m) hanya jika konfigurasi sama sekali tidak tersedia.
-4. **Multi-Timeframe (MTF) Confirmation**:
+1. **CLI Flag (Mode Backtest)**:
+   Argumen `--interval <val>` memiliki prioritas tertinggi saat menjalankan backtest CLI.
+2. **Active Strategy Timeframe (`<STRATEGY>_INTERVAL`)**:
+   Konfigurasi timeframe langsung pada parameter strategi aktif di `.env` (misalnya `PIER_INTERVAL=15m`, `BOTRAGRAM_INTERVAL=5m`, `MORPH_INTERVAL=15m`, `CHOCH_INTERVAL=5m`, dll., mendukung alias `_TIMEFRAME` dan `_TF`).
+3. **Category Interval Fallback**:
+   Fallback level kategori seperti `SCALPING_INTERVAL`, `TREND_INTERVAL`, `SWING_INTERVAL` jika `<STRATEGY>_INTERVAL` spesifik tidak diatur.
+4. **Global Market Interval (`GLOBAL_MARKET_INTERVAL`)**:
+   Jika timeframe spesifik strategi tidak diatur, strategi otomatis fallback ke `GLOBAL_MARKET_INTERVAL` (atau fallback legacy `MARKET_INTERVAL`).
+5. **Project Safe Default**:
+   `Interval.M5` (5m) hanya jika konfigurasi sama sekali tidak tersedia di environment.
+6. **Multi-Timeframe (MTF) Confirmation**:
    `MTF_TIMEFRAME` (misal 15m) adalah timeframe konfirmasi tren terpisah dan DILARANG mengganti atau meng-override strategy timeframe.
 
 Diagram resolusi timeframe:
@@ -191,14 +195,14 @@ Diagram resolusi timeframe:
                                 │
                                 ▼
                   ┌───────────────────────────┐
-                  │ Strategy Override Enabled │
+                  │ <STRATEGY>_INTERVAL set?  │
                   └─────────────┬─────────────┘
                                 │
                      yes ───────┴─────── no
                       │                   │
                       ▼                   ▼
-             STRATEGY_TIMEFRAME       GLOBAL TF
-                  OVERRIDE
+             <STRATEGY>_INTERVAL      GLOBAL TF
+             (e.g. PIER_INTERVAL)
                       │                   │
                       └─────────┬─────────┘
                                 ▼

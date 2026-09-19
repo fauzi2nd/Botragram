@@ -147,10 +147,8 @@ AUTONOMOUS_MAINNET_ENTRY_ENABLED=false
 STRATEGY_TYPE=choch_fvg
 LOG_LEVEL=INFO
 
-# Hierarki Konfigurasi Timeframe
+# Timeframe Konfigurasi
 GLOBAL_MARKET_INTERVAL=5m              # Canonical default/global timeframe market data
-STRATEGY_TIMEFRAME_OVERRIDE_ENABLED=false # false = ikuti global, true = pakai override
-STRATEGY_TIMEFRAME_OVERRIDE=3m         # Timeframe khusus strategi bila override aktif
 MTF_CONFIRMATION_ENABLED=false         # Konfirmasi tren MTF (terpisah & independen)
 MTF_TIMEFRAME=15m                      # Timeframe konfirmasi MTF
 
@@ -172,20 +170,25 @@ DISCOVERY_MAX_UNIVERSE_SYMBOLS=150 # Plafon maksimal universe (fokus koin top-vo
 DISCOVERY_CADENCE_SECONDS=        # Interval jeda scanning (opsional)
 DISCOVERY_CANDLE_DELAY_SECONDS=0.05 # Pacing jeda antar fetch candle (rate limit safety)
 
-# Parameter Khusus SMC / Price Action (choch_fvg)
+# Parameter Khusus Strategi (Timeframe & Indikator per Strategi)
+# CHOCH_INTERVAL=5m               # Timeframe khusus choch_fvg
 # CHOCH_SWING_WINDOW=5            # Window bar swing high/low lookback (default: 5)
 # CHOCH_FVG_LOOKBACK=20           # Window pencarian imbalance/FVG (default: 20)
 # CHOCH_MIN_BODY_RATIO=0.50       # Minimal rasio body candle displacement (default: 0.50)
 # CHOCH_VOLUME_MULTIPLIER=1.20    # Pengali volume candle displacement vs SMA (default: 1.20)
+# PIER_INTERVAL=15m               # Timeframe khusus pinbar_engulfing_ema_rsi
+# BOTRAGRAM_INTERVAL=5m           # Timeframe khusus botragram_origin
 ```
 
 ### Hierarki & Resolusi Timeframe
 
 Resolusi timeframe memiliki single source of truth yang transparan:
-1. `STRATEGY_TIMEFRAME_OVERRIDE` jika `STRATEGY_TIMEFRAME_OVERRIDE_ENABLED=true`.
-2. `GLOBAL_MARKET_INTERVAL` (atau fallback legacy alias `MARKET_INTERVAL`) jika override `false`.
-3. Project safe default (`5m`) bila konfigurasi tidak tersedia.
-4. `MTF_TIMEFRAME` (misal 15m) adalah konfirmasi tren terpisah dan tidak pernah menimpa strategy timeframe.
+1. Argumen CLI `--interval` saat menjalankan backtest (prioritas tertinggi).
+2. Konfigurasi timeframe spesifik strategi aktif di `.env` (misal `PIER_INTERVAL`, `BOTRAGRAM_INTERVAL`, `MORPH_INTERVAL`, `CHOCH_INTERVAL`, dll.).
+3. Konfigurasi kategori (`SCALPING_INTERVAL`, `TREND_INTERVAL`, `SWING_INTERVAL`).
+4. `GLOBAL_MARKET_INTERVAL` (atau fallback legacy `MARKET_INTERVAL`) jika strategi tidak mengatur interval khusus.
+5. Project safe default (`5m`) bila konfigurasi sama sekali tidak tersedia.
+6. `MTF_TIMEFRAME` (misal 15m) adalah konfirmasi tren terpisah dan tidak pernah menimpa strategy timeframe.
 
 ```text
                     ┌────────────────────────┐
@@ -194,14 +197,14 @@ Resolusi timeframe memiliki single source of truth yang transparan:
                                 │
                                 ▼
                   ┌───────────────────────────┐
-                  │ Strategy Override Enabled │
+                  │ <STRATEGY>_INTERVAL set?  │
                   └─────────────┬─────────────┘
                                 │
                      yes ───────┴─────── no
                       │                   │
                       ▼                   ▼
-             STRATEGY_TIMEFRAME       GLOBAL TF
-                  OVERRIDE
+             <STRATEGY>_INTERVAL      GLOBAL TF
+             (e.g. PIER_INTERVAL)
                       │                   │
                       └─────────┬─────────┘
                                 ▼

@@ -45,12 +45,32 @@ def _create_isolated_settings_manager(
     """Create an isolated SettingsManager with clean test environment."""
     monkeypatch.delenv("BOTRAGRAM_ENV_FILE", raising=False)
     monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)
+    monkeypatch.delenv("STRATEGY_TYPE", raising=False)
     monkeypatch.delenv("GLOBAL_MARKET_INTERVAL", raising=False)
     monkeypatch.delenv("MARKET_INTERVAL", raising=False)
     monkeypatch.delenv("STRATEGY_TIMEFRAME_OVERRIDE_ENABLED", raising=False)
     monkeypatch.delenv("STRATEGY_TIMEFRAME_OVERRIDE", raising=False)
     monkeypatch.delenv("MTF_CONFIRMATION_ENABLED", raising=False)
     monkeypatch.delenv("MTF_TIMEFRAME", raising=False)
+    for k in (
+        "PIER_INTERVAL",
+        "PIER_TIMEFRAME",
+        "PIER_TF",
+        "BOTRAGRAM_INTERVAL",
+        "ORIGIN_INTERVAL",
+        "BOTRAGRAM_TIMEFRAME",
+        "BOTRAGRAM_TF",
+        "MORPH_INTERVAL",
+        "MORPH_TIMEFRAME",
+        "MORPH_TF",
+        "CHOCH_INTERVAL",
+        "CHOCH_TIMEFRAME",
+        "CHOCH_TF",
+        "SCALPING_INTERVAL",
+        "TREND_INTERVAL",
+        "SWING_INTERVAL",
+    ):
+        monkeypatch.delenv(k, raising=False)
 
     for key, value in env_vars.items():
         monkeypatch.setenv(key, value)
@@ -271,3 +291,164 @@ def test_case_g_explicit_cli_backtest_interval_precedence(
         default_interval=settings.effective_strategy_interval,
     )
     assert request_omitted.interval is Interval.M3
+
+
+def test_strategy_specific_interval_pier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """PIER_INTERVAL configures pinbar_engulfing_ema_rsi timeframe."""
+    manager = _create_isolated_settings_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        env_vars={
+            "STRATEGY_TYPE": "pinbar_engulfing_ema_rsi",
+            "GLOBAL_MARKET_INTERVAL": "5m",
+            "PIER_INTERVAL": "3m",
+        },
+    )
+    settings = manager.load()
+
+    assert settings.market.interval is Interval.M5
+    assert settings.effective_strategy_interval is Interval.M3
+    assert settings.strategy_interval_source == "PIER_INTERVAL"
+
+
+def test_strategy_specific_interval_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """PIER_TIMEFRAME and PIER_TF are recognized aliases."""
+    for alias_key in ("PIER_TIMEFRAME", "PIER_TF"):
+        manager = _create_isolated_settings_manager(
+            monkeypatch=monkeypatch,
+            tmp_path=tmp_path,
+            env_vars={
+                "STRATEGY_TYPE": "pinbar_engulfing_ema_rsi",
+                "GLOBAL_MARKET_INTERVAL": "5m",
+                alias_key: "15m",
+            },
+        )
+        settings = manager.load()
+        assert settings.effective_strategy_interval is Interval.M15
+        assert settings.strategy_interval_source == alias_key
+
+
+def test_strategy_specific_interval_botragram_origin(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """BOTRAGRAM_INTERVAL and ORIGIN_INTERVAL configure botragram_origin."""
+    for key in ("BOTRAGRAM_INTERVAL", "ORIGIN_INTERVAL", "BOTRAGRAM_TF"):
+        manager = _create_isolated_settings_manager(
+            monkeypatch=monkeypatch,
+            tmp_path=tmp_path,
+            env_vars={
+                "STRATEGY_TYPE": "botragram_origin",
+                "GLOBAL_MARKET_INTERVAL": "5m",
+                key: "1m",
+            },
+        )
+        settings = manager.load()
+        assert settings.effective_strategy_interval is Interval.M1
+        assert settings.strategy_interval_source == key
+
+
+def test_strategy_specific_fallback_to_global(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """When strategy interval is unset, it falls back to GLOBAL_MARKET_INTERVAL."""
+    manager = _create_isolated_settings_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        env_vars={
+            "STRATEGY_TYPE": "pinbar_engulfing_ema_rsi",
+            "GLOBAL_MARKET_INTERVAL": "5m",
+        },
+    )
+    settings = manager.load()
+
+    assert settings.market.interval is Interval.M5
+    assert settings.effective_strategy_interval is Interval.M5
+    assert settings.strategy_interval_source == "global"
+
+
+def test_strategy_specific_does_not_leak_to_other_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """PIER_INTERVAL should not affect botragram_origin when active."""
+    manager = _create_isolated_settings_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        env_vars={
+            "STRATEGY_TYPE": "botragram_origin",
+            "GLOBAL_MARKET_INTERVAL": "5m",
+            "PIER_INTERVAL": "3m",
+        },
+    )
+    settings = manager.load()
+
+    # Active strategy is botragram_origin, so PIER_INTERVAL is ignored.
+    assert settings.effective_strategy_interval is Interval.M5
+    assert settings.strategy_interval_source == "global"
+
+
+def test_category_interval_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Category-level intervals (SCALPING, TREND, SWING) apply to strategies."""
+    # Scalping
+    mgr_scalp = _create_isolated_settings_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        env_vars={
+            "STRATEGY_TYPE": "ema_scalping",
+            "GLOBAL_MARKET_INTERVAL": "5m",
+            "SCALPING_INTERVAL": "1m",
+        },
+    )
+    assert mgr_scalp.load().effective_strategy_interval is Interval.M1
+
+    # Trend
+    mgr_trend = _create_isolated_settings_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        env_vars={
+            "STRATEGY_TYPE": "ema_cross",
+            "GLOBAL_MARKET_INTERVAL": "5m",
+            "TREND_INTERVAL": "30m",
+        },
+    )
+    assert mgr_trend.load().effective_strategy_interval is Interval.M30
+
+    # Swing
+    mgr_swing = _create_isolated_settings_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        env_vars={
+            "STRATEGY_TYPE": "macd_swing",
+            "GLOBAL_MARKET_INTERVAL": "5m",
+            "SWING_INTERVAL": "4h",
+        },
+    )
+    assert mgr_swing.load().effective_strategy_interval is Interval.H4
+
+
+def test_invalid_strategy_interval_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Invalid interval string for a strategy fails closed at startup."""
+    manager = _create_isolated_settings_manager(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        env_vars={
+            "STRATEGY_TYPE": "pinbar_engulfing_ema_rsi",
+            "PIER_INTERVAL": "invalid_interval",
+        },
+    )
+    with pytest.raises(ValueError, match="PIER_INTERVAL"):
+        manager.load()

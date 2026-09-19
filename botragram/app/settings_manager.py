@@ -508,6 +508,24 @@ class SettingsManager:
         """Load strategy settings with strict optional environment selection."""
         environment = self._environment_provider
         raw_strategy_type = environment.get_strategy_type()
+        strategy_type = (
+            self._parse_enum(
+                enum_type=StrategyType,
+                raw_value=raw_strategy_type,
+                setting_name="STRATEGY_TYPE",
+            )
+            if raw_strategy_type
+            else StrategyType.EMA_CROSS
+        )
+        raw_strat_interval, strat_interval_source = environment.get_strategy_interval(
+            strategy_type
+        )
+        strategy_interval: Interval | None = None
+        if raw_strat_interval and raw_strat_interval.strip():
+            strategy_interval = self._parse_market_interval(
+                raw_value=raw_strat_interval.strip(),
+                setting_name=strat_interval_source,
+            )
         strategy_override_enabled = (
             environment.get_strategy_timeframe_override_enabled()
         )
@@ -635,14 +653,10 @@ class SettingsManager:
             self._environment_provider.get_account_ratio_htf_period()
         )
         return StrategySettings(
-            strategy_type=(
-                self._parse_enum(
-                    enum_type=StrategyType,
-                    raw_value=raw_strategy_type,
-                    setting_name="STRATEGY_TYPE",
-                )
-                if raw_strategy_type
-                else StrategyType.EMA_CROSS
+            strategy_type=strategy_type,
+            strategy_interval=strategy_interval,
+            strategy_interval_source=(
+                strat_interval_source if strategy_interval is not None else None
             ),
             timeframe_override_enabled=strategy_override_enabled,
             timeframe_override=timeframe_override,

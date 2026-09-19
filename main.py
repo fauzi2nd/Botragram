@@ -349,18 +349,10 @@ async def main() -> None:
         )
         _LOGGER.info(
             "Configuration timeframe: global_market_interval=%s strategy=%s "
-            "strategy_timeframe_override_enabled=%s "
-            "strategy_timeframe_override=%s effective_strategy_interval=%s "
-            "strategy_interval_source=%s mtf_confirmation_enabled=%s "
-            "mtf_timeframe=%s",
+            "effective_strategy_interval=%s strategy_interval_source=%s "
+            "mtf_confirmation_enabled=%s mtf_timeframe=%s",
             settings.market.interval.value,
             settings.strategy.strategy_type.value,
-            settings.strategy.timeframe_override_enabled,
-            (
-                settings.strategy.timeframe_override.value
-                if settings.strategy.timeframe_override is not None
-                else "none"
-            ),
             settings.effective_strategy_interval.value,
             settings.strategy_interval_source,
             settings.strategy.mtf_confirmation_enabled,

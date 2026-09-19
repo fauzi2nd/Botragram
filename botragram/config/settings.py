@@ -63,5 +63,5 @@ class Settings:
 
     @property
     def strategy_interval_source(self) -> str:
-        """Return 'override' or 'global' indicating the source of the strategy TF."""
+        """Return the source name indicating the origin of the strategy timeframe."""
         return self.strategy.interval_source()

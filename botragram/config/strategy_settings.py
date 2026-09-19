@@ -71,6 +71,8 @@ class StrategySettings:
     confirm_htf_account_ratio: bool = False
     account_ratio_htf_period: str = "1h"
 
+    strategy_interval: Interval | None = None
+    strategy_interval_source: str | None = None
     timeframe_override_enabled: bool = False
     timeframe_override: Interval | None = None
 
@@ -80,13 +82,17 @@ class StrategySettings:
         return get_strategy_default_interval(self.strategy_type)
 
     def effective_interval(self, global_interval: Interval) -> Interval:
-        """Resolve effective strategy interval from override or global fallback."""
+        """Resolve effective strategy interval from setting, override, or global."""
+        if self.strategy_interval is not None:
+            return self.strategy_interval
         if self.timeframe_override_enabled and self.timeframe_override is not None:
             return self.timeframe_override
         return global_interval
 
     def interval_source(self) -> str:
-        """Return the source of the strategy interval: 'override' or 'global'."""
+        """Return the source of the strategy interval."""
+        if self.strategy_interval is not None:
+            return self.strategy_interval_source or "strategy_interval"
         if self.timeframe_override_enabled and self.timeframe_override is not None:
             return "override"
         return "global"
