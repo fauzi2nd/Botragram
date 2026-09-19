@@ -729,7 +729,7 @@ def test_get_strategy_message_active_interval_and_dynamic_rrr() -> None:
     )
     assert "Timeframe:</b> <code>3m</code> (Default: <code>5m</code>)" in msg
     assert "Target RRR:</b> <code>1:1.8</code> (SL 1.2% | TP 2.2%)" in msg
-    assert "Risk:</b> Pattern Swing SL & Adaptive TP" in msg
+    assert "Risk:</b> Pattern Swing SL &amp; Adaptive TP" in msg
     assert "1:1.5 Target RRR" not in msg
     assert "Auto Timeframe:</b> 5m" not in msg
 

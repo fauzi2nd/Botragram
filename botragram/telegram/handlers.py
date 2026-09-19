@@ -10,9 +10,16 @@ Python:
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, Final
 
-from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from botragram.constants.telegram import (
     CMD_POSITIONS,
@@ -70,10 +77,24 @@ from botragram.telegram.strategy_switch import (
 )
 
 __all__ = ["register_handlers"]
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+
+
+async def _telegram_error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Log any uncaught exception raised during Telegram update processing."""
+    _LOGGER.exception(
+        "Telegram unhandled exception processing update %r: %s",
+        update,
+        context.error,
+    )
 
 
 def register_handlers(app: Any) -> None:
     """Register command and callback handlers on Telegram app."""
+    app.add_error_handler(_telegram_error_handler)
     app.add_handler(CommandHandler(CMD_START, start_command))
     app.add_handler(CommandHandler(CMD_STATUS, status_command))
     app.add_handler(CommandHandler(CMD_POSITIONS, positions_command))

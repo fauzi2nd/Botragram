@@ -848,10 +848,16 @@ async def strategy_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message:
-        if not is_authorized_update(update=update, context=context):
-            return
+    if not update.message:
+        return
+    if not is_authorized_update(update=update, context=context):
+        return
 
+    logger.info(
+        "strategy_command executing for chat_id=%s",
+        update.effective_chat.id if update.effective_chat else None,
+    )
+    try:
         ctx = _get_context(context)
         fast_period = 9
         slow_period = 21
@@ -861,20 +867,49 @@ async def strategy_command(
             if not ctx.is_autonomous_live
             else True
         )
-        msg = ctx.format_strategy_message(
+        markup = get_strategy_keyboard(
             strategy_name,
-            fast_period,
-            slow_period,
             confirmed=confirmed,
         )
-        await update.message.reply_text(
-            msg,
-            parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_strategy_keyboard(
+        try:
+            msg = ctx.format_strategy_message(
                 strategy_name,
+                fast_period,
+                slow_period,
                 confirmed=confirmed,
-            ),
+            )
+            await update.message.reply_text(
+                msg,
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=markup,
+            )
+            logger.info("strategy_command reply sent successfully")
+            return
+        except Exception:
+            logger.exception(
+                "Failed to send formatted strategy message; "
+                "retrying fallback with plain message"
+            )
+
+        plain_msg = (
+            f"🧠 Strategy Selector\n\n"
+            f"Strategy: {strategy_name}\n"
+            f"Pilih strategy trading pada tombol di bawah:"
         )
+        await update.message.reply_text(
+            plain_msg,
+            reply_markup=markup,
+        )
+        logger.info("strategy_command fallback reply sent")
+    except Exception:
+        logger.exception("strategy_command failed unexpectedly")
+        try:
+            await update.message.reply_text(
+                "🧠 <b>Strategy</b>\n\nGagal memuat menu strategi.",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+        except Exception:
+            logger.exception("strategy_command emergency reply failed")
 
 
 async def interval_command(
@@ -1174,7 +1209,7 @@ async def menu_message_handler(
         await settings_command(update, context)
     elif action == MENU_EXCHANGE:
         await exchange_command(update, context)
-    elif action == MENU_STRATEGY:
+    elif action in {MENU_STRATEGY, "🧠 Strategy", "Strategy", "/strategy"}:
         await strategy_command(update, context)
     elif action == MENU_INTERVAL:
         await interval_command(update, context)

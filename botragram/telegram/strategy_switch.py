@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from html import escape
-from typing import Protocol, runtime_checkable
+from typing import Final, Protocol, runtime_checkable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -16,6 +17,8 @@ from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
 from botragram.telegram.keyboards import get_strategy_keyboard
 
 __all__ = ["strategy_switch_callback", "strategy_switch_command"]
+
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 _STRATEGY_CALLBACK_PREFIX = "cb_strategy_"
 _FAST_PERIOD = 9
@@ -114,20 +117,59 @@ async def strategy_switch_command(
     if update.message is None:
         return
     if not is_authorized_update(update=update, context=context):
+        _LOGGER.warning(
+            "Unauthorized access attempt to strategy_switch_command: chat_id=%s",
+            update.effective_chat.id if update.effective_chat else None,
+        )
         return
 
-    bot_context = _get_context(context)
-    strategy = _current_strategy(bot_context)
-    await update.message.reply_text(
-        bot_context.format_strategy_message(
-            strategy.value,
-            _FAST_PERIOD,
-            _SLOW_PERIOD,
-            confirmed=True,
-        ),
-        parse_mode=DEFAULT_PARSE_MODE,
-        reply_markup=get_strategy_keyboard(strategy.value, confirmed=True),
+    _LOGGER.info(
+        "strategy_switch_command executing for chat_id=%s",
+        update.effective_chat.id if update.effective_chat else None,
     )
+    try:
+        bot_context = _get_context(context)
+        strategy = _current_strategy(bot_context)
+        keyboard = get_strategy_keyboard(strategy.value, confirmed=True)
+        try:
+            msg = bot_context.format_strategy_message(
+                strategy.value,
+                _FAST_PERIOD,
+                _SLOW_PERIOD,
+                confirmed=True,
+            )
+            await update.message.reply_text(
+                msg,
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=keyboard,
+            )
+            _LOGGER.info("strategy_switch_command reply sent successfully")
+            return
+        except Exception:
+            _LOGGER.exception(
+                "Failed to send formatted strategy message; "
+                "retrying fallback without parse_mode"
+            )
+
+        plain_msg = (
+            f"🧠 Strategy Selector\n\n"
+            f"Strategy: {strategy.value}\n"
+            f"Pilih strategy trading pada tombol di bawah:"
+        )
+        await update.message.reply_text(
+            plain_msg,
+            reply_markup=keyboard,
+        )
+        _LOGGER.info("strategy_switch_command fallback reply sent")
+    except Exception:
+        _LOGGER.exception("strategy_switch_command failed unexpectedly")
+        try:
+            await update.message.reply_text(
+                "🧠 <b>Strategy Selector</b>\n\nGagal memuat menu strategi.",
+                parse_mode=DEFAULT_PARSE_MODE,
+            )
+        except Exception:
+            _LOGGER.exception("strategy_switch_command emergency reply failed")
 
 
 async def strategy_switch_callback(
@@ -138,19 +180,50 @@ async def strategy_switch_callback(
     query = update.callback_query
     if query is None or not is_authorized_update(update=update, context=context):
         return
+
+    try:
+        await query.answer()
+    except Exception:
+        _LOGGER.debug("query.answer() failed or already answered", exc_info=True)
+
     if (query.data or "") == "cb_strategy":
-        bot_context = _get_context(context)
-        strategy = _current_strategy(bot_context)
-        await query.edit_message_text(
-            bot_context.format_strategy_message(
-                strategy.value,
-                _FAST_PERIOD,
-                _SLOW_PERIOD,
-                confirmed=True,
-            ),
-            parse_mode=DEFAULT_PARSE_MODE,
-            reply_markup=get_strategy_keyboard(strategy.value, confirmed=True),
+        _LOGGER.info(
+            "cb_strategy callback tapped by chat_id=%s",
+            update.effective_chat.id if update.effective_chat else None,
         )
+        try:
+            bot_context = _get_context(context)
+            strategy = _current_strategy(bot_context)
+            await query.edit_message_text(
+                bot_context.format_strategy_message(
+                    strategy.value,
+                    _FAST_PERIOD,
+                    _SLOW_PERIOD,
+                    confirmed=True,
+                ),
+                parse_mode=DEFAULT_PARSE_MODE,
+                reply_markup=get_strategy_keyboard(strategy.value, confirmed=True),
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Failed to edit message in cb_strategy callback; retrying plain text"
+            )
+            try:
+                bot_context = _get_context(context)
+                strategy = _current_strategy(bot_context)
+                plain_msg = (
+                    f"🧠 Strategy Selector\n\n"
+                    f"Strategy: {strategy.value}\n"
+                    f"Pilih strategy trading pada tombol di bawah:"
+                )
+                await query.edit_message_text(
+                    plain_msg,
+                    reply_markup=get_strategy_keyboard(strategy.value, confirmed=True),
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Emergency fallback edit_message_text failed in cb_strategy"
+                )
         return
 
     raw_strategy = (query.data or "").removeprefix(_STRATEGY_CALLBACK_PREFIX)

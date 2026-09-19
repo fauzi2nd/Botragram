@@ -200,7 +200,7 @@ async def strategy_flatten_confirm_callback(
         return
 
     await query.edit_message_text(
-        "⏳ <b>Close All & Strategy sedang diproses.</b>\n\n"
+        "⏳ <b>Close All &amp; Strategy sedang diproses.</b>\n\n"
         f"Target: <code>{target.value}</code>\n"
         "Posisi ditutup satu per satu dan direkonsiliasi. Strategy hanya akan "
         "diterapkan setelah portfolio terbukti flat. Bot tetap <b>PAUSED</b>.",

@@ -198,7 +198,9 @@ async def menu_message_handler_with_runtime_refresh(
         return
 
     action = update.message.text or ""
-    if action == MENU_STRATEGY:
+    logger.info("menu_message_handler_with_runtime_refresh received: action=%r", action)
+    cleaned_action = action.strip()
+    if cleaned_action in {MENU_STRATEGY, "🧠 Strategy", "Strategy", "/strategy"}:
         await strategy_switch_command(update, context)
         return
     if action not in {MENU_START, MENU_RESUME, MENU_PAUSE}:

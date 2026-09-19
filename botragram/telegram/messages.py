@@ -990,10 +990,14 @@ def get_strategy_message(
             lines.append("<b>Swing Window:</b> 5")
             lines.append("<b>Volume Multiplier:</b> 1.2x")
         case StrategyType.MORPH:
-            lines.append("<b>Concept:</b> Market Orderflow Regime & Price-Hunt (MORPH)")
-            lines.append("<b>Structure:</b> Swing Liquidity Sweep & FVG Retest")
+            lines.append(
+                "<b>Concept:</b> Market Orderflow Regime &amp; Price-Hunt (MORPH)"
+            )
+            lines.append("<b>Structure:</b> Swing Liquidity Sweep &amp; FVG Retest")
             lines.append("<b>Trigger:</b> Pinbar / Engulfing Rejection")
-            lines.append("<b>Flow & Volatility:</b> Volume SMA + Open Interest Buildup")
+            lines.append(
+                "<b>Flow &amp; Volatility:</b> Volume SMA + Open Interest Buildup"
+            )
             lines.append("<b>Filters:</b> Macro Trend (EMA 200/50) + NATR Gate")
         case StrategyType.CHOCH_RSI_BB_HYBRID:
             lines.append("<b>Concept:</b> SMC Structure + RSI/BB Hybrid")
@@ -1029,17 +1033,18 @@ def get_strategy_message(
         case StrategyType.NY_4H_RANGE_SCALPING:
             lines.append("<b>Concept:</b> NY 4H Range Scalping (EST/EDT)")
             lines.append("<b>Anchor:</b> 1st Closed 4H Candle (00:00-04:00 NY)")
-            lines.append("<b>Trigger:</b> 5M Breakout & Re-entry Confirmation")
-            lines.append("<b>Risk:</b> Swing SL & 1:2 Minimum Risk-Reward")
+            lines.append("<b>Trigger:</b> 5M Breakout &amp; Re-entry Confirmation")
+            lines.append("<b>Risk:</b> Swing SL &amp; 1:2 Minimum Risk-Reward")
         case StrategyType.BOTRAGRAM_ORIGIN:
             lines.append(
                 "<b>Concept:</b> Botragram Origin (Candlestick Pattern Engine)"
             )
             lines.append(
-                "<b>Patterns:</b> Single, Dual & Triple Japanese Candlestick Patterns"
+                "<b>Patterns:</b> Single, Dual &amp; Triple "
+                "Japanese Candlestick Patterns"
             )
             lines.append("<b>Trigger:</b> Rejection / Momentum / Reversal Confluence")
-            lines.append("<b>Risk:</b> Pattern Swing SL & Adaptive TP")
+            lines.append("<b>Risk:</b> Pattern Swing SL &amp; Adaptive TP")
         case _:
             lines.append(f"<b>Fast EMA period:</b> {fast_period}")
             lines.append(f"<b>Slow EMA period:</b> {slow_period}")
@@ -1294,7 +1299,7 @@ def get_tpsl_ratio_message(
     )
 
     return (
-        "🎯 <b>Konfigurasi TP / SL & Risk:Reward Ratio</b>\n\n"
+        "🎯 <b>Konfigurasi TP / SL &amp; Risk:Reward Ratio</b>\n\n"
         f"• <b>Status:</b> {pause_status}\n"
         f"• <b>Stop Loss (SL):</b> <b>{sl_pct_display:.2f}%</b>\n"
         f"• <b>Take Profit (TP):</b> <b>{tp_pct_display:.2f}%</b>\n"

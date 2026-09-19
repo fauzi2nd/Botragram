@@ -409,7 +409,12 @@ class BotContext:
     def active_interval(self) -> Interval:
         """Return the active candle interval from runtime control or config."""
         control = self.runtime_control
-        return control.interval if control is not None else self.configured_interval
+        if control is not None:
+            try:
+                return control.interval
+            except RuntimeError:
+                return self.configured_interval
+        return self.configured_interval
 
     def get_strategy_exit_rates(
         self,
