@@ -68,6 +68,7 @@ def _create_fixture(
     initial_balance: Decimal = Decimal("10000"),
     max_open_positions: int = 1,
     notification_publisher: NotificationPublisher | None = None,
+    close_on_opposite_signal: bool = False,
 ) -> PaperFixture:
     """Create an isolated paper portfolio."""
     orders = MemoryOrderRepository()
@@ -85,6 +86,7 @@ def _create_fixture(
         pnl_engine=PnLEngine(),
         notification_publisher=notification_publisher,
         initial_balance=initial_balance,
+        close_on_opposite_signal=close_on_opposite_signal,
     )
     return PaperFixture(
         service=service,
@@ -324,6 +326,100 @@ async def _run_duplicate_symbol_test() -> None:
     assert duplicate_result.reason == "Paper position remains open"
     assert await fixture.orders.count() == 1
     assert await fixture.positions.count() == 1
+
+
+def test_paper_service_keeps_position_open_on_opposite_signal_by_default() -> None:
+    """Ensure opposite entry signals do not prematurely close open positions."""
+    asyncio.run(_run_opposite_signal_parity_test())
+
+
+async def _run_opposite_signal_parity_test() -> None:
+    """Verify default live-parity ignores opposite entry signals."""
+    fixture = _create_fixture()
+    entry_result = await fixture.service.execute(
+        signal=_create_signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("100"),
+        ),
+    )
+    assert entry_result.executed
+    assert await fixture.positions.count() == 1
+
+    # Price 101 is strictly between Stop Loss (98) and Take Profit (104)
+    opposite_signal = _create_signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("101"),
+        generated_at=_NOW + timedelta(minutes=1),
+    )
+    opposite_result = await fixture.service.execute(signal=opposite_signal)
+
+    # Must NOT close the long position
+    assert not opposite_result.executed
+    assert opposite_result.reason == "Paper position remains open"
+    assert await fixture.orders.count() == 1
+    assert await fixture.positions.count() == 1
+
+
+def test_paper_service_closes_position_on_opposite_signal_when_enabled() -> None:
+    """Allow optional reversal exit when close_on_opposite_signal is True."""
+    asyncio.run(_run_opposite_signal_reversal_test())
+
+
+async def _run_opposite_signal_reversal_test() -> None:
+    """Verify position closes on opposite signal if explicitly requested."""
+    fixture = _create_fixture(close_on_opposite_signal=True)
+    await fixture.service.execute(
+        signal=_create_signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("100"),
+        ),
+    )
+
+    opposite_signal = _create_signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("101"),
+        generated_at=_NOW + timedelta(minutes=1),
+    )
+    opposite_result = await fixture.service.execute(signal=opposite_signal)
+
+    assert opposite_result.executed
+    assert opposite_result.reason == "Paper long position closed by signal"
+    assert await fixture.positions.count() == 0
+    assert await fixture.orders.count() == 2
+
+
+def test_paper_service_closes_position_on_explicit_close_signal() -> None:
+    """Ensure explicit CLOSE_LONG/CLOSE_SHORT closes positions regardless of flag."""
+    asyncio.run(_run_explicit_close_signal_test())
+
+
+async def _run_explicit_close_signal_test() -> None:
+    """Verify CLOSE_LONG cleanly exits the position."""
+    fixture = _create_fixture(close_on_opposite_signal=False)
+    await fixture.service.execute(
+        signal=_create_signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("100"),
+        ),
+    )
+
+    explicit_close_signal = _create_signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.CLOSE_LONG,
+        price=Decimal("101"),
+        generated_at=_NOW + timedelta(minutes=1),
+    )
+    close_result = await fixture.service.execute(signal=explicit_close_signal)
+
+    assert close_result.executed
+    assert close_result.reason == "Paper long position closed by signal"
+    assert await fixture.positions.count() == 0
+    assert await fixture.orders.count() == 2
 
 
 def test_paper_service_serializes_concurrent_capacity_checks() -> None:

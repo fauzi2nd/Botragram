@@ -107,6 +107,7 @@ class BacktestEngine:
             initial_balance=request.initial_balance,
             fee_rate=request.fee_rate,
             slippage_rate=request.slippage_rate,
+            close_on_opposite_signal=request.close_on_opposite_signal,
         )
         exit_reasons: list[str] = []
         peak_equity = request.initial_balance

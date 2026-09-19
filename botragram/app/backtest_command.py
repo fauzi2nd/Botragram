@@ -114,6 +114,12 @@ def parse_backtest_request(
         default=None,
         help="Optional path to SQLite database containing historical candles",
     )
+    parser.add_argument(
+        "--close-on-opposite-signal",
+        action="store_true",
+        default=False,
+        help="Close existing open position when an opposite entry signal occurs",
+    )
 
     namespace = parser.parse_args(tuple(arguments[1:]))
 
@@ -147,6 +153,7 @@ def parse_backtest_request(
         max_candles=_parse_integer(namespace=namespace, name="max_candles"),
         data_source=_required_string(namespace=namespace, name="data_source"),
         database_path=database_path,
+        close_on_opposite_signal=bool(namespace.close_on_opposite_signal),
     )
 
 

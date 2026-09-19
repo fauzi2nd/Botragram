@@ -18,7 +18,7 @@ from __future__ import annotations
 # =============================================================================
 import asyncio
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -120,6 +120,40 @@ class SellThenHoldStrategy(BaseStrategy):
             strategy_name=self.strategy_type.value,
             generated_at=candle.close_time,
             reason="Deterministic backtest short signal",
+        )
+
+
+class AlternatingSignalStrategy(BaseStrategy):
+    """Emit BUY on first candle, SELL on second candle, and HOLD afterwards."""
+
+    @property
+    def strategy_type(self) -> StrategyType:
+        """Return the strategy profile used for risk levels."""
+        return StrategyType.EMA_SCALPING
+
+    @property
+    def minimum_candles(self) -> int:
+        """Allow an immediate signal from the first replay candle."""
+        return 1
+
+    def generate_signal(self, *, candles: Sequence[Candle]) -> Signal:
+        """Generate alternating directional signals."""
+        self.validate_candles(candles=candles)
+        candle = candles[-1]
+        if len(candles) == 1:
+            sig = SignalType.BUY
+        elif len(candles) == 2:
+            sig = SignalType.SELL
+        else:
+            sig = SignalType.HOLD
+        return Signal(
+            symbol=candle.symbol,
+            signal_type=sig,
+            price=candle.close_price,
+            confidence=Decimal("1"),
+            strategy_name=self.strategy_type.value,
+            generated_at=candle.close_time,
+            reason="Alternating backtest signal",
         )
 
 
@@ -735,3 +769,79 @@ async def test_backtest_command_runs_with_local_resampled_data() -> None:
 
     finally:
         db_file.unlink(missing_ok=True)
+
+
+def test_backtest_cli_parses_close_on_opposite_signal() -> None:
+    """Verify CLI parses --close-on-opposite-signal into BacktestRequest."""
+    base_args = (
+        "backtest",
+        "--market-type",
+        "futures",
+        "--symbol",
+        "btcusdt",
+        "--interval",
+        "1m",
+        "--strategy",
+        "ema_scalping",
+        "--start",
+        "2026-09-01",
+        "--end",
+        "2026-09-02",
+    )
+    req_default = parse_backtest_request(arguments=base_args)
+    assert req_default.close_on_opposite_signal is False
+
+    req_flag = parse_backtest_request(
+        arguments=(*base_args, "--close-on-opposite-signal"),
+    )
+    assert req_flag.close_on_opposite_signal is True
+
+
+@pytest.mark.asyncio
+async def test_backtest_engine_respects_close_on_opposite_signal_flag() -> None:
+    """Verify BacktestEngine ignores opposite signals by default for live parity."""
+    engine = BacktestEngine(
+        strategy=AlternatingSignalStrategy(),
+        risk_settings=RiskSettings(leverage=10),
+    )
+    candles = (
+        _create_candle(
+            minute=0,
+            open_price="100",
+            high_price="100.1",
+            low_price="99.9",
+            close_price="100",
+        ),
+        _create_candle(
+            minute=1,
+            open_price="100",
+            high_price="100.1",
+            low_price="99.9",
+            close_price="100.05",
+        ),
+        _create_candle(
+            minute=2,
+            open_price="100.05",
+            high_price="100.1",
+            low_price="99.9",
+            close_price="100.02",
+        ),
+    )
+
+    # 1. Default (close_on_opposite_signal=False):
+    # Long position stays open across candle 1 and closes only at end of range
+    res_default = await engine.run(
+        request=replace(_create_request(), close_on_opposite_signal=False),
+        candles=candles,
+    )
+    assert res_default.metrics.total_trades == 1
+    assert res_default.trades[0].reason == "End of backtest range"
+
+    # 2. Enabled (close_on_opposite_signal=True):
+    # Long position closes on candle 1 due to SELL signal
+    res_opposite = await engine.run(
+        request=replace(_create_request(), close_on_opposite_signal=True),
+        candles=candles,
+    )
+    assert res_opposite.metrics.total_trades == 1
+    assert res_opposite.trades[0].reason == "Paper long position closed by signal"

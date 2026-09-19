@@ -95,6 +95,7 @@ class PaperTradingService:
     initial_balance: Decimal = _DEFAULT_INITIAL_BALANCE
     fee_rate: Decimal = _DEFAULT_FEE_RATE
     slippage_rate: Decimal = _DEFAULT_SLIPPAGE_RATE
+    close_on_opposite_signal: bool = False
     _execution_lock: asyncio.Lock = field(
         default_factory=asyncio.Lock,
         init=False,
@@ -891,8 +892,7 @@ class PaperTradingService:
 
         raise ValueError(f"Unsupported paper entry signal: {signal_type.value!r}")
 
-    @staticmethod
-    def _close_reason(*, position: Position, signal: Signal) -> str | None:
+    def _close_reason(self, *, position: Position, signal: Signal) -> str | None:
         """Return the active exit trigger, if any."""
         if position.side is PositionSide.LONG:
             if position.stop_loss is not None and signal.price <= position.stop_loss:
@@ -902,7 +902,9 @@ class PaperTradingService:
                 and signal.price >= position.take_profit
             ):
                 return "Paper take-profit triggered"
-            if signal.signal_type in (SignalType.SELL, SignalType.CLOSE_LONG):
+            if signal.signal_type is SignalType.CLOSE_LONG:
+                return "Paper long position closed by signal"
+            if self.close_on_opposite_signal and signal.signal_type is SignalType.SELL:
                 return "Paper long position closed by signal"
             return None
 
@@ -914,7 +916,9 @@ class PaperTradingService:
                 and signal.price <= position.take_profit
             ):
                 return "Paper take-profit triggered"
-            if signal.signal_type in (SignalType.BUY, SignalType.CLOSE_SHORT):
+            if signal.signal_type is SignalType.CLOSE_SHORT:
+                return "Paper short position closed by signal"
+            if self.close_on_opposite_signal and signal.signal_type is SignalType.BUY:
                 return "Paper short position closed by signal"
             return None
 

@@ -52,6 +52,7 @@ class BacktestRequest:
     max_candles: int = 100_000
     data_source: str = "auto"
     database_path: str | None = None
+    close_on_opposite_signal: bool = False
 
     def __post_init__(self) -> None:
         """Normalize and validate request boundaries."""
