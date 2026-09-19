@@ -72,6 +72,7 @@ def is_backtest_command(arguments: Sequence[str]) -> bool:
 def parse_backtest_request(
     *,
     arguments: Sequence[str],
+    default_interval: Interval | None = None,
 ) -> BacktestRequest:
     """Parse validated CLI arguments into an immutable request."""
     parser = argparse.ArgumentParser(
@@ -82,8 +83,10 @@ def parse_backtest_request(
     parser.add_argument("--symbol", required=True)
     parser.add_argument(
         "--interval",
-        required=True,
+        required=False,
+        default=None,
         choices=tuple(interval.value for interval in Interval),
+        help="Explicit candlestick interval (overrides .env strategy and global TF)",
     )
     parser.add_argument(
         "--strategy",
@@ -130,9 +133,17 @@ def parse_backtest_request(
         else None
     )
 
+    raw_interval: str | None = namespace.interval
+    if raw_interval is not None and raw_interval.strip():
+        resolved_interval = Interval(raw_interval.strip())
+    elif default_interval is not None:
+        resolved_interval = default_interval
+    else:
+        resolved_interval = Interval.M5
+
     return BacktestRequest(
         symbol=_required_string(namespace=namespace, name="symbol"),
-        interval=Interval(_required_string(namespace=namespace, name="interval")),
+        interval=resolved_interval,
         strategy_type=StrategyType(
             _required_string(namespace=namespace, name="strategy")
         ),

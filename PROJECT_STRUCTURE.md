@@ -64,10 +64,10 @@ botragram/
 |   |-- app_settings.py
 |   |-- exchange_settings.py
 |   |-- logging_settings.py
-|   |-- market_settings.py
+|   |-- market_settings.py     # Global market interval (canonical) and discovery configuration
 |   |-- risk_settings.py
-|   |-- settings.py
-|   |-- strategy_settings.py
+|   |-- settings.py            # Authoritative aggregate settings (effective_strategy_interval)
+|   |-- strategy_settings.py   # Strategy parameters and active timeframe override
 |   `-- telegram_settings.py
 |-- constants/
 |   |-- ai.py

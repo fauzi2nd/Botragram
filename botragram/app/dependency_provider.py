@@ -56,7 +56,6 @@ from botragram.constants import (
     BYBIT_TESTNET_SPOT_WEBSOCKET_BASE_URL,
     BYBIT_TESTNET_WEBSOCKET_BASE_URL,
     BYBIT_WEBSOCKET_BASE_URL,
-    get_strategy_default_interval,
 )
 from botragram.engine import (
     OrderEngine,
@@ -287,7 +286,7 @@ class DependencyProvider:
             exchange_type=self._settings.exchange.exchange,
             market_type=self._settings.exchange.market_type,
             symbol=self._settings.market.symbol,
-            interval=self._settings.market.interval,
+            interval=self._settings.effective_strategy_interval,
             strategy_type=self._settings.strategy.strategy_type,
             leverage=self._settings.risk.leverage,
         )
@@ -495,15 +494,15 @@ class DependencyProvider:
                             self._settings.strategy,
                             strategy_type=persisted_strategy,
                         ),
-                        market=replace(
-                            self._settings.market,
-                            interval=get_strategy_default_interval(persisted_strategy),
-                        ),
                     )
                 self._runtime_control.strategy_type = persisted_strategy
-                self._runtime_control.interval = self._settings.market.interval
+                self._runtime_control.interval = (
+                    self._settings.effective_strategy_interval
+                )
             else:
-                self._runtime_control.interval = self._settings.market.interval
+                self._runtime_control.interval = (
+                    self._settings.effective_strategy_interval
+                )
             persisted_leverage = await self.runtime_settings_repository.get_leverage()
             if persisted_leverage is not None:
                 self._settings = replace(

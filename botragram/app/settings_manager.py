@@ -13,9 +13,11 @@ Python:
 # =============================================================================
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Final
 
 # =============================================================================
 # Local Imports
@@ -31,7 +33,6 @@ from botragram.config.settings import Settings
 from botragram.config.strategy_settings import StrategySettings
 from botragram.config.telegram_settings import TelegramSettings
 from botragram.constants import DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
-from botragram.constants.strategy import get_strategy_default_interval
 from botragram.enums import (
     ExchangeEnvironment,
     ExchangeType,
@@ -46,6 +47,8 @@ from botragram.enums import (
 __all__ = [
     "SettingsManager",
 ]
+
+_LOGGER: Final[logging.Logger] = logging.getLogger("botragram.app.settings_manager")
 
 
 # =============================================================================
@@ -217,20 +220,29 @@ class SettingsManager:
         self,
         strategy_type: StrategyType | None = None,
     ) -> MarketSettings:
-        """Load market settings while preserving the strategy's optimal interval."""
+        """Load market settings defining global market timeframe and discovery."""
         environment = self._environment_provider
-        raw_interval = environment.get_market_interval()
+        if environment.has_legacy_market_interval_only():
+            _LOGGER.warning(
+                "Environment variable 'MARKET_INTERVAL' is deprecated; "
+                "use 'GLOBAL_MARKET_INTERVAL' instead."
+            )
+        raw_interval = environment.get_global_market_interval()
         raw_max_universe_symbols = environment.get_discovery_max_universe_symbols()
         raw_discovery_cadence = environment.get_discovery_cadence_seconds()
         raw_candle_delay = environment.get_discovery_candle_delay_seconds()
-        default_interval = (
-            get_strategy_default_interval(strategy_type)
-            if strategy_type is not None
-            else Interval.M15
+        default_interval = Interval.M5
+        setting_name = (
+            "MARKET_INTERVAL"
+            if environment.has_legacy_market_interval_only()
+            else "GLOBAL_MARKET_INTERVAL"
         )
         return MarketSettings(
             interval=(
-                self._parse_market_interval(raw_value=raw_interval)
+                self._parse_market_interval(
+                    raw_value=raw_interval,
+                    setting_name=setting_name,
+                )
                 if raw_interval
                 else default_interval
             ),
@@ -496,6 +508,26 @@ class SettingsManager:
         """Load strategy settings with strict optional environment selection."""
         environment = self._environment_provider
         raw_strategy_type = environment.get_strategy_type()
+        strategy_override_enabled = (
+            environment.get_strategy_timeframe_override_enabled()
+        )
+        raw_strategy_override = environment.get_strategy_timeframe_override()
+        timeframe_override: Interval | None = None
+        if strategy_override_enabled:
+            if not raw_strategy_override or not raw_strategy_override.strip():
+                raise ValueError(
+                    "Environment variable 'STRATEGY_TIMEFRAME_OVERRIDE' cannot "
+                    "be empty when 'STRATEGY_TIMEFRAME_OVERRIDE_ENABLED' is true"
+                )
+            timeframe_override = self._parse_market_interval(
+                raw_value=raw_strategy_override.strip(),
+                setting_name="STRATEGY_TIMEFRAME_OVERRIDE",
+            )
+        elif raw_strategy_override and raw_strategy_override.strip():
+            timeframe_override = self._parse_market_interval(
+                raw_value=raw_strategy_override.strip(),
+                setting_name="STRATEGY_TIMEFRAME_OVERRIDE",
+            )
         invert_signals = environment.get_invert_signals()
         min_signal_confidence = self._parse_decimal(
             raw_value=self._environment_provider.get_min_signal_confidence(),
@@ -612,6 +644,8 @@ class SettingsManager:
                 if raw_strategy_type
                 else StrategyType.EMA_CROSS
             ),
+            timeframe_override_enabled=strategy_override_enabled,
+            timeframe_override=timeframe_override,
             invert_signals=invert_signals,
             min_signal_confidence=min_signal_confidence,
             mtf_confirmation_enabled=mtf_enabled,
@@ -1106,8 +1140,12 @@ class SettingsManager:
                 ) from error
 
     @staticmethod
-    def _parse_market_interval(*, raw_value: str) -> Interval:
-        """Parse a case-sensitive Binance candle interval.
+    def _parse_market_interval(
+        *,
+        raw_value: str,
+        setting_name: str = "GLOBAL_MARKET_INTERVAL",
+    ) -> Interval:
+        """Parse a case-sensitive candle interval.
 
         Raises:
             ValueError: If the configured interval is unsupported.
@@ -1116,8 +1154,7 @@ class SettingsManager:
             return Interval(raw_value)
         except ValueError as error:
             raise ValueError(
-                "Environment variable 'MARKET_INTERVAL' has invalid value "
-                f"{raw_value!r}"
+                f"Environment variable {setting_name!r} has invalid value {raw_value!r}"
             ) from error
 
     @staticmethod

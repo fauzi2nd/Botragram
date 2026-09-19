@@ -48,7 +48,7 @@ class MarketSettings:
 
     base_asset: str = "BTC"
     quote_asset: str = "USDT"
-    interval: Interval = Interval.M15
+    interval: Interval = Interval.M5
     discovery_max_symbols: int = DEFAULT_DISCOVERY_MAX_SYMBOLS
     discovery_universe_limit: int = DEFAULT_DISCOVERY_UNIVERSE_LIMIT
     discovery_max_universe_symbols: int | None = None
@@ -119,3 +119,8 @@ class MarketSettings:
     def symbol(self) -> str:
         """Combined market symbol."""
         return f"{self.base_asset}{self.quote_asset}"
+
+    @property
+    def global_interval(self) -> Interval:
+        """Alias for global market candlestick interval."""
+        return self.interval

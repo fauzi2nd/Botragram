@@ -147,6 +147,13 @@ AUTONOMOUS_MAINNET_ENTRY_ENABLED=false
 STRATEGY_TYPE=choch_fvg
 LOG_LEVEL=INFO
 
+# Hierarki Konfigurasi Timeframe
+GLOBAL_MARKET_INTERVAL=5m              # Canonical default/global timeframe market data
+STRATEGY_TIMEFRAME_OVERRIDE_ENABLED=false # false = ikuti global, true = pakai override
+STRATEGY_TIMEFRAME_OVERRIDE=3m         # Timeframe khusus strategi bila override aktif
+MTF_CONFIRMATION_ENABLED=false         # Konfirmasi tren MTF (terpisah & independen)
+MTF_TIMEFRAME=15m                      # Timeframe konfirmasi MTF
+
 # Parameter Risiko & Portofolio
 MAX_OPEN_POSITIONS=1              # Jumlah maksimal posisi bersamaan
 MAX_POSITION_SIZE_USDT=100        # Plafon maksimal ukuran posisi per trade
@@ -170,6 +177,43 @@ DISCOVERY_CANDLE_DELAY_SECONDS=0.05 # Pacing jeda antar fetch candle (rate limit
 # CHOCH_FVG_LOOKBACK=20           # Window pencarian imbalance/FVG (default: 20)
 # CHOCH_MIN_BODY_RATIO=0.50       # Minimal rasio body candle displacement (default: 0.50)
 # CHOCH_VOLUME_MULTIPLIER=1.20    # Pengali volume candle displacement vs SMA (default: 1.20)
+```
+
+### Hierarki & Resolusi Timeframe
+
+Resolusi timeframe memiliki single source of truth yang transparan:
+1. `STRATEGY_TIMEFRAME_OVERRIDE` jika `STRATEGY_TIMEFRAME_OVERRIDE_ENABLED=true`.
+2. `GLOBAL_MARKET_INTERVAL` (atau fallback legacy alias `MARKET_INTERVAL`) jika override `false`.
+3. Project safe default (`5m`) bila konfigurasi tidak tersedia.
+4. `MTF_TIMEFRAME` (misal 15m) adalah konfirmasi tren terpisah dan tidak pernah menimpa strategy timeframe.
+
+```text
+                    ┌────────────────────────┐
+                    │ GLOBAL_MARKET_INTERVAL │
+                    └───────────┬────────────┘
+                                │
+                                ▼
+                  ┌───────────────────────────┐
+                  │ Strategy Override Enabled │
+                  └─────────────┬─────────────┘
+                                │
+                     yes ───────┴─────── no
+                      │                   │
+                      ▼                   ▼
+             STRATEGY_TIMEFRAME       GLOBAL TF
+                  OVERRIDE
+                      │                   │
+                      └─────────┬─────────┘
+                                ▼
+                     EFFECTIVE STRATEGY TF
+                                │
+                                ▼
+                             STRATEGY
+                                │
+                        ┌───────┴───────┐
+                        ▼               ▼
+                      ENTRY            MTF
+                                    15m/other
 ```
 
 ---

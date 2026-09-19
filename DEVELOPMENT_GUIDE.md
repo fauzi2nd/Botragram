@@ -169,6 +169,50 @@ WAJIB ditinjau sebelum file baru dibuat.
 - `.env.example` hanya berisi placeholder dan WAJIB diperbarui saat environment
   variable publik bertambah atau berubah.
 
+### 5.1 Timeframe Hierarchy & Resolution Precedence
+
+Resolusi timeframe mengikuti hierarki tiga level terpisah yang deterministik:
+
+1. **Active Strategy Timeframe Override**:
+   Jika `STRATEGY_TIMEFRAME_OVERRIDE_ENABLED=true`, strategi menggunakan `STRATEGY_TIMEFRAME_OVERRIDE`.
+2. **Global Market Interval**:
+   Jika override dinonaktifkan (`false`), strategi menggunakan `GLOBAL_MARKET_INTERVAL` (atau fallback legacy `MARKET_INTERVAL`).
+3. **Project Safe Default**:
+   `Interval.M5` (5m) hanya jika konfigurasi sama sekali tidak tersedia.
+4. **Multi-Timeframe (MTF) Confirmation**:
+   `MTF_TIMEFRAME` (misal 15m) adalah timeframe konfirmasi tren terpisah dan DILARANG mengganti atau meng-override strategy timeframe.
+
+Diagram resolusi timeframe:
+
+```text
+                    ┌────────────────────────┐
+                    │ GLOBAL_MARKET_INTERVAL │
+                    └───────────┬────────────┘
+                                │
+                                ▼
+                  ┌───────────────────────────┐
+                  │ Strategy Override Enabled │
+                  └─────────────┬─────────────┘
+                                │
+                     yes ───────┴─────── no
+                      │                   │
+                      ▼                   ▼
+             STRATEGY_TIMEFRAME       GLOBAL TF
+                  OVERRIDE
+                      │                   │
+                      └─────────┬─────────┘
+                                ▼
+                     EFFECTIVE STRATEGY TF
+                                │
+                                ▼
+                             STRATEGY
+                                │
+                        ┌───────┴───────┐
+                        ▼               ▼
+                      ENTRY            MTF
+                                    15m/other
+```
+
 ---
 
 ## 6. Domain Model dan Immutability

@@ -29,6 +29,7 @@ from botragram.config.market_settings import MarketSettings
 from botragram.config.risk_settings import RiskSettings
 from botragram.config.strategy_settings import StrategySettings
 from botragram.config.telegram_settings import TelegramSettings
+from botragram.enums import Interval
 
 __all__ = [
     "Settings",
@@ -54,3 +55,13 @@ class Settings:
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
     ai: AISettings = field(default_factory=AISettings)
+
+    @property
+    def effective_strategy_interval(self) -> Interval:
+        """Return the authoritative effective strategy interval."""
+        return self.strategy.effective_interval(self.market.interval)
+
+    @property
+    def strategy_interval_source(self) -> str:
+        """Return 'override' or 'global' indicating the source of the strategy TF."""
+        return self.strategy.interval_source()

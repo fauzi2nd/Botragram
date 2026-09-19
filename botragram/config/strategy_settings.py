@@ -71,10 +71,25 @@ class StrategySettings:
     confirm_htf_account_ratio: bool = False
     account_ratio_htf_period: str = "1h"
 
+    timeframe_override_enabled: bool = False
+    timeframe_override: Interval | None = None
+
     @property
     def default_interval(self) -> Interval:
         """Return the default optimal candlestick interval for this strategy."""
         return get_strategy_default_interval(self.strategy_type)
+
+    def effective_interval(self, global_interval: Interval) -> Interval:
+        """Resolve effective strategy interval from override or global fallback."""
+        if self.timeframe_override_enabled and self.timeframe_override is not None:
+            return self.timeframe_override
+        return global_interval
+
+    def interval_source(self) -> str:
+        """Return the source of the strategy interval: 'override' or 'global'."""
+        if self.timeframe_override_enabled and self.timeframe_override is not None:
+            return "override"
+        return "global"
 
     # ============================================================================
     # EMA Cross
@@ -373,6 +388,11 @@ class StrategySettings:
 
     def __post_init__(self) -> None:
         """Validate bounded strategy settings."""
+        if self.timeframe_override_enabled and self.timeframe_override is None:
+            raise ValueError(
+                "timeframe_override must not be None when "
+                "timeframe_override_enabled is True"
+            )
         if not self.min_signal_confidence.is_finite():
             raise ValueError("Minimum signal confidence must be finite")
         if not Decimal("0.0") <= self.min_signal_confidence <= Decimal("1.0"):

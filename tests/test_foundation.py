@@ -195,7 +195,7 @@ def test_market_symbol_combines_configured_assets() -> None:
         ("1m", Interval.M1),
         ("7m", Interval.M7),
         ("1M", Interval.MN1),
-        ("", Interval.M15),
+        ("", Interval.M5),
     ),
 )
 def test_settings_manager_loads_configured_market_interval(

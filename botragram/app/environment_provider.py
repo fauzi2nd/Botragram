@@ -88,6 +88,7 @@ from botragram.constants.env import (
     ENV_FILTER_ACCOUNT_RATIO,
     ENV_FILTER_FUNDING_SENTIMENT,
     ENV_GEMINI_API_KEY,
+    ENV_GLOBAL_MARKET_INTERVAL,
     ENV_INVERT_SIGNALS,
     ENV_LEVERAGE,
     ENV_LOG_LEVEL,
@@ -181,6 +182,8 @@ from botragram.constants.env import (
     ENV_SLOT_MARGIN_BUFFER_PCT,
     ENV_SLOT_SIZING_ENABLED,
     ENV_STOP_LOSS_PCT,
+    ENV_STRATEGY_TIMEFRAME_OVERRIDE,
+    ENV_STRATEGY_TIMEFRAME_OVERRIDE_ENABLED,
     ENV_STRATEGY_TYPE,
     ENV_SWING_STOP_LOSS_PCT,
     ENV_SWING_TAKE_PROFIT_PCT,
@@ -1072,9 +1075,37 @@ class EnvironmentProvider:
         """Return the maximum acceptable MARKET bid/ask spread in basis points."""
         return self._get_var(ENV_MAX_SPREAD_BPS, default="20")
 
-    def get_market_interval(self) -> str:
-        """Return the optional configured candle interval."""
+    def get_global_market_interval(self) -> str:
+        """Return the configured global market candle interval with legacy fallback."""
+        canonical = self._get_var(ENV_GLOBAL_MARKET_INTERVAL)
+        if canonical:
+            return canonical
         return self._get_var(ENV_MARKET_INTERVAL)
+
+    def has_legacy_market_interval_only(self) -> bool:
+        """Return True if legacy MARKET_INTERVAL is set without canonical key."""
+        legacy = self._get_var(ENV_MARKET_INTERVAL)
+        canonical = self._get_var(ENV_GLOBAL_MARKET_INTERVAL)
+        return bool(legacy) and not bool(canonical)
+
+    def get_market_interval(self) -> str:
+        """Return the optional configured candle interval.
+
+        This method is preserved for backward compatibility and delegates
+        to get_global_market_interval.
+        """
+        return self.get_global_market_interval()
+
+    def get_strategy_timeframe_override_enabled(self) -> bool:
+        """Return whether active strategy timeframe override is enabled."""
+        return self._get_bool(
+            ENV_STRATEGY_TIMEFRAME_OVERRIDE_ENABLED,
+            default=False,
+        )
+
+    def get_strategy_timeframe_override(self) -> str:
+        """Return the optional active strategy timeframe override string."""
+        return self._get_var(ENV_STRATEGY_TIMEFRAME_OVERRIDE)
 
     def get_discovery_max_universe_symbols(self) -> str:
         """Return the optional ceiling on the rotated ranked discovery universe."""

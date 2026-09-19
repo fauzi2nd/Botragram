@@ -102,6 +102,6 @@ async def test_runtime_strategy_selection_persists_to_database() -> None:
 
     try:
         assert provider2.runtime_control.strategy_type is StrategyType.ADX_TREND
-        assert provider2.runtime_control.interval is Interval.M15
+        assert provider2.runtime_control.interval is Interval.M5
     finally:
         await provider2.close()

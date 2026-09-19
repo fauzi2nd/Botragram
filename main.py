@@ -43,7 +43,6 @@ from botragram.app.backtest_command import (
 )
 from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.config import Settings
-from botragram.constants import get_strategy_default_interval
 from botragram.enums import (
     ExchangeType,
     ExecutionPolicy,
@@ -246,7 +245,7 @@ async def _run_trading(
         runner = TradingRunner(
             executor=dependency_provider.trading_cycle_executor,
             symbol=settings.market.symbol,
-            interval=settings.market.interval,
+            interval=settings.effective_strategy_interval,
             trade_mode=settings.app.trade_mode,
             candle_limit=max(100, minimum_candles),
             runtime_control=dependency_provider.runtime_control,
@@ -288,7 +287,10 @@ async def main() -> None:
     settings = settings_manager.load()
     arguments = tuple(sys.argv[1:])
     if is_backtest_command(arguments):
-        request = parse_backtest_request(arguments=arguments)
+        request = parse_backtest_request(
+            arguments=arguments,
+            default_interval=settings.effective_strategy_interval,
+        )
         configure_logging(settings=settings.logging)
 
         try:
@@ -344,6 +346,25 @@ async def main() -> None:
             settings.app.trade_mode.value,
             settings.market.symbol,
             settings.strategy.strategy_type.value,
+        )
+        _LOGGER.info(
+            "Configuration timeframe: global_market_interval=%s strategy=%s "
+            "strategy_timeframe_override_enabled=%s "
+            "strategy_timeframe_override=%s effective_strategy_interval=%s "
+            "strategy_interval_source=%s mtf_confirmation_enabled=%s "
+            "mtf_timeframe=%s",
+            settings.market.interval.value,
+            settings.strategy.strategy_type.value,
+            settings.strategy.timeframe_override_enabled,
+            (
+                settings.strategy.timeframe_override.value
+                if settings.strategy.timeframe_override is not None
+                else "none"
+            ),
+            settings.effective_strategy_interval.value,
+            settings.strategy_interval_source,
+            settings.strategy.mtf_confirmation_enabled,
+            settings.strategy.mtf_interval.value,
         )
         while True:
             dependency_provider = DependencyProvider(
@@ -415,13 +436,8 @@ async def main() -> None:
                 continue
 
             if isinstance(requested_restart, StrategyType):
-                default_interval = get_strategy_default_interval(requested_restart)
                 settings = replace(
                     settings,
-                    market=replace(
-                        settings.market,
-                        interval=default_interval,
-                    ),
                     strategy=replace(
                         settings.strategy,
                         strategy_type=requested_restart,
@@ -430,10 +446,12 @@ async def main() -> None:
                 settings_manager.validate(settings=settings)
                 session_restart_target = requested_restart
                 _LOGGER.info(
-                    "Application restarting with strategy: %s (interval=%s); "
+                    "Application restarting with strategy: %s "
+                    "(effective_strategy_interval=%s source=%s); "
                     "next_session_paused=true",
                     requested_restart.value,
-                    default_interval.value,
+                    settings.effective_strategy_interval.value,
+                    settings.strategy_interval_source,
                 )
                 continue
 

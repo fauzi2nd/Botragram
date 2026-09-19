@@ -10,7 +10,6 @@ from typing import Protocol
 from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.app.settings_manager import SettingsManager
 from botragram.config import Settings
-from botragram.constants import get_strategy_default_interval
 from botragram.enums import (
     ExchangeType,
     ExecutionPolicy,
@@ -365,13 +364,8 @@ class MarketTypeSwitchService:
         if strategy_type is self.current_strategy_type:
             return False
 
-        default_interval = get_strategy_default_interval(strategy_type)
         candidate = replace(
             self.settings,
-            market=replace(
-                self.settings.market,
-                interval=default_interval,
-            ),
             strategy=replace(
                 self.settings.strategy,
                 strategy_type=strategy_type,
