@@ -1,15 +1,35 @@
-"""Stepped stop loss configuration and runtime behavior tests."""
+"""
+Botragram
 
+Description:
+    Stepped stop loss configuration and runtime behavior tests.
+
+Python:
+    3.14+
+"""
+
+# =============================================================================
+# Future
+# =============================================================================
 from __future__ import annotations
 
+# =============================================================================
+# Standard Library Imports
+# =============================================================================
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+# =============================================================================
+# Third-Party Imports
+# =============================================================================
 import pytest
 
+# =============================================================================
+# Local Imports
+# =============================================================================
 from botragram.app import SettingsManager
 from botragram.app.environment_provider import EnvironmentProvider
 from botragram.config.risk_settings import RiskSettings
@@ -30,9 +50,15 @@ from botragram.services.position_protection_manager import (
 from botragram.storage.memory import MemoryPositionRepository
 from botragram.strategies.base import BaseStrategy
 
+# =============================================================================
+# Constants
+# =============================================================================
 _NOW = datetime(2026, 8, 7, tzinfo=UTC)
 
 
+# =============================================================================
+# Test Doubles
+# =============================================================================
 class BuyThenHoldStrategy(BaseStrategy):
     """Open once and hold so candle protection controls the exit."""
 
@@ -82,6 +108,9 @@ def _create_candle(
     )
 
 
+# =============================================================================
+# Test Cases
+# =============================================================================
 def test_default_stepped_stop_risk_settings() -> None:
     """Verify default values for stepped stop in RiskSettings."""
     settings = RiskSettings()
@@ -379,3 +408,60 @@ async def test_backtest_engine_stepped_stop_disabled() -> None:
     # It remains open until closed by the finalizer at the end of the backtest.
     assert len(result.trades) == 1
     assert result.trades[0].reason == "End of backtest range"
+
+
+@pytest.mark.asyncio
+async def test_backtest_engine_stepped_stop_enabled() -> None:
+    """BacktestEngine arms breakeven stop when stepped_stop_enabled=True."""
+    risk = RiskSettings(
+        leverage=20,
+        scalping_stop_loss_pct=Decimal("0.02"),
+        scalping_take_profit_pct=Decimal("0.06"),
+        stepped_stop_enabled=True,
+    )
+    engine = BacktestEngine(
+        strategy=BuyThenHoldStrategy(),
+        risk_settings=risk,
+    )
+
+    candles = (
+        _create_candle(
+            minute=0,
+            open_price="100",
+            high_price="100.2",
+            low_price="99.9",
+            close_price="100",
+        ),
+        _create_candle(
+            minute=1,
+            open_price="100",
+            # 1.6% move * 20 leverage = 32% ROI (exceeds 30% BE threshold)
+            high_price="101.6",
+            low_price="100",
+            close_price="101.5",
+        ),
+        _create_candle(
+            minute=2,
+            open_price="100.4",
+            high_price="100.5",
+            # Hits BE stop (~100.16) on candle 2 pullback
+            low_price="100.1",
+            close_price="100.3",
+        ),
+    )
+
+    request = BacktestRequest(
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+        market_type=MarketType.FUTURES,
+        start_time=_NOW,
+        end_time=_NOW + timedelta(minutes=3),
+        initial_balance=Decimal("100"),
+    )
+
+    result = await engine.run(request=request, candles=candles)
+
+    assert len(result.trades) == 1
+    assert result.trades[0].reason == "Paper stop-loss triggered"
+    assert result.trades[0].exit_price >= Decimal("100.09")
