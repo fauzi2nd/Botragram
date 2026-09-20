@@ -378,9 +378,22 @@ class SettingsManager:
                 raw_value=environment.get_max_spread_bps(),
                 setting_name="MAX_SPREAD_BPS",
             ),
+            stepped_stop_enabled=environment.get_stepped_stop_enabled(),
+            stepped_stop_thresholds=self._parse_decimal_tuple(
+                raw_value=environment.get_stepped_stop_thresholds(),
+                setting_name="STEPPED_STOP_THRESHOLDS",
+            ),
+            stepped_stop_locked_lag=self._parse_decimal(
+                raw_value=environment.get_stepped_stop_locked_lag(),
+                setting_name="STEPPED_STOP_LOCKED_LAG",
+            ),
             breakeven_roi_threshold=self._parse_decimal(
                 raw_value=environment.get_breakeven_roi_threshold(),
                 setting_name="BREAKEVEN_ROI_THRESHOLD",
+            ),
+            breakeven_fee_buffer=self._parse_decimal(
+                raw_value=environment.get_breakeven_fee_buffer(),
+                setting_name="BREAKEVEN_FEE_BUFFER",
             ),
             partial_tp_enabled=environment.get_partial_tp_enabled(),
             partial_tp_ratio=self._parse_decimal(
@@ -1197,6 +1210,19 @@ class SettingsManager:
             raise ValueError(f"Environment variable {setting_name!r} must be finite")
 
         return value
+
+    @classmethod
+    def _parse_decimal_tuple(
+        cls, *, raw_value: str, setting_name: str
+    ) -> tuple[Decimal, ...]:
+        """Parse comma-separated finite decimals into a tuple."""
+        raw_parts = [part.strip() for part in raw_value.split(",") if part.strip()]
+        if not raw_parts:
+            raise ValueError(f"Environment variable {setting_name!r} cannot be empty")
+        return tuple(
+            cls._parse_decimal(raw_value=part, setting_name=setting_name)
+            for part in raw_parts
+        )
 
     @staticmethod
     def _parse_positive_int(*, raw_value: str, setting_name: str) -> int:

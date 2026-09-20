@@ -73,7 +73,17 @@ class RiskSettings:
     origin_take_profit_pct: Decimal = Decimal("0.045")
 
     # Stepped Position Protection
+    stepped_stop_enabled: bool = True
+    stepped_stop_thresholds: tuple[Decimal, ...] = (
+        Decimal("0.30"),
+        Decimal("0.45"),
+        Decimal("0.60"),
+        Decimal("0.75"),
+        Decimal("0.90"),
+    )
+    stepped_stop_locked_lag: Decimal = Decimal("0.20")
     breakeven_roi_threshold: Decimal = Decimal("0.30")
+    breakeven_fee_buffer: Decimal = Decimal("0.0016")
 
     # Partial Take Profit
     partial_tp_enabled: bool = False
@@ -178,6 +188,38 @@ class RiskSettings:
             or self.breakeven_roi_threshold <= Decimal("0")
         ):
             raise ValueError("breakeven_roi_threshold must be positive and finite")
+
+        if (
+            not self.breakeven_fee_buffer.is_finite()
+            or self.breakeven_fee_buffer < Decimal("0")
+            or self.breakeven_fee_buffer >= Decimal("0.05")
+        ):
+            raise ValueError("breakeven_fee_buffer must be in [0, 0.05)")
+
+        if not self.stepped_stop_thresholds:
+            raise ValueError("stepped_stop_thresholds cannot be empty")
+
+        prev_threshold = Decimal("0")
+        for threshold in self.stepped_stop_thresholds:
+            if not threshold.is_finite() or not (
+                Decimal("0") < threshold < Decimal("1")
+            ):
+                raise ValueError(
+                    "Each stepped_stop_threshold must be strictly between 0 and 1"
+                )
+            if threshold <= prev_threshold:
+                raise ValueError("stepped_stop_thresholds must be strictly increasing")
+            prev_threshold = threshold
+
+        if not self.stepped_stop_locked_lag.is_finite() or not (
+            Decimal("0")
+            < self.stepped_stop_locked_lag
+            < self.stepped_stop_thresholds[0]
+        ):
+            raise ValueError(
+                "stepped_stop_locked_lag must be positive, finite, and strictly "
+                "less than the first stepped stop threshold"
+            )
 
         if self.partial_tp_enabled:
             if not self.partial_tp_ratio.is_finite() or not (

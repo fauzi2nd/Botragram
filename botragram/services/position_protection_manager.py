@@ -80,6 +80,9 @@ class PositionProtectionManager:
     exchange_client: BaseExchangeClient
     position_refresh_seconds: float = _POSITION_REFRESH_SECONDS
     failure_retry_seconds: float = _FAILURE_RETRY_SECONDS
+    stepped_stop_enabled: bool = True
+    stepped_stop_thresholds: tuple[Decimal, ...] = _PROGRESS_THRESHOLDS
+    stepped_stop_locked_lag: Decimal = _LOCKED_PROGRESS_LAG
     breakeven_roi_threshold: Decimal = _BREAKEVEN_ROI_THRESHOLD
     breakeven_fee_buffer: Decimal = _BREAKEVEN_FEE_BUFFER
     partial_tp_enabled: bool = False
@@ -108,6 +111,12 @@ class PositionProtectionManager:
 
         if self.breakeven_fee_buffer < 0:
             raise ValueError("Breakeven fee buffer must be non-negative")
+
+        if not self.stepped_stop_thresholds:
+            raise ValueError("Stepped stop thresholds cannot be empty")
+
+        if self.stepped_stop_locked_lag <= 0:
+            raise ValueError("Stepped stop locked lag must be greater than zero")
 
         if not (_DECIMAL_ZERO < self.partial_tp_ratio < Decimal("1")):
             raise ValueError("Partial TP ratio must be between 0 and 1 exclusive")
@@ -174,6 +183,9 @@ class PositionProtectionManager:
                 ):
                     return
 
+            if not self.stepped_stop_enabled:
+                return
+
             roi = self._calculate_roi(
                 position=position,
                 current_price=ticker.last_price,
@@ -182,6 +194,7 @@ class PositionProtectionManager:
                 progress=progress,
                 roi=roi,
                 breakeven_roi_threshold=self.breakeven_roi_threshold,
+                thresholds=self.stepped_stop_thresholds,
             )
 
             if step <= position.protection_step:
@@ -191,6 +204,8 @@ class PositionProtectionManager:
                 replacement_stop = self._calculate_stop_loss(
                     position=position,
                     step=step,
+                    thresholds=self.stepped_stop_thresholds,
+                    locked_lag=self.stepped_stop_locked_lag,
                     breakeven_fee_buffer=self.breakeven_fee_buffer,
                 )
             except ValueError as err:
@@ -1309,12 +1324,14 @@ class PositionProtectionManager:
         progress: Decimal,
         roi: Decimal,
         breakeven_roi_threshold: Decimal = _BREAKEVEN_ROI_THRESHOLD,
+        thresholds: tuple[Decimal, ...] = _PROGRESS_THRESHOLDS,
     ) -> int:
         """Return the highest crossed protection step number."""
         return RiskEngine.resolve_target_protection_step(
             progress=progress,
             roi=roi,
             breakeven_roi_threshold=breakeven_roi_threshold,
+            thresholds=thresholds,
         )
 
     _resolve_step = resolve_step
@@ -1325,12 +1342,16 @@ class PositionProtectionManager:
         *,
         position: Position,
         step: int,
+        thresholds: tuple[Decimal, ...] = _PROGRESS_THRESHOLDS,
+        locked_lag: Decimal = _LOCKED_PROGRESS_LAG,
         breakeven_fee_buffer: Decimal = _BREAKEVEN_FEE_BUFFER,
     ) -> Decimal:
         """Calculate the profit-lock price for a specific protection step."""
         return RiskEngine.calculate_stepped_stop_loss(
             position=position,
             step=step,
+            thresholds=thresholds,
+            locked_lag=locked_lag,
             breakeven_fee_buffer=breakeven_fee_buffer,
         )
 

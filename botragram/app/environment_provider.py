@@ -44,6 +44,7 @@ from botragram.constants.env import (
     ENV_BITGET_TESTNET,
     ENV_BOTRAGRAM_ENV_FILE,
     ENV_BOTRAGRAM_PROFILE,
+    ENV_BREAKEVEN_FEE_BUFFER,
     ENV_BREAKEVEN_ROI_THRESHOLD,
     ENV_BTC_TREND_EMA_PERIOD,
     ENV_BTC_TREND_FILTER_ENABLED,
@@ -178,6 +179,9 @@ from botragram.constants.env import (
     ENV_SCALPING_TAKE_PROFIT_PCT,
     ENV_SLOT_MARGIN_BUFFER_PCT,
     ENV_SLOT_SIZING_ENABLED,
+    ENV_STEPPED_STOP_ENABLED,
+    ENV_STEPPED_STOP_LOCKED_LAG,
+    ENV_STEPPED_STOP_THRESHOLDS,
     ENV_STOP_LOSS_PCT,
     ENV_STRATEGY_TIMEFRAME_OVERRIDE,
     ENV_STRATEGY_TIMEFRAME_OVERRIDE_ENABLED,
@@ -681,6 +685,24 @@ class EnvironmentProvider:
     def get_breakeven_roi_threshold(self) -> str:
         """Return the minimum ROI threshold to arm breakeven protection."""
         return self._get_var(ENV_BREAKEVEN_ROI_THRESHOLD, default="0.30")
+
+    def get_breakeven_fee_buffer(self) -> str:
+        """Return the fee buffer fraction added to entry price at breakeven."""
+        return self._get_var(ENV_BREAKEVEN_FEE_BUFFER, default="0.0016")
+
+    def get_stepped_stop_enabled(self) -> bool:
+        """Return whether stepped stop loss (SL+ profit lock) is enabled."""
+        return self._get_bool(ENV_STEPPED_STOP_ENABLED, default=True)
+
+    def get_stepped_stop_thresholds(self) -> str:
+        """Return comma-separated TP progress thresholds for stepped stop loss."""
+        return self._get_var(
+            ENV_STEPPED_STOP_THRESHOLDS, default="0.30,0.45,0.60,0.75,0.90"
+        )
+
+    def get_stepped_stop_locked_lag(self) -> str:
+        """Return the locked profit lag behind the current reached step."""
+        return self._get_var(ENV_STEPPED_STOP_LOCKED_LAG, default="0.20")
 
     def get_partial_tp_enabled(self) -> bool:
         """Return whether partial take profit is enabled."""

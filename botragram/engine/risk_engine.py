@@ -134,6 +134,7 @@ class RiskEngine:
         cls,
         *,
         progress: Decimal,
+        thresholds: tuple[Decimal, ...] = PROGRESS_THRESHOLDS,
     ) -> int:
         """Return the highest crossed stepped profit protection step number.
 
@@ -149,7 +150,7 @@ class RiskEngine:
         Leverage-dependent ROI is prohibited as a source of stepped profit progress.
         For independent breakeven policy, see resolve_breakeven_step().
         """
-        tp_steps = sum(progress >= threshold for threshold in PROGRESS_THRESHOLDS)
+        tp_steps = sum(progress >= threshold for threshold in thresholds)
         if tp_steps > 0:
             return tp_steps + 1
         return 0
@@ -177,6 +178,7 @@ class RiskEngine:
         progress: Decimal,
         roi: Decimal,
         breakeven_roi_threshold: Decimal = DEFAULT_BREAKEVEN_ROI_THRESHOLD,
+        thresholds: tuple[Decimal, ...] = PROGRESS_THRESHOLDS,
     ) -> int:
         """Resolve highest crossed protection step combining BE and profit steps.
 
@@ -188,6 +190,7 @@ class RiskEngine:
         )
         profit_step = cls.resolve_protection_step(
             progress=progress,
+            thresholds=thresholds,
         )
         return max(breakeven_step, profit_step)
 
@@ -197,6 +200,8 @@ class RiskEngine:
         *,
         position: Position,
         step: int,
+        thresholds: tuple[Decimal, ...] = PROGRESS_THRESHOLDS,
+        locked_lag: Decimal = LOCKED_PROGRESS_LAG,
         breakeven_fee_buffer: Decimal = DEFAULT_BREAKEVEN_FEE_BUFFER,
     ) -> Decimal:
         """Calculate the profit-lock price for a specific protection step.
@@ -232,10 +237,10 @@ class RiskEngine:
             )
 
         threshold_idx = step - 2
-        if not (0 <= threshold_idx < len(PROGRESS_THRESHOLDS)):
+        if not (0 <= threshold_idx < len(thresholds)):
             raise ValueError(f"Invalid protection step: {step}")
 
-        locked_progress = PROGRESS_THRESHOLDS[threshold_idx] - LOCKED_PROGRESS_LAG
+        locked_progress = thresholds[threshold_idx] - locked_lag
         nominal_distance = tp_distance * locked_progress
         locked_distance = max(fee_buffer_distance, nominal_distance)
 

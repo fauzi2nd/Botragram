@@ -340,7 +340,7 @@ class BacktestEngine:
             be_stop = RiskEngine.calculate_stepped_stop_loss(
                 position=position,
                 step=1,
-                breakeven_fee_buffer=_BREAKEVEN_FEE_BUFFER,
+                breakeven_fee_buffer=self.risk_settings.breakeven_fee_buffer,
             )
             if position.side is PositionSide.LONG:
                 new_stop = (
@@ -389,6 +389,9 @@ class BacktestEngine:
         if position is None or position.take_profit is None:
             return
 
+        if not self.risk_settings.stepped_stop_enabled:
+            return
+
         candidate_stops: list[Decimal] = []
         tp_distance = abs(position.take_profit - position.entry_price)
         step = position.protection_step
@@ -411,6 +414,7 @@ class BacktestEngine:
                 progress=progress,
                 roi=roi,
                 breakeven_roi_threshold=self.risk_settings.breakeven_roi_threshold,
+                thresholds=self.risk_settings.stepped_stop_thresholds,
             )
             if resolved_step > position.protection_step:
                 step = resolved_step
@@ -418,7 +422,9 @@ class BacktestEngine:
                     stop_price = RiskEngine.calculate_stepped_stop_loss(
                         position=position,
                         step=step,
-                        breakeven_fee_buffer=_BREAKEVEN_FEE_BUFFER,
+                        thresholds=self.risk_settings.stepped_stop_thresholds,
+                        locked_lag=self.risk_settings.stepped_stop_locked_lag,
+                        breakeven_fee_buffer=self.risk_settings.breakeven_fee_buffer,
                     )
                     candidate_stops.append(stop_price)
                 except ValueError as err:
