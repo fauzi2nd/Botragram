@@ -607,6 +607,42 @@ python -m pytest tests/test_partial_tp_hardening.py -q
 - Workflow mengevaluasi seluruh gate hingga selesai agar audit report komprehensif selalu tersedia pada log sebelum status akhir diputuskan.
 - `.github/workflows/release-gate.yml` adalah **satu-satunya** CI gate yang aktif. Tidak ada workflow supplemental lain.
 
+### 19.1 Zero-Tolerance Gate Policy
+
+Release certification bersifat **binary dan zero-tolerance**. Sebuah perubahan
+hanya boleh dinyatakan PASS apabila seluruh mandatory gate benar-benar selesai
+dan menghasilkan status **success**.
+
+WAJIB dipenuhi pada local gate maupun GitHub Release Gate:
+
+- **0 error**.
+- **0 warning** yang berasal dari source code, test, configuration, atau quality
+  tooling proyek.
+- **0 diagnostic suppression/ignore baru** yang menyembunyikan error atau warning,
+  termasuk shortcut seperti `# type: ignore`, `# noqa`, `# pyright: ignore`, atau
+  padanan tool lain, kecuali pengecualian yang sudah ada dan tidak diubah sebagai
+  bagian dari perubahan tersebut.
+- **0 skipped**, **cancelled**, **timed_out**, **neutral**, atau outcome non-success
+  pada mandatory gate.
+- Tidak boleh memakai suppression atau konfigurasi yang menonaktifkan diagnostic
+  hanya agar gate terlihat lulus.
+- Semua mandatory command harus benar-benar dieksekusi; tidak ada gate yang boleh
+  dianggap PASS karena tool tidak terpasang, command tidak dijalankan, atau hasilnya
+  tidak tersedia.
+- Jika workflow menggunakan `continue-on-error` untuk mengumpulkan seluruh hasil,
+  outcome non-`success` tetap **WAJIB** membuat final evaluator gagal (`exit 1`).
+  `continue-on-error` DILARANG diperlakukan sebagai PASS atau sebagai mekanisme
+  untuk menyembunyikan kegagalan.
+- **GitHub Actions workflow conclusion WAJIB `success`**. Final evaluator yang
+  berhasil saja tidak cukup apabila keseluruhan workflow/run berakhir selain
+  `success`.
+- Semua mandatory gate harus terlihat sebagai **PASS** pada release-gate report.
+- Release atau merge DILARANG dilakukan ketika masih ada error, warning, suppressed
+  diagnostic, skipped gate, atau outcome non-success yang belum diperbaiki.
+
+Aturan ini berlaku untuk perubahan source, test, configuration, documentation,
+workflow/CI, dan tooling yang dapat memengaruhi release certification.
+
 Kriteria lulus:
 
 - Tidak ada syntax/compile error.
@@ -662,7 +698,11 @@ Perubahan dianggap selesai hanya jika semua item yang relevan terpenuhi:
 - [ ] Type annotation lengkap; tidak ada suppression baru tanpa justifikasi.
 - [ ] Error path, cancellation, dan cleanup resource telah diuji.
 - [ ] Unit/integration/regression test telah ditambahkan atau diperbarui.
-- [ ] Semua quality gate yang tersedia lulus.
+- [ ] Semua quality gate yang tersedia lulus dengan **0 error, 0 warning, 0
+  diagnostic suppression/ignore baru, dan 0 mandatory gate berstatus skipped,
+  cancelled, timed_out, neutral, atau outcome non-success lainnya.
+- [ ] GitHub Actions authoritative release gate berakhir dengan workflow
+  conclusion **success**, bukan hanya final evaluator yang PASS.
 - [ ] Tidak ada secret, debug output, dead code, atau duplicate logic.
 - [ ] Dokumentasi, `.env.example`, export, dan migration diperbarui jika perlu.
 - [ ] Perubahan minimal, mudah ditinjau, dan tidak membawa refactor tak terkait.
