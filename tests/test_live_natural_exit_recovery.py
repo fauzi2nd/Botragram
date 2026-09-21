@@ -1180,6 +1180,7 @@ def _fill(
     realized_pnl: str,
     quantity: str = "885",
     is_liquidation: bool = False,
+    executed_at: datetime = _NOW,
 ) -> Trade:
     """Build one exact Futures fill for lifecycle enrichment."""
     fill_price = Decimal("0.011")
@@ -1195,7 +1196,7 @@ def _fill(
         fee=Decimal("0.1"),
         fee_asset="USDT",
         realized_pnl=Decimal(realized_pnl),
-        executed_at=_NOW,
+        executed_at=executed_at,
         is_liquidation=is_liquidation,
     )
 
@@ -1307,6 +1308,81 @@ async def test_manual_close_recovers_when_protection_history_not_implemented() -
                 side=OrderSide.BUY,
                 realized_pnl="1",
                 quantity="885",
+            ),
+        ),
+        standard_orders=(manual_order,),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert exchange.trade_calls == [(_SYMBOL, 1000)]
+    assert exchange.order_calls == [(_SYMBOL, manual_order.order_id)]
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
+    assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+
+
+@pytest.mark.asyncio
+async def test_manual_close_recovers_when_trade_precedes_position_opened_at() -> None:
+    """Recover manual close when fill timestamp precedes position.opened_at
+    but follows attempt.
+    """
+    attempt_time = datetime(2026, 8, 21, 10, 0, 0, tzinfo=UTC)
+    trade_time = datetime(2026, 8, 21, 11, 0, 0, tzinfo=UTC)
+    skewed_opened_at = datetime(2026, 8, 21, 11, 0, 1, tzinfo=UTC)
+
+    position = _position()
+    position = replace(position, opened_at=skewed_opened_at)
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+
+    attempt = _completed_attempt(position=position)
+    attempt = replace(attempt, created_at=attempt_time)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    manual_order = Order(
+        order_id="manual-exit-clock-skew",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        price=Decimal("2.0"),
+        stop_price=None,
+        created_at=trade_time,
+        updated_at=trade_time,
+        client_order_id="web-manual-close",
+    )
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+                executed_at=attempt_time,
+            ),
+            _fill(
+                trade_id="manual-fill-1",
+                order_id=manual_order.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity=str(position.quantity),
+                executed_at=trade_time,
             ),
         ),
         standard_orders=(manual_order,),

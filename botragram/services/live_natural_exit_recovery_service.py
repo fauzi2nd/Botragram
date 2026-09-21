@@ -386,10 +386,22 @@ class LiveNaturalExitRecoveryService:
             entry_client_order_id=entry_identity,
         ):
             return entry_identity
+        attempt = await self.submission_attempt_repository.get_by_client_order_id(
+            client_order_id=entry_identity,
+        )
+        if (
+            attempt is None
+            or attempt.status is not SubmissionAttemptStatus.COMPLETED
+            or attempt.exchange_order_id is None
+        ):
+            raise RuntimeError(
+                "Natural exit cannot delete an unstaged lifecycle identity"
+            )
         if len(filled_exit_orders) > 1:
             raise RuntimeError(
                 "Natural exit requires exactly one authoritative FILLED exit"
             )
+        threshold_time = min(attempt.created_at, position.opened_at)
         provenance = ClosedPositionProvenance.PROTECTION_ORDER
         close_reason: ClosedPositionReason
         if filled_exit_orders:
@@ -401,6 +413,7 @@ class LiveNaturalExitRecoveryService:
         else:
             recovered_exit = await self._recover_filled_stepped_stop_from_history(
                 position=position,
+                threshold_time=threshold_time,
             )
             if recovered_exit is None:
                 (
@@ -408,6 +421,7 @@ class LiveNaturalExitRecoveryService:
                     is_liquidation,
                 ) = await self._recover_filled_manual_close_from_history(
                     position=position,
+                    threshold_time=threshold_time,
                 )
                 if is_liquidation:
                     close_reason = ClosedPositionReason.LIQUIDATION
@@ -421,17 +435,6 @@ class LiveNaturalExitRecoveryService:
                     position=position,
                     exit_order=exit_order,
                 )
-        attempt = await self.submission_attempt_repository.get_by_client_order_id(
-            client_order_id=entry_identity,
-        )
-        if (
-            attempt is None
-            or attempt.status is not SubmissionAttemptStatus.COMPLETED
-            or attempt.exchange_order_id is None
-        ):
-            raise RuntimeError(
-                "Natural exit cannot delete an unstaged lifecycle identity"
-            )
         await service.stage(
             position=position,
             attempt=attempt,
@@ -445,13 +448,17 @@ class LiveNaturalExitRecoveryService:
         self,
         *,
         position: Position,
+        threshold_time: datetime | None = None,
     ) -> Order | None:
         """Recover one lost durable stepped-STOP identity through bounded GETs."""
+        effective_threshold = (
+            threshold_time if threshold_time is not None else position.opened_at
+        )
         try:
             history = tuple(
                 await self.exchange_client.get_protection_order_history(
                     symbol=position.symbol,
-                    start_time=position.opened_at,
+                    start_time=effective_threshold,
                 )
             )
         except NotImplementedError:
@@ -470,7 +477,7 @@ class LiveNaturalExitRecoveryService:
             if order.client_order_id not in persisted_ids
             and Position.is_generated_stop_loss_client_algo_id(order.client_order_id)
             and order.symbol.upper() == position.symbol.upper()
-            and order.created_at >= position.opened_at
+            and order.created_at >= effective_threshold
             and order.side is closing_side
             and order.order_type in {OrderType.STOP_MARKET, OrderType.STOP}
             and order.status is OrderStatus.FILLED
@@ -504,6 +511,7 @@ class LiveNaturalExitRecoveryService:
         self,
         *,
         position: Position,
+        threshold_time: datetime | None = None,
     ) -> tuple[Order, bool]:
         """Recover one full manual close or liquidation from account fills."""
         closing_side = (
@@ -515,12 +523,15 @@ class LiveNaturalExitRecoveryService:
                 limit=_MANUAL_CLOSE_TRADE_LIMIT,
             )
         )
+        effective_threshold = (
+            threshold_time if threshold_time is not None else position.opened_at
+        )
         quantities_by_order: dict[str, Decimal] = {}
         for trade in trades:
             if (
                 trade.symbol.upper() != position.symbol.upper()
                 or trade.side is not closing_side
-                or trade.executed_at < position.opened_at
+                or trade.executed_at < effective_threshold
             ):
                 continue
             quantities_by_order[trade.order_id] = (
@@ -552,6 +563,7 @@ class LiveNaturalExitRecoveryService:
             order=recovered,
             order_id=order_id,
             position=position,
+            threshold_time=effective_threshold,
         )
         is_liquidation = any(
             trade.is_liquidation for trade in trades if trade.order_id == order_id
@@ -580,15 +592,19 @@ class LiveNaturalExitRecoveryService:
         order: Order,
         order_id: str,
         position: Position,
+        threshold_time: datetime | None = None,
     ) -> None:
         """Require one exact filled standard order for the full stored exposure."""
         closing_side = (
             OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
+        effective_threshold = (
+            threshold_time if threshold_time is not None else position.opened_at
+        )
         if (
             order.order_id != order_id
             or order.symbol.upper() != position.symbol.upper()
-            or order.created_at < position.opened_at
+            or order.created_at < effective_threshold
             or order.side is not closing_side
             or order.order_type not in {OrderType.MARKET, OrderType.LIMIT}
             or order.status is not OrderStatus.FILLED

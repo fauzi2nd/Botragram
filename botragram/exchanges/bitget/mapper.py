@@ -466,8 +466,24 @@ class BitgetExchangeMapper(BaseExchangeMapper):
         except ValueError, TypeError:
             leverage = 1
 
-        created_at = self._to_datetime(payload.get("cTime"))
-        updated_at = self._to_datetime(payload.get("uTime", payload.get("cTime")))
+        created_at = self._to_datetime(
+            payload.get(
+                "cTime",
+                payload.get(
+                    "ctime",
+                    payload.get("createdTime", payload.get("openTime")),
+                ),
+            )
+        )
+        updated_at = self._to_datetime(
+            payload.get(
+                "uTime",
+                payload.get(
+                    "utime",
+                    payload.get("updatedTime", payload.get("cTime")),
+                ),
+            )
+        )
 
         return Position(
             symbol=symbol,
