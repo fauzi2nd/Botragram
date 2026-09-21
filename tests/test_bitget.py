@@ -1627,3 +1627,87 @@ async def test_bitget_base_client_get_protection_order_history_raises() -> None:
             symbol="BTCUSDT",
             start_time=datetime.now(UTC),
         )
+
+
+@pytest.mark.asyncio
+async def test_bitget_get_protection_order_resolves_companion_tpsl_leg() -> None:
+    """Verify get_protection_order_by_client_id correlates unmapped companion leg."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            {
+                "orderId": "1486065050578296872",
+                "clientOid": "bsl-23a2d6561dac4c83851a5489dc0d5a2a",
+                "symbol": "ARXUSDT",
+                "category": "USDT-FUTURES",
+                "qty": "124",
+                "posSide": "short",
+                "takeProfit": "0.19777",
+                "stopLoss": "0.20326",
+                "type": "tpsl",
+                "status": "pending",
+            }
+        ],
+    }
+
+    # SL leg matches direct clientOid
+    sl_order = await client.get_protection_order_by_client_id(
+        symbol="ARXUSDT",
+        client_id="bsl-23a2d6561dac4c83851a5489dc0d5a2a",
+    )
+    assert sl_order.order_id == "1486065050578296872-sl"
+    assert sl_order.client_order_id == "bsl-23a2d6561dac4c83851a5489dc0d5a2a"
+    assert sl_order.order_type is OrderType.STOP_MARKET
+    assert sl_order.stop_price == Decimal("0.20326")
+
+    # TP leg was stored without clientOid on Bitget; client resolves it cleanly
+    tp_order = await client.get_protection_order_by_client_id(
+        symbol="ARXUSDT",
+        client_id="btp-d0dcc18f04434cb59945dd3e50908213",
+    )
+    assert tp_order.order_id == "1486065050578296872-tp"
+    assert tp_order.client_order_id == "btp-d0dcc18f04434cb59945dd3e50908213"
+    assert tp_order.order_type is OrderType.TAKE_PROFIT_MARKET
+    assert tp_order.stop_price == Decimal("0.19777")
+
+
+@pytest.mark.asyncio
+async def test_bitget_cancel_protection_order_companion_leg_uses_order_id() -> None:
+    """Verify cancel_protection_order sends orderId when cancelling companion leg."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            {
+                "orderId": "1486065050578296872",
+                "clientOid": "bsl-23a2d6561dac4c83851a5489dc0d5a2a",
+                "symbol": "ARXUSDT",
+                "category": "USDT-FUTURES",
+                "qty": "124",
+                "posSide": "short",
+                "takeProfit": "0.19777",
+                "stopLoss": "0.20326",
+                "type": "tpsl",
+                "status": "pending",
+            }
+        ],
+    }
+
+    await client.cancel_protection_order(
+        symbol="ARXUSDT",
+        client_id="btp-d0dcc18f04434cb59945dd3e50908213",
+    )
+
+    assert rest.last_path == "/api/v3/trade/cancel-strategy-order"
+    assert rest.last_data == {
+        "category": "USDT-FUTURES",
+        "symbol": "ARXUSDT",
+        "orderId": "1486065050578296872",
+    }

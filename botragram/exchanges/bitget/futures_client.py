@@ -719,6 +719,27 @@ class BitgetFuturesExchangeClient(BitgetClient):
                 ):
                     return replace(order, client_order_id=client_id)
 
+        # Handle Bitget combined TPSL orders where the venue stores only one clientOid.
+        # If client_id is a TAKE_PROFIT leg (e.g. btp-...) and the venue record only
+        # retained the stop loss clientOid, associate the unmapped TP leg:
+        if client_id.startswith("btp-"):
+            for order in orders:
+                if order.order_type in (
+                    OrderType.TAKE_PROFIT_MARKET,
+                    OrderType.TAKE_PROFIT,
+                ) and (order.client_order_id is None or order.order_id.endswith("-tp")):
+                    return replace(order, client_order_id=client_id)
+
+        # Reciprocally, if client_id is a STOP_LOSS leg (e.g. bsl-...) and the venue
+        # record only retained the take profit clientOid, associate the unmapped SL leg:
+        if client_id.startswith("bsl-"):
+            for order in orders:
+                if order.order_type in (
+                    OrderType.STOP_MARKET,
+                    OrderType.STOP,
+                ) and (order.client_order_id is None or order.order_id.endswith("-sl")):
+                    return replace(order, client_order_id=client_id)
+
         raise ExchangeOrderNotFoundError(
             f"Protection order with client_id {client_id!r} not found "
             f"for symbol {symbol!r}"
@@ -784,7 +805,26 @@ class BitgetFuturesExchangeClient(BitgetClient):
             order_id = raw_id[:-3] if raw_id.endswith(("-tp", "-sl")) else raw_id
             data["orderId"] = order_id
         else:
-            data["clientOid"] = client_id
+            resolved_order_id: str | None = None
+            try:
+                matched_order = await self.get_protection_order_by_client_id(
+                    symbol=normalized_symbol,
+                    client_id=client_id,
+                )
+                clean_id = (
+                    matched_order.order_id[:-3]
+                    if matched_order.order_id.endswith(("-tp", "-sl"))
+                    else matched_order.order_id
+                )
+                if clean_id and not clean_id.startswith("bitget-"):
+                    resolved_order_id = clean_id
+            except Exception:
+                resolved_order_id = None
+
+            if resolved_order_id is not None:
+                data["orderId"] = resolved_order_id
+            else:
+                data["clientOid"] = client_id
         try:
             await self._rest.post(
                 _CANCEL_PLAN_ORDER_ENDPOINT,
