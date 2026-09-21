@@ -260,8 +260,9 @@ Aturan ketat:
 - Return type `object` lebih disukai daripada `Any` untuk data belum tervalidasi.
 - Data eksternal WAJIB dinarrow dan divalidasi sebelum masuk domain.
 
-Target wajib: **0 error dan 0 warning** pada strict type checking untuk source
-yang termasuk dalam konfigurasi proyek.
+Target wajib: **0 error dan 0 warning** pada strict type checking (Pyright strict,
+Mypy strict, dan Pyrefly). Khusus `pyrefly`, analisis WAJIB bebas dari warning dan
+suppressed diagnostics (`0 errors, 0 warnings, 0 suppressed`).
 
 ---
 
@@ -589,7 +590,7 @@ python -m ruff format --check .
 python -m ruff check .
 python -m pyright
 python -m mypy botragram
-pyrefly check
+pyrefly check --min-severity warn
 python -m pytest
 git diff --check
 ```
@@ -618,6 +619,10 @@ WAJIB dipenuhi pada local gate maupun GitHub Release Gate:
 - **0 error**.
 - **0 warning** yang berasal dari source code, test, configuration, atau quality
   tooling proyek.
+- **Pyrefly zero-warning & zero-suppression policy**: `pyrefly check --min-severity warn`
+  WAJIB menghasilkan **0 diagnostics** (`0 errors, 0 warnings`) dan **0 suppressed diagnostics**.
+  Dilarang ada komentar `# type: ignore` ataupun directive suppression lainnya untuk
+  memalsukan status bersih.
 - **0 diagnostic suppression/ignore baru** yang menyembunyikan error atau warning,
   termasuk shortcut seperti `# type: ignore`, `# noqa`, `# pyright: ignore`, atau
   padanan tool lain, kecuali pengecualian yang sudah ada dan tidak diubah sebagai

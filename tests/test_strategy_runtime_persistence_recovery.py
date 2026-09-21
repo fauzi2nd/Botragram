@@ -192,9 +192,9 @@ async def test_runtime_strategy_selection_updates_interval(
 
         assert (
             provider.runtime_control.strategy_type
-            is StrategyType.PINBAR_ENGULFING_EMA_RSI
+            == StrategyType.PINBAR_ENGULFING_EMA_RSI
         )
-        assert provider.runtime_control.interval is Interval.M15
+        assert provider.runtime_control.interval == Interval.M15
         assert provider.settings.strategy.strategy_interval is Interval.M15
         assert provider.settings.strategy.strategy_interval_source == "PIER_INTERVAL"
     finally:

@@ -68,7 +68,7 @@ jobs:
       - name: Type diagnostics (pyrefly)
         id: pyrefly
         continue-on-error: true
-        run: pyrefly check
+        run: pyrefly check --min-severity warn
 
       - name: Automated test suite (pytest)
         id: pytest

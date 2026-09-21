@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 # =============================================================================
 # Third-Party Imports
@@ -971,16 +972,21 @@ async def test_bitget_get_order_translates_not_found() -> None:
 
     # Configure rest mock to raise BitgetRestResponseError
     async def fake_get(
-        endpoint: str, params: QueryParams | None = None, authenticated: bool = False
+        path: str,
+        *,
+        params: QueryParams | None = None,
+        headers: RequestHeaders | None = None,
+        authenticated: bool = False,
     ) -> JsonResponse:
+        del params, headers, authenticated
         raise BitgetRestResponseError(
             code="25204",
             message="Order does not exist",
-            request_path=endpoint,
+            request_path=path,
             http_status=400,
         )
 
-    rest.get = fake_get  # type: ignore[assignment]
+    setattr(rest, "get", fake_get)
 
     with pytest.raises(ExchangeOrderNotFoundError):
         await client.get_order(symbol="SHIBUSDT", order_id="999999")
@@ -1383,7 +1389,7 @@ async def test_bitget_verify_mainnet_symbol_readiness_invalid_leverage() -> None
         # bool is an instance of int in Python, must fail validation
         await client.verify_mainnet_symbol_readiness(
             symbol="BTCUSDT",
-            maximum_leverage=True,  # type: ignore[arg-type]
+            maximum_leverage=cast(int, True),
             entry_notional=Decimal("50"),
         )
 

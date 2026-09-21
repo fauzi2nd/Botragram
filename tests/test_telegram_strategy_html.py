@@ -5,9 +5,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
+from telegram import Update
+from telegram.ext import ContextTypes
 
 from botragram.constants.telegram import (
     DEFAULT_PARSE_MODE,
@@ -19,6 +22,7 @@ from botragram.telegram.context import (
     ALLOWED_CHAT_IDS_KEY,
     BOT_CONTEXT_KEY,
     BotContext,
+    BotRuntimeControl,
 )
 from botragram.telegram.messages import get_strategy_message
 from botragram.telegram.runtime_menu_refresh import (
@@ -90,6 +94,16 @@ class _MockContext:
     bot_data: dict[str, object] = field(default_factory=dict[str, object])
 
 
+def _typed_update(update: _MockUpdate) -> Update:
+    """Cast the structural test double at the Telegram handler boundary."""
+    return cast(Update, update)
+
+
+def _typed_context(context: _MockContext) -> ContextTypes.DEFAULT_TYPE:
+    """Cast the structural test double at the Telegram handler boundary."""
+    return cast(ContextTypes.DEFAULT_TYPE, context)
+
+
 def test_all_strategy_messages_have_valid_html_entities() -> None:
     """Ensure every StrategyType message has zero raw unescaped ampersands."""
     for strategy in StrategyType:
@@ -130,8 +144,8 @@ async def test_strategy_switch_command_responds_for_botragram_origin() -> None:
     )
 
     await strategy_switch_command(
-        update=update,  # type: ignore[arg-type]
-        context=context,  # type: ignore[arg-type]
+        update=_typed_update(update),
+        context=_typed_context(context),
     )
 
     assert len(message.replies) == 1
@@ -163,8 +177,8 @@ async def test_menu_message_handler_with_runtime_refresh_routes_menu_strategy() 
     )
 
     await menu_message_handler_with_runtime_refresh(
-        update=update,  # type: ignore[arg-type]
-        context=context,  # type: ignore[arg-type]
+        update=_typed_update(update),
+        context=_typed_context(context),
     )
 
     assert len(message.replies) == 1
@@ -200,8 +214,8 @@ async def test_strategy_switch_command_fallback_on_parse_error() -> None:
     )
 
     await strategy_switch_command(
-        update=update,  # type: ignore[arg-type]
-        context=context,  # type: ignore[arg-type]
+        update=_typed_update(update),
+        context=_typed_context(context),
     )
 
     assert mock_message.reply_text.call_count == 2
@@ -231,8 +245,8 @@ async def test_menu_message_handler_lenient_strategy_aliases(action_text: str) -
     )
 
     await menu_message_handler_with_runtime_refresh(
-        update=update,  # type: ignore[arg-type]
-        context=context,  # type: ignore[arg-type]
+        update=_typed_update(update),
+        context=_typed_context(context),
     )
 
     assert len(message.replies) == 1
@@ -259,8 +273,8 @@ async def test_strategy_switch_callback_answers_and_edits() -> None:
     )
 
     await strategy_switch_callback(
-        update=update,  # type: ignore[arg-type]
-        context=context,  # type: ignore[arg-type]
+        update=_typed_update(update),
+        context=_typed_context(context),
     )
 
     assert query.answered is True
@@ -290,8 +304,8 @@ async def test_strategy_command_in_commands_module() -> None:
     )
 
     await strategy_command(
-        update=update,  # type: ignore[arg-type]
-        context=context,  # type: ignore[arg-type]
+        update=_typed_update(update),
+        context=_typed_context(context),
     )
 
     assert len(message.replies) == 1
@@ -316,7 +330,7 @@ def test_active_interval_multi_context_fallback() -> None:
     """Ensure active_interval falls back to configured_interval on multi-context."""
     bot_context = BotContext(
         configured_interval=Interval.M5,
-        runtime_control=_MockMultiContextControl(),  # type: ignore[arg-type]
+        runtime_control=cast(BotRuntimeControl, _MockMultiContextControl()),
     )
     assert bot_context.active_interval == Interval.M5
 
@@ -329,7 +343,7 @@ async def test_strategy_switch_command_multi_context_autonomous_live() -> None:
         execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
         strategy_name=StrategyType.BOTRAGRAM_ORIGIN.value,
         configured_interval=Interval.M3,
-        runtime_control=_MockMultiContextControl(),  # type: ignore[arg-type]
+        runtime_control=cast(BotRuntimeControl, _MockMultiContextControl()),
     )
     message = _MockMessage(text="🧠 Strategy")
     update = _MockUpdate(
@@ -344,8 +358,8 @@ async def test_strategy_switch_command_multi_context_autonomous_live() -> None:
     )
 
     await strategy_switch_command(
-        update=update,  # type: ignore[arg-type]
-        context=context,  # type: ignore[arg-type]
+        update=_typed_update(update),
+        context=_typed_context(context),
     )
 
     assert len(message.replies) == 1

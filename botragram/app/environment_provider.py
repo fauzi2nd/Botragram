@@ -1142,7 +1142,7 @@ class EnvironmentProvider:
         st_val = (
             strategy_type.value
             if isinstance(strategy_type, StrategyType)
-            else str(strategy_type).lower().strip()
+            else strategy_type.lower().strip()
         )
         candidates: list[str] = []
         if st_val == "pinbar_engulfing_ema_rsi":
