@@ -1231,6 +1231,94 @@ def test_global_runner_preserves_capacity_skip_outcome_while_waiting() -> None:
     assert waiting.last_outcome is GlobalDiscoveryCycleOutcome.SKIPPED_CAPACITY
 
 
+def test_global_runner_suppresses_preflight_and_completion_spam_when_capacity_saturated(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Suppress repetitive preflight and completion spam while capacity remains full."""
+    caplog.set_level(logging.DEBUG)
+    telemetry = GlobalDiscoveryTelemetry(
+        interval=Interval.M5,
+        universe_limit=100,
+        batch_size=20,
+        top_n=5,
+    )
+    executor = ReportingGlobalExecutor(
+        report=GlobalDiscoveryCycleReport(skipped_capacity=True)
+    )
+    runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M5,
+        global_discovery_telemetry=telemetry,
+    )
+
+    # First cycle with capacity full: preflight and pause message logged at INFO
+    assert asyncio.run(runner.run_once()) == ()
+    info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+    info_messages = [r.getMessage() for r in info_records]
+    assert any("Global discovery preflight started" in m for m in info_messages)
+    assert any(
+        "Global discovery paused: entry capacity reached" in m for m in info_messages
+    )
+
+    # Second cycle with capacity still full: preflight and completion demoted to DEBUG
+    caplog.clear()
+    assert asyncio.run(runner.run_once()) == ()
+    info_records_2 = [r for r in caplog.records if r.levelno == logging.INFO]
+    info_messages_2 = [r.getMessage() for r in info_records_2]
+    assert not any("Global discovery preflight started" in m for m in info_messages_2)
+    assert not any("Global discovery paused" in m for m in info_messages_2)
+    assert not any("Global discovery cycle completed" in m for m in info_messages_2)
+    debug_messages_2 = [
+        r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG
+    ]
+    assert any("Global discovery preflight started" in m for m in debug_messages_2)
+    assert any(
+        "Global discovery cycle completed: outcome=skipped_capacity" in m
+        for m in debug_messages_2
+    )
+
+    # Third cycle: capacity opens up, normal discovery resumes with INFO
+    executor.report = GlobalDiscoveryCycleReport(skipped_capacity=False)
+    caplog.clear()
+    assert asyncio.run(runner.run_once()) == ()
+    info_records_3 = [r for r in caplog.records if r.levelno == logging.INFO]
+    info_messages_3 = [r.getMessage() for r in info_records_3]
+    assert any(
+        "Global discovery resumed: entry capacity available." in m
+        for m in info_messages_3
+    )
+    assert any("Global discovery cycle completed" in m for m in info_messages_3)
+
+
+def test_global_runner_backs_off_cadence_delay_when_capacity_saturated() -> None:
+    """Back off aggressive sub-5s cadence delay while capacity is saturated."""
+    telemetry = GlobalDiscoveryTelemetry(interval=Interval.M5)
+    executor = ReportingGlobalExecutor(
+        report=GlobalDiscoveryCycleReport(skipped_capacity=True)
+    )
+    runner = TradingRunner(
+        executor=executor,
+        symbol="BTCUSDT",
+        interval=Interval.M5,
+        cycle_interval_seconds=1.0,
+        global_discovery_telemetry=telemetry,
+    )
+
+    # Before run, default delay is 1.0s
+    assert runner.calculate_next_global_cycle_delay() == 1.0
+
+    # Run once with capacity full -> sets saturated state
+    assert asyncio.run(runner.run_once()) == ()
+    # When saturated, delay is backed off to 5.0s
+    assert runner.calculate_next_global_cycle_delay() == 5.0
+
+    # Capacity opens up -> resets saturated state
+    executor.report = GlobalDiscoveryCycleReport(skipped_capacity=False)
+    assert asyncio.run(runner.run_once()) == ()
+    assert runner.calculate_next_global_cycle_delay() == 1.0
+
+
 def test_global_runner_reports_rate_limit_skip_without_failure() -> None:
     """Expose deliberate discovery throttling as a normal empty cycle."""
     telemetry = GlobalDiscoveryTelemetry(interval=Interval.M1)

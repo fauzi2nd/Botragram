@@ -1105,6 +1105,11 @@ class TradingRunner:
     _outage_reason: str | None = field(default=None, init=False, repr=False)
     _next_recovery_retry_seconds: float = field(default=0.0, init=False, repr=False)
     _outage_known_position_count: int = field(default=0, init=False, repr=False)
+    _last_discovery_skipped_capacity: bool = field(
+        default=False,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         """Normalize and validate immutable runtime inputs."""
@@ -2307,28 +2312,39 @@ class TradingRunner:
     ) -> None:
         """Record and log the preflight before a possible discovery scan."""
         telemetry.begin_cycle(interval=self.interval)
-        _LOGGER.info(
-            "Global discovery preflight started: interval=%s universe_limit=%s "
-            "batch_size=%s top_n=%s",
-            self.interval.value,
-            telemetry.universe_limit,
-            telemetry.batch_size,
-            telemetry.top_n,
-        )
+        if not self._last_discovery_skipped_capacity:
+            _LOGGER.info(
+                "Global discovery preflight started: interval=%s universe_limit=%s "
+                "batch_size=%s top_n=%s",
+                self.interval.value,
+                telemetry.universe_limit,
+                telemetry.batch_size,
+                telemetry.top_n,
+            )
+        else:
+            _LOGGER.debug(
+                "Global discovery preflight started: interval=%s universe_limit=%s "
+                "batch_size=%s top_n=%s (capacity full, probing exit / capacity)",
+                self.interval.value,
+                telemetry.universe_limit,
+                telemetry.batch_size,
+                telemetry.top_n,
+            )
 
-    @staticmethod
     def _complete_global_discovery_telemetry(
+        self,
         *,
         telemetry: GlobalDiscoveryTelemetry,
         results: tuple[TradingResult, ...],
         report: GlobalDiscoveryCycleReport | None,
     ) -> None:
         """Record and log completed local telemetry without runtime authority."""
+        skipped_capacity = report.skipped_capacity if report is not None else False
         telemetry.complete_cycle(
             results=results,
             batch=report.batch if report is not None else None,
             signals=report.signals if report is not None else (),
-            skipped_capacity=(report.skipped_capacity if report is not None else False),
+            skipped_capacity=skipped_capacity,
             skipped_rate_limit=(
                 report.skipped_rate_limit if report is not None else False
             ),
@@ -2342,17 +2358,34 @@ class TradingRunner:
             if snapshot.last_outcome is not None
             else "unknown"
         )
-        _LOGGER.info(
-            "Global discovery cycle completed: outcome=%s scanned=%s actionable=%s "
-            "rank_start=%s rank_end=%s universe_size=%s duration_ms=%s",
-            outcome,
-            snapshot.scanned_count,
-            snapshot.actionable_count,
-            snapshot.rank_start,
-            snapshot.rank_end,
-            snapshot.universe_size,
-            snapshot.last_duration_ms,
-        )
+        if skipped_capacity:
+            if not self._last_discovery_skipped_capacity:
+                _LOGGER.info(
+                    "Global discovery paused: entry capacity reached (maximum open "
+                    "positions active). Discovery scanning suspended while positions "
+                    "remain open."
+                )
+            else:
+                _LOGGER.debug(
+                    "Global discovery cycle completed: outcome=%s (capacity full)",
+                    outcome,
+                )
+            self._last_discovery_skipped_capacity = True
+        else:
+            if self._last_discovery_skipped_capacity:
+                _LOGGER.info("Global discovery resumed: entry capacity available.")
+            self._last_discovery_skipped_capacity = False
+            _LOGGER.info(
+                "Global discovery cycle completed: outcome=%s scanned=%s actionable=%s "
+                "rank_start=%s rank_end=%s universe_size=%s duration_ms=%s",
+                outcome,
+                snapshot.scanned_count,
+                snapshot.actionable_count,
+                snapshot.rank_start,
+                snapshot.rank_end,
+                snapshot.universe_size,
+                snapshot.last_duration_ms,
+            )
         for candidate in snapshot.candidates:
             _LOGGER.info(
                 "Global discovery candidate processed: symbol=%s side=%s "
@@ -2384,12 +2417,25 @@ class TradingRunner:
             else float(self.interval.seconds)
         )
 
-    def _calculate_next_global_cycle_delay(self) -> float:
+    def calculate_next_global_cycle_delay(self) -> float:
         """Return the delay in seconds until the next global discovery cycle."""
+        if (
+            self._last_discovery_skipped_capacity
+            and self.cycle_interval_seconds is not None
+        ):
+            return max(
+                self.cycle_interval_seconds,
+                min(5.0, float(self.interval.seconds)),
+            )
+
         if self.cycle_interval_seconds is not None:
             return self.cycle_interval_seconds
 
         return self.calculate_seconds_until_next_candle_close()
+
+    def _calculate_next_global_cycle_delay(self) -> float:
+        """Return the delay in seconds until the next global discovery cycle."""
+        return self.calculate_next_global_cycle_delay()
 
     async def _wait_for_global_cycle(self) -> None:
         """Wait for cadence while waking early on recovered-runtime degradation."""
