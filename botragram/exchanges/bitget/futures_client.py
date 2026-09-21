@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Final, cast
@@ -700,6 +701,22 @@ class BitgetFuturesExchangeClient(BitgetClient):
         for order in orders:
             if order.client_order_id == client_id:
                 return order
+            if client_id.startswith("adopted-"):
+                raw_id = client_id.removeprefix("adopted-")
+                clean_raw_id = (
+                    raw_id[:-3] if raw_id.endswith(("-tp", "-sl")) else raw_id
+                )
+                clean_order_id = (
+                    order.order_id[:-3]
+                    if order.order_id.endswith(("-tp", "-sl"))
+                    else order.order_id
+                )
+                if (
+                    order.order_id == raw_id
+                    or clean_order_id == clean_raw_id
+                    or f"adopted-{order.order_id}" == client_id
+                ):
+                    return replace(order, client_order_id=client_id)
 
         raise ExchangeOrderNotFoundError(
             f"Protection order with client_id {client_id!r} not found "
@@ -717,8 +734,13 @@ class BitgetFuturesExchangeClient(BitgetClient):
         data: dict[str, object] = {
             "category": _CATEGORY,
             "symbol": normalized_symbol,
-            "clientOid": client_id,
         }
+        if client_id.startswith("adopted-"):
+            raw_id = client_id.removeprefix("adopted-")
+            order_id = raw_id[:-3] if raw_id.endswith(("-tp", "-sl")) else raw_id
+            data["orderId"] = order_id
+        else:
+            data["clientOid"] = client_id
         try:
             await self._rest.post(
                 _CANCEL_PLAN_ORDER_ENDPOINT,

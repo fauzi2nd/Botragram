@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -1589,3 +1590,106 @@ async def test_reconciliation_recovers_when_order_type_mismatches_persisted_id()
     assert protected.stop_loss_client_algo_id is not None
     assert protected.stop_loss_client_algo_id != stop_id
     assert any(o.order_type is OrderType.STOP_MARKET for o in exchange.orders)
+
+
+@pytest.mark.asyncio
+async def test_adopted_protection_leg_resolves_without_spurious_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An adopted protection order is resolved from open orders without warning."""
+    exchange = RestartProtectionExchange()
+    # Exchange has an open TP order with order_id="12345-tp" and no client_order_id
+    exchange.orders = [
+        _order(
+            order_id="12345-tp",
+            client_id=None,
+            side=OrderSide.SELL,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            trigger=Decimal("104"),
+        ),
+        _order(
+            order_id="12345-sl",
+            client_id="bsl-12345",
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP_MARKET,
+            trigger=Decimal("98"),
+        ),
+    ]
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(
+            settings=replace(
+                RiskSettings(),
+                ema_cross_stop_loss_pct=Decimal("0.02"),
+                ema_cross_take_profit_pct=Decimal("0.04"),
+            )
+        ),
+    )
+    position = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id="bsl-12345",
+        tp_id="adopted-12345-tp",
+    )
+    await repository.save(position=position)
+
+    with caplog.at_level(logging.WARNING):
+        protected = await service.ensure(position=position)
+
+    # Must preserve the adopted ID without logging spurious warnings or recreating
+    assert protected.take_profit_client_algo_id == "adopted-12345-tp"
+    assert protected.stop_loss_client_algo_id == "bsl-12345"
+    assert not any(
+        "Persisted LIVE protection identity is absent" in r.message
+        for r in caplog.records
+    )
+    assert exchange.posts == []
+
+
+@pytest.mark.asyncio
+async def test_adoption_logs_adopted_id_instead_of_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Initial adoption logs adopted synthetic ID instead of client_id=None."""
+    exchange = RestartProtectionExchange()
+    exchange.orders = [
+        _order(
+            order_id="12345-tp",
+            client_id=None,
+            side=OrderSide.SELL,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            trigger=Decimal("104"),
+        ),
+    ]
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(
+            settings=replace(
+                RiskSettings(),
+                ema_cross_stop_loss_pct=Decimal("0.02"),
+                ema_cross_take_profit_pct=Decimal("0.04"),
+            )
+        ),
+    )
+    position = _position(
+        stop_loss=None,
+        take_profit=None,
+        stop_id=None,
+        tp_id=None,
+    )
+    await repository.save(position=position)
+
+    with caplog.at_level(logging.INFO):
+        protected = await service.ensure(position=position)
+
+    assert protected.take_profit_client_algo_id == "adopted-12345-tp"
+    assert any(
+        "Adopting valid manual/external TAKE_PROFIT order from venue" in r.message
+        and "client_id=adopted-12345-tp" in r.message
+        for r in caplog.records
+    )
+    assert not any("client_id=None" in r.message for r in caplog.records)

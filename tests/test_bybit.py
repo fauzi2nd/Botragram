@@ -1375,3 +1375,53 @@ async def test_bybit_futures_get_order_by_client_id_falls_back_to_history() -> N
         "/v5/order/realtime",
         "/v5/order/history",
     ]
+
+
+@pytest.mark.asyncio
+async def test_bybit_futures_exchange_client_adopted_protection_order() -> None:
+    """Verify Bybit get_protection_order_by_client_id and cancel handle adopted- IDs."""
+    rest = MockBybitRestClient()
+    rest.canned_response = {
+        "retCode": 0,
+        "retMsg": "OK",
+        "result": {
+            "list": [
+                {
+                    "orderId": "bybit-tp-12345",
+                    "orderLinkId": "",
+                    "symbol": "BTCUSDT",
+                    "side": "Sell",
+                    "orderType": "Market",
+                    "stopOrderType": "TakeProfit",
+                    "orderStatus": "Untriggered",
+                    "qty": "1",
+                    "cumExecQty": "0",
+                    "triggerPrice": "55000",
+                    "createdTime": "1700000000000",
+                    "updatedTime": "1700000000000",
+                }
+            ]
+        },
+    }
+    mapper = BybitExchangeMapper()
+    client = BybitFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    order = await client.get_protection_order_by_client_id(
+        symbol="BTCUSDT",
+        client_id="adopted-bybit-tp-12345",
+    )
+    assert order.order_id == "bybit-tp-12345"
+    assert order.client_order_id == "adopted-bybit-tp-12345"
+
+    rest.canned_response = {"retCode": 0, "retMsg": "OK", "result": {}}
+    await client.cancel_protection_order(
+        symbol="BTCUSDT",
+        client_id="adopted-bybit-tp-12345-tp",
+    )
+    assert rest.last_path == "/v5/order/cancel"
+    assert rest.last_data == {
+        "category": "linear",
+        "symbol": "BTCUSDT",
+        "orderFilter": "StopOrder",
+        "orderId": "bybit-tp-12345",
+    }

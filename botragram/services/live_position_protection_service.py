@@ -100,39 +100,52 @@ class LivePositionProtectionService:
         # Resolve it first and fail closed on an unprovable outcome.  Only
         # identities created during this invocation may proceed directly to POST.
         if position.stop_loss_client_algo_id is not None:
-            persisted_stop, stop_conflict = await self._recover_persisted_leg(
-                position=position,
-                order_type=OrderType.STOP_MARKET,
-                client_id=position.stop_loss_client_algo_id,
-                allow_canceled=True,
-            )
-            if (
-                persisted_stop is not None
-                and persisted_stop.status is OrderStatus.CANCELED
-            ):
-                adopted = await self._adopt_canceled_stop_replacement(
+            adopted_stop = (
+                self._find_adopted_protection_order(
+                    orders=protection_orders,
                     position=position,
-                    canceled_order=persisted_stop,
+                    order_type=OrderType.STOP_MARKET,
+                    adopted_client_id=position.stop_loss_client_algo_id,
                 )
-                if adopted is not None:
-                    position, stop_order = adopted
-                else:
+                if position.stop_loss_client_algo_id.startswith("adopted-")
+                else None
+            )
+            if adopted_stop is not None:
+                stop_order = adopted_stop
+            else:
+                persisted_stop, stop_conflict = await self._recover_persisted_leg(
+                    position=position,
+                    order_type=OrderType.STOP_MARKET,
+                    client_id=position.stop_loss_client_algo_id,
+                    allow_canceled=True,
+                )
+                if (
+                    persisted_stop is not None
+                    and persisted_stop.status is OrderStatus.CANCELED
+                ):
+                    adopted = await self._adopt_canceled_stop_replacement(
+                        position=position,
+                        canceled_order=persisted_stop,
+                    )
+                    if adopted is not None:
+                        position, stop_order = adopted
+                    else:
+                        position = replace(
+                            position,
+                            stop_loss_client_algo_id=None,
+                            pending_stop_loss=None,
+                            pending_stop_loss_client_algo_id=None,
+                            pending_protection_step=0,
+                        )
+                        stop_order = None
+                elif stop_conflict:
                     position = replace(
                         position,
                         stop_loss_client_algo_id=None,
-                        pending_stop_loss=None,
-                        pending_stop_loss_client_algo_id=None,
-                        pending_protection_step=0,
                     )
                     stop_order = None
-            elif stop_conflict:
-                position = replace(
-                    position,
-                    stop_loss_client_algo_id=None,
-                )
-                stop_order = None
-            else:
-                stop_order = persisted_stop
+                else:
+                    stop_order = persisted_stop
         elif position.stop_loss is not None:
             candidate_stop = self._find_protection_order(
                 orders=protection_orders,
@@ -146,26 +159,42 @@ class LivePositionProtectionService:
                 stop_order = candidate_stop
 
         if position.take_profit_client_algo_id is not None:
-            persisted_tp, tp_conflict = await self._recover_persisted_leg(
-                position=position,
-                order_type=OrderType.TAKE_PROFIT_MARKET,
-                client_id=position.take_profit_client_algo_id,
-                allow_canceled=True,
+            adopted_tp = (
+                self._find_adopted_protection_order(
+                    orders=protection_orders,
+                    position=position,
+                    order_type=OrderType.TAKE_PROFIT_MARKET,
+                    adopted_client_id=position.take_profit_client_algo_id,
+                )
+                if position.take_profit_client_algo_id.startswith("adopted-")
+                else None
             )
-            if persisted_tp is not None and persisted_tp.status is OrderStatus.CANCELED:
-                position = replace(
-                    position,
-                    take_profit_client_algo_id=None,
-                )
-                take_profit_order = None
-            elif tp_conflict:
-                position = replace(
-                    position,
-                    take_profit_client_algo_id=None,
-                )
-                take_profit_order = None
+            if adopted_tp is not None:
+                take_profit_order = adopted_tp
             else:
-                take_profit_order = persisted_tp
+                persisted_tp, tp_conflict = await self._recover_persisted_leg(
+                    position=position,
+                    order_type=OrderType.TAKE_PROFIT_MARKET,
+                    client_id=position.take_profit_client_algo_id,
+                    allow_canceled=True,
+                )
+                if (
+                    persisted_tp is not None
+                    and persisted_tp.status is OrderStatus.CANCELED
+                ):
+                    position = replace(
+                        position,
+                        take_profit_client_algo_id=None,
+                    )
+                    take_profit_order = None
+                elif tp_conflict:
+                    position = replace(
+                        position,
+                        take_profit_client_algo_id=None,
+                    )
+                    take_profit_order = None
+                else:
+                    take_profit_order = persisted_tp
         elif position.take_profit is not None:
             candidate_tp = self._find_protection_order(
                 orders=protection_orders,
@@ -203,23 +232,24 @@ class LivePositionProtectionService:
                 expected_trigger=planned_stop,
             )
             if adoptable_stop is not None:
+                adopted_stop_id = (
+                    adoptable_stop.client_order_id
+                    if adoptable_stop.client_order_id
+                    else f"adopted-{adoptable_stop.order_id}"
+                )
                 _LOGGER.info(
                     "Adopting valid manual/external STOP order from venue: "
                     "symbol=%s order_id=%s client_id=%s trigger=%s",
                     position.symbol,
                     adoptable_stop.order_id,
-                    adoptable_stop.client_order_id,
+                    adopted_stop_id,
                     adoptable_stop.stop_price,
                 )
                 stop_order = adoptable_stop
                 position = replace(
                     position,
                     stop_loss=adoptable_stop.stop_price,
-                    stop_loss_client_algo_id=(
-                        adoptable_stop.client_order_id
-                        if adoptable_stop.client_order_id
-                        else f"adopted-{adoptable_stop.order_id}"
-                    ),
+                    stop_loss_client_algo_id=adopted_stop_id,
                 )
                 await self.position_repository.save(position=position)
 
@@ -236,23 +266,24 @@ class LivePositionProtectionService:
                 expected_trigger=planned_tp,
             )
             if adoptable_tp is not None:
+                adopted_tp_id = (
+                    adoptable_tp.client_order_id
+                    if adoptable_tp.client_order_id
+                    else f"adopted-{adoptable_tp.order_id}"
+                )
                 _LOGGER.info(
                     "Adopting valid manual/external TAKE_PROFIT order from venue: "
                     "symbol=%s order_id=%s client_id=%s trigger=%s",
                     position.symbol,
                     adoptable_tp.order_id,
-                    adoptable_tp.client_order_id,
+                    adopted_tp_id,
                     adoptable_tp.stop_price,
                 )
                 take_profit_order = adoptable_tp
                 position = replace(
                     position,
                     take_profit=adoptable_tp.stop_price,
-                    take_profit_client_algo_id=(
-                        adoptable_tp.client_order_id
-                        if adoptable_tp.client_order_id
-                        else f"adopted-{adoptable_tp.order_id}"
-                    ),
+                    take_profit_client_algo_id=adopted_tp_id,
                 )
                 await self.position_repository.save(position=position)
 
@@ -1200,6 +1231,38 @@ class LivePositionProtectionService:
             if position.side is PositionSide.LONG
             else min(matching, key=lambda order: order.stop_price or Decimal("0"))
         )
+
+    @staticmethod
+    def _find_adopted_protection_order(
+        *,
+        orders: Sequence[Order],
+        position: Position,
+        order_type: OrderType,
+        adopted_client_id: str,
+    ) -> Order | None:
+        """Return an active adopted protection order matching its durable identity."""
+        if not adopted_client_id.startswith("adopted-"):
+            return None
+        target_order_id = adopted_client_id.removeprefix("adopted-")
+        closing_side = LivePositionProtectionService._closing_side(position.side)
+        expected_types = (
+            {OrderType.STOP_MARKET, OrderType.STOP}
+            if order_type in (OrderType.STOP_MARKET, OrderType.STOP)
+            else {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
+        )
+        for order in orders:
+            if (
+                order.symbol.upper() == position.symbol.upper()
+                and order.side is closing_side
+                and order.order_type in expected_types
+                and (
+                    order.order_id == target_order_id
+                    or order.client_order_id == adopted_client_id
+                    or f"adopted-{order.order_id}" == adopted_client_id
+                )
+            ):
+                return replace(order, client_order_id=adopted_client_id)
+        return None
 
     @staticmethod
     def _find_adoptable_protection_order(

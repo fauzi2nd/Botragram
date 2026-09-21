@@ -1385,3 +1385,55 @@ async def test_bitget_verify_mainnet_symbol_readiness_invalid_leverage() -> None
             maximum_leverage=True,  # type: ignore[arg-type]
             entry_notional=Decimal("50"),
         )
+
+
+@pytest.mark.asyncio
+async def test_bitget_futures_exchange_client_adopted_protection_order() -> None:
+    """Verify get_protection_order_by_client_id and cancel handle adopted- IDs."""
+    rest = MockBitgetRestClient()
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {
+            "list": [
+                {
+                    "orderId": "1485957673526992966",
+                    "clientOid": "bsl-123456",
+                    "symbol": "BTCUSDT",
+                    "planType": "pos_loss",
+                    "triggerPrice": "50000",
+                    "triggerType": "mark_price",
+                    "status": "live",
+                    "posMode": "one_way_mode",
+                    "side": "buy",
+                    "holdSide": "long",
+                    "actualSize": "0.1",
+                    "cTime": "1700000000000",
+                    "uTime": "1700000000000",
+                }
+            ]
+        },
+    }
+    mapper = BitgetExchangeMapper()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    # Lookup by adopted-{order_id}
+    order = await client.get_protection_order_by_client_id(
+        symbol="BTCUSDT",
+        client_id="adopted-1485957673526992966",
+    )
+    assert order.order_id == "1485957673526992966"
+    assert order.client_order_id == "adopted-1485957673526992966"
+
+    # Cancel by adopted-{order_id}-tp strips suffix and sends orderId
+    rest.canned_response = {"code": "00000", "msg": "success", "data": {}}
+    await client.cancel_protection_order(
+        symbol="BTCUSDT",
+        client_id="adopted-1485957673526992966-tp",
+    )
+    assert rest.last_path == "/api/v3/trade/cancel-strategy-order"
+    assert rest.last_data == {
+        "category": "USDT-FUTURES",
+        "symbol": "BTCUSDT",
+        "orderId": "1485957673526992966",
+    }

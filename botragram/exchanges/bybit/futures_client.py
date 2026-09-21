@@ -538,12 +538,37 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         """Return one conditional protection order by client identity."""
         normalized_symbol = symbol.strip().upper()
         normalized_client_id = client_id.strip()
-        params: dict[str, str] = {
-            "category": "linear",
-            "symbol": normalized_symbol,
-            "orderLinkId": normalized_client_id,
-            "orderFilter": "StopOrder",
-        }
+        if normalized_client_id.startswith("adopted-"):
+            raw_id = normalized_client_id.removeprefix("adopted-")
+            clean_raw_id = raw_id[:-3] if raw_id.endswith(("-tp", "-sl")) else raw_id
+            for open_order in await self.get_open_protection_orders(
+                symbol=normalized_symbol
+            ):
+                clean_order_id = (
+                    open_order.order_id[:-3]
+                    if open_order.order_id.endswith(("-tp", "-sl"))
+                    else open_order.order_id
+                )
+                if (
+                    open_order.order_id == raw_id
+                    or clean_order_id == clean_raw_id
+                    or f"adopted-{open_order.order_id}" == normalized_client_id
+                ):
+                    return replace(open_order, client_order_id=normalized_client_id)
+            order_id = clean_raw_id
+            params: dict[str, str] = {
+                "category": "linear",
+                "symbol": normalized_symbol,
+                "orderId": order_id,
+                "orderFilter": "StopOrder",
+            }
+        else:
+            params = {
+                "category": "linear",
+                "symbol": normalized_symbol,
+                "orderLinkId": normalized_client_id,
+                "orderFilter": "StopOrder",
+            }
         payload = await self._rest.get(
             _ORDER_REALTIME_ENDPOINT,
             params=params,
@@ -551,6 +576,8 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         )
         order = self._extract_order_from_list_payload(payload=payload)
         if order is not None:
+            if normalized_client_id.startswith("adopted-"):
+                return replace(order, client_order_id=normalized_client_id)
             return order
 
         history_payload = await self._rest.get(
@@ -560,6 +587,8 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         )
         order = self._extract_order_from_list_payload(payload=history_payload)
         if order is not None:
+            if normalized_client_id.startswith("adopted-"):
+                return replace(order, client_order_id=normalized_client_id)
             return order
 
         raise ExchangeOrderNotFoundError(
@@ -612,14 +641,23 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         client_id: str,
     ) -> None:
         """Cancel one conditional protection order by durable client identity."""
+        normalized_symbol = symbol.strip().upper()
+        normalized_client_id = client_id.strip()
+        data: dict[str, object] = {
+            "category": "linear",
+            "symbol": normalized_symbol,
+            "orderFilter": "StopOrder",
+        }
+        if normalized_client_id.startswith("adopted-"):
+            raw_id = normalized_client_id.removeprefix("adopted-")
+            order_id = raw_id[:-3] if raw_id.endswith(("-tp", "-sl")) else raw_id
+            data["orderId"] = order_id
+        else:
+            data["orderLinkId"] = normalized_client_id
+
         await self._rest.post(
             _ORDER_CANCEL_ENDPOINT,
-            data={
-                "category": "linear",
-                "symbol": symbol.strip().upper(),
-                "orderLinkId": client_id,
-                "orderFilter": "StopOrder",
-            },
+            data=data,
             authenticated=True,
         )
 
