@@ -1257,3 +1257,146 @@ async def test_legacy_strategy_mismatch_blocks() -> None:
 
     result = await service.recover_acknowledged(attempt=_run2_attempt())
     assert result is LivePostEntryRecoveryResult.POSITION_NOT_VISIBLE
+
+
+@pytest.mark.asyncio
+async def test_filled_entry_with_manual_close_recovers_and_stages_manual_order() -> (
+    None
+):
+    """If exchange entry is FILLED, position is 0, no emergency exit exists,
+    but a manual close is found in exchange trades, recover as MANUAL_CLOSE.
+    """
+    from collections.abc import Sequence
+
+    from botragram.enums import (
+        ClosedPositionProvenance,
+        ClosedPositionReason,
+        OrderStatus,
+        SubmissionAttemptStatus,
+    )
+    from botragram.exceptions import ExchangeOrderNotFoundError
+    from botragram.models import Order, Trade
+    from botragram.services.closed_position_lifecycle_service import (
+        ClosedPositionLifecycleService,
+    )
+    from botragram.storage.memory.closed_position_lifecycle_repository import (
+        MemoryClosedPositionLifecycleRepository,
+    )
+
+    entry_order = Order(
+        order_id="entry-100",
+        client_order_id=_CLIENT_ORDER_ID,
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.01"),
+        executed_quantity=Decimal("0.01"),
+        price=None,
+        status=OrderStatus.FILLED,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    manual_exit_order = Order(
+        order_id="manual-exit-100",
+        client_order_id="manual-exit-cid",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.01"),
+        executed_quantity=Decimal("0.01"),
+        price=Decimal("65200"),
+        status=OrderStatus.FILLED,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    manual_trade = Trade(
+        trade_id="trade-1",
+        order_id="manual-exit-100",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        price=Decimal("65200"),
+        quantity=Decimal("0.01"),
+        quote_quantity=Decimal("652"),
+        fee=Decimal("0.05"),
+        fee_asset="USDT",
+        executed_at=_NOW,
+    )
+
+    class FakeEmergencyExchange:
+        async def close_position(
+            self, *, symbol: str, client_order_id: str | None = None
+        ) -> Order:
+            raise NotImplementedError()
+
+        async def get_trades(
+            self, *, symbol: str | None, limit: int
+        ) -> Sequence[Trade]:
+            return (manual_trade,)
+
+        async def get_order(self, *, symbol: str, order_id: str) -> Order:
+            if order_id == "manual-exit-100":
+                return manual_exit_order
+            raise ExchangeOrderNotFoundError(f"Order {order_id} not found")
+
+    repository = MemorySubmissionAttemptRepository()
+    attempt = _attempt()
+    await repository.save(attempt=attempt)
+    positions = FakePositionService(responses=[None, None])
+    positions.persisted = _position(quantity=Decimal("0.01"))
+    protection = FakeProtectionService()
+    control = TradingRuntimeControl()
+    lifecycle_repo = MemoryClosedPositionLifecycleRepository()
+
+    class FakeTradeHistory:
+        async def get_trades_for_order(
+            self, *, symbol: str, order_id: str
+        ) -> tuple[Trade, ...]:
+            if order_id == "manual-exit-100":
+                return (manual_trade,)
+            return ()
+
+    lifecycle_service = ClosedPositionLifecycleService(
+        repository=lifecycle_repo,
+        trade_history=FakeTradeHistory(),
+        pnl_asset="USDT",
+    )
+
+    class EntryOnlyOrderService:
+        async def get_by_client_order_id(
+            self, *, symbol: str, client_order_id: str
+        ) -> Order:
+            if client_order_id == _CLIENT_ORDER_ID:
+                return entry_order
+            raise ExchangeOrderNotFoundError(f"Order {client_order_id} not found")
+
+    fake_exchange = FakeEmergencyExchange()
+    service = LivePostEntryRecoveryService(
+        submission_attempt_repository=repository,
+        live_recovery_repository=MemoryLiveRecoveryRepository(
+            attempt_repo=repository,
+            position_repo=positions,
+        ),
+        position_service=positions,
+        protection_service=protection,
+        runtime_control=control,
+        order_service=EntryOnlyOrderService(),
+        emergency_exit_exchange=fake_exchange,
+        manual_exit_reader=fake_exchange,
+        closed_lifecycle_service=lifecycle_service,
+    )
+
+    result = await service.recover_acknowledged(attempt=attempt)
+
+    assert result is LivePostEntryRecoveryResult.RESOLVED_NO_EXPOSURE
+    completed = await repository.get_by_client_order_id(
+        client_order_id=_CLIENT_ORDER_ID
+    )
+    assert completed is not None
+    assert completed.status is SubmissionAttemptStatus.RESOLVED_NO_EXPOSURE
+    assert positions.persisted is None
+
+    staged = await lifecycle_repo.get_pending()
+    assert len(staged) == 1
+    assert staged[0].close_reason is ClosedPositionReason.MANUAL_CLOSE
+    assert staged[0].provenance is ClosedPositionProvenance.MANUAL_ORDER
+    assert staged[0].exit_order_id == "manual-exit-100"

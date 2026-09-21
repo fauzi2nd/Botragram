@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -143,3 +144,49 @@ async def test_strategy_restart_session_remains_paused() -> None:
 
     assert runtime_control.is_paused
     assert publisher.refreshed
+
+
+@pytest.mark.asyncio
+async def test_prepare_strategy_resolves_strategy_interval(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify prepare_strategy resolves the target strategy's interval."""
+    test_env = tmp_path / "test.env"
+    test_env.write_text("")
+    monkeypatch.setenv("BOTRAGRAM_ENV_FILE", str(test_env))
+    monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)
+    monkeypatch.setenv("TRADE_MODE", "PAPER")
+    monkeypatch.setenv("EXECUTION_POLICY", "single_symbol")
+    monkeypatch.setenv("AUTONOMOUS_LIVE_ENTRY_ENABLED", "false")
+    monkeypatch.setenv("AUTONOMOUS_MAINNET_ENTRY_ENABLED", "false")
+    monkeypatch.setenv("STRATEGY_TYPE", "botragram_origin")
+    monkeypatch.setenv("ORIGIN_INTERVAL", "3m")
+    monkeypatch.setenv("PIER_INTERVAL", "15m")
+    from botragram.app.environment_provider import EnvironmentProvider
+    from botragram.app.settings_manager import SettingsManager
+    from botragram.enums import Interval
+
+    env_provider = EnvironmentProvider(env_path=str(test_env))
+    manager = SettingsManager(environment_provider=env_provider)
+    settings = manager.load()
+    assert settings.strategy.strategy_interval is Interval.M3
+
+    coordinator = RuntimeRestartCoordinator()
+    service = MarketTypeSwitchService(
+        trade_mode=TradeMode.PAPER,
+        runtime_control=TradingRuntimeControl(),
+        position_repository=_StoredPositions(),
+        position_service=_LivePositions(),
+        restart_coordinator=coordinator,
+        settings=settings,
+    )
+
+    assert await service.prepare_strategy(
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI
+    )
+    strat_interval, strat_source = manager.resolve_strategy_interval(
+        StrategyType.PINBAR_ENGULFING_EMA_RSI
+    )
+    assert strat_interval is Interval.M15
+    assert strat_source == "PIER_INTERVAL"

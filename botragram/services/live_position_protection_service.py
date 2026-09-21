@@ -100,7 +100,7 @@ class LivePositionProtectionService:
         # Resolve it first and fail closed on an unprovable outcome.  Only
         # identities created during this invocation may proceed directly to POST.
         if position.stop_loss_client_algo_id is not None:
-            persisted_stop = await self._recover_persisted_leg(
+            persisted_stop, stop_conflict = await self._recover_persisted_leg(
                 position=position,
                 order_type=OrderType.STOP_MARKET,
                 client_id=position.stop_loss_client_algo_id,
@@ -125,6 +125,12 @@ class LivePositionProtectionService:
                         pending_protection_step=0,
                     )
                     stop_order = None
+            elif stop_conflict:
+                position = replace(
+                    position,
+                    stop_loss_client_algo_id=None,
+                )
+                stop_order = None
             else:
                 stop_order = persisted_stop
         elif position.stop_loss is not None:
@@ -140,13 +146,19 @@ class LivePositionProtectionService:
                 stop_order = candidate_stop
 
         if position.take_profit_client_algo_id is not None:
-            persisted_tp = await self._recover_persisted_leg(
+            persisted_tp, tp_conflict = await self._recover_persisted_leg(
                 position=position,
                 order_type=OrderType.TAKE_PROFIT_MARKET,
                 client_id=position.take_profit_client_algo_id,
                 allow_canceled=True,
             )
             if persisted_tp is not None and persisted_tp.status is OrderStatus.CANCELED:
+                position = replace(
+                    position,
+                    take_profit_client_algo_id=None,
+                )
+                take_profit_order = None
+            elif tp_conflict:
                 position = replace(
                     position,
                     take_profit_client_algo_id=None,
@@ -268,10 +280,13 @@ class LivePositionProtectionService:
             is_owned_stop = (
                 position.stop_loss_client_algo_id is not None
                 and order.client_order_id == position.stop_loss_client_algo_id
+                and order.order_type in (OrderType.STOP_MARKET, OrderType.STOP)
             )
             is_owned_tp = (
                 position.take_profit_client_algo_id is not None
                 and order.client_order_id == position.take_profit_client_algo_id
+                and order.order_type
+                in (OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT)
             )
             is_adopted_stop = stop_order is not None and (
                 order.order_id == stop_order.order_id
@@ -781,27 +796,17 @@ class LivePositionProtectionService:
         order_type: OrderType,
         client_id: str,
         allow_canceled: bool = False,
-    ) -> Order | None:
+    ) -> tuple[Order | None, bool]:
         """Prove a pre-restart protection mutation through one authoritative GET.
 
         A transport-uncertain result remains terminal for this recovery pass.
-        An authoritative not-found result returns ``None`` so the caller may
-        revalidate and recreate the same durable identity without inventing a
-        second mutation identity.
-
-        Args:
-            position: The live position that requires protection.
-            order_type: The logical protection leg to recover.
-            client_id: The durable exchange client identity for that leg.
-            allow_canceled: Whether a canceled predecessor may be returned for
-                deterministic stepped STOP replacement recovery.
+        An authoritative not-found result returns ``(None, False)`` so the caller
+        may recreate the same durable identity. A type-mismatched or wrong-side
+        order returns ``(None, True)`` signaling that the ID is occupied by a
+        conflicting order and a fresh identity must be generated.
 
         Returns:
-            The authoritative matching protection order, or ``None`` when the
-            exact durable identity is authoritatively absent.
-
-        Raises:
-            RuntimeError: If the protection mutation cannot be proven.
+            A tuple of (matching_order, is_id_conflict).
         """
         last_unknown: ExchangeOrderOutcomeUnknownError | None = None
         for attempt in range(_PROTECTION_VISIBILITY_ATTEMPTS):
@@ -822,6 +827,31 @@ class LivePositionProtectionService:
             except ExchangeOrderOutcomeUnknownError as error:
                 last_unknown = error
             else:
+                expected_types = (
+                    {OrderType.STOP_MARKET, OrderType.STOP}
+                    if order_type in (OrderType.STOP_MARKET, OrderType.STOP)
+                    else {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
+                )
+                closing_side = self._closing_side(position.side)
+                if (
+                    order.symbol.upper() != position.symbol.upper()
+                    or order.side is not closing_side
+                    or order.order_type not in expected_types
+                ):
+                    _LOGGER.warning(
+                        "Protection order candidate %r does not match expected leg "
+                        "(symbol=%s side=%s type=%s; got symbol=%s side=%s type=%s); "
+                        "treating leg as absent and regenerating client ID",
+                        client_id,
+                        position.symbol,
+                        closing_side.value,
+                        order_type.value,
+                        order.symbol,
+                        order.side.value,
+                        order.order_type.value,
+                    )
+                    return (None, True)
+
                 self._validate_reconciled_leg_identity(
                     order=order,
                     position=position,
@@ -831,7 +861,7 @@ class LivePositionProtectionService:
                 if order.status is OrderStatus.NEW or (
                     allow_canceled and order.status is OrderStatus.CANCELED
                 ):
-                    return order
+                    return (order, False)
                 raise RuntimeError("Reconciled protection order does not match its leg")
 
             if attempt + 1 < _PROTECTION_VISIBILITY_ATTEMPTS:
@@ -850,7 +880,7 @@ class LivePositionProtectionService:
             order_type.value,
             client_id,
         )
-        return None
+        return (None, False)
 
     async def _adopt_canceled_stop_replacement(
         self,
@@ -987,6 +1017,26 @@ class LivePositionProtectionService:
         except ExchangeOrderOutcomeUnknownError:
             return "unknown"
 
+        expected_types = (
+            {OrderType.STOP_MARKET, OrderType.STOP}
+            if order_type in (OrderType.STOP_MARKET, OrderType.STOP)
+            else {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
+        )
+        closing_side = self._closing_side(position.side)
+        if (
+            order.symbol.upper() != position.symbol.upper()
+            or order.side is not closing_side
+            or order.order_type not in expected_types
+        ):
+            _LOGGER.debug(
+                "Protection order probe %r returned order of type %s; "
+                "expected leg %s is absent on venue",
+                client_id,
+                order.order_type.value,
+                order_type.value,
+            )
+            return "not_found"
+
         try:
             self._validate_reconciled_leg_identity(
                 order=order,
@@ -1022,17 +1072,51 @@ class LivePositionProtectionService:
             if order_type in (OrderType.STOP_MARKET, OrderType.STOP)
             else {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
         )
-        if (
-            order.client_order_id != client_id
-            or order.symbol.upper() != position.symbol.upper()
-            or order.side
-            is not LivePositionProtectionService._closing_side(position.side)
-            or order.order_type not in expected_types
-            or order.quantity < position.quantity
-            or order.stop_price is None
-            or expected_trigger is None
-            or order.stop_price != expected_trigger
-        ):
+        closing_side = LivePositionProtectionService._closing_side(position.side)
+        mismatches: list[str] = []
+        if order.client_order_id != client_id:
+            mismatches.append(
+                f"client_order_id={order.client_order_id!r} != {client_id!r}"
+            )
+        if order.symbol.upper() != position.symbol.upper():
+            mismatches.append(f"symbol={order.symbol!r} != {position.symbol!r}")
+        if order.side is not closing_side:
+            mismatches.append(f"side={order.side!r} != expected={closing_side!r}")
+        type_mismatch = order.order_type not in expected_types
+        if type_mismatch:
+            mismatches.append(
+                f"order_type={order.order_type!r} not in {expected_types!r}"
+            )
+        if order.quantity > _DECIMAL_ZERO and order.quantity < position.quantity:
+            mismatches.append(
+                f"quantity={order.quantity} < position.quantity={position.quantity}"
+            )
+        if order.stop_price is None:
+            mismatches.append("stop_price=None")
+        if expected_trigger is None:
+            mismatches.append(
+                f"expected_trigger=None (position sl/tp not set for {order_type!r})"
+            )
+        if order.stop_price is not None and expected_trigger is not None:
+            if order.stop_price != expected_trigger:
+                mismatches.append(
+                    f"stop_price={order.stop_price} "
+                    f"!= expected_trigger={expected_trigger}"
+                )
+        if mismatches:
+            _LOGGER.warning(
+                "Protection order identity mismatch: %s | "
+                "order_id=%s client_id=%s order_type=%s "
+                "order_qty=%s pos_qty=%s stop_price=%s expected_trigger=%s",
+                "; ".join(mismatches),
+                order.order_id,
+                order.client_order_id,
+                order.order_type,
+                order.quantity,
+                position.quantity,
+                order.stop_price,
+                expected_trigger,
+            )
             raise RuntimeError("Reconciled protection order does not match its leg")
 
     @staticmethod

@@ -40,6 +40,7 @@ from botragram.constants.env import (
     ENV_BINANCE_TESTNET,
     ENV_BITGET_API_KEY,
     ENV_BITGET_API_SECRET,
+    ENV_BITGET_MARKET_TYPE,
     ENV_BITGET_PASSPHRASE,
     ENV_BITGET_TESTNET,
     ENV_BOTRAGRAM_ENV_FILE,
@@ -1333,18 +1334,25 @@ class EnvironmentProvider:
         return self._get_var(
             ENV_BITGET_API_KEY,
             ENV_EXCHANGE_API_KEY_LEGACY,
-        )
+        ).strip()
 
     def get_bitget_api_secret(self) -> str:
         """Return the Bitget API secret."""
         return self._get_var(
             ENV_BITGET_API_SECRET,
             ENV_EXCHANGE_API_SECRET_LEGACY,
-        )
+        ).strip()
 
     def get_bitget_passphrase(self) -> str:
         """Return the Bitget API passphrase."""
-        return self._get_var(ENV_BITGET_PASSPHRASE)
+        return self._get_var(ENV_BITGET_PASSPHRASE).strip()
+
+    def get_bitget_market_type(self) -> str:
+        """Return the selected Bitget product family."""
+        return self._get_var(
+            ENV_BITGET_MARKET_TYPE,
+            default="FUTURES",
+        ).upper()
 
     def get_bitget_testnet(self) -> bool:
         """Return whether Bitget testnet mode is enabled."""

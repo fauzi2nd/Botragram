@@ -125,9 +125,9 @@ class BitgetRestClient(BaseRestClient):
         retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
     ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._api_key = api_key
-        self._api_secret = api_secret
-        self._passphrase = passphrase
+        self._api_key = api_key.strip()
+        self._api_secret = api_secret.strip()
+        self._passphrase = passphrase.strip()
         self._timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         self._max_retries = max_retries
         self._retry_delay_seconds = retry_delay_seconds

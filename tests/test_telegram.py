@@ -500,6 +500,7 @@ def test_main_menu_and_exchange_keyboard_have_stable_actions() -> None:
         "cb_back_main",
         "cb_exchange_binance",
         "cb_exchange_bybit",
+        "cb_exchange_bitget",
         "cb_product_spot",
         "cb_product_futures",
     }
@@ -535,6 +536,17 @@ def test_main_menu_and_exchange_keyboard_have_stable_actions() -> None:
     }
     assert "✅ 🟠 BINANCE" in confirmed_labels
     assert "✅ Futures" in confirmed_labels
+
+    confirmed_bitget = get_exchange_keyboard(
+        "BITGET",
+        MarketType.FUTURES,
+        exchange_confirmed=True,
+        market_type_confirmed=True,
+    )
+    confirmed_bitget_labels = {
+        button.text for row in confirmed_bitget.inline_keyboard for button in row
+    }
+    assert "✅ 🔵 BITGET" in confirmed_bitget_labels
 
 
 def test_market_keyboard_paginates_dynamic_exchange_symbols() -> None:

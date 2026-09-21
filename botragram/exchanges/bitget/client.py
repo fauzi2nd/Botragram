@@ -77,13 +77,13 @@ BITGET_INTERVAL_MAP: Final[dict[Interval, str]] = {
 _PRODUCT_TYPE: Final[str] = "USDT-FUTURES"
 
 _PING_ENDPOINT: Final[str] = "/api/v2/public/time"
-_ACCOUNTS_ENDPOINT: Final[str] = "/api/v2/mix/account/accounts"
+_ACCOUNTS_ENDPOINT: Final[str] = "/api/v3/account/assets"
 _TICKER_ENDPOINT: Final[str] = "/api/v2/mix/market/ticker"
 _TICKERS_ENDPOINT: Final[str] = "/api/v2/mix/market/tickers"
 _CANDLES_ENDPOINT: Final[str] = "/api/v2/mix/market/candles"
 _CONTRACTS_ENDPOINT: Final[str] = "/api/v2/mix/market/contracts"
 _OPEN_INTEREST_ENDPOINT: Final[str] = "/api/v2/mix/market/open-interest"
-_FILLS_ENDPOINT: Final[str] = "/api/v2/mix/order/fills"
+_FILLS_ENDPOINT: Final[str] = "/api/v3/trade/fills"
 
 
 # =============================================================================
@@ -147,7 +147,6 @@ class BitgetClient(BaseExchangeClient):
         """Return current exchange account wallet balances."""
         payload = await self._rest.get(
             _ACCOUNTS_ENDPOINT,
-            params={"productType": _PRODUCT_TYPE},
             authenticated=True,
         )
         if isinstance(payload, dict):
@@ -395,7 +394,7 @@ class BitgetClient(BaseExchangeClient):
     ) -> Sequence[Trade]:
         """Return bounded account fills."""
         params: dict[str, str | int] = {
-            "productType": _PRODUCT_TYPE,
+            "category": "USDT-FUTURES",
             "limit": min(limit, 100),
         }
         if symbol is not None:
@@ -411,7 +410,8 @@ class BitgetClient(BaseExchangeClient):
             raw_data = payload.get("data")
             raw_list: list[object]
             if isinstance(raw_data, dict):
-                fill_list = cast(dict[str, object], raw_data).get("fillList")
+                data_dict = cast(dict[str, object], raw_data)
+                fill_list = data_dict.get("list") or data_dict.get("fillList")
                 raw_list = (
                     cast(list[object], fill_list) if isinstance(fill_list, list) else []
                 )

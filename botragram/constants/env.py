@@ -187,6 +187,7 @@ __all__ = [
     "ENV_BITGET_API_SECRET",
     "ENV_BITGET_PASSPHRASE",
     "ENV_BITGET_TESTNET",
+    "ENV_BITGET_MARKET_TYPE",
     "ENV_BYBIT_API_KEY",
     "ENV_BYBIT_API_SECRET",
     "ENV_BYBIT_DEMO",
@@ -402,6 +403,7 @@ ENV_BITGET_API_KEY: str = "BITGET_API_KEY"
 ENV_BITGET_API_SECRET: str = "BITGET_API_SECRET"
 ENV_BITGET_PASSPHRASE: str = "BITGET_PASSPHRASE"
 ENV_BITGET_TESTNET: str = "BITGET_TESTNET"
+ENV_BITGET_MARKET_TYPE: str = "BITGET_MARKET_TYPE"
 
 # =============================================================================
 # Constants — Bybit

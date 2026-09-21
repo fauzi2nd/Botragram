@@ -1520,3 +1520,72 @@ async def test_wrong_side_protection_orders_are_cancelled() -> None:
         "wrong-side-order" in exchange.cancelled
         or "wrong-side-client-id" in exchange.cancelled
     )
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_recovers_when_order_type_mismatches_persisted_id() -> (
+    None
+):
+    """Regression: when queried client_id returns wrong order_type, treat leg as absent.
+
+    Across exchanges (e.g. composite TPSL or recycled client IDs), querying a
+    persisted stop-loss ID may return an order of type TAKE_PROFIT_MARKET.
+    Reconciliation must treat the expected leg as absent, probe must return
+    'not_found', and ensure() must recreate the missing leg without crashing.
+    """
+    exchange = RestartProtectionExchange()
+    stop_id = "bsl-persisted-sl-id-123456789012"
+    tp_id = "btp-persisted-tp-id-123456789012"
+
+    # Exchange reports an order under stop_id whose order_type is TAKE_PROFIT_MARKET!
+    exchange.orders = [
+        _order(
+            order_id="mismatched-order-1",
+            client_id=stop_id,
+            side=OrderSide.SELL,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            trigger=Decimal("104"),
+        ),
+        _order(
+            order_id="tp-primary",
+            client_id=tp_id,
+            side=OrderSide.SELL,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            trigger=Decimal("104"),
+        ),
+    ]
+
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(
+            settings=replace(
+                RiskSettings(),
+                ema_cross_stop_loss_pct=Decimal("0.02"),
+                ema_cross_take_profit_pct=Decimal("0.04"),
+            )
+        ),
+    )
+    position = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id=stop_id,
+        tp_id=tp_id,
+    )
+
+    # 1. Probe for the SL leg must return 'not_found' (not 'unexpected')
+    probe_status = await service.probe_persisted_leg(
+        position=position,
+        order_type=OrderType.STOP_MARKET,
+        client_id=stop_id,
+    )
+    assert probe_status == "not_found"
+
+    # 2. ensure() must not crash with RuntimeError; it must recreate the missing SL
+    protected = await service.ensure(position=position)
+
+    # The missing SL leg must be recreated with a new client ID
+    assert protected.stop_loss_client_algo_id is not None
+    assert protected.stop_loss_client_algo_id != stop_id
+    assert any(o.order_type is OrderType.STOP_MARKET for o in exchange.orders)

@@ -167,8 +167,14 @@ class SettingsManager:
                     testnet=environment.get_binance_testnet(),
                 )
             case ExchangeType.BITGET:
+                market_type = self._parse_enum(
+                    enum_type=MarketType,
+                    raw_value=environment.get_bitget_market_type(),
+                    setting_name="BITGET_MARKET_TYPE",
+                )
                 return ExchangeSettings(
                     exchange=exchange,
+                    market_type=market_type,
                     api_key=environment.get_bitget_api_key(),
                     api_secret=environment.get_bitget_api_secret(),
                     passphrase=environment.get_bitget_passphrase(),
@@ -517,6 +523,41 @@ class SettingsManager:
             exchange=exchange,
         )
 
+    @staticmethod
+    def resolve_strategy_interval_from_environment(
+        strategy_type: StrategyType,
+        environment_provider: EnvironmentProvider | None = None,
+    ) -> tuple[Interval | None, str | None]:
+        """Resolve candle interval and source name configured for a strategy type."""
+        provider = (
+            environment_provider
+            if environment_provider is not None
+            else EnvironmentProvider()
+        )
+        raw_strat_interval, strat_interval_source = provider.get_strategy_interval(
+            strategy_type
+        )
+        strategy_interval: Interval | None = None
+        if raw_strat_interval and raw_strat_interval.strip():
+            strategy_interval = SettingsManager._parse_market_interval(
+                raw_value=raw_strat_interval.strip(),
+                setting_name=strat_interval_source,
+            )
+        return (
+            strategy_interval,
+            strat_interval_source if strategy_interval is not None else None,
+        )
+
+    def resolve_strategy_interval(
+        self,
+        strategy_type: StrategyType,
+    ) -> tuple[Interval | None, str | None]:
+        """Resolve candle interval and source name for the configured environment."""
+        return self.resolve_strategy_interval_from_environment(
+            strategy_type=strategy_type,
+            environment_provider=self._environment_provider,
+        )
+
     def load_strategy_settings(self) -> StrategySettings:
         """Load strategy settings with strict optional environment selection."""
         environment = self._environment_provider
@@ -530,15 +571,9 @@ class SettingsManager:
             if raw_strategy_type
             else StrategyType.EMA_CROSS
         )
-        raw_strat_interval, strat_interval_source = environment.get_strategy_interval(
+        strategy_interval, strat_interval_source = self.resolve_strategy_interval(
             strategy_type
         )
-        strategy_interval: Interval | None = None
-        if raw_strat_interval and raw_strat_interval.strip():
-            strategy_interval = self._parse_market_interval(
-                raw_value=raw_strat_interval.strip(),
-                setting_name=strat_interval_source,
-            )
         strategy_override_enabled = (
             environment.get_strategy_timeframe_override_enabled()
         )

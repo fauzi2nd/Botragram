@@ -428,11 +428,16 @@ async def main() -> None:
                 continue
 
             if isinstance(requested_restart, StrategyType):
+                strat_interval, strat_source = (
+                    settings_manager.resolve_strategy_interval(requested_restart)
+                )
                 settings = replace(
                     settings,
                     strategy=replace(
                         settings.strategy,
                         strategy_type=requested_restart,
+                        strategy_interval=strat_interval,
+                        strategy_interval_source=strat_source,
                     ),
                 )
                 settings_manager.validate(settings=settings)

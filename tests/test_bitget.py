@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 # =============================================================================
 # Third-Party Imports
@@ -36,7 +37,7 @@ from botragram.enums import (
     OrderType,
     PositionSide,
 )
-from botragram.exceptions import ExchangeError
+from botragram.exceptions import ExchangeError, ExchangeOrderNotFoundError
 from botragram.exchanges.base.rest import (
     JsonResponse,
     QueryParams,
@@ -44,7 +45,7 @@ from botragram.exchanges.base.rest import (
 )
 from botragram.exchanges.bitget.futures_client import BitgetFuturesExchangeClient
 from botragram.exchanges.bitget.mapper import BitgetExchangeMapper
-from botragram.exchanges.bitget.rest import BitgetRestClient
+from botragram.exchanges.bitget.rest import BitgetRestClient, BitgetRestResponseError
 from botragram.exchanges.bitget.stream import BitgetStreamClient
 from botragram.exchanges.factory import ExchangeFactory
 
@@ -486,7 +487,7 @@ async def test_bitget_futures_create_reduce_only_market_order() -> None:
     rest.canned_response = {
         "code": "00000",
         "msg": "success",
-        "data": {"orderId": "bg-pclose-1"},
+        "data": {"orderId": "bg-pclose-1", "holdMode": "one_way_mode"},
     }
     client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
 
@@ -498,12 +499,13 @@ async def test_bitget_futures_create_reduce_only_market_order() -> None:
     )
 
     assert order.order_id == "bg-pclose-1"
+    assert ("POST", "/api/v3/trade/place-order") in rest.history
     assert rest.last_data is not None
-    assert rest.last_data.get("productType") == "USDT-FUTURES"
-    assert rest.last_data.get("tradeSide") == "close"
+    assert rest.last_data.get("category") == "USDT-FUTURES"
     assert rest.last_data.get("orderType") == "market"
     assert rest.last_data.get("side") == "sell"
-    assert rest.last_data.get("size") == "0.5"
+    assert rest.last_data.get("qty") == "0.5"
+    assert rest.last_data.get("reduceOnly") == "YES"
     assert rest.last_data.get("clientOid") == "bg-client-1"
 
     with pytest.raises(ValueError, match="Order quantity must be greater than zero"):
@@ -512,3 +514,744 @@ async def test_bitget_futures_create_reduce_only_market_order() -> None:
             side=OrderSide.SELL,
             quantity=Decimal("0"),
         )
+
+
+@pytest.mark.asyncio
+async def test_bitget_futures_v3_uta_operations() -> None:
+    """Verify all V3 UTA endpoints, payloads, and responses."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    # 1. get_account uses /api/v3/account/assets
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {
+            "list": [
+                {
+                    "coin": "USDT",
+                    "available": "5000.00",
+                    "frozen": "100.00",
+                }
+            ]
+        },
+    }
+    account = await client.get_account()
+    assert rest.last_path == "/api/v3/account/assets"
+    assert len(account.balances) == 1
+    assert account.balances[0].asset == "USDT"
+    assert account.balances[0].free == Decimal("5000.00")
+
+    # 2. get_positions uses /api/v3/position/current-position
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {
+            "list": [
+                {
+                    "symbol": "ETHUSDT",
+                    "holdSide": "short",
+                    "total": "2.0",
+                    "openPriceAvg": "3000.0",
+                    "markPrice": "2950.0",
+                    "unrealizedPL": "100.0",
+                    "leverage": "20",
+                    "cTime": "1700000000000",
+                }
+            ]
+        },
+    }
+    positions = await client.get_positions(symbol="ETHUSDT")
+    assert rest.last_path == "/api/v3/position/current-position"
+    assert rest.last_params == {
+        "category": "USDT-FUTURES",
+        "symbol": "ETHUSDT",
+    }
+    assert len(positions) == 1
+    assert positions[0].symbol == "ETHUSDT"
+    assert positions[0].side is PositionSide.SHORT
+    assert positions[0].quantity == Decimal("2.0")
+
+    # 3. cancel_order uses /api/v3/trade/cancel-order
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {},
+    }
+    await client.cancel_order(symbol="BTCUSDT", order_id="ord-99")
+    assert ("POST", "/api/v3/trade/cancel-order") in rest.history
+    assert rest.last_data == {
+        "category": "USDT-FUTURES",
+        "symbol": "BTCUSDT",
+        "orderId": "ord-99",
+    }
+
+    # 4. cancel_all_orders uses /api/v3/trade/cancel-symbol-order
+    rest.canned_responses = [
+        # for get_open_orders
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "list": [
+                    {
+                        "orderId": "o1",
+                        "symbol": "BTCUSDT",
+                        "side": "buy",
+                        "orderType": "limit",
+                        "status": "live",
+                        "qty": "0.1",
+                        "cTime": "1700000000000",
+                    }
+                ]
+            },
+        },
+        # for cancel-symbol-order
+        {"code": "00000", "msg": "success", "data": {}},
+    ]
+    canceled = await client.cancel_all_orders(symbol="BTCUSDT")
+    assert len(canceled) == 1
+    assert rest.last_path == "/api/v3/trade/cancel-symbol-order"
+    assert rest.last_data == {
+        "category": "USDT-FUTURES",
+        "symbol": "BTCUSDT",
+    }
+
+    # 5. create_protection_orders uses /api/v3/trade/place-strategy-order
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {"orderId": "strat-1"},
+    }
+    prot_orders = await client.create_protection_orders(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("0.1"),
+        stop_loss=Decimal("59000.0"),
+        take_profit=Decimal("65000.0"),
+        stop_loss_client_algo_id="sl-algo-1",
+        take_profit_client_algo_id="tp-algo-1",
+    )
+    assert len(prot_orders) == 2
+    assert rest.last_path == "/api/v3/trade/place-strategy-order"
+    assert rest.last_data is not None
+    assert rest.last_data.get("category") == "USDT-FUTURES"
+    assert rest.last_data.get("type") == "tpsl"
+
+    # 6. set_leverage uses /api/v3/account/set-leverage
+    rest.canned_response = {"code": "00000", "msg": "success", "data": {}}
+    await client.set_leverage(symbol="BTCUSDT", leverage=25, hold_side="long")
+    assert rest.last_path == "/api/v3/account/set-leverage"
+    assert rest.last_data == {
+        "category": "USDT-FUTURES",
+        "symbol": "BTCUSDT",
+        "leverage": "25",
+        "posSide": "long",
+        "marginMode": "crossed",
+    }
+
+
+def test_settings_manager_loads_bitget_market_type(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify SettingsManager parses BITGET_MARKET_TYPE and strips credentials."""
+    monkeypatch.delenv("BOTRAGRAM_ENV_FILE", raising=False)
+    monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)
+    monkeypatch.setenv("ACTIVE_EXCHANGE", "BITGET")
+    monkeypatch.setenv("BITGET_MARKET_TYPE", "FUTURES")
+    monkeypatch.setenv("BITGET_API_KEY", "  test-key  ")
+    monkeypatch.setenv("BITGET_API_SECRET", "  test-secret  ")
+    monkeypatch.setenv("BITGET_PASSPHRASE", "  test-passphrase  ")
+    monkeypatch.setenv("BITGET_TESTNET", "false")
+
+    from botragram.app.environment_provider import EnvironmentProvider
+    from botragram.app.settings_manager import SettingsManager
+
+    env_provider = EnvironmentProvider(env_path=str(tmp_path / "missing.env"))
+    settings = SettingsManager(
+        environment_provider=env_provider
+    ).load_exchange_settings()
+    assert settings.exchange is ExchangeType.BITGET
+    assert settings.market_type is MarketType.FUTURES
+    assert settings.api_key == "test-key"
+    assert settings.api_secret == "test-secret"
+    assert settings.passphrase == "test-passphrase"
+    assert not settings.testnet
+
+
+@pytest.mark.asyncio
+async def test_bitget_futures_exchange_client_get_trades_for_order() -> None:
+    """Verify get_trades_for_order queries fills endpoint with category and orderId."""
+    rest = MockBitgetRestClient()
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            {
+                "tradeId": "t1",
+                "orderId": "ord-123",
+                "symbol": "BTCUSDT",
+                "side": "buy",
+                "price": "50000.0",
+                "size": "0.1",
+                "fee": "0.02",
+                "feeCurrency": "USDT",
+                "cTime": "1700000000000",
+                "pnl": "15.5",
+            },
+            {
+                "tradeId": "t2",
+                "orderId": "ord-other",
+                "symbol": "BTCUSDT",
+                "side": "buy",
+                "price": "50000.0",
+                "size": "0.1",
+                "fee": "0.02",
+                "feeCurrency": "USDT",
+                "cTime": "1700000000000",
+            },
+        ],
+    }
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+    trades = await client.get_trades_for_order(symbol="BTCUSDT", order_id="ord-123")
+
+    assert len(trades) == 1
+    assert trades[0].trade_id == "t1"
+    assert trades[0].order_id == "ord-123"
+    assert trades[0].price == Decimal("50000.0")
+    assert trades[0].realized_pnl == Decimal("15.5")
+    assert rest.last_path == "/api/v3/trade/fills"
+    assert rest.last_params == {
+        "category": "USDT-FUTURES",
+        "symbol": "BTCUSDT",
+        "orderId": "ord-123",
+        "limit": 100,
+    }
+
+
+@pytest.mark.asyncio
+async def test_bitget_futures_create_order_hedge_mode() -> None:
+    """Verify hedge mode sets posSide=long for buy and posSide=short for sell."""
+    rest = MockBitgetRestClient()
+    rest.canned_responses = [
+        # Response for GET /api/v3/account/settings
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"holdMode": "hedge_mode"},
+        },
+        # Response for POST /api/v3/trade/place-order
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "ord-buy-1"},
+        },
+        # Response for GET /api/v3/trade/order-info
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "orderId": "ord-buy-1",
+                "symbol": "BTCUSDT",
+                "side": "buy",
+                "orderType": "market",
+                "status": "live",
+                "size": "0.01",
+                "baseVolume": "0.0",
+                "cTime": "1700000000000",
+                "uTime": "1700000000000",
+            },
+        },
+    ]
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+    order = await client.create_order(
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.01"),
+    )
+    assert order.order_id == "ord-buy-1"
+    assert rest.last_data is not None
+    assert rest.last_data["side"] == "buy"
+    assert rest.last_data["posSide"] == "long"
+    assert "reduceOnly" not in rest.last_data
+
+    # Now test sell order (cached hold mode = hedge_mode)
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "ord-sell-1"},
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "orderId": "ord-sell-1",
+                "symbol": "BTCUSDT",
+                "side": "sell",
+                "orderType": "market",
+                "status": "live",
+                "size": "0.01",
+                "baseVolume": "0.0",
+                "cTime": "1700000000000",
+                "uTime": "1700000000000",
+            },
+        },
+    ]
+    order_sell = await client.create_order(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.01"),
+    )
+    assert order_sell.order_id == "ord-sell-1"
+    assert rest.last_data is not None
+    assert rest.last_data["side"] == "sell"
+    assert rest.last_data["posSide"] == "short"
+
+
+@pytest.mark.asyncio
+async def test_bitget_futures_create_order_one_way_mode() -> None:
+    """Verify create_order in one_way_mode omits posSide and uses reduceOnly."""
+    rest = MockBitgetRestClient()
+    rest.canned_responses = [
+        # Response for GET /api/v3/account/settings
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"holdMode": "one_way_mode"},
+        },
+        # Response for POST /api/v3/trade/place-order
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "ord-reduce-1"},
+        },
+        # Response for GET /api/v3/trade/order-info
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "orderId": "ord-reduce-1",
+                "symbol": "BTCUSDT",
+                "side": "sell",
+                "orderType": "market",
+                "status": "live",
+                "size": "0.01",
+                "baseVolume": "0.0",
+                "cTime": "1700000000000",
+                "uTime": "1700000000000",
+            },
+        },
+    ]
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+    order = await client.create_order(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.01"),
+        reduce_only=True,
+    )
+    assert order.order_id == "ord-reduce-1"
+    assert rest.last_data is not None
+    assert rest.last_data["side"] == "sell"
+    assert rest.last_data["reduceOnly"] == "YES"
+
+
+def test_bitget_mapper_strategy_order() -> None:
+    """Verify map_order properly maps TPSL plan orders without side but with posSide."""
+    mapper = BitgetExchangeMapper()
+    raw_sl = {
+        "orderId": "1485899132632014849",
+        "clientOid": "bsl-test-1",
+        "symbol": "SHIBUSDT",
+        "category": "USDT-FUTURES",
+        "qty": "4370000",
+        "posSide": "long",
+        "stopLoss": "0.000005684",
+        "type": "tpsl",
+        "status": "pending",
+        "createdTime": "1789991880567",
+        "updatedTime": "1789991880585",
+    }
+    order = mapper.map_order(raw_sl)
+    assert order.order_id == "1485899132632014849"
+    assert order.client_order_id == "bsl-test-1"
+    assert order.symbol == "SHIBUSDT"
+    assert order.side is OrderSide.SELL
+    assert order.order_type is OrderType.STOP_MARKET
+    assert order.status is OrderStatus.NEW
+    assert order.stop_price == Decimal("0.000005684")
+    assert order.quantity == Decimal("4370000")
+
+    raw_tp = {
+        "orderId": "1485899132632014850",
+        "clientOid": "btp-test-1",
+        "symbol": "SHIBUSDT",
+        "category": "USDT-FUTURES",
+        "qty": "4370000",
+        "posSide": "short",
+        "takeProfit": "0.000005500",
+        "type": "tpsl",
+        "status": "pending",
+        "createdTime": "1789991880567",
+        "updatedTime": "1789991880585",
+    }
+    tp_order = mapper.map_order(raw_tp)
+    assert tp_order.side is OrderSide.BUY
+    assert tp_order.order_type is OrderType.TAKE_PROFIT_MARKET
+    assert tp_order.stop_price == Decimal("0.000005500")
+
+
+def test_bitget_mapper_order_status_fields() -> None:
+    """Verify map_order maps orderStatus field from Bitget order-info."""
+    mapper = BitgetExchangeMapper()
+    raw = {
+        "orderId": "1485899111776612353",
+        "clientOid": "btg-test-order",
+        "symbol": "SHIBUSDT",
+        "orderType": "market",
+        "side": "buy",
+        "qty": "4370000",
+        "cumExecQty": "4370000",
+        "orderStatus": "filled",
+    }
+    order = mapper.map_order(raw)
+    assert order.status is OrderStatus.FILLED
+    assert order.executed_quantity == Decimal("4370000")
+
+    raw_exec = {
+        "orderId": "1485899111776612354",
+        "symbol": "SHIBUSDT",
+        "side": "buy",
+        "orderType": "market",
+        "orderStatus": "executed",
+    }
+    assert mapper.map_order(raw_exec).status is OrderStatus.FILLED
+
+
+def test_bitget_mapper_trade_fills_payload() -> None:
+    """Verify map_trade correctly extracts execPrice, execQty, feeDetail, execPnl."""
+    mapper = BitgetExchangeMapper()
+    raw_fill = {
+        "execId": "1485904825235017728",
+        "orderId": "1485904825228161024",
+        "clientOid": "1485904825228161025",
+        "symbol": "SHIBUSDT",
+        "side": "sell",
+        "tradeSide": "close_long",
+        "execPrice": "0.000005741",
+        "execQty": "4370000",
+        "feeDetail": [{"feeCoin": "USDT", "fee": "0.0150529"}],
+        "createdTime": "1789993237789",
+        "execPnl": "0.11799",
+    }
+    trade = mapper.map_trade(raw_fill)
+    assert trade.trade_id == "1485904825235017728"
+    assert trade.order_id == "1485904825228161024"
+    assert trade.symbol == "SHIBUSDT"
+    assert trade.side is OrderSide.SELL
+    assert trade.price == Decimal("0.000005741")
+    assert trade.quantity == Decimal("4370000")
+    assert trade.fee == Decimal("0.0150529")
+    assert trade.fee_asset == "USDT"
+    assert trade.realized_pnl == Decimal("0.11799")
+
+
+@pytest.mark.asyncio
+async def test_bitget_get_order_translates_not_found() -> None:
+    """Verify get_order and get_order_by_client_order_id raise
+    ExchangeOrderNotFoundError on 25204.
+    """
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    # Configure rest mock to raise BitgetRestResponseError
+    async def fake_get(
+        endpoint: str, params: QueryParams | None = None, authenticated: bool = False
+    ) -> JsonResponse:
+        raise BitgetRestResponseError(
+            code="25204",
+            message="Order does not exist",
+            request_path=endpoint,
+            http_status=400,
+        )
+
+    rest.get = fake_get  # type: ignore[assignment]
+
+    with pytest.raises(ExchangeOrderNotFoundError):
+        await client.get_order(symbol="SHIBUSDT", order_id="999999")
+
+    with pytest.raises(ExchangeOrderNotFoundError):
+        await client.get_order_by_client_order_id(
+            symbol="SHIBUSDT", client_order_id="eme-missing"
+        )
+
+
+# =============================================================================
+# Regression Tests — protection order reconciliation (Bug 1, Bug 2)
+# =============================================================================
+def test_bitget_mapper_plan_order_pos_loss_maps_to_stop_market() -> None:
+    """Regression: pos_loss planType must produce STOP_MARKET, not MARKET.
+
+    Bitget V3 unfilled-strategy-orders returns planType='pos_loss' with
+    orderType='market' (the post-trigger execution style).  Before the fix,
+    the mapper used orderType and incorrectly produced OrderType.MARKET, which
+    caused _validate_reconciled_leg_identity to raise RuntimeError.
+    """
+    mapper = BitgetExchangeMapper()
+    payload = {
+        "planOrderId": "strat-sl-001",
+        "clientOid": "bsl-3e4e7c673b8343c6a52ca5167960c102",
+        "symbol": "XRPUSDT",
+        "posSide": "long",
+        "orderType": "market",  # post-trigger execution type — NOT the trigger class
+        "planType": "pos_loss",  # trigger class — determines SL vs TP
+        "triggerPrice": "1.4778",
+        "size": "16",
+        "planStatus": "not_trigger",
+        "cTime": "1700000000000",
+        "uTime": "1700000000000",
+    }
+    order = mapper.map_order(payload)
+
+    assert order.order_id == "strat-sl-001"
+    assert order.client_order_id == "bsl-3e4e7c673b8343c6a52ca5167960c102"
+    assert order.symbol == "XRPUSDT"
+    assert order.side is OrderSide.SELL  # closing LONG → SELL
+    assert order.order_type is OrderType.STOP_MARKET
+    assert order.stop_price == Decimal("1.4778")
+    assert order.quantity == Decimal("16")
+    assert order.status is OrderStatus.NEW
+
+
+def test_bitget_mapper_plan_order_pos_profit_maps_to_take_profit_market() -> None:
+    """Regression: pos_profit planType must produce TAKE_PROFIT_MARKET, not MARKET."""
+    mapper = BitgetExchangeMapper()
+    payload = {
+        "planOrderId": "strat-tp-001",
+        "clientOid": "btp-068764063f8d462091100c9bb8531b25",
+        "symbol": "XRPUSDT",
+        "posSide": "long",
+        "orderType": "market",
+        "planType": "pos_profit",
+        "triggerPrice": "1.5135",
+        "size": "16",
+        "planStatus": "not_trigger",
+        "cTime": "1700000000000",
+        "uTime": "1700000000000",
+    }
+    order = mapper.map_order(payload)
+
+    assert order.order_id == "strat-tp-001"
+    assert order.client_order_id == "btp-068764063f8d462091100c9bb8531b25"
+    assert order.symbol == "XRPUSDT"
+    assert order.side is OrderSide.SELL
+    assert order.order_type is OrderType.TAKE_PROFIT_MARKET
+    assert order.stop_price == Decimal("1.5135")
+    assert order.quantity == Decimal("16")
+
+
+def test_bitget_mapper_plan_order_zero_size_allowed() -> None:
+    """Regression: plan order with size=0 (Bitget 'close all') must parse without error.
+
+    When protection orders are placed without an explicit size, Bitget stores
+    size='0'.  The mapper must not crash and must produce quantity=Decimal('0').
+    The protection service's relaxed quantity check accepts 0 as 'close all'.
+    """
+    mapper = BitgetExchangeMapper()
+    payload = {
+        "planOrderId": "strat-sl-002",
+        "clientOid": "bsl-abc",
+        "symbol": "XRPUSDT",
+        "posSide": "long",
+        "orderType": "market",
+        "planType": "pos_loss",
+        "triggerPrice": "1.4778",
+        "size": "0",
+        "planStatus": "not_trigger",
+        "cTime": "1700000000000",
+        "uTime": "1700000000000",
+    }
+    order = mapper.map_order(payload)
+
+    assert order.order_type is OrderType.STOP_MARKET
+    assert order.stop_price == Decimal("1.4778")
+    assert order.quantity == Decimal("0")
+
+
+def test_bitget_mapper_plan_order_nested_stop_loss_dict() -> None:
+    """Regression: nested stopLoss dict must extract triggerPrice as STOP_MARKET.
+
+    Some Bitget V3 endpoints return stopLoss as an object:
+        {"triggerPrice": "1.4778", "triggerType": "mark_price", "orderType": "market"}
+    The mapper must extract the inner triggerPrice and classify as STOP_MARKET.
+    """
+    mapper = BitgetExchangeMapper()
+    payload = {
+        "planOrderId": "strat-sl-003",
+        "clientOid": "bsl-nested",
+        "symbol": "ETHUSDT",
+        "posSide": "long",
+        "orderType": "market",
+        "planType": "",
+        "stopLoss": {"triggerPrice": "2800.0", "triggerType": "mark_price"},
+        "triggerPrice": "",
+        "size": "1",
+        "planStatus": "not_trigger",
+        "cTime": "1700000000000",
+        "uTime": "1700000000000",
+    }
+    order = mapper.map_order(payload)
+
+    assert order.order_type is OrderType.STOP_MARKET
+    assert order.stop_price == Decimal("2800.0")
+
+
+def test_bitget_mapper_plan_order_nested_take_profit_dict() -> None:
+    """Regression: nested takeProfit dict must produce TAKE_PROFIT_MARKET order type."""
+    mapper = BitgetExchangeMapper()
+    payload = {
+        "planOrderId": "strat-tp-002",
+        "clientOid": "btp-nested",
+        "symbol": "ETHUSDT",
+        "posSide": "long",
+        "orderType": "market",
+        "planType": "",
+        "takeProfit": {"triggerPrice": "3200.0", "triggerType": "mark_price"},
+        "triggerPrice": "",
+        "size": "1",
+        "planStatus": "not_trigger",
+        "cTime": "1700000000000",
+        "uTime": "1700000000000",
+    }
+    order = mapper.map_order(payload)
+
+    assert order.order_type is OrderType.TAKE_PROFIT_MARKET
+    assert order.stop_price == Decimal("3200.0")
+
+
+@pytest.mark.asyncio
+async def test_bitget_futures_create_protection_orders_atomic_combined_submission() -> (
+    None
+):
+    """Regression: create_protection_orders submits combined TPSL in one atomic request.
+
+    Submitting SL and TP in separate calls causes Bitget's position-level TPSL
+    to overwrite the earlier leg. Both must be sent together with explicit size.
+    """
+    rest = MockBitgetRestClient()
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {"orderId": "strat-combined-1"},
+    }
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    captured_data: dict[str, object] | None = None
+    call_count = 0
+
+    original_post = rest.post
+
+    async def recording_post(
+        path: str,
+        *,
+        params: QueryParams | None = None,
+        data: dict[str, object] | None = None,
+        headers: RequestHeaders | None = None,
+        authenticated: bool = False,
+    ) -> JsonResponse:
+        nonlocal call_count, captured_data
+        call_count += 1
+        captured_data = data
+        return await original_post(
+            path,
+            params=params,
+            data=data,
+            headers=headers,
+            authenticated=authenticated,
+        )
+
+    rest.post = recording_post  # type: ignore[assignment]
+
+    orders = await client.create_protection_orders(
+        symbol="XRPUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("16"),
+        stop_loss=Decimal("1.4778"),
+        take_profit=Decimal("1.5135"),
+        stop_loss_client_algo_id="bsl-test",
+        take_profit_client_algo_id="btp-test",
+    )
+
+    assert call_count == 1, "Must submit both legs in a single atomic request"
+    assert captured_data is not None
+    assert captured_data.get("size") == "16"
+    assert captured_data.get("stopLoss") == "1.4778"
+    assert captured_data.get("takeProfit") == "1.5135"
+    assert captured_data.get("type") == "tpsl"
+    assert len(orders) == 2
+    assert orders[0].order_type is OrderType.STOP_MARKET
+    assert orders[0].stop_price == Decimal("1.4778")
+    assert orders[0].client_order_id == "bsl-test"
+    assert orders[1].order_type is OrderType.TAKE_PROFIT_MARKET
+    assert orders[1].stop_price == Decimal("1.5135")
+    assert orders[1].client_order_id == "btp-test"
+
+
+def test_bitget_mapper_map_protection_orders_unpacks_combined_tpsl() -> None:
+    """map_protection_orders unpacks combined SL+TP record into two distinct orders."""
+    mapper = BitgetExchangeMapper()
+    payload = {
+        "planOrderId": "strat-combined-001",
+        "clientOid": "bsl-3e4e7c673b8343c6a52ca5167960c102",
+        "symbol": "XRPUSDT",
+        "posSide": "long",
+        "orderType": "market",
+        "stopLoss": "1.4778",
+        "takeProfit": "1.5135",
+        "size": "16",
+        "planStatus": "not_trigger",
+        "cTime": "1700000000000",
+        "uTime": "1700000000000",
+    }
+    orders = mapper.map_protection_orders(payload)
+
+    assert len(orders) == 2
+    sl, tp = orders
+
+    assert sl.order_type is OrderType.STOP_MARKET
+    assert sl.stop_price == Decimal("1.4778")
+    assert sl.client_order_id == "bsl-3e4e7c673b8343c6a52ca5167960c102"
+    assert sl.side is OrderSide.SELL
+    assert sl.quantity == Decimal("16")
+
+    assert tp.order_type is OrderType.TAKE_PROFIT_MARKET
+    assert tp.stop_price == Decimal("1.5135")
+    assert tp.client_order_id is None, "TP leg must not adopt bsl- client ID"
+    assert tp.side is OrderSide.SELL
+    assert tp.quantity == Decimal("16")
+
+
+def test_bitget_mapper_map_order_tp_clears_bsl_client_id() -> None:
+    """map_order must not return an SL client_order_id on a pure TP order."""
+    mapper = BitgetExchangeMapper()
+    payload = {
+        "planOrderId": "strat-tp-only",
+        "clientOid": "bsl-should-not-attach-to-tp",
+        "symbol": "XRPUSDT",
+        "posSide": "long",
+        "orderType": "market",
+        "takeProfit": "1.5135",
+        "size": "16",
+        "planStatus": "not_trigger",
+        "cTime": "1700000000000",
+        "uTime": "1700000000000",
+    }
+    order = mapper.map_order(payload)
+
+    assert order.order_type is OrderType.TAKE_PROFIT_MARKET
+    assert order.stop_price == Decimal("1.5135")
+    assert order.client_order_id is None

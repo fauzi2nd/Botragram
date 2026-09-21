@@ -364,11 +364,16 @@ class MarketTypeSwitchService:
         if strategy_type is self.current_strategy_type:
             return False
 
+        strat_interval, strat_source = (
+            SettingsManager.resolve_strategy_interval_from_environment(strategy_type)
+        )
         candidate = replace(
             self.settings,
             strategy=replace(
                 self.settings.strategy,
                 strategy_type=strategy_type,
+                strategy_interval=strat_interval,
+                strategy_interval_source=strat_source,
             ),
         )
         SettingsManager.validate(settings=candidate)

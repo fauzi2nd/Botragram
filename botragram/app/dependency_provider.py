@@ -25,6 +25,7 @@ from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.app.runtime_limited_autonomous_live_executor import (
     RuntimeLimitedAutonomousLiveTradingCycleExecutor,
 )
+from botragram.app.settings_manager import SettingsManager
 from botragram.app.trading_runner import (
     AutonomousPaperTradingCycleExecutor,
     HumanConfirmedPaperTradingCycleExecutor,
@@ -488,11 +489,18 @@ class DependencyProvider:
             persisted_strategy = await self.runtime_settings_repository.get_strategy()
             if persisted_strategy is not None:
                 if persisted_strategy is not self._settings.strategy.strategy_type:
+                    strat_interval, strat_source = (
+                        SettingsManager.resolve_strategy_interval_from_environment(
+                            persisted_strategy
+                        )
+                    )
                     self._settings = replace(
                         self._settings,
                         strategy=replace(
                             self._settings.strategy,
                             strategy_type=persisted_strategy,
+                            strategy_interval=strat_interval,
+                            strategy_interval_source=strat_source,
                         ),
                     )
                 self._runtime_control.strategy_type = persisted_strategy
@@ -1253,6 +1261,19 @@ class DependencyProvider:
 
     def _select_runtime_strategy(self, strategy_type: StrategyType) -> None:
         self.signal_engine.get_minimum_candles(strategy_type=strategy_type)
+        strat_interval, strat_source = (
+            SettingsManager.resolve_strategy_interval_from_environment(strategy_type)
+        )
+        self._settings = replace(
+            self._settings,
+            strategy=replace(
+                self._settings.strategy,
+                strategy_type=strategy_type,
+                strategy_interval=strat_interval,
+                strategy_interval_source=strat_source,
+            ),
+        )
+        self._runtime_control.interval = self._settings.effective_strategy_interval
         if self._runtime_settings_repository is not None:
             asyncio.create_task(
                 self._runtime_settings_repository.save_strategy(
@@ -1373,7 +1394,11 @@ class DependencyProvider:
             )
             if isinstance(
                 exchange_client,
-                (BinanceFuturesExchangeClient, BybitFuturesExchangeClient),
+                (
+                    BinanceFuturesExchangeClient,
+                    BybitFuturesExchangeClient,
+                    BitgetFuturesExchangeClient,
+                ),
             )
             else None
         )
@@ -1454,6 +1479,7 @@ class DependencyProvider:
             protection_reconciler=self.live_position_protection_service,
             protection_cleanup_service=self.live_position_protection_service,
             emergency_exit_exchange=exchange_client,
+            manual_exit_reader=exchange_client,
             closed_lifecycle_service=self._closed_position_lifecycle_service,
         )
         self._live_futures_entry_service = LiveFuturesEntryService(
@@ -1556,7 +1582,11 @@ class DependencyProvider:
             exchange_client = self.exchange_client
             if not isinstance(
                 exchange_client,
-                (BinanceFuturesExchangeClient, BybitFuturesExchangeClient),
+                (
+                    BinanceFuturesExchangeClient,
+                    BybitFuturesExchangeClient,
+                    BitgetFuturesExchangeClient,
+                ),
             ):
                 raise TypeError("Autonomous LIVE requires Futures exchange client")
             authorization = self._autonomous_live_entry_authorization
@@ -1596,8 +1626,10 @@ class DependencyProvider:
                 live_runtime_portfolio_reconciler=(
                     self.live_runtime_portfolio_reconciliation_service
                 ),
-                discovery_rate_limit_governor=(
-                    exchange_client.rest_transport.rate_limit_governor
+                discovery_rate_limit_governor=getattr(
+                    exchange_client.rest_transport,
+                    "rate_limit_governor",
+                    None,
                 ),
                 position_exit_service=self.position_exit_service,
                 runtime_risk_limit_provider=self.runtime_risk_limit_service,

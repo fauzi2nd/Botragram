@@ -16,7 +16,8 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Final, cast
@@ -79,6 +80,9 @@ _ORDER_TYPE_MAP: Final[Mapping[str, OrderType]] = {
     "STOP": OrderType.STOP,
     "STOP_MARKET": OrderType.STOP_MARKET,
     "PLAN": OrderType.STOP,
+    "TAKE_PROFIT": OrderType.TAKE_PROFIT,
+    "TAKE_PROFIT_MARKET": OrderType.TAKE_PROFIT_MARKET,
+    "TPSL": OrderType.STOP_MARKET,
 }
 
 _STATUS_MAP: Final[Mapping[str, OrderStatus]] = {
@@ -86,11 +90,13 @@ _STATUS_MAP: Final[Mapping[str, OrderStatus]] = {
     "NEW": OrderStatus.NEW,
     "NOT_TRIGGER": OrderStatus.NEW,
     "UNTRIGGERED": OrderStatus.NEW,
+    "PENDING": OrderStatus.NEW,
     "LIVE": OrderStatus.NEW,
     "PARTIALLY_FILLED": OrderStatus.PARTIALLY_FILLED,
     "PARTIAL_FILL": OrderStatus.PARTIALLY_FILLED,
     "FILLED": OrderStatus.FILLED,
     "FULL_FILL": OrderStatus.FILLED,
+    "EXECUTED": OrderStatus.FILLED,
     "CANCELLED": OrderStatus.CANCELED,
     "CANCELED": OrderStatus.CANCELED,
     "FAIL": OrderStatus.REJECTED,
@@ -211,43 +217,129 @@ class BitgetExchangeMapper(BaseExchangeMapper):
         symbol = self._to_string(payload.get("symbol")).strip().upper()
 
         raw_side = self._to_string(payload.get("side")).strip().upper()
-        side = _SIDE_MAP.get(raw_side, OrderSide.BUY)
+        if raw_side in _SIDE_MAP:
+            side = _SIDE_MAP[raw_side]
+        else:
+            # Plan / Strategy orders on Bitget specify posSide instead of side.
+            # A stop-loss or take-profit order closing a LONG position has side SELL,
+            # and closing a SHORT position has side BUY.
+            pos_side = (
+                self._to_string(payload.get("posSide", payload.get("holdSide")))
+                .strip()
+                .upper()
+            )
+            if pos_side == "LONG":
+                side = OrderSide.SELL
+            elif pos_side == "SHORT":
+                side = OrderSide.BUY
+            else:
+                side = OrderSide.BUY
 
         raw_type = (
-            self._to_string(payload.get("orderType", payload.get("planType")))
+            self._to_string(
+                payload.get("orderType", payload.get("planType", payload.get("type")))
+            )
             .strip()
             .upper()
         )
-        order_type = _ORDER_TYPE_MAP.get(raw_type, OrderType.MARKET)
+        # planType classifies the trigger intent (pos_loss / pos_profit) independently
+        # of orderType, which describes only the execution order type (market / limit).
+        raw_plan_type = self._to_string(payload.get("planType", "")).strip().upper()
+
+        # stopLoss / takeProfit may arrive as a plain price string or as a nested
+        # object {"triggerPrice": ..., "triggerType": ..., "orderType": ...}.
+        raw_sl = payload.get("stopLoss")
+        raw_tp = payload.get("takeProfit")
+        stop_loss_val = (
+            self._to_decimal(cast(dict[str, object], raw_sl).get("triggerPrice"))
+            if isinstance(raw_sl, dict)
+            else self._to_decimal(raw_sl)
+        )
+        take_profit_val = (
+            self._to_decimal(cast(dict[str, object], raw_tp).get("triggerPrice"))
+            if isinstance(raw_tp, dict)
+            else self._to_decimal(raw_tp)
+        )
+        trigger_price_val = self._to_decimal(payload.get("triggerPrice"))
+
+        if stop_loss_val > _DECIMAL_ZERO:
+            order_type = OrderType.STOP_MARKET
+            stop_price: Decimal | None = stop_loss_val
+        elif take_profit_val > _DECIMAL_ZERO:
+            order_type = OrderType.TAKE_PROFIT_MARKET
+            stop_price = take_profit_val
+        elif trigger_price_val > _DECIMAL_ZERO:
+            # orderType in plan-order responses describes the post-trigger execution
+            # style ("market", "limit") — not whether it is a stop-loss or take-profit.
+            # Use planType for accurate classification.
+            if raw_plan_type in (
+                "POS_LOSS",
+                "LOSS_PLAN",
+                "STOP_LOSS",
+                "LOSS",
+                "TRIGGERED_SL",
+                "NORMAL_PLAN",
+            ):
+                order_type = OrderType.STOP_MARKET
+            elif raw_plan_type in (
+                "POS_PROFIT",
+                "PROFIT_PLAN",
+                "TAKE_PROFIT",
+                "PROFIT",
+                "TRIGGERED_TP",
+            ):
+                order_type = OrderType.TAKE_PROFIT_MARKET
+            else:
+                # Fall back to the type map; if it resolves to a plain execution
+                # type (MARKET / LIMIT), default to STOP_MARKET so a triggered
+                # plan order is never classified as a vanilla market/limit order.
+                mapped = _ORDER_TYPE_MAP.get(raw_type, OrderType.STOP_MARKET)
+                order_type = (
+                    OrderType.STOP_MARKET
+                    if mapped in (OrderType.MARKET, OrderType.LIMIT)
+                    else mapped
+                )
+            stop_price = trigger_price_val
+        else:
+            order_type = _ORDER_TYPE_MAP.get(raw_type, OrderType.MARKET)
+            stop_price = None
 
         raw_status = (
             self._to_string(
-                payload.get("status", payload.get("state", payload.get("planStatus")))
+                payload.get(
+                    "status",
+                    payload.get(
+                        "orderStatus",
+                        payload.get("state", payload.get("planStatus")),
+                    ),
+                )
             )
             .strip()
             .upper()
         )
         status = _STATUS_MAP.get(raw_status, OrderStatus.NEW)
 
-        price_val = self._to_decimal(
-            payload.get(
-                "price", payload.get("triggerPrice", payload.get("executePrice"))
-            )
-        )
+        price_val = self._to_decimal(payload.get("price", payload.get("executePrice")))
         price = price_val if price_val > _DECIMAL_ZERO else None
 
-        quantity = self._to_decimal(payload.get("size", payload.get("quantity")))
-        exec_qty = self._to_decimal(
-            payload.get("baseVolume", payload.get("cumExecQty"))
+        quantity = self._to_decimal(
+            payload.get("qty", payload.get("size", payload.get("quantity")))
         )
-
-        stop_price_val = self._to_decimal(payload.get("triggerPrice"))
-        stop_price = stop_price_val if stop_price_val > _DECIMAL_ZERO else None
+        exec_qty = self._to_decimal(
+            payload.get("cumQty", payload.get("baseVolume", payload.get("cumExecQty")))
+        )
 
         created_at = self._to_datetime(payload.get("cTime", payload.get("createdTime")))
         updated_at = self._to_datetime(
             payload.get("uTime", payload.get("updatedTime", payload.get("cTime")))
         )
+
+        if order_type is OrderType.TAKE_PROFIT_MARKET and client_order_id is not None:
+            if client_order_id.startswith("bsl-"):
+                client_order_id = None
+        elif order_type is OrderType.STOP_MARKET and client_order_id is not None:
+            if client_order_id.startswith("btp-"):
+                client_order_id = None
 
         return Order(
             order_id=order_id,
@@ -264,11 +356,72 @@ class BitgetExchangeMapper(BaseExchangeMapper):
             updated_at=updated_at,
         )
 
+    def map_protection_orders(self, payload: ExchangePayload) -> Sequence[Order]:
+        """Map Bitget strategy/plan order payload into protection orders.
+
+        A Bitget 'tpsl' strategy order may carry both stop-loss and take-profit
+        legs within a single record. This method unpacks both legs into separate
+        Order instances when both are present.
+        """
+        raw_sl = payload.get("stopLoss")
+        raw_tp = payload.get("takeProfit")
+        stop_loss_val = (
+            self._to_decimal(cast(dict[str, object], raw_sl).get("triggerPrice"))
+            if isinstance(raw_sl, dict)
+            else self._to_decimal(raw_sl)
+        )
+        take_profit_val = (
+            self._to_decimal(cast(dict[str, object], raw_tp).get("triggerPrice"))
+            if isinstance(raw_tp, dict)
+            else self._to_decimal(raw_tp)
+        )
+
+        if stop_loss_val > _DECIMAL_ZERO and take_profit_val > _DECIMAL_ZERO:
+            base_order = self.map_order(payload)
+            raw_client_id = (
+                self._to_string(
+                    payload.get("clientOid", payload.get("clientOrderId"))
+                ).strip()
+                or None
+            )
+            sl_client_id = (
+                raw_client_id
+                if raw_client_id is not None and not raw_client_id.startswith("btp-")
+                else None
+            )
+            tp_client_id = (
+                raw_client_id
+                if raw_client_id is not None and not raw_client_id.startswith("bsl-")
+                else None
+            )
+
+            sl_order = replace(
+                base_order,
+                order_id=f"{base_order.order_id}-sl" if base_order.order_id else "sl",
+                client_order_id=sl_client_id,
+                order_type=OrderType.STOP_MARKET,
+                stop_price=stop_loss_val,
+            )
+            tp_order = replace(
+                base_order,
+                order_id=f"{base_order.order_id}-tp" if base_order.order_id else "tp",
+                client_order_id=tp_client_id,
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                stop_price=take_profit_val,
+            )
+            return (sl_order, tp_order)
+
+        return (self.map_order(payload),)
+
     def map_position(self, payload: ExchangePayload) -> Position:
-        """Map Bitget V2 position payload into Position model."""
+        """Map Bitget V2/V3 position payload into Position model."""
         symbol = self._to_string(payload.get("symbol")).strip().upper()
 
-        raw_side = self._to_string(payload.get("holdSide")).strip().upper()
+        raw_side = (
+            self._to_string(payload.get("holdSide", payload.get("posSide")))
+            .strip()
+            .upper()
+        )
         side = _POSITION_SIDE_MAP.get(raw_side, PositionSide.LONG)
 
         quantity = self._to_decimal(
@@ -307,13 +460,20 @@ class BitgetExchangeMapper(BaseExchangeMapper):
         )
 
     def map_account(self, payload: ExchangePayload) -> Account:
-        """Map Bitget V2 account/balance payload into Account model."""
+        """Map Bitget V2/V3 account/balance payload into Account model."""
         balances: list[Balance] = []
 
         data = payload.get("data")
         raw_list: list[object]
         if isinstance(data, list):
             raw_list = cast(list[object], data)
+        elif isinstance(data, dict):
+            dict_data = cast(dict[str, object], data)
+            inner_list = dict_data.get("list", dict_data.get("assets"))
+            if isinstance(inner_list, list):
+                raw_list = cast(list[object], inner_list)
+            else:
+                raw_list = [dict_data]
         else:
             raw_list = [payload]
 
@@ -360,7 +520,7 @@ class BitgetExchangeMapper(BaseExchangeMapper):
     def map_trade(self, payload: ExchangePayload) -> Trade:
         """Map Bitget V2 trade/fills payload into Trade model."""
         trade_id = self._to_string(
-            payload.get("tradeId", payload.get("fillId"))
+            payload.get("tradeId", payload.get("fillId", payload.get("execId")))
         ).strip()
         order_id = self._to_string(payload.get("orderId")).strip()
         symbol = self._to_string(payload.get("symbol")).strip().upper()
@@ -368,18 +528,56 @@ class BitgetExchangeMapper(BaseExchangeMapper):
         raw_side = self._to_string(payload.get("side")).strip().upper()
         side = _SIDE_MAP.get(raw_side, OrderSide.BUY)
 
-        price = self._to_decimal(payload.get("price", payload.get("fillPrice")))
-        qty = self._to_decimal(payload.get("size", payload.get("baseVolume")))
-        quote_qty = price * qty
-
-        fee = self._to_decimal(payload.get("fee", payload.get("fillFee")))
-        fee_asset = (
-            self._to_string(payload.get("feeCurrency", payload.get("feeCoin", "USDT")))
-            .strip()
-            .upper()
+        price = self._to_decimal(
+            payload.get("price", payload.get("fillPrice", payload.get("execPrice")))
         )
+        qty = self._to_decimal(
+            payload.get(
+                "size",
+                payload.get(
+                    "baseVolume",
+                    payload.get("execQty", payload.get("qty")),
+                ),
+            )
+        )
+        quote_qty = self._to_decimal(
+            payload.get("execValue", payload.get("quoteVolume"))
+        )
+        if quote_qty <= _DECIMAL_ZERO:
+            quote_qty = price * qty
 
-        executed_at = self._to_datetime(payload.get("cTime", payload.get("fillTime")))
+        raw_fee = payload.get("fee", payload.get("fillFee"))
+        raw_fee_currency = payload.get("feeCurrency", payload.get("feeCoin"))
+        fee_detail = payload.get("feeDetail")
+        if raw_fee is None and isinstance(fee_detail, list) and fee_detail:
+            first_fee = cast(list[object], fee_detail)[0]
+            if isinstance(first_fee, dict):
+                fee_dict = cast(dict[str, object], first_fee)
+                raw_fee = fee_dict.get("fee")
+                if raw_fee_currency is None:
+                    raw_fee_currency = fee_dict.get("feeCoin")
+
+        fee = self._to_decimal(raw_fee)
+        fee_asset = self._to_string(raw_fee_currency or "USDT").strip().upper()
+
+        executed_at = self._to_datetime(
+            payload.get(
+                "cTime",
+                payload.get(
+                    "createdTime",
+                    payload.get(
+                        "fillTime",
+                        payload.get("uTime", payload.get("updatedTime")),
+                    ),
+                ),
+            )
+        )
+        pnl_val = payload.get("pnl", payload.get("realizedPnl", payload.get("execPnl")))
+        realized_pnl = (
+            self._to_decimal(pnl_val)
+            if pnl_val is not None and str(pnl_val).strip() != ""
+            else None
+        )
 
         return Trade(
             trade_id=trade_id,
@@ -392,7 +590,7 @@ class BitgetExchangeMapper(BaseExchangeMapper):
             fee=fee,
             fee_asset=fee_asset,
             executed_at=executed_at,
-            realized_pnl=None,
+            realized_pnl=realized_pnl,
             is_liquidation=False,
         )
 

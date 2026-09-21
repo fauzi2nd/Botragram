@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -44,7 +45,7 @@ from botragram.exceptions import (
     ExchangeOrderPriceBandRejectedError,
     VenueRuleValidationError,
 )
-from botragram.models import Order, Position, SubmissionAttempt
+from botragram.models import Order, Position, SubmissionAttempt, Trade
 from botragram.repositories import SubmissionAttemptRepository
 from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
 from botragram.services.closed_position_lifecycle_service import (
@@ -154,6 +155,28 @@ class LiveEmergencyExitExchange(Protocol):
         ...
 
 
+class LiveManualExitTradeReader(Protocol):
+    """Read trade history and orders to recover external or manual exits."""
+
+    async def get_trades(
+        self,
+        *,
+        symbol: str | None,
+        limit: int,
+    ) -> Sequence[Trade]:
+        """Return bounded account fills."""
+        ...
+
+    async def get_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> Order:
+        """Return order by order_id."""
+        ...
+
+
 # =============================================================================
 # Enums
 # =============================================================================
@@ -183,6 +206,7 @@ class LivePostEntryRecoveryService:
     protection_reconciler: LiveProtectionVerification | None = None
     protection_cleanup_service: LiveProtectionCleanup | None = None
     emergency_exit_exchange: LiveEmergencyExitExchange | None = None
+    manual_exit_reader: LiveManualExitTradeReader | None = None
     closed_lifecycle_service: ClosedPositionLifecycleService | None = None
 
     async def recover_acknowledged(
@@ -566,6 +590,9 @@ class LivePostEntryRecoveryService:
         position: Position,
         exit_order: Order | None,
         close_reason: ClosedPositionReason,
+        provenance: ClosedPositionProvenance = (
+            ClosedPositionProvenance.RECOVERY_EMERGENCY_ORDER
+        ),
     ) -> str | None:
         """Require durable recovery ownership before terminalizing local identity."""
         service = self.closed_lifecycle_service
@@ -584,7 +611,7 @@ class LivePostEntryRecoveryService:
             attempt=attempt,
             exit_order=exit_order,
             close_reason=close_reason,
-            provenance=ClosedPositionProvenance.RECOVERY_EMERGENCY_ORDER,
+            provenance=provenance,
         )
         return attempt.client_order_id
 
@@ -625,18 +652,116 @@ class LivePostEntryRecoveryService:
                 raise RuntimeError(
                     "Recovered emergency exit is not in a proven FILLED state"
                 )
+            return await self._stage_recovery_lifecycle(
+                attempt=attempt,
+                position=position,
+                exit_order=exit_order,
+                close_reason=ClosedPositionReason.RECOVERY_CLOSE,
+                provenance=ClosedPositionProvenance.RECOVERY_EMERGENCY_ORDER,
+            )
         except ExchangeOrderNotFoundError as error:
+            manual_order = await self._recover_filled_manual_close_from_history(
+                attempt=attempt,
+                position=position,
+            )
+            if manual_order is not None:
+                return await self._stage_recovery_lifecycle(
+                    attempt=attempt,
+                    position=position,
+                    exit_order=manual_order,
+                    close_reason=ClosedPositionReason.MANUAL_CLOSE,
+                    provenance=ClosedPositionProvenance.MANUAL_ORDER,
+                )
             raise RuntimeError(
                 "Recovery cannot prove a durable emergency exit identity"
             ) from error
         except asyncio.CancelledError:
             raise
-        return await self._stage_recovery_lifecycle(
-            attempt=attempt,
-            position=position,
-            exit_order=exit_order,
-            close_reason=ClosedPositionReason.RECOVERY_CLOSE,
+
+    async def _recover_filled_manual_close_from_history(
+        self,
+        *,
+        attempt: SubmissionAttempt,
+        position: Position,
+    ) -> Order | None:
+        """Recover one full manual close or external exit from exchange fills."""
+        reader = self.manual_exit_reader
+        if reader is None:
+            return None
+
+        closing_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
+        try:
+            trades = tuple(
+                await reader.get_trades(
+                    symbol=position.symbol,
+                    limit=1000,
+                )
+            )
+        except Exception as error:
+            _LOGGER.warning(
+                "Failed to fetch trades during manual exit recovery: symbol=%s "
+                "error=%s",
+                position.symbol,
+                error,
+            )
+            return None
+
+        quantities_by_order: dict[str, Decimal] = {}
+        threshold_time = min(attempt.created_at, position.opened_at)
+        for trade in trades:
+            if (
+                trade.symbol.upper() != position.symbol.upper()
+                or trade.side is not closing_side
+                or trade.executed_at < threshold_time
+            ):
+                continue
+            quantities_by_order[trade.order_id] = (
+                quantities_by_order.get(trade.order_id, _DECIMAL_ZERO) + trade.quantity
+            )
+
+        candidate_ids = tuple(
+            sorted(
+                order_id
+                for order_id, quantity in quantities_by_order.items()
+                if quantity == position.quantity
+            )
+        )
+        if len(candidate_ids) != 1:
+            return None
+
+        order_id = candidate_ids[0]
+        try:
+            recovered = await reader.get_order(
+                symbol=position.symbol,
+                order_id=order_id,
+            )
+        except Exception as error:
+            _LOGGER.warning(
+                "Failed to fetch order during manual exit recovery: symbol=%s "
+                "order_id=%s error=%s",
+                position.symbol,
+                order_id,
+                error,
+            )
+            return None
+
+        if recovered.client_order_id is None or not recovered.client_order_id.strip():
+            recovered = replace(
+                recovered,
+                client_order_id=f"manual-{recovered.order_id}",
+            )
+
+        if (
+            recovered.symbol.upper() != position.symbol.upper()
+            or recovered.side is not closing_side
+            or recovered.quantity < position.quantity
+            or recovered.status is not OrderStatus.FILLED
+        ):
+            return None
+
+        return recovered
 
     async def _complete_recovery_lifecycle_best_effort(
         self,

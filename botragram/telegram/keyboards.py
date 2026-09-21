@@ -567,6 +567,7 @@ def get_exchange_keyboard(
     normalized = active_exchange.strip().upper()
     binance_check = "✅ " if exchange_confirmed and normalized == "BINANCE" else ""
     bybit_check = "✅ " if exchange_confirmed and normalized == "BYBIT" else ""
+    bitget_check = "✅ " if exchange_confirmed and normalized == "BITGET" else ""
     spot_check = (
         "✅ " if market_type_confirmed and market_type is MarketType.SPOT else ""
     )
@@ -582,6 +583,10 @@ def get_exchange_keyboard(
             InlineKeyboardButton(
                 f"{bybit_check}🟡 BYBIT",
                 callback_data="cb_exchange_bybit",
+            ),
+            InlineKeyboardButton(
+                f"{bitget_check}🔵 BITGET",
+                callback_data="cb_exchange_bitget",
             ),
         ],
         [
