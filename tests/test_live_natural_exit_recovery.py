@@ -57,6 +57,7 @@ class FakeNaturalExitExchange:
         protections: tuple[Order, ...] = (),
         exact_only_protections: tuple[Order, ...] = (),
         protection_history: tuple[Order, ...] = (),
+        unsupported_protection_history: bool = False,
         trades: tuple[Trade, ...] = (),
         standard_orders: tuple[Order, ...] = (),
         ambiguous_after_remove: bool = False,
@@ -66,6 +67,7 @@ class FakeNaturalExitExchange:
         self.protections = list(protections)
         self.exact_only_protections = list(exact_only_protections)
         self.protection_history = protection_history
+        self.unsupported_protection_history = unsupported_protection_history
         self.trades = trades
         self.standard_orders = standard_orders
         self.ambiguous_after_remove = ambiguous_after_remove
@@ -116,6 +118,8 @@ class FakeNaturalExitExchange:
         end_time: datetime | None = None,
     ) -> tuple[Order, ...]:
         del end_time
+        if self.unsupported_protection_history:
+            raise NotImplementedError("Protection-order history is not supported")
         self.history_calls.append((symbol.upper(), start_time))
         return tuple(
             order for order in self.protection_history if order.symbol == symbol.upper()
@@ -1240,6 +1244,69 @@ async def test_manual_close_recovers_one_full_order_with_multiple_fills() -> Non
                 side=OrderSide.BUY,
                 realized_pnl="1",
                 quantity="485",
+            ),
+        ),
+        standard_orders=(manual_order,),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert exchange.trade_calls == [(_SYMBOL, 1000)]
+    assert exchange.order_calls == [(_SYMBOL, manual_order.order_id)]
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
+    assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+
+
+@pytest.mark.asyncio
+async def test_manual_close_recovers_when_protection_history_not_implemented() -> None:
+    """Recover manual close when connector raises NotImplementedError on history."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    manual_order = Order(
+        order_id="manual-exit-unsupported-sl-history",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        price=None,
+        stop_price=None,
+        created_at=_NOW,
+        updated_at=_NOW,
+        client_order_id="web-manual-close",
+    )
+    exchange = FakeNaturalExitExchange(
+        unsupported_protection_history=True,
+        trades=(
+            _fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+            ),
+            _fill(
+                trade_id="manual-fill-1",
+                order_id=manual_order.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity="885",
             ),
         ),
         standard_orders=(manual_order,),

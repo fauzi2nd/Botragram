@@ -447,12 +447,15 @@ class LiveNaturalExitRecoveryService:
         position: Position,
     ) -> Order | None:
         """Recover one lost durable stepped-STOP identity through bounded GETs."""
-        history = tuple(
-            await self.exchange_client.get_protection_order_history(
-                symbol=position.symbol,
-                start_time=position.opened_at,
+        try:
+            history = tuple(
+                await self.exchange_client.get_protection_order_history(
+                    symbol=position.symbol,
+                    start_time=position.opened_at,
+                )
             )
-        )
+        except NotImplementedError:
+            return None
         persisted_ids = {
             position.stop_loss_client_algo_id,
             position.take_profit_client_algo_id,

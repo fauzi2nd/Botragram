@@ -61,6 +61,7 @@ _FILLS_ENDPOINT: Final[str] = "/api/v3/trade/fills"
 _PLACE_PLAN_ORDER_ENDPOINT: Final[str] = "/api/v3/trade/place-strategy-order"
 _CANCEL_PLAN_ORDER_ENDPOINT: Final[str] = "/api/v3/trade/cancel-strategy-order"
 _PLAN_PENDING_ENDPOINT: Final[str] = "/api/v3/trade/unfilled-strategy-orders"
+_PLAN_HISTORY_ENDPOINT: Final[str] = "/api/v3/trade/history-strategy-orders"
 
 _ALL_POSITIONS_ENDPOINT: Final[str] = "/api/v3/position/current-position"
 _SET_LEVERAGE_ENDPOINT: Final[str] = "/api/v3/account/set-leverage"
@@ -722,6 +723,49 @@ class BitgetFuturesExchangeClient(BitgetClient):
             f"Protection order with client_id {client_id!r} not found "
             f"for symbol {symbol!r}"
         )
+
+    async def get_protection_order_history(
+        self,
+        *,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime | None = None,
+    ) -> Sequence[Order]:
+        """Return conditional protection order history for one symbol."""
+        start_ms = int(start_time.timestamp() * 1000)
+        params: dict[str, str | int] = {
+            "category": _CATEGORY,
+            "symbol": symbol.strip().upper(),
+            "startTime": start_ms,
+            "limit": 100,
+        }
+        if end_time is not None:
+            params["endTime"] = int(end_time.timestamp() * 1000)
+
+        payload = await self._rest.get(
+            _PLAN_HISTORY_ENDPOINT,
+            params=params,
+            authenticated=True,
+        )
+        orders: list[Order] = []
+        if isinstance(payload, dict):
+            raw_data = payload.get("data")
+            raw_list: list[object] = []
+            if isinstance(raw_data, dict):
+                ent_list = cast(dict[str, object], raw_data).get("list")
+                raw_list = (
+                    cast(list[object], ent_list) if isinstance(ent_list, list) else []
+                )
+            elif isinstance(raw_data, list):
+                raw_list = cast(list[object], raw_data)
+
+            for item in raw_list:
+                if isinstance(item, dict):
+                    orders.extend(
+                        self._mapper.map_protection_orders(cast(ExchangePayload, item))
+                    )
+
+        return tuple(orders)
 
     async def cancel_protection_order(
         self,

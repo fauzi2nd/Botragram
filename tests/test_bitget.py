@@ -16,7 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -43,6 +43,7 @@ from botragram.exchanges.base.rest import (
     QueryParams,
     RequestHeaders,
 )
+from botragram.exchanges.bitget.client import BitgetClient
 from botragram.exchanges.bitget.futures_client import BitgetFuturesExchangeClient
 from botragram.exchanges.bitget.mapper import BitgetExchangeMapper
 from botragram.exchanges.bitget.rest import BitgetRestClient, BitgetRestResponseError
@@ -1551,3 +1552,72 @@ def test_bitget_map_ticker_funding_rate_fallback() -> None:
         }
     )
     assert ticker2.funding_rate == Decimal("-0.0002")
+
+
+@pytest.mark.asyncio
+async def test_bitget_get_protection_order_history() -> None:
+    """Verify get_protection_order_history fetches and maps Bitget strategy orders."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetExchangeMapper()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {
+            "list": [
+                {
+                    "orderId": "plan-12345",
+                    "clientOid": "bsl-00000000000000000000000000000001",
+                    "symbol": "ETHUSDT",
+                    "side": "sell",
+                    "planType": "pos_loss",
+                    "triggerPrice": "2400.0",
+                    "size": "0.05",
+                    "status": "executed",
+                    "cTime": "1700000000000",
+                    "uTime": "1700000001000",
+                }
+            ]
+        },
+    }
+
+    start = datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
+    end = datetime(2023, 11, 15, 22, 13, 20, tzinfo=UTC)
+    orders = await client.get_protection_order_history(
+        symbol="ETHUSDT",
+        start_time=start,
+        end_time=end,
+    )
+
+    assert len(orders) == 1
+    assert orders[0].order_id == "plan-12345"
+    assert orders[0].client_order_id == "bsl-00000000000000000000000000000001"
+    assert orders[0].symbol == "ETHUSDT"
+    assert orders[0].side is OrderSide.SELL
+    assert orders[0].order_type is OrderType.STOP_MARKET
+    assert orders[0].status is OrderStatus.FILLED
+    assert orders[0].stop_price == Decimal("2400.0")
+
+    assert rest.last_path == "/api/v3/trade/history-strategy-orders"
+    assert rest.last_params == {
+        "category": "USDT-FUTURES",
+        "symbol": "ETHUSDT",
+        "startTime": int(start.timestamp() * 1000),
+        "endTime": int(end.timestamp() * 1000),
+        "limit": 100,
+    }
+
+
+@pytest.mark.asyncio
+async def test_bitget_base_client_get_protection_order_history_raises() -> None:
+    """Verify base BitgetClient raises NotImplementedError for history."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetExchangeMapper()
+    base_client = BitgetClient(rest=rest, mapper=mapper)
+
+    with pytest.raises(NotImplementedError, match="must be implemented by subclass"):
+        await base_client.get_protection_order_history(
+            symbol="BTCUSDT",
+            start_time=datetime.now(UTC),
+        )

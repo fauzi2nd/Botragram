@@ -587,6 +587,18 @@ class BitgetClient(BaseExchangeClient):
             "get_protection_order_by_client_id must be implemented by subclass"
         )
 
+    async def get_protection_order_history(
+        self,
+        *,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime | None = None,
+    ) -> Sequence[Order]:
+        del symbol, start_time, end_time
+        raise NotImplementedError(
+            "get_protection_order_history must be implemented by subclass"
+        )
+
     async def ensure_stop_loss_order(
         self,
         *,
