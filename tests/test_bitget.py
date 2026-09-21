@@ -1437,3 +1437,117 @@ async def test_bitget_futures_exchange_client_adopted_protection_order() -> None
         "symbol": "BTCUSDT",
         "orderId": "1485957673526992966",
     }
+
+
+@pytest.mark.asyncio
+async def test_bitget_get_account_ratio_success_and_period_normalization() -> None:
+    """Verify get_account_ratio normalizes period and maps long/short ratios."""
+    rest = MockBitgetRestClient()
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            {
+                "longAccountRatio": "0.5500",
+                "shortAccountRatio": "0.4500",
+                "longShortAccountRatio": "1.2222",
+                "ts": "1700000900000",
+            },
+            {
+                "longAccountRatio": "0.6000",
+                "shortAccountRatio": "0.4000",
+                "longShortAccountRatio": "1.5000",
+                "ts": "1700001800000",
+            },
+        ],
+    }
+    mapper = BitgetExchangeMapper()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    # Calling with '15min' normalizes to '15m'
+    ratios = await client.get_account_ratio(
+        symbol="BTCUSDT",
+        period="15min",
+        limit=10,
+    )
+    assert rest.last_path == "/api/v2/mix/market/account-long-short"
+    assert rest.last_params == {
+        "symbol": "BTCUSDT",
+        "productType": "USDT-FUTURES",
+        "period": "15m",
+    }
+    assert len(ratios) == 2
+    ts1, buy1, sell1 = ratios[0]
+    assert buy1 == Decimal("0.5500")
+    assert sell1 == Decimal("0.4500")
+    assert ts1.timestamp() == 1700000900.0
+
+    ts2, buy2, sell2 = ratios[1]
+    assert buy2 == Decimal("0.6000")
+    assert sell2 == Decimal("0.4000")
+    assert ts2.timestamp() == 1700001800.0
+
+    # Test limit <= 0 returns empty
+    empty = await client.get_account_ratio(symbol="BTCUSDT", limit=0)
+    assert empty == ()
+
+
+@pytest.mark.asyncio
+async def test_bitget_open_interest_rolling_history() -> None:
+    """Verify get_open_interest accumulates historical points across polls."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetExchangeMapper()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    # First poll at t=1000
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {
+            "openInterestList": [{"symbol": "BTCUSDT", "size": "100.5"}],
+            "ts": "1700001000000",
+        },
+    }
+    points1 = await client.get_open_interest(symbol="BTCUSDT")
+    assert len(points1) == 1
+    assert points1[0][1] == Decimal("100.5")
+
+    # Second poll at t=2000
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {
+            "openInterestList": [{"symbol": "BTCUSDT", "size": "105.0"}],
+            "ts": "1700002000000",
+        },
+    }
+    points2 = await client.get_open_interest(symbol="BTCUSDT")
+    assert len(points2) == 2
+    assert points2[0][1] == Decimal("100.5")
+    assert points2[1][1] == Decimal("105.0")
+
+
+def test_bitget_map_ticker_funding_rate_fallback() -> None:
+    """Verify map_ticker reads fundingRate and falls back to fundRate."""
+    mapper = BitgetExchangeMapper()
+
+    ticker1 = mapper.map_ticker(
+        {
+            "symbol": "BTCUSDT",
+            "lastPr": "50000",
+            "ts": "1700000000000",
+            "fundingRate": "0.0001",
+        }
+    )
+    assert ticker1.funding_rate == Decimal("0.0001")
+
+    ticker2 = mapper.map_ticker(
+        {
+            "symbol": "BTCUSDT",
+            "lastPr": "50000",
+            "ts": "1700000000000",
+            "fundingRate": "",
+            "fundRate": "-0.0002",
+        }
+    )
+    assert ticker2.funding_rate == Decimal("-0.0002")

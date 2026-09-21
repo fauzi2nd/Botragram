@@ -188,6 +188,8 @@ class BitgetExchangeMapper(BaseExchangeMapper):
         timestamp = self._to_datetime(payload.get("ts"))
 
         raw_funding = payload.get("fundingRate")
+        if raw_funding is None or raw_funding == "":
+            raw_funding = payload.get("fundRate")
         funding_rate = (
             self._to_decimal(raw_funding)
             if raw_funding is not None and raw_funding != ""
@@ -202,6 +204,26 @@ class BitgetExchangeMapper(BaseExchangeMapper):
             timestamp=timestamp,
             funding_rate=funding_rate,
         )
+
+    def map_account_ratio(
+        self,
+        payload: ExchangePayload,
+    ) -> tuple[datetime, Decimal, Decimal]:
+        """Map Bitget account-long-short payload item into a 3-tuple.
+
+        Returns:
+            Tuple of (timestamp, buy_ratio, sell_ratio).
+        """
+        timestamp = self._to_datetime(payload.get("ts"))
+        buy_ratio = self._to_decimal(
+            payload.get("longAccountRatio", payload.get("buyRatio"))
+        )
+        sell_ratio = self._to_decimal(
+            payload.get("shortAccountRatio", payload.get("sellRatio"))
+        )
+        if sell_ratio <= _DECIMAL_ZERO and buy_ratio > _DECIMAL_ZERO:
+            sell_ratio = Decimal("1") - buy_ratio
+        return (timestamp, buy_ratio, sell_ratio)
 
     def map_order(self, payload: ExchangePayload) -> Order:
         """Map Bitget V2 order payload into Order model."""

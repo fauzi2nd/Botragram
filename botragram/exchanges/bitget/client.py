@@ -83,7 +83,25 @@ _TICKERS_ENDPOINT: Final[str] = "/api/v2/mix/market/tickers"
 _CANDLES_ENDPOINT: Final[str] = "/api/v2/mix/market/candles"
 _CONTRACTS_ENDPOINT: Final[str] = "/api/v2/mix/market/contracts"
 _OPEN_INTEREST_ENDPOINT: Final[str] = "/api/v2/mix/market/open-interest"
+_ACCOUNT_RATIO_ENDPOINT: Final[str] = "/api/v2/mix/market/account-long-short"
 _FILLS_ENDPOINT: Final[str] = "/api/v3/trade/fills"
+
+_ACCOUNT_RATIO_PERIOD_MAP: Final[dict[str, str]] = {
+    "5min": "5m",
+    "5m": "5m",
+    "15min": "15m",
+    "15m": "15m",
+    "30min": "30m",
+    "30m": "30m",
+    "1h": "1h",
+    "1hour": "1h",
+    "2h": "2h",
+    "4h": "4h",
+    "6h": "6h",
+    "12h": "12h",
+    "1d": "1d",
+    "1day": "1d",
+}
 
 
 # =============================================================================
@@ -94,6 +112,7 @@ class BitgetClient(BaseExchangeClient):
 
     __slots__ = (
         "_mapper",
+        "_oi_history",
         "_rest",
     )
 
@@ -106,6 +125,7 @@ class BitgetClient(BaseExchangeClient):
         """Initialize the Bitget exchange client."""
         self._rest = rest
         self._mapper = mapper
+        self._oi_history: dict[str, list[tuple[datetime, Decimal]]] = {}
 
     @property
     def rest_transport(self) -> BitgetRestClient:
@@ -345,14 +365,14 @@ class BitgetClient(BaseExchangeClient):
         interval: Interval | None = None,
         limit: int = 50,
     ) -> Sequence[tuple[datetime, Decimal]]:
-        """Return Open Interest snapshot points."""
-        del interval, limit
+        """Return historical and current Open Interest points."""
+        del interval
+        norm_symbol = symbol.strip().upper()
         payload = await self._rest.get(
             _OPEN_INTEREST_ENDPOINT,
-            params={"productType": _PRODUCT_TYPE, "symbol": symbol.strip().upper()},
+            params={"productType": _PRODUCT_TYPE, "symbol": norm_symbol},
             authenticated=False,
         )
-        points: list[tuple[datetime, Decimal]] = []
         if isinstance(payload, dict):
             raw_data = payload.get("data")
             if isinstance(raw_data, dict):
@@ -376,7 +396,13 @@ class BitgetClient(BaseExchangeClient):
                             size_raw = item_map.get("size")
                             try:
                                 oi_dec = Decimal(str(size_raw))
-                                points.append((ts, oi_dec))
+                                history = self._oi_history.setdefault(norm_symbol, [])
+                                if not history or history[-1][0] != ts:
+                                    history.append((ts, oi_dec))
+                                    if len(history) > 100:
+                                        del history[:-100]
+                                elif history and history[-1][0] == ts:
+                                    history[-1] = (ts, oi_dec)
                             except (InvalidOperation, TypeError, ValueError) as error:
                                 _LOGGER.debug(
                                     "Could not parse Bitget OI size %r: %s",
@@ -384,7 +410,52 @@ class BitgetClient(BaseExchangeClient):
                                     error,
                                 )
 
-        return tuple(points)
+        stored_history = self._oi_history.get(norm_symbol)
+        if stored_history:
+            return tuple(stored_history[-max(1, limit) :])
+        return ()
+
+    async def get_account_ratio(
+        self,
+        *,
+        symbol: str,
+        period: str = "15min",
+        limit: int = 50,
+    ) -> Sequence[tuple[datetime, Decimal, Decimal]]:
+        """Return historical Long-Short Account Ratio points.
+
+        Each point is a tuple of (timestamp, buy_ratio, sell_ratio).
+        """
+        if limit <= 0:
+            return ()
+
+        norm_symbol = symbol.strip().upper()
+        norm_period = _ACCOUNT_RATIO_PERIOD_MAP.get(period.lower(), period)
+        payload = await self._rest.get(
+            _ACCOUNT_RATIO_ENDPOINT,
+            params={
+                "symbol": norm_symbol,
+                "productType": _PRODUCT_TYPE,
+                "period": norm_period,
+            },
+            authenticated=False,
+        )
+        if not isinstance(payload, dict):
+            return ()
+
+        raw_data = payload.get("data")
+        if not isinstance(raw_data, list):
+            return ()
+
+        points: list[tuple[datetime, Decimal, Decimal]] = []
+        for item in cast(list[object], raw_data):
+            if isinstance(item, dict):
+                points.append(
+                    self._mapper.map_account_ratio(cast(ExchangePayload, item))
+                )
+
+        points.sort(key=lambda x: x[0])
+        return tuple(points[-limit:])
 
     async def get_trades(
         self,
