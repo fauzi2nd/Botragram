@@ -64,6 +64,8 @@ _PLAN_PENDING_ENDPOINT: Final[str] = "/api/v3/trade/unfilled-strategy-orders"
 _ALL_POSITIONS_ENDPOINT: Final[str] = "/api/v3/position/current-position"
 _SET_LEVERAGE_ENDPOINT: Final[str] = "/api/v3/account/set-leverage"
 _ACCOUNT_SETTINGS_ENDPOINT: Final[str] = "/api/v3/account/settings"
+_CONTRACTS_ENDPOINT: Final[str] = "/api/v2/mix/market/contracts"
+_PRODUCT_TYPE: Final[str] = "usdt-futures"
 
 
 # =============================================================================
@@ -862,6 +864,76 @@ class BitgetFuturesExchangeClient(BitgetClient):
     async def verify_mainnet_readiness(self) -> None:
         """Verify API key connectivity and futures account access."""
         await self.get_account()
+
+    async def verify_mainnet_symbol_readiness(
+        self,
+        *,
+        symbol: str,
+        maximum_leverage: int,
+        entry_notional: Decimal,
+    ) -> None:
+        """Fail closed unless one symbol is safe for a MAINNET entry."""
+        del entry_notional
+        if isinstance(maximum_leverage, bool) or maximum_leverage <= 0:
+            raise ValueError("Maximum leverage must be greater than zero")
+
+        normalized_symbol = symbol.strip().upper()
+        payload = await self._rest.get(
+            _CONTRACTS_ENDPOINT,
+            params={"productType": _PRODUCT_TYPE, "symbol": normalized_symbol},
+            authenticated=False,
+        )
+        if not isinstance(payload, dict):
+            raise ValueError(f"Invalid contracts response for {normalized_symbol!r}")
+
+        raw_data = payload.get("data")
+        if not isinstance(raw_data, list) or not raw_data:
+            raise ValueError(f"No contract rules found for {normalized_symbol!r}")
+
+        first = cast(list[object], raw_data)[0]
+        if not isinstance(first, dict):
+            raise ValueError(f"Invalid contract data for {normalized_symbol!r}")
+
+        first_map = cast(ExchangePayload, first)
+        self._mapper.map_symbol_rules(first_map)
+
+        max_allowed_leverage = maximum_leverage
+        raw_max = first_map.get("maxLever")
+        if raw_max is not None and str(raw_max).strip() != "":
+            try:
+                max_allowed_leverage = int(float(str(raw_max)))
+            except ValueError, TypeError:
+                max_allowed_leverage = maximum_leverage
+
+        target_leverage = max(1, min(maximum_leverage, max_allowed_leverage))
+        hold_mode = await self.get_hold_mode()
+        if hold_mode == "hedge_mode":
+            await self.set_leverage(
+                symbol=normalized_symbol,
+                leverage=target_leverage,
+                hold_side="long",
+            )
+            await self.set_leverage(
+                symbol=normalized_symbol,
+                leverage=target_leverage,
+                hold_side="short",
+            )
+        else:
+            await self.set_leverage(
+                symbol=normalized_symbol,
+                leverage=target_leverage,
+                hold_side="long",
+            )
+
+        _LOGGER.info(
+            "Bitget symbol leverage verified and aligned: symbol=%s leverage=%dx "
+            "(maximum_allowed=%dx requested=%dx hold_mode=%s)",
+            normalized_symbol,
+            target_leverage,
+            max_allowed_leverage,
+            maximum_leverage,
+            hold_mode,
+        )
 
     async def get_trades_for_order(
         self,

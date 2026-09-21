@@ -1255,3 +1255,133 @@ def test_bitget_mapper_map_order_tp_clears_bsl_client_id() -> None:
     assert order.order_type is OrderType.TAKE_PROFIT_MARKET
     assert order.stop_price == Decimal("1.5135")
     assert order.client_order_id is None
+
+
+@pytest.mark.asyncio
+async def test_bitget_verify_mainnet_symbol_readiness_hedge_mode() -> None:
+    """verify_mainnet_symbol_readiness sets leverage for long and short."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetExchangeMapper()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    # 1. Contracts endpoint response
+    contracts_response: JsonResponse = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            {
+                "symbol": "BTCUSDT",
+                "maxLever": "125",
+                "minTradeNum": "0.001",
+                "maxOrderQty": "1000",
+                "sizeMultiplier": "0.001",
+                "pricePlace": "1",
+                "minTradeUSDT": "5",
+            }
+        ],
+    }
+    # 2. Account settings response (hedge_mode)
+    settings_response: JsonResponse = {
+        "code": "00000",
+        "msg": "success",
+        "data": {"holdMode": "hedge_mode"},
+    }
+    # 3. set_leverage long
+    lev_long_response: JsonResponse = {"code": "00000", "msg": "success", "data": {}}
+    # 4. set_leverage short
+    lev_short_response: JsonResponse = {"code": "00000", "msg": "success", "data": {}}
+
+    rest.canned_responses = [
+        contracts_response,
+        settings_response,
+        lev_long_response,
+        lev_short_response,
+    ]
+
+    await client.verify_mainnet_symbol_readiness(
+        symbol="btcusdt",
+        maximum_leverage=3,
+        entry_notional=Decimal("50"),
+    )
+
+    set_leverage_calls = [
+        entry
+        for entry in rest.history
+        if entry == ("POST", "/api/v3/account/set-leverage")
+    ]
+    assert len(set_leverage_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_bitget_verify_mainnet_symbol_readiness_caps_at_max_leverage() -> None:
+    """verify_mainnet_symbol_readiness caps leverage at symbol maxLever."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetExchangeMapper()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    # 1. Contracts endpoint response with maxLever = 2
+    contracts_response: JsonResponse = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            {
+                "symbol": "LOWLEVUSDT",
+                "maxLever": "2",
+                "minTradeNum": "1",
+                "maxOrderQty": "1000",
+                "sizeMultiplier": "1",
+                "pricePlace": "2",
+            }
+        ],
+    }
+    # 2. Account settings response (one_way_mode)
+    settings_response: JsonResponse = {
+        "code": "00000",
+        "msg": "success",
+        "data": {"holdMode": "one_way_mode"},
+    }
+    lev_response: JsonResponse = {"code": "00000", "msg": "success", "data": {}}
+
+    rest.canned_responses = [
+        contracts_response,
+        settings_response,
+        lev_response,
+    ]
+
+    await client.verify_mainnet_symbol_readiness(
+        symbol="LOWLEVUSDT",
+        maximum_leverage=8,
+        entry_notional=Decimal("50"),
+    )
+
+    assert rest.last_path == "/api/v3/account/set-leverage"
+    assert rest.last_data == {
+        "category": "USDT-FUTURES",
+        "symbol": "LOWLEVUSDT",
+        "leverage": "2",
+        "posSide": "long",
+        "marginMode": "crossed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_bitget_verify_mainnet_symbol_readiness_invalid_leverage() -> None:
+    """verify_mainnet_symbol_readiness raises ValueError for invalid leverage."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetExchangeMapper()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=mapper)
+
+    with pytest.raises(ValueError, match="Maximum leverage must be greater than zero"):
+        await client.verify_mainnet_symbol_readiness(
+            symbol="BTCUSDT",
+            maximum_leverage=0,
+            entry_notional=Decimal("50"),
+        )
+
+    with pytest.raises(ValueError, match="Maximum leverage must be greater than zero"):
+        # bool is an instance of int in Python, must fail validation
+        await client.verify_mainnet_symbol_readiness(
+            symbol="BTCUSDT",
+            maximum_leverage=True,  # type: ignore[arg-type]
+            entry_notional=Decimal("50"),
+        )

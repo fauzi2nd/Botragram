@@ -1495,7 +1495,11 @@ class DependencyProvider:
                 exchange_client
                 if isinstance(
                     exchange_client,
-                    (BinanceFuturesExchangeClient, BybitFuturesExchangeClient),
+                    (
+                        BinanceFuturesExchangeClient,
+                        BybitFuturesExchangeClient,
+                        BitgetFuturesExchangeClient,
+                    ),
                 )
                 and self._settings.app.trade_mode is TradeMode.LIVE
                 and self._settings.exchange.market_type is MarketType.FUTURES
