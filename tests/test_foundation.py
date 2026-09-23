@@ -1494,3 +1494,29 @@ def test_settings_manager_market_type_switch_symmetrical_defaults(
     assert futures_settings.symbol == "BTCUSDT"
     assert futures_settings.quote_asset == "USDT"
     assert futures_settings.base_asset == "BTC"
+
+
+def test_env_example_safe_non_live_defaults() -> None:
+    """Verify .env.example defaults to non-live, paper, testnet settings (P0-05)."""
+    from pathlib import Path
+
+    env_path = Path(__file__).resolve().parent.parent / ".env.example"
+    assert env_path.is_file(), ".env.example file must exist at project root"
+
+    env_content = env_path.read_text(encoding="utf-8")
+    lines = [
+        line.strip()
+        for line in env_content.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    parsed: dict[str, str] = {}
+    for line in lines:
+        if "=" in line:
+            key, val = line.split("=", 1)
+            parsed[key.strip()] = val.strip()
+
+    assert parsed.get("BOTRAGRAM_PROFILE") == "TESTNET"
+    assert parsed.get("TRADE_MODE") == "PAPER"
+    assert parsed.get("AUTONOMOUS_LIVE_ENTRY_ENABLED") == "false"
+    assert parsed.get("AUTONOMOUS_MAINNET_ENTRY_ENABLED") == "false"
+    assert parsed.get("EXECUTION_POLICY") == "single_symbol"

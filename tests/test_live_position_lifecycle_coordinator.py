@@ -74,3 +74,63 @@ def test_position_deletion_invalidates_the_normalized_symbol_cache_version() -> 
     coordinator.record_position_deletion(symbol="AIOUSDT")
 
     assert coordinator.get_position_version(symbol="aiousdt") == 1
+
+
+def test_coordinator_supports_task_reentrancy() -> None:
+    """Allow nested hold_portfolio and hold locks in the same task."""
+    coordinator = LivePositionLifecycleCoordinator()
+    events: list[str] = []
+
+    async def nested() -> None:
+        async with coordinator.hold_portfolio():
+            events.append("portfolio_enter")
+            async with coordinator.hold(symbol="BTCUSDT"):
+                events.append("symbol_enter")
+            events.append("symbol_exit")
+        events.append("portfolio_exit")
+
+    asyncio.run(nested())
+    assert events == [
+        "portfolio_enter",
+        "symbol_enter",
+        "symbol_exit",
+        "portfolio_exit",
+    ]
+
+
+def test_entry_and_portfolio_reconcile_are_mutually_exclusive() -> None:
+    """Serialize concurrent entry and portfolio reconciliation across tasks."""
+    coordinator = LivePositionLifecycleCoordinator()
+    entry_started = asyncio.Event()
+    allow_entry_finish = asyncio.Event()
+    reconcile_started = asyncio.Event()
+    order_of_events: list[str] = []
+
+    async def simulated_entry() -> None:
+        async with coordinator.hold(symbol="BTCUSDT"):
+            order_of_events.append("entry_holding")
+            entry_started.set()
+            await allow_entry_finish.wait()
+            order_of_events.append("entry_done")
+
+    async def simulated_reconcile() -> None:
+        await entry_started.wait()
+        reconcile_started.set()
+        async with coordinator.hold_portfolio():
+            order_of_events.append("reconcile_holding")
+
+    async def scenario() -> None:
+        entry_task = asyncio.create_task(simulated_entry())
+        reconcile_task = asyncio.create_task(simulated_reconcile())
+        await reconcile_started.wait()
+        await asyncio.sleep(0.01)
+        assert order_of_events == ["entry_holding"]
+        allow_entry_finish.set()
+        await asyncio.gather(entry_task, reconcile_task)
+
+    asyncio.run(scenario())
+    assert order_of_events == [
+        "entry_holding",
+        "entry_done",
+        "reconcile_holding",
+    ]

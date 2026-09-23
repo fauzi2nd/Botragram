@@ -43,6 +43,7 @@ from botragram.models.risk import PositionSize
 from botragram.services import (
     LiveEntryRiskEvaluationService,
     LiveFuturesEntryService,
+    LivePositionLifecycleCoordinator,
     LivePostEntryRecoveryService,
 )
 from botragram.storage.memory import MemorySubmissionAttemptRepository
@@ -472,6 +473,7 @@ def _service(
     order_service: FakeOrderService | None = None,
     position_service: FakePositionService | None = None,
     protection_service: FakeProtectionService | None = None,
+    lifecycle_coordinator: LivePositionLifecycleCoordinator | None = None,
     market_type: MarketType = MarketType.FUTURES,
 ) -> tuple[LiveFuturesEntryService, TradingRuntimeControl]:
     """Build the focused entry service with boundary fakes."""
@@ -486,6 +488,9 @@ def _service(
             submission_attempt_repository=MemorySubmissionAttemptRepository(),
             portfolio_engine=PortfolioEngine(),
             max_open_positions=1,
+            lifecycle_coordinator=(
+                lifecycle_coordinator or LivePositionLifecycleCoordinator()
+            ),
         ),
         control,
     )
@@ -1368,3 +1373,56 @@ async def test_preflight_cancellation_propagates_without_closing_protection_gate
     assert orders.calls == 0
     assert await service.submission_attempt_repository.get_incomplete() == ()
     assert "position protection" not in control.get_missing_startup_requirements()
+
+
+@pytest.mark.asyncio
+async def test_live_entry_serializes_with_lifecycle_coordinator() -> None:
+    """Ensure in-flight entry blocks concurrent portfolio reconciliation."""
+    coordinator = LivePositionLifecycleCoordinator()
+    ensure_started = asyncio.Event()
+    allow_ensure_finish = asyncio.Event()
+
+    @dataclass(slots=True)
+    class BlockingProtectionService(FakeProtectionService):
+        async def ensure(self, *, position: Position) -> Position:
+            ensure_started.set()
+            await allow_ensure_finish.wait()
+            return await super().ensure(position=position)
+
+    positions = FakePositionService(_position())
+    protection = BlockingProtectionService()
+    service, _ = _service(
+        position_service=positions,
+        protection_service=protection,
+        lifecycle_coordinator=coordinator,
+    )
+
+    reconcile_acquired = False
+
+    async def run_entry() -> None:
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    async def run_concurrent_reconcile() -> None:
+        nonlocal reconcile_acquired
+        await ensure_started.wait()
+        async with coordinator.hold_portfolio():
+            reconcile_acquired = True
+
+    entry_task = asyncio.create_task(run_entry())
+    reconcile_task = asyncio.create_task(run_concurrent_reconcile())
+
+    await ensure_started.wait()
+    await asyncio.sleep(0.01)
+    assert not reconcile_acquired, (
+        "hold_portfolio must be blocked while entry holds lock"
+    )
+
+    allow_ensure_finish.set()
+    await asyncio.gather(entry_task, reconcile_task)
+    assert reconcile_acquired, "hold_portfolio acquires after entry finishes"

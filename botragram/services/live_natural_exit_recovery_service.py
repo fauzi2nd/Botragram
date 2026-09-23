@@ -115,7 +115,8 @@ class LiveNaturalExitExchange(Protocol):
         self,
         *,
         symbol: str,
-        client_id: str,
+        client_id: str | None = None,
+        order_id: str | None = None,
     ) -> None:
         """Attempt one exact conditional protection cancellation."""
         ...
@@ -149,6 +150,10 @@ class LiveNaturalExitRecoveryService:
 
     async def reconcile(self) -> None:
         """Remove proven orphan protection and stale local positions."""
+        async with self.lifecycle_coordinator.hold_portfolio():
+            await self._reconcile_under_lock()
+
+    async def _reconcile_under_lock(self) -> None:
         operator_repository = self.operator_exit_repository
         if (
             operator_repository is not None
@@ -1005,7 +1010,8 @@ class LiveNaturalExitRecoveryService:
     async def _cancel_and_reconcile(self, *, order: Order) -> None:
         """Attempt one DELETE and prove its exact identity is inactive."""
         client_id = order.client_order_id
-        if client_id is None:
+        order_id = order.order_id
+        if client_id is None and not order_id:
             raise RuntimeError("Orphan protection is missing its client identity")
 
         ambiguous_error: ExchangeOrderOutcomeUnknownError | None = None
@@ -1013,6 +1019,7 @@ class LiveNaturalExitRecoveryService:
             await self.exchange_client.cancel_protection_order(
                 symbol=order.symbol,
                 client_id=client_id,
+                order_id=order_id,
             )
         except asyncio.CancelledError:
             raise
@@ -1022,12 +1029,37 @@ class LiveNaturalExitRecoveryService:
         last_unknown: ExchangeOrderOutcomeUnknownError | None = None
         for attempt in range(_RECONCILIATION_ATTEMPTS):
             try:
-                remaining = (
-                    await self.exchange_client.get_protection_order_by_client_id(
-                        symbol=order.symbol,
-                        client_id=client_id,
+                if client_id is not None:
+                    remaining = (
+                        await self.exchange_client.get_protection_order_by_client_id(
+                            symbol=order.symbol,
+                            client_id=client_id,
+                        )
                     )
-                )
+                else:
+                    open_orders = await self.exchange_client.get_open_protection_orders(
+                        symbol=order.symbol
+                    )
+                    clean_target_id = (
+                        order_id[:-3] if order_id.endswith(("-tp", "-sl")) else order_id
+                    )
+                    matching = [
+                        o
+                        for o in open_orders
+                        if o.order_id == order_id
+                        or (
+                            clean_target_id
+                            and (
+                                o.order_id[:-3]
+                                if o.order_id.endswith(("-tp", "-sl"))
+                                else o.order_id
+                            )
+                            == clean_target_id
+                        )
+                    ]
+                    if not matching:
+                        return
+                    remaining = matching[0]
             except ExchangeOrderNotFoundError:
                 return
             except ExchangeOrderOutcomeUnknownError as error:
@@ -1064,13 +1096,16 @@ class LiveNaturalExitRecoveryService:
         expected_types: set[OrderType] | None = None
         expected_trigger = None
 
-        if client_id == position.stop_loss_client_algo_id:
+        if client_id is not None and client_id == position.stop_loss_client_algo_id:
             expected_types = {OrderType.STOP_MARKET, OrderType.STOP}
             expected_trigger = position.stop_loss
-        elif client_id == position.take_profit_client_algo_id:
+        elif client_id is not None and client_id == position.take_profit_client_algo_id:
             expected_types = {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
             expected_trigger = position.take_profit
-        elif client_id == position.pending_stop_loss_client_algo_id:
+        elif (
+            client_id is not None
+            and client_id == position.pending_stop_loss_client_algo_id
+        ):
             expected_types = {OrderType.STOP_MARKET, OrderType.STOP}
             expected_trigger = position.pending_stop_loss
         elif Position.is_generated_stop_loss_client_algo_id(client_id):
@@ -1079,6 +1114,16 @@ class LiveNaturalExitRecoveryService:
         elif Position.is_generated_take_profit_client_algo_id(client_id):
             expected_types = {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
             expected_trigger = order.stop_price
+        elif client_id is None and order.order_id:
+            if order.order_type in (
+                OrderType.TAKE_PROFIT_MARKET,
+                OrderType.TAKE_PROFIT,
+            ):
+                expected_types = {OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT}
+                expected_trigger = position.take_profit or order.stop_price
+            elif order.order_type in (OrderType.STOP_MARKET, OrderType.STOP):
+                expected_types = {OrderType.STOP_MARKET, OrderType.STOP}
+                expected_trigger = position.stop_loss or order.stop_price
 
         if expected_types is None:
             raise RuntimeError(

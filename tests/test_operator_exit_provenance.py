@@ -200,13 +200,15 @@ class _OperatorExchange:
         self,
         *,
         symbol: str,
-        client_id: str,
+        client_id: str | None = None,
+        order_id: str | None = None,
     ) -> None:
         """Cancel one exact owned protection leg after flat exposure is proven."""
-        order = self.protections[client_id]
+        key = client_id or order_id or ""
+        order = self.protections[key]
         assert order.symbol.upper() == symbol.upper()
-        self.cancel_calls.append(client_id)
-        self.protections[client_id] = replace(order, status=OrderStatus.CANCELED)
+        self.cancel_calls.append(key)
+        self.protections[key] = replace(order, status=OrderStatus.CANCELED)
 
     async def get_trades_for_order(
         self,

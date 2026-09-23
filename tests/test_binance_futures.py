@@ -329,11 +329,15 @@ class InMemoryProtectionClient(BinanceFuturesExchangeClient):
         self,
         *,
         symbol: str,
-        client_id: str,
+        client_id: str | None = None,
+        order_id: str | None = None,
     ) -> None:
         """Cancel one exact in-memory conditional identity."""
         for order in tuple(self.open_protections):
-            if order.symbol == symbol and order.client_order_id == client_id:
+            if order.symbol == symbol and (
+                (client_id is not None and order.client_order_id == client_id)
+                or (order_id is not None and order.order_id == order_id)
+            ):
                 self.cancelled.append(order.order_id)
                 self.open_protections.remove(order)
                 return

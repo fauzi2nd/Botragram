@@ -234,7 +234,10 @@ class OperatorExitService:
         """Validate mode-specific dependencies without widening capabilities."""
         if self.confirmation_ttl <= timedelta(0):
             raise ValueError("Operator-exit confirmation TTL must be positive")
-        if self.trade_mode is TradeMode.LIVE and self.market_type is MarketType.FUTURES:
+        if self.trade_mode is TradeMode.LIVE and self.market_type in (
+            MarketType.FUTURES,
+            MarketType.CFD,
+        ):
             if any(
                 dependency is None
                 for dependency in (
@@ -1349,9 +1352,9 @@ class OperatorExitService:
             self._require_live_futures()
 
     def _require_live_futures(self) -> None:
-        """Limit financial LIVE exits to the audited Binance Futures workflow."""
-        if self.market_type is not MarketType.FUTURES:
-            raise RuntimeError("LIVE operator exits currently require Futures")
+        """Limit financial LIVE exits to audited Futures/CFD workflows."""
+        if self.market_type not in (MarketType.FUTURES, MarketType.CFD):
+            raise RuntimeError("LIVE operator exits currently require Futures or CFD")
 
     def _release_runtime_gate(self) -> None:
         """Release only this service's operator-exit runtime reservation."""

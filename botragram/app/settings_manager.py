@@ -39,6 +39,7 @@ from botragram.enums import (
     ExecutionPolicy,
     Interval,
     LogLevel,
+    MarginMode,
     MarketType,
     StrategyType,
     TradeMode,
@@ -178,6 +179,11 @@ class SettingsManager:
                     raw_value=environment.get_bitget_market_type(),
                     setting_name="BITGET_MARKET_TYPE",
                 )
+                margin_mode = self._parse_enum(
+                    enum_type=MarginMode,
+                    raw_value=environment.get_bitget_margin_mode(),
+                    setting_name="BITGET_MARGIN_MODE",
+                )
                 return ExchangeSettings(
                     exchange=exchange,
                     market_type=market_type,
@@ -185,6 +191,7 @@ class SettingsManager:
                     api_secret=environment.get_bitget_api_secret(),
                     passphrase=environment.get_bitget_passphrase(),
                     testnet=environment.get_bitget_testnet(),
+                    margin_mode=margin_mode,
                 )
             case ExchangeType.BYBIT:
                 market_type = self._parse_enum(
@@ -1284,6 +1291,7 @@ class SettingsManager:
             ExecutionPolicy,
             Interval,
             LogLevel,
+            MarginMode,
             MarketType,
             StrategyType,
             TradeMode,

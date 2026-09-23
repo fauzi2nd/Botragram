@@ -219,8 +219,9 @@ class _FakeExchangeClient(BaseExchangeClient):
         *,
         symbol: str,
         client_order_id: str | None = None,
+        side: PositionSide | None = None,
     ) -> Order:  # pragma: no cover
-        del symbol, client_order_id
+        del symbol, client_order_id, side
         self.delete_calls += 1
         raise NotImplementedError
 

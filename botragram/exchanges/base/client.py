@@ -30,6 +30,7 @@ from botragram.enums import (
     MarketSessionStatus,
     OrderSide,
     OrderType,
+    PositionSide,
 )
 from botragram.models import (
     Account,
@@ -389,15 +390,16 @@ class BaseExchangeClient(ABC):
         self,
         *,
         symbol: str,
-        client_id: str,
+        client_id: str | None = None,
+        order_id: str | None = None,
     ) -> None:
-        """Cancel one conditional protection order by durable client identity.
+        """Cancel one conditional protection order by client identity or order id.
 
         Futures connectors with a dedicated conditional-order endpoint override
         this boundary. Connectors that do not support conditional protection
         cancellation fail closed instead of routing to an unrelated order API.
         """
-        del symbol, client_id
+        del symbol, client_id, order_id
         raise NotImplementedError("Protection-order cancellation is not supported")
 
     @abstractmethod
@@ -431,6 +433,7 @@ class BaseExchangeClient(ABC):
         *,
         symbol: str,
         client_order_id: str | None = None,
+        side: PositionSide | None = None,
     ) -> Order:
         """Close the active position with an optional durable client identity."""
 

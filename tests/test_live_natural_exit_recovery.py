@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -34,6 +35,7 @@ from botragram.models import (
 from botragram.services import (
     ClosedPositionLifecycleService,
     LiveNaturalExitRecoveryService,
+    LivePositionLifecycleCoordinator,
 )
 from botragram.storage.memory import (
     MemoryClosedPositionLifecycleRepository,
@@ -167,20 +169,27 @@ class FakeNaturalExitExchange:
         self,
         *,
         symbol: str,
-        client_id: str,
+        client_id: str | None = None,
+        order_id: str | None = None,
     ) -> None:
-        self.cancel_calls.append((symbol.upper(), client_id))
+        self.cancel_calls.append((symbol.upper(), client_id or order_id or ""))
 
         if not self.keep_after_cancel:
             self.protections = [
                 order
                 for order in self.protections
-                if order.client_order_id != client_id
+                if not (
+                    (client_id is not None and order.client_order_id == client_id)
+                    or (order_id is not None and order.order_id == order_id)
+                )
             ]
             self.exact_only_protections = [
                 order
                 for order in self.exact_only_protections
-                if order.client_order_id != client_id
+                if not (
+                    (client_id is not None and order.client_order_id == client_id)
+                    or (order_id is not None and order.order_id == order_id)
+                )
             ]
 
         if self.ambiguous_after_remove or self.keep_after_cancel:
@@ -397,9 +406,10 @@ async def test_reconcile_does_not_retry_delete_when_bulk_snapshot_lags() -> None
             self,
             *,
             symbol: str,
-            client_id: str,
+            client_id: str | None = None,
+            order_id: str | None = None,
         ) -> None:
-            self.cancel_calls.append((symbol.upper(), client_id))
+            self.cancel_calls.append((symbol.upper(), client_id or order_id or ""))
             self.hide_from_bulk = True
 
     repository = await _repository()
@@ -440,9 +450,10 @@ async def test_reconcile_waits_for_delayed_exact_cancellation_without_repeating_
             self,
             *,
             symbol: str,
-            client_id: str,
+            client_id: str | None = None,
+            order_id: str | None = None,
         ) -> None:
-            self.cancel_calls.append((symbol.upper(), client_id))
+            self.cancel_calls.append((symbol.upper(), client_id or order_id or ""))
 
         async def get_protection_order_by_client_id(
             self,
@@ -1791,3 +1802,85 @@ async def test_reconcile_permits_orphan_cancel_when_trigger_modified() -> None:
     assert exchange.cancel_calls == [(_SYMBOL, _STOP_ID)]
     assert exchange.protections == []
     assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_cancels_orphan_without_client_id_using_order_id() -> None:
+    """Verify orphan with client_order_id=None is cancelled via order_id (P2-03)."""
+    repository = await _repository()
+    # Orphan TP from a combined plan order where client_order_id is None
+    orphan_tp = Order(
+        order_id="1486065050578296872-tp",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.TAKE_PROFIT_MARKET,
+        status=OrderStatus.NEW,
+        quantity=Decimal("885"),
+        executed_quantity=Decimal("0"),
+        price=None,
+        stop_price=Decimal("0.01084"),
+        created_at=_NOW,
+        updated_at=_NOW,
+        client_order_id=None,
+    )
+    exchange = FakeNaturalExitExchange(
+        protections=(orphan_tp,),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+    )
+
+    await service.reconcile()
+
+    assert exchange.cancel_calls == [(_SYMBOL, "1486065050578296872-tp")]
+    assert exchange.protections == []
+    assert await repository.get_by_symbol(symbol=_SYMBOL) is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_serializes_with_lifecycle_coordinator() -> None:
+    """Ensure reconcile holds the portfolio coordinator lock during execution."""
+    coordinator = LivePositionLifecycleCoordinator()
+    reconcile_holding = False
+    concurrent_acquired = False
+
+    class BlockingNaturalExitExchange(FakeNaturalExitExchange):
+        async def get_positions(
+            self,
+            *,
+            symbol: str | None = None,
+        ) -> tuple[Position, ...]:
+            nonlocal reconcile_holding
+            reconcile_holding = True
+            await asyncio.sleep(0.02)
+            return await super().get_positions(symbol=symbol)
+
+    repository = await _repository()
+    exchange = BlockingNaturalExitExchange()
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=repository,
+        submission_attempt_repository=MemorySubmissionAttemptRepository(),
+        lifecycle_coordinator=coordinator,
+    )
+
+    async def run_reconcile() -> None:
+        await service.reconcile()
+
+    async def run_concurrent_entry() -> None:
+        nonlocal concurrent_acquired
+        while not reconcile_holding:
+            await asyncio.sleep(0.001)
+        async with coordinator.hold(symbol="BTCUSDT"):
+            concurrent_acquired = True
+
+    reconcile_task = asyncio.create_task(run_reconcile())
+    entry_task = asyncio.create_task(run_concurrent_entry())
+
+    await asyncio.sleep(0.01)
+    assert not concurrent_acquired, "hold must be blocked while reconcile holds lock"
+
+    await asyncio.gather(reconcile_task, entry_task)
+    assert concurrent_acquired, "hold acquires after reconcile finishes"

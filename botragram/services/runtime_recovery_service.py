@@ -192,9 +192,9 @@ class RuntimeRecoveryService:
             if not await self._recover_incomplete_live_entry():
                 return False
 
-            if self.market_type is not MarketType.FUTURES:
+            if self.market_type not in (MarketType.FUTURES, MarketType.CFD):
                 _LOGGER.critical(
-                    "Automatic live position recovery currently requires FUTURES"
+                    "Automatic live position recovery currently requires FUTURES or CFD"
                 )
                 return False
 

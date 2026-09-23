@@ -50,6 +50,10 @@ from botragram.enums import (
     StrategyType,
     TradeMode,
 )
+from botragram.storage.sqlite import (
+    SQLiteDatabase,
+    SQLiteRuntimeSettingsRepository,
+)
 from botragram.utils.logger import configure_logging, shutdown_logging
 from botragram.utils.retry import CappedExponentialBackoff
 
@@ -367,6 +371,96 @@ async def main() -> None:
             settings.strategy.mtf_confirmation_enabled,
             settings.strategy.mtf_interval.value,
         )
+        if settings.app.database_path.exists():
+            boot_db = SQLiteDatabase(database_path=settings.app.database_path)
+            await boot_db.connect()
+            try:
+                boot_repo = SQLiteRuntimeSettingsRepository(database=boot_db)
+                durable_exchange = await boot_repo.get_exchange()
+                durable_market_type = await boot_repo.get_market_type()
+                durable_policy = await boot_repo.get_execution_policy()
+                durable_strategy = await boot_repo.get_strategy()
+
+                if (
+                    durable_exchange is not None
+                    and durable_exchange is not settings.exchange.exchange
+                ):
+                    new_exchange_settings = settings_manager.load_exchange_settings(
+                        exchange_override=durable_exchange,
+                    )
+                    new_market_settings = settings_manager.load_market_settings(
+                        exchange=new_exchange_settings,
+                    )
+                    settings = replace(
+                        settings,
+                        exchange=new_exchange_settings,
+                        market=new_market_settings,
+                        app=replace(
+                            settings.app,
+                            database_path=SettingsManager.get_scoped_database_path(
+                                app=settings.app,
+                                exchange=new_exchange_settings,
+                            ),
+                        ),
+                    )
+
+                if (
+                    durable_market_type is not None
+                    and durable_market_type is not settings.exchange.market_type
+                ):
+                    new_exchange_settings = replace(
+                        settings.exchange,
+                        market_type=durable_market_type,
+                    )
+                    new_market_settings = settings_manager.load_market_settings(
+                        exchange=new_exchange_settings,
+                    )
+                    settings = replace(
+                        settings,
+                        exchange=new_exchange_settings,
+                        market=new_market_settings,
+                    )
+                    market_type_confirmed = True
+
+                if (
+                    durable_policy is not None
+                    and durable_policy is not settings.app.effective_execution_policy
+                ):
+                    settings = replace(
+                        settings,
+                        app=replace(
+                            settings.app,
+                            execution_policy=durable_policy,
+                            autonomous_execution_enabled=False,
+                        ),
+                    )
+
+                if (
+                    durable_strategy is not None
+                    and durable_strategy is not settings.strategy.strategy_type
+                ):
+                    strat_interval, strat_source = (
+                        settings_manager.resolve_strategy_interval(durable_strategy)
+                    )
+                    settings = replace(
+                        settings,
+                        strategy=replace(
+                            settings.strategy,
+                            strategy_type=durable_strategy,
+                            strategy_interval=strat_interval,
+                            strategy_interval_source=strat_source,
+                        ),
+                    )
+
+                settings_manager.validate(settings=settings)
+            except Exception as error:
+                _LOGGER.warning(
+                    "Could not restore durable runtime settings overrides: %s",
+                    error,
+                )
+            finally:
+                await boot_db.close()
+
         while True:
             dependency_provider = DependencyProvider(
                 database_path=settings.app.database_path,
@@ -392,6 +486,22 @@ async def main() -> None:
 
             if requested_restart is None:
                 break
+
+            try:
+                repo = dependency_provider.runtime_settings_repository
+                if isinstance(requested_restart, MarketType):
+                    await repo.save_market_type(market_type=requested_restart)
+                elif isinstance(requested_restart, ExchangeType):
+                    await repo.save_exchange(exchange_type=requested_restart)
+                elif isinstance(requested_restart, StrategyType):
+                    await repo.save_strategy(strategy_type=requested_restart)
+                else:
+                    await repo.save_execution_policy(execution_policy=requested_restart)
+            except Exception as error:
+                _LOGGER.warning(
+                    "Failed to persist restart target to runtime settings: %s",
+                    error,
+                )
 
             if isinstance(requested_restart, MarketType):
                 new_exchange_settings = replace(

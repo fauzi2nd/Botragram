@@ -16,13 +16,19 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import sqlite3
 from datetime import UTC, datetime
 from typing import Final
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import StrategyType
+from botragram.enums import (
+    ExchangeType,
+    ExecutionPolicy,
+    MarketType,
+    StrategyType,
+)
 from botragram.repositories import RuntimeSettingsRepository
 from botragram.storage.sqlite.database import SQLiteDatabase
 
@@ -35,6 +41,9 @@ __all__ = ["SQLiteRuntimeSettingsRepository"]
 _STRATEGY_KEY: Final[str] = "active_strategy"
 _LEVERAGE_KEY: Final[str] = "active_leverage"
 _DYNAMIC_LEVERAGE_KEY: Final[str] = "dynamic_leverage_enabled"
+_MARKET_TYPE_KEY: Final[str] = "active_market_type"
+_EXCHANGE_KEY: Final[str] = "active_exchange"
+_EXECUTION_POLICY_KEY: Final[str] = "active_execution_policy"
 _SELECT_SQL: Final[str] = """
 SELECT value
 FROM runtime_settings
@@ -61,17 +70,27 @@ class SQLiteRuntimeSettingsRepository(RuntimeSettingsRepository):
         """Initialize the repository with a connected database."""
         self._database = database
 
+    async def _safe_fetch_value(self, key: str) -> str | None:
+        """Fetch raw setting value, returning None if table does not exist."""
+        try:
+            row = await self._database.fetch_one(
+                statement=_SELECT_SQL,
+                parameters=(key,),
+            )
+            if row is None:
+                return None
+            raw_value = row["value"]
+            if not isinstance(raw_value, str):
+                raise TypeError("SQLite runtime setting value must be text")
+            return raw_value
+        except sqlite3.OperationalError:
+            return None
+
     async def get_strategy(self) -> StrategyType | None:
         """Return the latest durable runtime strategy, if configured."""
-        row = await self._database.fetch_one(
-            statement=_SELECT_SQL,
-            parameters=(_STRATEGY_KEY,),
-        )
-        if row is None:
+        raw_value = await self._safe_fetch_value(_STRATEGY_KEY)
+        if raw_value is None:
             return None
-        raw_value = row["value"]
-        if not isinstance(raw_value, str):
-            raise TypeError("SQLite runtime setting value must be text")
         try:
             return StrategyType(raw_value)
         except ValueError:
@@ -88,15 +107,9 @@ class SQLiteRuntimeSettingsRepository(RuntimeSettingsRepository):
 
     async def get_leverage(self) -> int | None:
         """Return the latest durable runtime leverage, if configured."""
-        row = await self._database.fetch_one(
-            statement=_SELECT_SQL,
-            parameters=(_LEVERAGE_KEY,),
-        )
-        if row is None:
+        raw_value = await self._safe_fetch_value(_LEVERAGE_KEY)
+        if raw_value is None:
             return None
-        raw_value = row["value"]
-        if not isinstance(raw_value, str):
-            raise TypeError("SQLite runtime setting value must be text")
         try:
             val = int(raw_value)
             return val if val > 0 else None
@@ -116,15 +129,9 @@ class SQLiteRuntimeSettingsRepository(RuntimeSettingsRepository):
 
     async def get_dynamic_leverage(self) -> bool | None:
         """Return latest durable dynamic leverage setting, if configured."""
-        row = await self._database.fetch_one(
-            statement=_SELECT_SQL,
-            parameters=(_DYNAMIC_LEVERAGE_KEY,),
-        )
-        if row is None:
+        raw_value = await self._safe_fetch_value(_DYNAMIC_LEVERAGE_KEY)
+        if raw_value is None:
             return None
-        raw_value = row["value"]
-        if not isinstance(raw_value, str):
-            raise TypeError("SQLite runtime setting value must be text")
         norm = raw_value.strip().lower()
         if norm in ("1", "true", "yes", "on"):
             return True
@@ -140,4 +147,61 @@ class SQLiteRuntimeSettingsRepository(RuntimeSettingsRepository):
             await connection.execute(
                 _UPSERT_SQL,
                 (_DYNAMIC_LEVERAGE_KEY, val_str, now),
+            )
+
+    async def get_market_type(self) -> MarketType | None:
+        """Return the latest durable runtime market type, if configured."""
+        raw_value = await self._safe_fetch_value(_MARKET_TYPE_KEY)
+        if raw_value is None:
+            return None
+        try:
+            return MarketType(raw_value)
+        except ValueError:
+            return None
+
+    async def save_market_type(self, *, market_type: MarketType) -> None:
+        """Atomically persist the active runtime market type."""
+        now = datetime.now(UTC).isoformat()
+        async with self._database.transaction() as connection:
+            await connection.execute(
+                _UPSERT_SQL,
+                (_MARKET_TYPE_KEY, market_type.value, now),
+            )
+
+    async def get_exchange(self) -> ExchangeType | None:
+        """Return the latest durable runtime exchange, if configured."""
+        raw_value = await self._safe_fetch_value(_EXCHANGE_KEY)
+        if raw_value is None:
+            return None
+        try:
+            return ExchangeType(raw_value)
+        except ValueError:
+            return None
+
+    async def save_exchange(self, *, exchange_type: ExchangeType) -> None:
+        """Atomically persist the active runtime exchange."""
+        now = datetime.now(UTC).isoformat()
+        async with self._database.transaction() as connection:
+            await connection.execute(
+                _UPSERT_SQL,
+                (_EXCHANGE_KEY, exchange_type.value, now),
+            )
+
+    async def get_execution_policy(self) -> ExecutionPolicy | None:
+        """Return the latest durable runtime execution policy, if configured."""
+        raw_value = await self._safe_fetch_value(_EXECUTION_POLICY_KEY)
+        if raw_value is None:
+            return None
+        try:
+            return ExecutionPolicy(raw_value)
+        except ValueError:
+            return None
+
+    async def save_execution_policy(self, *, execution_policy: ExecutionPolicy) -> None:
+        """Atomically persist the active runtime execution policy."""
+        now = datetime.now(UTC).isoformat()
+        async with self._database.transaction() as connection:
+            await connection.execute(
+                _UPSERT_SQL,
+                (_EXECUTION_POLICY_KEY, execution_policy.value, now),
             )

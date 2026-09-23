@@ -30,7 +30,7 @@ import aiohttp
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import Interval, OrderSide, OrderType
+from botragram.enums import Interval, OrderSide, OrderType, PositionSide
 from botragram.exchanges.base.client import BaseExchangeClient
 from botragram.exchanges.base.mapper import ExchangePayload
 from botragram.exchanges.bitget.mapper import BitgetExchangeMapper
@@ -625,7 +625,9 @@ class BitgetClient(BaseExchangeClient):
         *,
         symbol: str,
         client_order_id: str | None = None,
+        side: PositionSide | None = None,
     ) -> Order:
+        del side
         raise NotImplementedError("close_position must be implemented by subclass")
 
     async def close_position_exact(

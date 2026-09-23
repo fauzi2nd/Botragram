@@ -48,5 +48,13 @@ def test_live_post_entry_recovery_service_has_order_service() -> None:
             provider.live_natural_exit_recovery_service.operator_exit_repository
             is provider.operator_exit_repository
         )
+        assert (
+            provider.live_futures_entry_service.lifecycle_coordinator
+            is provider.live_natural_exit_recovery_service.lifecycle_coordinator
+        )
+        assert (
+            provider.live_entry_risk_evaluation_service.natural_exit_recovery_service
+            is None
+        )
     finally:
         asyncio.run(provider.close())

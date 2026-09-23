@@ -814,20 +814,29 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         self,
         *,
         symbol: str,
-        client_id: str,
+        client_id: str | None = None,
+        order_id: str | None = None,
     ) -> None:
-        """Cancel one Futures conditional order by exact durable client identity.
+        """Cancel one Futures conditional order by client identity or order id.
 
         The DELETE is attempted at most once. Any transport or HTTP uncertainty
         is surfaced so the caller can reconcile exclusively through GET reads.
         """
+        if client_id is None and order_id is None:
+            raise ValueError(
+                "Either client_id or order_id must be provided to cancel "
+                "protection order"
+            )
         self._normalize_symbol(symbol)
+        params: dict[str, str | int | float | bool] = {}
+        if client_id is not None:
+            params["clientAlgoId"] = self._normalize_client_order_id(client_id)
+        elif order_id is not None:
+            params["algoId"] = int(order_id) if order_id.isdigit() else order_id
         try:
             await self._rest.delete(
                 _ALGO_ORDER_ENDPOINT,
-                params={
-                    "clientAlgoId": self._normalize_client_order_id(client_id),
-                },
+                params=params,
                 authenticated=True,
             )
         except BinanceRestResponseError as error:
@@ -1161,6 +1170,7 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         *,
         symbol: str,
         client_order_id: str | None = None,
+        side: PositionSide | None = None,
     ) -> Order:
         """Close one active one-way Futures position with a market order."""
         positions = await self.get_positions(symbol=symbol)
@@ -1168,13 +1178,22 @@ class BinanceFuturesExchangeClient(BinanceExchangeClient):
         if not positions:
             raise ValueError(f"No active Futures position for {symbol!r}")
 
-        if len(positions) > 1:
+        if side is not None:
+            matching = [p for p in positions if p.side is side]
+            if not matching:
+                raise ValueError(
+                    f"No active Futures position for {symbol!r} with side {side.value}"
+                )
+            target_pos = matching[0]
+        elif len(positions) > 1:
             raise ValueError(
                 "Hedge-mode positions require explicit position-side closing"
             )
+        else:
+            target_pos = positions[0]
 
         return await self._close_position(
-            positions[0],
+            target_pos,
             client_order_id=client_order_id,
         )
 

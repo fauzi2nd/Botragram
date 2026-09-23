@@ -21,7 +21,12 @@ from abc import ABC, abstractmethod
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import StrategyType
+from botragram.enums import (
+    ExchangeType,
+    ExecutionPolicy,
+    MarketType,
+    StrategyType,
+)
 
 __all__ = ["RuntimeSettingsRepository"]
 
@@ -57,3 +62,27 @@ class RuntimeSettingsRepository(ABC):
     @abstractmethod
     async def save_dynamic_leverage(self, *, enabled: bool) -> None:
         """Atomically persist the active dynamic leverage setting."""
+
+    @abstractmethod
+    async def get_market_type(self) -> MarketType | None:
+        """Return the latest durable runtime market type, if configured."""
+
+    @abstractmethod
+    async def save_market_type(self, *, market_type: MarketType) -> None:
+        """Atomically persist the active runtime market type."""
+
+    @abstractmethod
+    async def get_exchange(self) -> ExchangeType | None:
+        """Return the latest durable runtime exchange, if configured."""
+
+    @abstractmethod
+    async def save_exchange(self, *, exchange_type: ExchangeType) -> None:
+        """Atomically persist the active runtime exchange."""
+
+    @abstractmethod
+    async def get_execution_policy(self) -> ExecutionPolicy | None:
+        """Return the latest durable runtime execution policy, if configured."""
+
+    @abstractmethod
+    async def save_execution_policy(self, *, execution_policy: ExecutionPolicy) -> None:
+        """Atomically persist the active runtime execution policy."""

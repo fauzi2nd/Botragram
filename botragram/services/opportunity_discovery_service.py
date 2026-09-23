@@ -28,13 +28,14 @@ from typing import Final, Protocol, runtime_checkable
 # Local Imports
 # =============================================================================
 from botragram.constants import DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
-from botragram.enums import Interval, SignalType, StrategyType
+from botragram.enums import AssetClass, Interval, SignalType, StrategyType
 from botragram.indicators.trend import (
     MtfTrendResult,
     TrendDirection,
     evaluate_mtf_trend,
 )
 from botragram.models import Candle, DiscoveryScanReport, Signal
+from botragram.strategies.base import resolve_asset_class
 from botragram.utils.validator import validate_symbol
 
 __all__ = [
@@ -537,7 +538,11 @@ class OpportunityDiscoveryService:
                     )
                     continue
 
-            if self.btc_trend_filter_enabled and symbol != "BTCUSDT":
+            if (
+                self.btc_trend_filter_enabled
+                and symbol != "BTCUSDT"
+                and resolve_asset_class(symbol) is AssetClass.CRYPTO
+            ):
                 if btc_trend_result is None:
                     btc_trend_result = await self._evaluate_btc_benchmark_trend(
                         as_of=as_of,

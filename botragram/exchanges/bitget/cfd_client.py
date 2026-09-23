@@ -45,7 +45,10 @@ from botragram.exceptions.exchange import (
 from botragram.exchanges.base.client import BaseExchangeClient
 from botragram.exchanges.base.mapper import ExchangePayload
 from botragram.exchanges.bitget.cfd_mapper import BitgetCfdMapper
-from botragram.exchanges.bitget.rest import BitgetRestClient, BitgetRestResponseError
+from botragram.exchanges.bitget.rest import (
+    BitgetRestClient,
+    BitgetRestResponseError,
+)
 from botragram.models import (
     Account,
     Candle,
@@ -61,6 +64,7 @@ from botragram.models import (
     Ticker,
     Trade,
 )
+from botragram.utils.candle_resampler import resample_candles
 
 __all__ = [
     "BITGET_CFD_INTERVAL_MAP",
@@ -81,6 +85,7 @@ _CFD_PLACE_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/place-order"
 _CFD_CANCEL_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/cancel-order"
 _CFD_ORDER_INFO_ENDPOINT: Final[str] = "/api/v3/cfd/trade/order-info"
 _CFD_OPEN_ORDERS_ENDPOINT: Final[str] = "/api/v3/cfd/trade/open-orders"
+_CFD_TRADES_ENDPOINT: Final[str] = "/api/v3/cfd/trade/history-orders"
 _CFD_POSITIONS_ENDPOINT: Final[str] = "/api/v3/cfd/trade/positions"
 _CFD_CLOSE_POSITION_ENDPOINT: Final[str] = "/api/v3/cfd/trade/close-positions"
 
@@ -91,19 +96,14 @@ _CFD_PLAN_HISTORY_ENDPOINT: Final[str] = "/api/v3/cfd/trade/history-strategy-ord
 
 BITGET_CFD_INTERVAL_MAP: Final[dict[Interval, str]] = {
     Interval.M1: "1m",
-    Interval.M3: "1m",
-    Interval.M5: "1m",
     Interval.M15: "15m",
-    Interval.M30: "15m",
     Interval.H1: "1h",
-    Interval.H2: "1h",
     Interval.H4: "4h",
-    Interval.H6: "4h",
-    Interval.H12: "4h",
     Interval.D1: "1d",
-    Interval.W1: "1d",
-    Interval.MN1: "1d",
 }
+_CFD_NATIVE_INTERVALS: Final[frozenset[Interval]] = frozenset(
+    BITGET_CFD_INTERVAL_MAP.keys()
+)
 
 
 # =============================================================================
@@ -173,6 +173,11 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
     def financing(self) -> CfdFinancingEngine:
         """Return the CFD financing and rollover engine."""
         return self._financing
+
+    @property
+    def supported_intervals(self) -> frozenset[Interval]:
+        """Return candlestick intervals natively supported by Bitget CFD."""
+        return _CFD_NATIVE_INTERVALS
 
     def get_contract_spec(self, symbol: str) -> CfdContractSpec:
         """Return the contract and pip specifications for a symbol."""
@@ -356,10 +361,37 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         start_time: datetime | None = None,
         end_time: datetime | None = None,
     ) -> Sequence[Candle]:
-        """Return historical CFD candlestick data with pagination support."""
+        """Return historical CFD candlestick data with pagination support.
+
+        For intervals not natively supported by Bitget CFD (e.g. 5m), lower
+        timeframe native candles (1m) are fetched and resampled into the target
+        interval.
+        """
+        target_limit = max(1, limit)
+
+        # Handle non-native intervals by fetching 1m base candles and resampling
+        if interval not in self.supported_intervals:
+            base_interval = Interval.M1
+            multiplier = max(1, interval.seconds // base_interval.seconds)
+            base_limit = (target_limit + 2) * multiplier
+            base_candles = await self.get_candles(
+                symbol=symbol,
+                interval=base_interval,
+                limit=base_limit,
+                start_time=start_time,
+                end_time=end_time,
+            )
+            if not base_candles:
+                return ()
+            resampled = resample_candles(
+                candles=base_candles,
+                target_interval=interval,
+                closed_only=False,
+            )
+            return resampled[-target_limit:]
+
         vendor_symbol = self._mapper.to_vendor_symbol(symbol, mode=self._mode)
         interval_str = BITGET_CFD_INTERVAL_MAP.get(interval, "15m")
-        target_limit = max(1, limit)
         all_candles: list[Candle] = []
         current_end_time_ms: int | None = (
             int(end_time.timestamp() * 1000) if end_time is not None else None
@@ -433,9 +465,31 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         limit: int,
     ) -> Sequence[Trade]:
         """Return recent CFD executions/fills."""
-        del symbol, limit
-        # CFD trades endpoint will be linked when account trade history is queried
-        return ()
+        params: dict[str, str | int] = {"limit": min(max(1, limit), 100)}
+        if symbol is not None:
+            params["symbol"] = self._mapper.to_vendor_symbol(symbol, mode=self._mode)
+
+        payload = await self._rest.get(
+            _CFD_TRADES_ENDPOINT,
+            params=params,
+            authenticated=True,
+        )
+        trades: list[Trade] = []
+        if isinstance(payload, dict):
+            raw_data = payload.get("data")
+            raw_list: list[object] = []
+            if isinstance(raw_data, dict):
+                ent_list = cast(dict[str, object], raw_data).get("list")
+                raw_list = (
+                    cast(list[object], ent_list) if isinstance(ent_list, list) else []
+                )
+            elif isinstance(raw_data, list):
+                raw_list = cast(list[object], raw_data)
+
+            for item in raw_list:
+                if isinstance(item, dict):
+                    trades.append(self._mapper.map_trade(cast(ExchangePayload, item)))
+        return tuple(trades)
 
     # =========================================================================
     # Orders
@@ -554,7 +608,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
             now = datetime.now(timezone.utc)
             return (
                 Order(
-                    order_id=order_id or "bitget-cfd-sl",
+                    order_id=f"{order_id}-sl" if order_id else "bitget-cfd-sl",
                     symbol=self._mapper.normalize_symbol(symbol),
                     side=side,
                     order_type=OrderType.STOP_MARKET,
@@ -567,7 +621,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                     updated_at=now,
                 ),
                 Order(
-                    order_id=order_id or "bitget-cfd-tp",
+                    order_id=f"{order_id}-tp" if order_id else "bitget-cfd-tp",
                     symbol=self._mapper.normalize_symbol(symbol),
                     side=side,
                     order_type=OrderType.TAKE_PROFIT_MARKET,
@@ -585,24 +639,6 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
 
         # Case 2: Only stop-loss requested
         if stop_loss is not None:
-            existing_tp_price: Decimal | None = None
-            try:
-                open_protections = await self.get_open_protection_orders(symbol=symbol)
-                for existing in open_protections:
-                    if (
-                        existing.order_type
-                        in (OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT)
-                        and existing.stop_price is not None
-                    ):
-                        existing_tp_price = existing.stop_price
-                        break
-            except Exception as check_error:
-                _LOGGER.warning(
-                    "Could not inspect open protections before placing SL for %s: %s",
-                    symbol,
-                    check_error,
-                )
-
             sl_data: dict[str, object] = {
                 "symbol": vendor_symbol,
                 "type": "tpsl",
@@ -610,8 +646,6 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                 "size": str(quantity),
                 "stopLoss": str(stop_loss),
             }
-            if existing_tp_price is not None:
-                sl_data["takeProfit"] = str(existing_tp_price)
             if stop_loss_client_algo_id:
                 sl_data["clientOid"] = stop_loss_client_algo_id
 
@@ -656,23 +690,6 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
 
         # Case 3: Only take-profit requested
         if take_profit is not None:
-            existing_sl_price: Decimal | None = None
-            try:
-                open_protections = await self.get_open_protection_orders(symbol=symbol)
-                for existing in open_protections:
-                    if (
-                        existing.order_type in (OrderType.STOP_MARKET, OrderType.STOP)
-                        and existing.stop_price is not None
-                    ):
-                        existing_sl_price = existing.stop_price
-                        break
-            except Exception as check_error:
-                _LOGGER.warning(
-                    "Could not inspect open protections before placing TP for %s: %s",
-                    symbol,
-                    check_error,
-                )
-
             tp_data: dict[str, object] = {
                 "symbol": vendor_symbol,
                 "type": "tpsl",
@@ -680,8 +697,6 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                 "size": str(quantity),
                 "takeProfit": str(take_profit),
             }
-            if existing_sl_price is not None:
-                tp_data["stopLoss"] = str(existing_sl_price)
             if take_profit_client_algo_id:
                 tp_data["clientOid"] = take_profit_client_algo_id
 
@@ -916,33 +931,43 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         self,
         *,
         symbol: str,
-        client_id: str,
+        client_id: str | None = None,
+        order_id: str | None = None,
     ) -> None:
-        """Cancel conditional plan order by client_id."""
+        """Cancel conditional plan order by order_id or client_id."""
+        if client_id is None and order_id is None:
+            raise ValueError(
+                "Either client_id or order_id must be provided to cancel "
+                "protection order"
+            )
         vendor_symbol = self._mapper.to_vendor_symbol(symbol, mode=self._mode)
         data: dict[str, object] = {
             "symbol": vendor_symbol,
         }
-        resolved_order_id: str | None = None
-        try:
-            matched = await self.get_protection_order_by_client_id(
-                symbol=symbol,
-                client_id=client_id,
-            )
-            clean_id = (
-                matched.order_id[:-3]
-                if matched.order_id.endswith(("-tp", "-sl"))
-                else matched.order_id
-            )
-            if clean_id and not clean_id.startswith("bitget-cfd-"):
-                resolved_order_id = clean_id
-        except Exception:
-            resolved_order_id = None
+        if order_id is not None:
+            clean_id = order_id[:-3] if order_id.endswith(("-tp", "-sl")) else order_id
+            data["orderId"] = clean_id
+        elif client_id is not None:
+            resolved_order_id: str | None = None
+            try:
+                matched = await self.get_protection_order_by_client_id(
+                    symbol=symbol,
+                    client_id=client_id,
+                )
+                clean_id = (
+                    matched.order_id[:-3]
+                    if matched.order_id.endswith(("-tp", "-sl"))
+                    else matched.order_id
+                )
+                if clean_id and not clean_id.startswith("bitget-cfd-"):
+                    resolved_order_id = clean_id
+            except Exception:
+                resolved_order_id = None
 
-        if resolved_order_id is not None:
-            data["orderId"] = resolved_order_id
-        else:
-            data["clientOid"] = client_id
+            if resolved_order_id is not None:
+                data["orderId"] = resolved_order_id
+            else:
+                data["clientOid"] = client_id
 
         try:
             await self._rest.post(
@@ -953,7 +978,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         except Exception as error:
             _LOGGER.warning(
                 "Failed to cancel CFD protection order %s: %s",
-                client_id,
+                order_id or client_id,
                 error,
             )
 
@@ -1066,6 +1091,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         symbol: str,
         client_order_id: str | None = None,
         bypass_calendar_guard: bool = False,
+        side: PositionSide | None = None,
     ) -> Order:
         """Close an open CFD position."""
         if not bypass_calendar_guard:
@@ -1076,8 +1102,25 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                     f"(status: {session.status.value}, reason: {session.reason})"
                 )
 
+        pos_side_str: str | None = None
+        if side is not None:
+            pos_side_str = "long" if side is PositionSide.LONG else "short"
+        else:
+            open_positions = await self.get_positions(symbol=symbol)
+            if len(open_positions) > 1:
+                raise RuntimeError(
+                    f"Multiple active CFD positions found for {symbol!r}. "
+                    "Explicit side parameter is required to close."
+                )
+            if len(open_positions) == 1:
+                pos_side_str = (
+                    "long" if open_positions[0].side is PositionSide.LONG else "short"
+                )
+
         vendor_symbol = self._mapper.to_vendor_symbol(symbol, mode=self._mode)
         body: dict[str, object] = {"symbol": vendor_symbol}
+        if pos_side_str is not None:
+            body["posSide"] = pos_side_str
         if client_order_id is not None:
             body["clientOid"] = client_order_id
 
@@ -1106,6 +1149,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         return await self.close_position(
             symbol=position.symbol,
             client_order_id=client_order_id,
+            side=position.side,
         )
 
     async def close_all_positions(self) -> Sequence[Order]:
@@ -1114,7 +1158,12 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         closed_orders: list[Order] = []
         for position in open_positions:
             try:
-                closed_orders.append(await self.close_position(symbol=position.symbol))
+                closed_orders.append(
+                    await self.close_position(
+                        symbol=position.symbol,
+                        side=position.side,
+                    )
+                )
             except Exception as error:
                 _LOGGER.warning(
                     "Failed to close CFD position for %s: %s",

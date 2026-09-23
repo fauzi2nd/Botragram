@@ -1200,3 +1200,25 @@ def test_natural_exit_guard_blocks_fresh_live_entry_risk_evaluation() -> None:
     assert natural_exit_recovery.calls == 1
     assert accounts.calls == 0
     assert positions.calls == 0
+
+
+def test_live_entry_risk_evaluation_service_skips_recovery_when_service_is_none() -> (
+    None
+):
+    """Eliminate redundant reconcile calls during candidate evaluation."""
+    accounts = _FakeAccountService(balances=[Decimal("500")])
+    positions = _FakePositionService(portfolios=[()])
+    service = LiveEntryRiskEvaluationService(
+        account_service=accounts,
+        position_service=positions,
+        trading_engine=TradingEngine(
+            risk_engine=RiskEngine(settings=RiskSettings()),
+        ),
+        balance_asset="USDT",
+        natural_exit_recovery_service=None,
+    )
+
+    evaluation = asyncio.run(service.evaluate(signal=_create_signal()))
+    assert evaluation.decision.should_execute
+    assert accounts.calls == 1
+    assert positions.calls == 1

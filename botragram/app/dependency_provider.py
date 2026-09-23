@@ -1124,6 +1124,7 @@ class DependencyProvider:
             api_secret=exchange.api_secret,
             passphrase=exchange.passphrase,
             market_type=exchange.market_type,
+            margin_mode=exchange.margin_mode,
         )
         self._exchange_client = exchange_client
         self._stream_client = stream_client
@@ -1433,7 +1434,7 @@ class DependencyProvider:
                 if live_user_data_service is not None
                 else None
             ),
-            natural_exit_recovery_service=self.live_natural_exit_recovery_service,
+            natural_exit_recovery_service=None,
             runtime_risk_limit_provider=runtime_limits,
             runtime_control=self.runtime_control,
         )
@@ -1515,6 +1516,7 @@ class DependencyProvider:
             ),
             maximum_leverage=self._settings.risk.leverage,
             runtime_risk_limit_provider=runtime_limits,
+            lifecycle_coordinator=self._live_position_lifecycle_coordinator,
         )
         self._live_trading_performance_service = LiveTradingPerformanceService(
             lifecycle_repository=self.closed_position_lifecycle_repository,

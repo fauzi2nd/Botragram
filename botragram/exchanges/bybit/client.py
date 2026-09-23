@@ -30,7 +30,7 @@ import aiohttp
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import Interval, OrderSide, OrderType
+from botragram.enums import Interval, OrderSide, OrderType, PositionSide
 from botragram.exchanges.base.client import BaseExchangeClient
 from botragram.exchanges.base.mapper import ExchangePayload
 from botragram.exchanges.bybit.mapper import BybitExchangeMapper
@@ -680,8 +680,9 @@ class BybitExchangeClient(BaseExchangeClient):
         *,
         symbol: str,
         client_order_id: str | None = None,
+        side: PositionSide | None = None,
     ) -> Order:
-        _ = (symbol, client_order_id)
+        _ = (symbol, client_order_id, side)
         raise NotImplementedError("Use BybitFuturesExchangeClient for close_position")
 
     async def close_position_exact(

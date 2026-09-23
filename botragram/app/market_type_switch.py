@@ -267,6 +267,10 @@ class MarketTypeSwitchService:
         ):
             raise ValueError("Bitget connector only supports Futures and CFD")
 
+        if self.runtime_settings_repository is not None:
+            await self.runtime_settings_repository.save_market_type(
+                market_type=market_type,
+            )
         self.restart_coordinator.stage(market_type=market_type)
         return True
 
@@ -284,6 +288,10 @@ class MarketTypeSwitchService:
         if await self._get_positions():
             raise RuntimeError("Close every active position before switching exchange")
 
+        if self.runtime_settings_repository is not None:
+            await self.runtime_settings_repository.save_exchange(
+                exchange_type=exchange_type,
+            )
         self.restart_coordinator.stage(exchange_type=exchange_type)
         return True
 
@@ -339,6 +347,11 @@ class MarketTypeSwitchService:
             blocked_message="Close every active position before switching trading mode",
             allow_operator_exit=allow_operator_exit,
         )
+
+        if self.runtime_settings_repository is not None:
+            await self.runtime_settings_repository.save_execution_policy(
+                execution_policy=execution_policy,
+            )
 
         try:
             self.restart_coordinator.stage(execution_policy=execution_policy)

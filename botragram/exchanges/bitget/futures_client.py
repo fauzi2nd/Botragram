@@ -26,7 +26,13 @@ from typing import Final, cast
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import OrderSide, OrderStatus, OrderType, PositionSide
+from botragram.enums import (
+    MarginMode,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+)
 from botragram.exceptions import (
     ExchangeError,
     ExchangeOrderNotFoundError,
@@ -76,17 +82,27 @@ _PRODUCT_TYPE: Final[str] = "usdt-futures"
 class BitgetFuturesExchangeClient(BitgetClient):
     """Bitget USDT-M Futures exchange client."""
 
-    __slots__ = ("_hold_mode",)
+    __slots__ = ("_hold_mode", "_margin_mode")
 
     def __init__(
         self,
         *,
         rest: BitgetRestClient,
         mapper: BitgetExchangeMapper,
+        margin_mode: MarginMode | str = MarginMode.ISOLATED,
     ) -> None:
         """Initialize the Bitget Futures client."""
         super().__init__(rest=rest, mapper=mapper)
         self._hold_mode: str | None = None
+        self._margin_mode: str = (
+            margin_mode.value
+            if isinstance(margin_mode, MarginMode)
+            else str(margin_mode).strip().lower()
+        )
+
+    async def get_margin_mode(self) -> str:
+        """Return the configured futures margin mode (isolated or crossed)."""
+        return self._margin_mode
 
     async def get_hold_mode(self) -> str:
         """Return the account position hold mode (hedge_mode or one_way_mode)."""
@@ -132,6 +148,7 @@ class BitgetFuturesExchangeClient(BitgetClient):
         bg_type = "market" if order_type is OrderType.MARKET else "limit"
 
         hold_mode = await self.get_hold_mode()
+        margin_mode = await self.get_margin_mode()
 
         data: dict[str, object] = {
             "category": _CATEGORY,
@@ -139,6 +156,7 @@ class BitgetFuturesExchangeClient(BitgetClient):
             "side": bg_side,
             "orderType": bg_type,
             "qty": str(quantity),
+            "marginMode": margin_mode,
         }
         if price is not None and bg_type == "limit":
             data["price"] = str(price)
@@ -252,6 +270,7 @@ class BitgetFuturesExchangeClient(BitgetClient):
         """Create conditional stop-loss and take-profit plan orders for a position."""
         normalized_symbol = symbol.strip().upper()
         pos_side = "long" if side is OrderSide.SELL else "short"
+        margin_mode = await self.get_margin_mode()
 
         # Case 1: Both legs requested — submit atomically in one TPSL request
         if stop_loss is not None and take_profit is not None:
@@ -263,6 +282,7 @@ class BitgetFuturesExchangeClient(BitgetClient):
                 "size": str(quantity),
                 "stopLoss": str(stop_loss),
                 "takeProfit": str(take_profit),
+                "marginMode": margin_mode,
             }
             if stop_loss_client_algo_id:
                 data["clientOid"] = stop_loss_client_algo_id
@@ -294,7 +314,7 @@ class BitgetFuturesExchangeClient(BitgetClient):
             now = datetime.now(timezone.utc)
             return (
                 Order(
-                    order_id=order_id or "bitget-sl",
+                    order_id=f"{order_id}-sl" if order_id else "bitget-sl",
                     symbol=normalized_symbol,
                     side=side,
                     order_type=OrderType.STOP_MARKET,
@@ -307,7 +327,7 @@ class BitgetFuturesExchangeClient(BitgetClient):
                     updated_at=now,
                 ),
                 Order(
-                    order_id=order_id or "bitget-tp",
+                    order_id=f"{order_id}-tp" if order_id else "bitget-tp",
                     symbol=normalized_symbol,
                     side=side,
                     order_type=OrderType.TAKE_PROFIT_MARKET,
@@ -323,28 +343,8 @@ class BitgetFuturesExchangeClient(BitgetClient):
 
         orders: list[Order] = []
 
-        # Case 2: Only stop loss requested — preserve active TP if present
+        # Case 2: Only stop loss requested
         if stop_loss is not None:
-            existing_tp_price: Decimal | None = None
-            try:
-                open_protections = await self.get_open_protection_orders(
-                    symbol=normalized_symbol
-                )
-                for existing in open_protections:
-                    if (
-                        existing.order_type
-                        in (OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT)
-                        and existing.stop_price is not None
-                    ):
-                        existing_tp_price = existing.stop_price
-                        break
-            except Exception as check_error:
-                _LOGGER.warning(
-                    "Could not inspect open protections before placing SL for %s: %s",
-                    normalized_symbol,
-                    check_error,
-                )
-
             sl_data: dict[str, object] = {
                 "category": _CATEGORY,
                 "symbol": normalized_symbol,
@@ -352,9 +352,8 @@ class BitgetFuturesExchangeClient(BitgetClient):
                 "posSide": pos_side,
                 "size": str(quantity),
                 "stopLoss": str(stop_loss),
+                "marginMode": margin_mode,
             }
-            if existing_tp_price is not None:
-                sl_data["takeProfit"] = str(existing_tp_price)
             if stop_loss_client_algo_id:
                 sl_data["clientOid"] = stop_loss_client_algo_id
 
@@ -397,27 +396,8 @@ class BitgetFuturesExchangeClient(BitgetClient):
                 )
             )
 
-        # Case 3: Only take profit requested — preserve active SL if present
+        # Case 3: Only take profit requested
         if take_profit is not None:
-            existing_sl_price: Decimal | None = None
-            try:
-                open_protections = await self.get_open_protection_orders(
-                    symbol=normalized_symbol
-                )
-                for existing in open_protections:
-                    if (
-                        existing.order_type in (OrderType.STOP_MARKET, OrderType.STOP)
-                        and existing.stop_price is not None
-                    ):
-                        existing_sl_price = existing.stop_price
-                        break
-            except Exception as check_error:
-                _LOGGER.warning(
-                    "Could not inspect open protections before placing TP for %s: %s",
-                    normalized_symbol,
-                    check_error,
-                )
-
             tp_data: dict[str, object] = {
                 "category": _CATEGORY,
                 "symbol": normalized_symbol,
@@ -425,9 +405,8 @@ class BitgetFuturesExchangeClient(BitgetClient):
                 "posSide": pos_side,
                 "size": str(quantity),
                 "takeProfit": str(take_profit),
+                "marginMode": margin_mode,
             }
-            if existing_sl_price is not None:
-                tp_data["stopLoss"] = str(existing_sl_price)
             if take_profit_client_algo_id:
                 tp_data["clientOid"] = take_profit_client_algo_id
 
@@ -797,19 +776,30 @@ class BitgetFuturesExchangeClient(BitgetClient):
         self,
         *,
         symbol: str,
-        client_id: str,
+        client_id: str | None = None,
+        order_id: str | None = None,
     ) -> None:
-        """Cancel conditional plan order by client_id."""
+        """Cancel conditional plan order by order_id or client_id."""
+        if client_id is None and order_id is None:
+            raise ValueError(
+                "Either client_id or order_id must be provided to cancel "
+                "protection order"
+            )
         normalized_symbol = symbol.strip().upper()
         data: dict[str, object] = {
             "category": _CATEGORY,
             "symbol": normalized_symbol,
         }
-        if client_id.startswith("adopted-"):
+        if order_id is not None:
+            clean_id = order_id[:-3] if order_id.endswith(("-tp", "-sl")) else order_id
+            data["orderId"] = clean_id
+        elif client_id is not None and client_id.startswith("adopted-"):
             raw_id = client_id.removeprefix("adopted-")
-            order_id = raw_id[:-3] if raw_id.endswith(("-tp", "-sl")) else raw_id
-            data["orderId"] = order_id
-        else:
+            order_id_from_client = (
+                raw_id[:-3] if raw_id.endswith(("-tp", "-sl")) else raw_id
+            )
+            data["orderId"] = order_id_from_client
+        elif client_id is not None:
             resolved_order_id: str | None = None
             try:
                 matched_order = await self.get_protection_order_by_client_id(
@@ -906,11 +896,19 @@ class BitgetFuturesExchangeClient(BitgetClient):
             elif isinstance(raw_data, list):
                 raw_list = cast(list[object], raw_data)
 
+            seen_symbols: set[str] = set()
             for item in raw_list:
                 if not isinstance(item, dict):
                     continue
                 pos = self._mapper.map_position(cast(ExchangePayload, item))
                 if pos.quantity > Decimal("0"):
+                    if pos.symbol in seen_symbols:
+                        _LOGGER.critical(
+                            "Bitget returned multiple positions for symbol %s in "
+                            "hedge mode; Botragram invariant requires One-Way Mode",
+                            pos.symbol,
+                        )
+                    seen_symbols.add(pos.symbol)
                     positions.append(pos)
 
         return tuple(positions)
@@ -920,6 +918,7 @@ class BitgetFuturesExchangeClient(BitgetClient):
         *,
         symbol: str,
         client_order_id: str | None = None,
+        side: PositionSide | None = None,
     ) -> Order:
         """Close an active position using market order."""
         positions = await self.get_positions(symbol=symbol)
@@ -928,7 +927,20 @@ class BitgetFuturesExchangeClient(BitgetClient):
                 f"No open position found to close for {symbol!r}"
             )
 
-        pos = positions[0]
+        if side is not None:
+            matching = [p for p in positions if p.side is side]
+            if not matching:
+                raise ExchangeOrderNotFoundError(
+                    f"No open {side.value} position found to close for {symbol!r}"
+                )
+            pos = matching[0]
+        elif len(positions) == 1:
+            pos = positions[0]
+        else:
+            raise RuntimeError(
+                f"Multiple open positions found for {symbol!r}; specify side to close"
+            )
+
         close_side = OrderSide.SELL if pos.side is PositionSide.LONG else OrderSide.BUY
         pos_side = "long" if pos.side is PositionSide.LONG else "short"
 
@@ -969,7 +981,7 @@ class BitgetFuturesExchangeClient(BitgetClient):
         positions = await self.get_positions()
         orders: list[Order] = []
         for pos in positions:
-            order = await self.close_position(symbol=pos.symbol)
+            order = await self.close_position(symbol=pos.symbol, side=pos.side)
             orders.append(order)
         return tuple(orders)
 
@@ -979,14 +991,16 @@ class BitgetFuturesExchangeClient(BitgetClient):
         symbol: str,
         leverage: int,
         hold_side: str = "long",
+        margin_mode: str | None = None,
     ) -> None:
         """Set leverage for symbol."""
+        effective_margin_mode = margin_mode or await self.get_margin_mode()
         data: dict[str, object] = {
             "category": _CATEGORY,
             "symbol": symbol.strip().upper(),
             "leverage": str(leverage),
             "posSide": hold_side,
-            "marginMode": "crossed",
+            "marginMode": effective_margin_mode,
         }
         await self._rest.post(
             _SET_LEVERAGE_ENDPOINT,
@@ -1040,32 +1054,37 @@ class BitgetFuturesExchangeClient(BitgetClient):
 
         target_leverage = max(1, min(maximum_leverage, max_allowed_leverage))
         hold_mode = await self.get_hold_mode()
+        margin_mode = await self.get_margin_mode()
         if hold_mode == "hedge_mode":
             await self.set_leverage(
                 symbol=normalized_symbol,
                 leverage=target_leverage,
                 hold_side="long",
+                margin_mode=margin_mode,
             )
             await self.set_leverage(
                 symbol=normalized_symbol,
                 leverage=target_leverage,
                 hold_side="short",
+                margin_mode=margin_mode,
             )
         else:
             await self.set_leverage(
                 symbol=normalized_symbol,
                 leverage=target_leverage,
                 hold_side="long",
+                margin_mode=margin_mode,
             )
 
         _LOGGER.info(
             "Bitget symbol leverage verified and aligned: symbol=%s leverage=%dx "
-            "(maximum_allowed=%dx requested=%dx hold_mode=%s)",
+            "(maximum_allowed=%dx requested=%dx hold_mode=%s margin_mode=%s)",
             normalized_symbol,
             target_leverage,
             max_allowed_leverage,
             maximum_leverage,
             hold_mode,
+            margin_mode,
         )
 
     async def get_trades_for_order(

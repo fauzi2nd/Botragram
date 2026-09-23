@@ -36,11 +36,13 @@ class LivePositionLifecycleCoordinator:
     deleted positions so a later market tick cannot reuse a stale local cache.
     """
 
-    __slots__ = ("_lock", "_position_versions")
+    __slots__ = ("_depth", "_lock", "_owner", "_position_versions")
 
     def __init__(self) -> None:
         """Initialize an unlocked lifecycle coordinator."""
         self._lock = asyncio.Lock()
+        self._owner: object | None = None
+        self._depth: int = 0
         self._position_versions: dict[str, int] = {}
 
     def get_position_version(self, *, symbol: str) -> int:
@@ -54,6 +56,26 @@ class LivePositionLifecycleCoordinator:
             self._position_versions.get(normalized_symbol, 0) + 1
         )
 
+    async def _acquire(self) -> None:
+        """Acquire the coordinator lock with task re-entrancy."""
+        current = asyncio.current_task()
+        if current is not None and self._owner is current:
+            self._depth += 1
+            return
+        await self._lock.acquire()
+        self._owner = current
+        self._depth = 1
+
+    def _release(self) -> None:
+        """Release one depth level or the underlying coordinator lock."""
+        current = asyncio.current_task()
+        if current is not None and self._owner is not current:
+            raise RuntimeError("Cannot release unowned lifecycle coordinator lock")
+        self._depth -= 1
+        if self._depth == 0:
+            self._owner = None
+            self._lock.release()
+
     @asynccontextmanager
     async def hold_portfolio(self) -> AsyncGenerator[None]:
         """Serialize one authoritative portfolio recovery.
@@ -62,8 +84,11 @@ class LivePositionLifecycleCoordinator:
             None while portfolio synchronization, persistence, and protection
             verification own the lifecycle coordinator.
         """
-        async with self._lock:
+        await self._acquire()
+        try:
             yield
+        finally:
+            self._release()
 
     @asynccontextmanager
     async def hold(self, *, symbol: str) -> AsyncGenerator[None]:
@@ -79,9 +104,11 @@ class LivePositionLifecycleCoordinator:
             ValueError: If ``symbol`` is empty.
         """
         self._normalize_symbol(symbol)
-
-        async with self._lock:
+        await self._acquire()
+        try:
             yield
+        finally:
+            self._release()
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:

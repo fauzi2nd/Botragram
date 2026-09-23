@@ -650,7 +650,7 @@ async def test_bitget_futures_v3_uta_operations() -> None:
         "symbol": "BTCUSDT",
         "leverage": "25",
         "posSide": "long",
-        "marginMode": "crossed",
+        "marginMode": "isolated",
     }
 
 
@@ -1490,7 +1490,7 @@ async def test_bitget_verify_mainnet_symbol_readiness_caps_at_max_leverage() -> 
         "symbol": "LOWLEVUSDT",
         "leverage": "2",
         "posSide": "long",
-        "marginMode": "crossed",
+        "marginMode": "isolated",
     }
 
 
@@ -1833,4 +1833,59 @@ async def test_bitget_cancel_protection_order_companion_leg_uses_order_id() -> N
         "category": "USDT-FUTURES",
         "symbol": "ARXUSDT",
         "orderId": "1486065050578296872",
+    }
+
+
+@pytest.mark.asyncio
+async def test_bitget_create_protection_orders_tp_only_does_not_duplicate_sl() -> None:
+    """Verify TP-only protection creation does not inject existing SL (P0-01)."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {"orderId": "tp-plan-999"},
+    }
+
+    orders = await client.create_protection_orders(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("1.5"),
+        take_profit=Decimal("75000"),
+        take_profit_client_algo_id="btp-unique-tp",
+    )
+
+    assert len(orders) == 1
+    assert orders[0].order_type is OrderType.TAKE_PROFIT_MARKET
+    assert orders[0].stop_price == Decimal("75000")
+    assert rest.last_path == "/api/v3/trade/place-strategy-order"
+    assert rest.last_data is not None
+    assert "stopLoss" not in rest.last_data, "TP request must not inject duplicate SL"
+    assert rest.last_data["takeProfit"] == "75000"
+    assert rest.last_data["clientOid"] == "btp-unique-tp"
+
+
+@pytest.mark.asyncio
+async def test_bitget_cancel_protection_order_by_order_id_directly() -> None:
+    """Verify cancel_protection_order strips suffix and sends orderId (P2-03)."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {},
+    }
+
+    await client.cancel_protection_order(
+        symbol="BTCUSDT",
+        order_id="9876543210-tp",
+    )
+
+    assert rest.last_path == "/api/v3/trade/cancel-strategy-order"
+    assert rest.last_data == {
+        "category": "USDT-FUTURES",
+        "symbol": "BTCUSDT",
+        "orderId": "9876543210",
     }

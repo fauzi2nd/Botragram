@@ -22,7 +22,7 @@ from dataclasses import dataclass
 # Local Imports
 # =============================================================================
 from botragram.constants import DEFAULT_MAX_RETRIES, DEFAULT_REQUEST_TIMEOUT_SECONDS
-from botragram.enums import ExchangeEnvironment, ExchangeType, MarketType
+from botragram.enums import ExchangeEnvironment, ExchangeType, MarginMode, MarketType
 
 __all__ = [
     "ExchangeSettings",
@@ -49,6 +49,7 @@ class ExchangeSettings:
     demo: bool = False
     timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
     max_retries: int = DEFAULT_MAX_RETRIES
+    margin_mode: MarginMode = MarginMode.ISOLATED
 
     @property
     def is_live(self) -> bool:

@@ -161,11 +161,20 @@ class RestartProtectionExchange(BinanceFuturesExchangeClient):
                 return order
         raise ExchangeOrderNotFoundError("not found")
 
-    async def cancel_protection_order(self, *, symbol: str, client_id: str) -> None:
+    async def cancel_protection_order(
+        self,
+        *,
+        symbol: str,
+        client_id: str | None = None,
+        order_id: str | None = None,
+    ) -> None:
         del symbol
-        self.cancelled.append(client_id)
+        target = client_id or order_id or ""
+        self.cancelled.append(target)
         self.orders = [
-            order for order in self.orders if order.client_order_id != client_id
+            order
+            for order in self.orders
+            if order.client_order_id != client_id and order.order_id != order_id
         ]
 
     async def cancel_order(self, *, symbol: str, order_id: str) -> Order:

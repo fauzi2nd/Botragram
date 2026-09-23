@@ -29,7 +29,7 @@ import aiohttp
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import Interval, OrderSide, OrderType
+from botragram.enums import Interval, OrderSide, OrderType, PositionSide
 from botragram.exchanges.base import BaseExchangeClient
 from botragram.exchanges.base.mapper import (
     ExchangePayload,
@@ -529,6 +529,7 @@ class BinanceExchangeClient(BaseExchangeClient):
         *,
         symbol: str,
         client_order_id: str | None = None,
+        side: PositionSide | None = None,
     ) -> Order:
         """Close an active position.
 
@@ -537,7 +538,7 @@ class BinanceExchangeClient(BaseExchangeClient):
         submit the appropriate sell order explicitly.
         """
         self._normalize_symbol(symbol)
-        del client_order_id
+        del client_order_id, side
 
         raise NotImplementedError(
             "Binance Spot position closing requires balance-aware order sizing"

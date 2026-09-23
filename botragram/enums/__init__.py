@@ -55,6 +55,7 @@ from botragram.enums.live_portfolio_recovery_unsafe_reason import (
 from botragram.enums.live_runtime_health_reason import LiveRuntimeHealthReason
 from botragram.enums.live_runtime_health_status import LiveRuntimeHealthStatus
 from botragram.enums.log_level import LogLevel
+from botragram.enums.margin_mode import MarginMode
 from botragram.enums.market_session_status import MarketSessionStatus
 from botragram.enums.market_type import MarketType
 from botragram.enums.notification_type import NotificationType
@@ -98,6 +99,7 @@ __all__ = [
     "FuturesAlgoOrderStatus",
     # Exchange
     "ExchangeType",
+    "MarginMode",
     "MarketType",
     "TradeMode",
     "LiveMarketStreamLifecycleStatus",

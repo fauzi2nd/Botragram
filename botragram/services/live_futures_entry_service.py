@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final, Protocol
@@ -45,6 +45,9 @@ from botragram.models import (
     SubmissionAttempt,
 )
 from botragram.repositories import SubmissionAttemptRepository
+from botragram.services.live_position_lifecycle_coordinator import (
+    LivePositionLifecycleCoordinator,
+)
 
 __all__ = ["LiveFuturesEntryService"]
 
@@ -159,6 +162,9 @@ class LiveFuturesEntryService:
     venue_entry_readiness: LiveVenueEntryReadiness | None = None
     maximum_leverage: int = 1
     runtime_risk_limit_provider: _RuntimeRiskLimitProvider | None = None
+    lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
+        default_factory=LivePositionLifecycleCoordinator,
+    )
 
     def __post_init__(self) -> None:
         if isinstance(self.maximum_leverage, bool) or self.maximum_leverage <= 0:
@@ -176,6 +182,24 @@ class LiveFuturesEntryService:
         price: Decimal | None,
     ) -> Order:
         """Submit a MARKET entry, synchronize it, and verify full protection."""
+        async with self.lifecycle_coordinator.hold(symbol=signal.symbol):
+            return await self._execute_under_lock(
+                signal=signal,
+                risk_result=risk_result,
+                interval=interval,
+                order_type=order_type,
+                price=price,
+            )
+
+    async def _execute_under_lock(
+        self,
+        *,
+        signal: Signal,
+        risk_result: RiskResult,
+        interval: Interval,
+        order_type: OrderType,
+        price: Decimal | None,
+    ) -> Order:
         self._validate_entry(order_type=order_type)
         limits = (
             self.runtime_risk_limit_provider.get_snapshot()
@@ -441,8 +465,8 @@ class LiveFuturesEntryService:
         return order
 
     def _validate_entry(self, *, order_type: OrderType) -> None:
-        if self.market_type is not MarketType.FUTURES:
-            raise RuntimeError("Protected LIVE entry currently requires FUTURES")
+        if self.market_type not in (MarketType.FUTURES, MarketType.CFD):
+            raise RuntimeError("Protected LIVE entry currently requires FUTURES or CFD")
         if order_type is not OrderType.MARKET:
             raise ValueError("Protected LIVE entry currently supports MARKET orders")
 

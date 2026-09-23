@@ -16,7 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import ExchangeType, MarketType
+from botragram.enums import ExchangeType, MarginMode, MarketType
 from botragram.exchanges.base import (
     BaseExchangeClient,
     BaseRestClient,
@@ -111,6 +111,7 @@ class ExchangeFactory:
         exchange_type: ExchangeType,
         rest_client: BaseRestClient,
         market_type: MarketType = MarketType.SPOT,
+        margin_mode: MarginMode = MarginMode.ISOLATED,
     ) -> BaseExchangeClient:
         """Create a high-level exchange client.
 
@@ -118,6 +119,7 @@ class ExchangeFactory:
             exchange_type: Exchange implementation to create.
             rest_client: REST transport used by the client.
             market_type: Target market type (spot or futures).
+            margin_mode: Futures margin mode (isolated or crossed).
 
         Returns:
             High-level exchange client.
@@ -163,6 +165,7 @@ class ExchangeFactory:
                     return BitgetFuturesExchangeClient(
                         rest=rest_client,
                         mapper=BitgetExchangeMapper(),
+                        margin_mode=margin_mode,
                     )
 
                 if market_type is MarketType.CFD:
@@ -222,6 +225,7 @@ class ExchangeFactory:
         api_secret: str = "",
         passphrase: str = "",
         market_type: MarketType = MarketType.SPOT,
+        margin_mode: MarginMode = MarginMode.ISOLATED,
     ) -> tuple[BaseExchangeClient, BaseStreamClient]:
         """Create matching REST-backed and streaming exchange clients.
 
@@ -233,6 +237,7 @@ class ExchangeFactory:
             api_secret: Exchange API secret.
             passphrase: Exchange API passphrase (used by Bitget).
             market_type: Target market type (spot or futures).
+            margin_mode: Futures margin mode (isolated or crossed).
 
         Returns:
             Tuple containing the exchange client and stream client.
@@ -248,6 +253,7 @@ class ExchangeFactory:
             exchange_type=exchange_type,
             rest_client=rest_client,
             market_type=market_type,
+            margin_mode=margin_mode,
         )
         stream_client = ExchangeFactory.create_stream_client(
             exchange_type=exchange_type,

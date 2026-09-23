@@ -638,22 +638,30 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         self,
         *,
         symbol: str,
-        client_id: str,
+        client_id: str | None = None,
+        order_id: str | None = None,
     ) -> None:
-        """Cancel one conditional protection order by durable client identity."""
+        """Cancel one conditional protection order by client identity or order id."""
+        if client_id is None and order_id is None:
+            raise ValueError(
+                "Either client_id or order_id must be provided to cancel "
+                "protection order"
+            )
         normalized_symbol = symbol.strip().upper()
-        normalized_client_id = client_id.strip()
         data: dict[str, object] = {
             "category": "linear",
             "symbol": normalized_symbol,
             "orderFilter": "StopOrder",
         }
-        if normalized_client_id.startswith("adopted-"):
-            raw_id = normalized_client_id.removeprefix("adopted-")
-            order_id = raw_id[:-3] if raw_id.endswith(("-tp", "-sl")) else raw_id
-            data["orderId"] = order_id
-        else:
-            data["orderLinkId"] = normalized_client_id
+        if order_id is not None:
+            clean_id = order_id[:-3] if order_id.endswith(("-tp", "-sl")) else order_id
+            data["orderId"] = clean_id
+        elif client_id is not None and client_id.startswith("adopted-"):
+            raw_id = client_id.removeprefix("adopted-")
+            clean_order_id = raw_id[:-3] if raw_id.endswith(("-tp", "-sl")) else raw_id
+            data["orderId"] = clean_order_id
+        elif client_id is not None:
+            data["orderLinkId"] = client_id.strip()
 
         await self._rest.post(
             _ORDER_CANCEL_ENDPOINT,
@@ -731,6 +739,7 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         *,
         symbol: str,
         client_order_id: str | None = None,
+        side: PositionSide | None = None,
     ) -> Order:
         """Close an active position via market order with reduceOnly=True."""
         normalized_symbol = symbol.strip().upper()
@@ -740,7 +749,22 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
                 f"No active position to close for symbol {normalized_symbol!r}"
             )
 
-        pos = positions[0]
+        if side is not None:
+            matching = [p for p in positions if p.side is side]
+            if not matching:
+                raise ValueError(
+                    f"No active position for symbol {normalized_symbol!r} "
+                    f"with side {side.value}"
+                )
+            pos = matching[0]
+        elif len(positions) > 1:
+            raise ValueError(
+                f"Multiple positions found for {normalized_symbol!r}. "
+                "Explicit side parameter is required to close."
+            )
+        else:
+            pos = positions[0]
+
         close_side = OrderSide.SELL if pos.side is PositionSide.LONG else OrderSide.BUY
 
         return await self.create_order(

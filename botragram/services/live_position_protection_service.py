@@ -1355,11 +1355,13 @@ class LivePositionProtectionService:
             )
 
         client_id = order.client_order_id
-        if client_id:
+        order_id = order.order_id
+        if client_id or order_id:
             try:
                 await self.exchange_client.cancel_protection_order(
                     symbol=symbol,
                     client_id=client_id,
+                    order_id=order_id,
                 )
             except Exception as error:
                 _LOGGER.warning(

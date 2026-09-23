@@ -41,6 +41,7 @@ from botragram.constants.env import (
     ENV_BINANCE_TESTNET,
     ENV_BITGET_API_KEY,
     ENV_BITGET_API_SECRET,
+    ENV_BITGET_MARGIN_MODE,
     ENV_BITGET_MARKET_TYPE,
     ENV_BITGET_PASSPHRASE,
     ENV_BITGET_TESTNET,
@@ -98,6 +99,7 @@ from botragram.constants.env import (
     ENV_LOG_FILENAME,
     ENV_LOG_LEVEL,
     ENV_LOG_LEVEL_LEGACY,
+    ENV_MARGIN_MODE,
     ENV_MARKET_INTERVAL,
     ENV_MARKET_SYMBOL,
     ENV_MAX_CONFIDENCE_MULTIPLIER,
@@ -1409,6 +1411,21 @@ class EnvironmentProvider:
             ENV_BITGET_TESTNET,
             default=True,
         )
+
+    def get_bitget_margin_mode(self) -> str:
+        """Return the Bitget margin mode (ISOLATED or CROSSED)."""
+        return self._get_var(
+            ENV_BITGET_MARGIN_MODE,
+            ENV_MARGIN_MODE,
+            default="ISOLATED",
+        ).upper()
+
+    def get_margin_mode(self) -> str:
+        """Return the general margin mode (ISOLATED or CROSSED)."""
+        return self._get_var(
+            ENV_MARGIN_MODE,
+            default="ISOLATED",
+        ).upper()
 
     # -------------------------------------------------------------------------
     # Bybit
