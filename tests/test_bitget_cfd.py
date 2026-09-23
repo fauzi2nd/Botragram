@@ -1172,3 +1172,102 @@ async def test_cfd_client_close_position_exact() -> None:
     assert rest.last_data is not None
     assert rest.last_data["symbol"] == "EURUSD"
     assert rest.last_data["clientOid"] == "bop_cfd_exact_1"
+
+
+def test_cfd_mapper_map_candle_five_elements() -> None:
+    """Verify CFD mapper supports 5-element candle tuple with zero volume."""
+    mapper = BitgetCfdMapper()
+    row = (
+        "1700000000000",
+        "1.0850",
+        "1.0870",
+        "1.0840",
+        "1.0865",
+    )
+    candle = mapper.map_candle(row, symbol="EURUSD.s", interval=Interval.M15)
+    assert candle.symbol == "EURUSD"
+    assert candle.interval == Interval.M15
+    assert candle.open_price == Decimal("1.0850")
+    assert candle.high_price == Decimal("1.0870")
+    assert candle.low_price == Decimal("1.0840")
+    assert candle.close_price == Decimal("1.0865")
+    assert candle.volume == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_get_trading_symbols() -> None:
+    """Verify get_trading_symbols queries tickers endpoint and deduplicates symbols."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="zero_fee")
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            {"symbol": "EURUSD.s", "lastPr": "1.0850"},
+            {"symbol": "EURUSD.pro", "lastPr": "1.0850"},
+            {"symbol": "XAUUSD.s", "lastPr": "2650.00"},
+            {"symbol": "US30.s", "lastPr": "42000.00"},
+            {"symbol": "EURGBP.s", "lastPr": "0.8500"},
+        ],
+    }
+
+    symbols = await client.get_trading_symbols(quote_asset="USD")
+    assert rest.last_path == "/api/v3/cfd/market/tickers"
+    assert "EURUSD" in symbols
+    assert "XAUUSD" in symbols
+    assert "EURGBP" not in symbols
+    # Ensure deduplicated
+    assert symbols.count("EURUSD") == 1
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_get_candles() -> None:
+    """Verify get_candles queries history-candlestick endpoint with parameters."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="zero_fee")
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            [
+                "1700000000000",
+                "1.0850",
+                "1.0870",
+                "1.0840",
+                "1.0865",
+            ]
+        ],
+    }
+
+    candles = await client.get_candles(
+        symbol="EURUSD",
+        interval=Interval.M15,
+        limit=50,
+    )
+    assert rest.last_path == "/api/v3/cfd/market/history-candlestick"
+    assert rest.last_params is not None
+    assert rest.last_params["symbol"] == "EURUSD.s"
+    assert rest.last_params["interval"] == "15m"
+    assert rest.last_params["side"] == "buy"
+    assert len(candles) == 1
+    assert candles[0].close_price == Decimal("1.0865")
+    assert candles[0].volume == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_get_market_entry_rules() -> None:
+    """Verify get_market_entry_rules loads specification from sizing engine."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="zero_fee")
+
+    rules = await client.get_market_entry_rules(symbol="EURUSD")
+    assert rules.symbol == "EURUSD"
+    assert rules.market_min_quantity == Decimal("0.01")
+    assert rules.market_max_quantity == Decimal("100.0")
+    assert rules.market_quantity_step == Decimal("0.01")
+    assert rules.price_tick_size == Decimal("0.0001")

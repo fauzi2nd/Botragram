@@ -90,6 +90,7 @@ from botragram.constants.env import (
     ENV_GLOBAL_MARKET_INTERVAL,
     ENV_INVERT_SIGNALS,
     ENV_LEVERAGE,
+    ENV_LOG_FILENAME,
     ENV_LOG_LEVEL,
     ENV_LOG_LEVEL_LEGACY,
     ENV_MARKET_INTERVAL,
@@ -550,6 +551,10 @@ class EnvironmentProvider:
             ENV_LOG_LEVEL_LEGACY,
             default="INFO",
         ).upper()
+
+    def get_log_filename(self) -> str:
+        """Return the optional explicit log filename."""
+        return self._get_var(ENV_LOG_FILENAME)
 
     def get_autonomous_execution_enabled(self) -> bool:
         """Return whether autonomous opportunity execution is enabled."""

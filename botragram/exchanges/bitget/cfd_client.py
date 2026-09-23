@@ -45,7 +45,6 @@ from botragram.exceptions.exchange import (
 from botragram.exchanges.base.client import BaseExchangeClient
 from botragram.exchanges.base.mapper import ExchangePayload
 from botragram.exchanges.bitget.cfd_mapper import BitgetCfdMapper
-from botragram.exchanges.bitget.client import BITGET_INTERVAL_MAP
 from botragram.exchanges.bitget.rest import BitgetRestClient, BitgetRestResponseError
 from botragram.models import (
     Account,
@@ -64,6 +63,7 @@ from botragram.models import (
 )
 
 __all__ = [
+    "BITGET_CFD_INTERVAL_MAP",
     "BitgetCfdExchangeClient",
 ]
 
@@ -75,8 +75,8 @@ _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _PING_ENDPOINT: Final[str] = "/api/v2/public/time"
 _CFD_ACCOUNT_ENDPOINT: Final[str] = "/api/v3/cfd/account/fund-detail"
 _CFD_TICKERS_ENDPOINT: Final[str] = "/api/v3/cfd/market/tickers"
-_CFD_CANDLES_ENDPOINT: Final[str] = "/api/v3/cfd/market/candles"
-_CFD_SYMBOLS_ENDPOINT: Final[str] = "/api/v3/cfd/market/symbols"
+_CFD_CANDLES_ENDPOINT: Final[str] = "/api/v3/cfd/market/history-candlestick"
+_CFD_SYMBOLS_ENDPOINT: Final[str] = "/api/v3/cfd/market/tickers"
 _CFD_PLACE_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/place-order"
 _CFD_CANCEL_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/cancel-order"
 _CFD_ORDER_INFO_ENDPOINT: Final[str] = "/api/v3/cfd/trade/order-info"
@@ -88,6 +88,22 @@ _CFD_PLACE_PLAN_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/place-strategy-o
 _CFD_CANCEL_PLAN_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/cancel-strategy-order"
 _CFD_PLAN_OPEN_ENDPOINT: Final[str] = "/api/v3/cfd/trade/unfilled-strategy-orders"
 _CFD_PLAN_HISTORY_ENDPOINT: Final[str] = "/api/v3/cfd/trade/history-strategy-orders"
+
+BITGET_CFD_INTERVAL_MAP: Final[dict[Interval, str]] = {
+    Interval.M1: "1m",
+    Interval.M3: "1m",
+    Interval.M5: "1m",
+    Interval.M15: "15m",
+    Interval.M30: "15m",
+    Interval.H1: "1h",
+    Interval.H2: "1h",
+    Interval.H4: "4h",
+    Interval.H6: "4h",
+    Interval.H12: "4h",
+    Interval.D1: "1d",
+    Interval.W1: "1d",
+    Interval.MN1: "1d",
+}
 
 
 # =============================================================================
@@ -293,49 +309,32 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
 
     async def get_market_entry_rules(self, *, symbol: str) -> ExchangeSymbolRules:
         """Return quantity and pricing rules for a CFD symbol."""
-        vendor_symbol = self._mapper.to_vendor_symbol(symbol, mode=self._mode)
-        try:
-            payload = await self._rest.get(
-                _CFD_SYMBOLS_ENDPOINT,
-                params={"symbol": vendor_symbol},
-                authenticated=False,
-            )
-            if isinstance(payload, dict):
-                raw_data = payload.get("data")
-                if isinstance(raw_data, list):
-                    raw_list = cast(list[object], raw_data)
-                    if raw_list and isinstance(raw_list[0], dict):
-                        return self._mapper.map_symbol_rules(
-                            cast(ExchangePayload, raw_list[0]),
-                            symbol=symbol,
-                        )
-                elif isinstance(raw_data, dict):
-                    return self._mapper.map_symbol_rules(
-                        cast(ExchangePayload, raw_data),
-                        symbol=symbol,
-                    )
-        except Exception as error:
-            _LOGGER.warning(
-                "Failed to fetch market rules for %s: %s; using defaults",
-                symbol,
-                error,
-            )
-        return self._mapper.map_symbol_rules({}, symbol=symbol)
+        spec = self._sizing.get_contract_spec(symbol)
+        return ExchangeSymbolRules(
+            symbol=self._mapper.normalize_symbol(symbol),
+            market_min_quantity=spec.min_lot,
+            market_max_quantity=spec.max_lot,
+            market_quantity_step=spec.lot_step,
+            price_tick_size=spec.pip_size,
+        )
 
     async def get_trading_symbols(self, *, quote_asset: str) -> Sequence[str]:
         """Return list of active CFD trading symbols."""
         try:
-            payload = await self._rest.get(_CFD_SYMBOLS_ENDPOINT, authenticated=False)
+            payload = await self._rest.get(_CFD_TICKERS_ENDPOINT, authenticated=False)
             if isinstance(payload, dict):
                 raw_data = payload.get("data")
                 if isinstance(raw_data, list):
                     result: list[str] = []
+                    seen: set[str] = set()
                     quote_upper = quote_asset.strip().upper()
                     for item in cast(list[object], raw_data):
                         if isinstance(item, dict):
                             item_payload = cast(ExchangePayload, item)
                             sym = str(item_payload.get("symbol", ""))
                             clean_sym = self._mapper.normalize_symbol(sym)
+                            if clean_sym in seen:
+                                continue
                             if clean_sym.endswith(quote_upper) or (
                                 quote_upper in ("USD", "USDT")
                                 and (
@@ -343,6 +342,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                                     or clean_sym.endswith("USDT")
                                 )
                             ):
+                                seen.add(clean_sym)
                                 result.append(clean_sym)
                     return tuple(result)
         except Exception as error:
@@ -360,11 +360,12 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
     ) -> Sequence[Candle]:
         """Return historical CFD candlestick data."""
         vendor_symbol = self._mapper.to_vendor_symbol(symbol, mode=self._mode)
-        interval_str = BITGET_INTERVAL_MAP.get(interval, "1m")
+        interval_str = BITGET_CFD_INTERVAL_MAP.get(interval, "15m")
         params: dict[str, str | int] = {
             "symbol": vendor_symbol,
-            "granularity": interval_str,
-            "limit": min(limit, 200),
+            "interval": interval_str,
+            "side": "buy",
+            "limit": min(limit, 100),
         }
         if start_time is not None:
             params["startTime"] = int(start_time.timestamp() * 1000)

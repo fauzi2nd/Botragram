@@ -1323,3 +1323,73 @@ def test_validation_utilities_accept_and_reject_domain_values() -> None:
     for invalid_symbol in ("", "   ", "BTC/USDT"):
         with pytest.raises(ValueError, match="Invalid trading symbol"):
             validate_symbol(invalid_symbol)
+
+
+def test_settings_manager_scoped_log_filename() -> None:
+    """Verify log filenames are isolated by execution context (paper, testnet, live)."""
+    # Paper mode
+    paper_app = AppSettings(trade_mode=TradeMode.PAPER)
+    live_exchange = ExchangeSettings(exchange=ExchangeType.BITGET, testnet=False)
+    assert (
+        SettingsManager.get_scoped_log_filename(app=paper_app, exchange=live_exchange)
+        == "botragram-paper.log"
+    )
+
+    # Testnet mode via ExchangeSettings testnet=True
+    live_app = AppSettings(trade_mode=TradeMode.LIVE)
+    testnet_exchange = ExchangeSettings(
+        exchange=ExchangeType.BITGET,
+        testnet=True,
+    )
+    assert (
+        SettingsManager.get_scoped_log_filename(app=live_app, exchange=testnet_exchange)
+        == "botragram-testnet.log"
+    )
+
+    # Demo mode via ExchangeSettings demo=True
+    demo_exchange = ExchangeSettings(
+        exchange=ExchangeType.BITGET,
+        demo=True,
+    )
+    assert (
+        SettingsManager.get_scoped_log_filename(app=live_app, exchange=demo_exchange)
+        == "botragram-testnet.log"
+    )
+
+    # Live mode
+    assert (
+        SettingsManager.get_scoped_log_filename(app=live_app, exchange=live_exchange)
+        == "botragram-live.log"
+    )
+
+
+def test_settings_manager_load_logging_settings_with_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify load_logging_settings applies scoped defaults and respects
+    custom LOG_FILENAME.
+    """
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    manager = SettingsManager(environment_provider=provider)
+
+    paper_app = AppSettings(trade_mode=TradeMode.PAPER)
+    live_exchange = ExchangeSettings(exchange=ExchangeType.BITGET, testnet=False)
+
+    # Scoped default for paper
+    logging_paper = manager.load_logging_settings(app=paper_app, exchange=live_exchange)
+    assert logging_paper.filename == "botragram-paper.log"
+    assert logging_paper.level == LogLevel.DEBUG
+
+    # Custom override via LOG_FILENAME
+    monkeypatch.setenv("LOG_FILENAME", "custom-bot.log")
+    custom_manager = SettingsManager(environment_provider=provider)
+    custom_logging = custom_manager.load_logging_settings(
+        app=paper_app,
+        exchange=live_exchange,
+    )
+    assert custom_logging.filename == "custom-bot.log"

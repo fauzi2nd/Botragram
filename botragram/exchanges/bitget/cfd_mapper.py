@@ -207,9 +207,9 @@ class BitgetCfdMapper(BaseExchangeMapper):
         interval: Interval,
     ) -> Candle:
         """Map Bitget CFD candle sequence into Candle model."""
-        if len(payload) < 6:
+        if len(payload) < 5:
             raise ValueError(
-                f"Invalid Bitget CFD candle payload, expected >= 6: {payload}"
+                f"Invalid Bitget CFD candle payload, expected >= 5: {payload}"
             )
 
         open_time = self._to_datetime(payload[0])
@@ -218,7 +218,7 @@ class BitgetCfdMapper(BaseExchangeMapper):
         high_price = self._to_decimal(payload[2])
         low_price = self._to_decimal(payload[3])
         close_price = self._to_decimal(payload[4])
-        volume = self._to_decimal(payload[5])
+        volume = self._to_decimal(payload[5]) if len(payload) >= 6 else _DECIMAL_ZERO
 
         return Candle(
             symbol=self.normalize_symbol(symbol),

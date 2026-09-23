@@ -99,7 +99,10 @@ class SettingsManager:
             risk=self.load_risk_settings(),
             strategy=strategy,
             telegram=self.load_telegram_settings(),
-            logging=self.load_logging_settings(),
+            logging=self.load_logging_settings(
+                app=app,
+                exchange=exchange,
+            ),
             ai=self.load_ai_settings(),
         )
         self.validate(settings=settings)
@@ -522,6 +525,25 @@ class SettingsManager:
             app=app,
             exchange=exchange,
         )
+
+    @staticmethod
+    def get_scoped_log_filename(
+        *,
+        app: AppSettings,
+        exchange: ExchangeSettings,
+    ) -> str:
+        """Return environment-scoped log filename for isolated concurrent runs."""
+        if app.trade_mode is TradeMode.PAPER:
+            return "botragram-paper.log"
+
+        if (
+            exchange.testnet
+            or exchange.demo
+            or exchange.environment is ExchangeEnvironment.TESTNET
+        ):
+            return "botragram-testnet.log"
+
+        return "botragram-live.log"
 
     @staticmethod
     def resolve_strategy_interval_from_environment(
@@ -1022,14 +1044,28 @@ class SettingsManager:
             ),
         )
 
-    def load_logging_settings(self) -> LoggingSettings:
-        """Load logging settings from the environment."""
+    def load_logging_settings(
+        self,
+        *,
+        app: AppSettings | None = None,
+        exchange: ExchangeSettings | None = None,
+    ) -> LoggingSettings:
+        """Load logging settings from the environment with context scoping."""
+        custom_filename = self._environment_provider.get_log_filename().strip()
+        if custom_filename:
+            filename = custom_filename
+        elif app is not None and exchange is not None:
+            filename = self.get_scoped_log_filename(app=app, exchange=exchange)
+        else:
+            filename = "botragram.log"
+
         return LoggingSettings(
             level=self._parse_enum(
                 enum_type=LogLevel,
                 raw_value=self._environment_provider.get_log_level(),
                 setting_name="LOG_LEVEL",
             ),
+            filename=filename,
         )
 
     def load_ai_settings(self) -> AISettings:
