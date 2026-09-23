@@ -55,6 +55,7 @@ from botragram.models.closed_position_lifecycle import (
     ClosedPositionLifecycle,
     PendingClosedPositionLifecycle,
 )
+from botragram.models.discovery_scan_report import DiscoveryScanReport
 from botragram.models.discovery_universe_batch import DiscoveryUniverseBatch
 from botragram.models.exchange_symbol_rules import ExchangeSymbolRules
 from botragram.models.executable_quote import ExecutableQuote
@@ -130,6 +131,7 @@ __all__ = [
     "CfdFinancingSchedule",
     "CfdMarginRequirement",
     "CfdOvernightSwapEstimate",
+    "DiscoveryScanReport",
     "DiscoveryUniverseBatch",
     "ExecutionAuthorization",
     "ExecutionAuthorizationOutcome",

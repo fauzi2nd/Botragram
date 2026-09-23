@@ -51,6 +51,7 @@ from botragram.models import (
     AutonomousLiveEntryExecutionResult,
     AutonomousLiveEntryIntent,
     AutonomousLiveEntryIntentResult,
+    DiscoveryScanReport,
     DiscoveryUniverseBatch,
     ExecutionAuthorization,
     LiveEntryRiskEvaluation,
@@ -668,6 +669,15 @@ class AutonomousPaperTradingCycleExecutor:
             initial_balance=account_balance_override,
         )
 
+    @property
+    def last_scan_report(self) -> DiscoveryScanReport | None:
+        """Return the most recent discovery scan report if available."""
+        discovery = getattr(
+            self.autonomous_execution_service, "discovery_service", None
+        )
+        report = getattr(discovery, "last_scan_report", None)
+        return report if isinstance(report, DiscoveryScanReport) else None
+
 
 @dataclass(slots=True, kw_only=True, frozen=True)
 class AutonomousLiveTradingCycleExecutor:
@@ -1032,6 +1042,13 @@ class HumanConfirmedPaperTradingCycleExecutor:
             for authorization in authorizations
         )
 
+    @property
+    def last_scan_report(self) -> DiscoveryScanReport | None:
+        """Return the most recent discovery scan report if available."""
+        discovery = getattr(self.human_confirmation_service, "discovery_service", None)
+        report = getattr(discovery, "last_scan_report", None)
+        return report if isinstance(report, DiscoveryScanReport) else None
+
 
 # =============================================================================
 # Runtime Classes
@@ -1273,12 +1290,18 @@ class TradingRunner:
 
         self._log_results(context=context, results=results)
         if is_paper_discovery and self._global_discovery_telemetry is not None:
+            scan_report = getattr(self.executor, "last_scan_report", None)
             self._observe_global_discovery(
                 operation="completing",
                 observation=lambda current: self._complete_global_discovery_telemetry(
                     telemetry=current,
                     results=results,
                     report=None,
+                    scan_report=(
+                        scan_report
+                        if isinstance(scan_report, DiscoveryScanReport)
+                        else None
+                    ),
                 ),
             )
 
@@ -2372,13 +2395,31 @@ class TradingRunner:
         telemetry: GlobalDiscoveryTelemetry,
         results: tuple[TradingResult, ...],
         report: GlobalDiscoveryCycleReport | None,
+        scan_report: DiscoveryScanReport | None = None,
     ) -> None:
         """Record and log completed local telemetry without runtime authority."""
         skipped_capacity = report.skipped_capacity if report is not None else False
+        signals = (
+            report.signals
+            if report is not None
+            else scan_report.signals
+            if scan_report is not None
+            else ()
+        )
+        scanned_count = scan_report.scanned_count if scan_report is not None else None
+        universe_size = scan_report.universe_size if scan_report is not None else None
+        rank_start = (
+            1 if scan_report is not None and scan_report.scanned_count > 0 else None
+        )
+        rank_end = (
+            scan_report.scanned_count
+            if scan_report is not None and scan_report.scanned_count > 0
+            else None
+        )
         telemetry.complete_cycle(
             results=results,
             batch=report.batch if report is not None else None,
-            signals=report.signals if report is not None else (),
+            signals=signals,
             skipped_capacity=skipped_capacity,
             skipped_rate_limit=(
                 report.skipped_rate_limit if report is not None else False
@@ -2386,6 +2427,10 @@ class TradingRunner:
             stopped_by_capacity=(
                 report.stopped_by_capacity if report is not None else False
             ),
+            scanned_count=scanned_count,
+            universe_size=universe_size,
+            rank_start=rank_start,
+            rank_end=rank_end,
         )
         snapshot = telemetry.get_snapshot()
         outcome = (

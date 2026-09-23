@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final, Protocol, runtime_checkable
@@ -34,7 +34,7 @@ from botragram.indicators.trend import (
     TrendDirection,
     evaluate_mtf_trend,
 )
-from botragram.models import Candle, Signal
+from botragram.models import Candle, DiscoveryScanReport, Signal
 from botragram.utils.validator import validate_symbol
 
 __all__ = [
@@ -178,6 +178,14 @@ class OpportunityDiscoveryService:
     volume_sma_period: int = 20
     min_24h_turnover_usdt: Decimal = Decimal("0")
     use_open_interest: bool = False
+    _last_scan_report: DiscoveryScanReport | None = field(
+        default=None, init=False, repr=False
+    )
+
+    @property
+    def last_scan_report(self) -> DiscoveryScanReport | None:
+        """Return the most recent discovery scan report."""
+        return self._last_scan_report
 
     async def discover(
         self,
@@ -239,6 +247,7 @@ class OpportunityDiscoveryService:
             top_n=top_n,
             strategy_type=strategy_type,
             as_of=as_of,
+            universe_size=len(symbols),
         )
 
     async def discover_symbols(
@@ -284,6 +293,7 @@ class OpportunityDiscoveryService:
             top_n=top_n,
             strategy_type=strategy_type,
             as_of=as_of,
+            universe_size=len(symbols),
         )
 
     async def _discover_selected_symbols(
@@ -295,6 +305,7 @@ class OpportunityDiscoveryService:
         top_n: int,
         strategy_type: StrategyType | None,
         as_of: datetime,
+        universe_size: int | None = None,
     ) -> tuple[Signal, ...]:
         """Evaluate one already-normalized symbol batch sequentially."""
         actionable_signals: list[Signal] = []
@@ -582,6 +593,12 @@ class OpportunityDiscoveryService:
             len(actionable_signals),
             len(ranked),
         )
+        report = DiscoveryScanReport(
+            universe_size=universe_size if universe_size is not None else len(symbols),
+            scanned_count=len(symbols),
+            signals=ranked,
+        )
+        object.__setattr__(self, "_last_scan_report", report)
         return ranked
 
     @classmethod

@@ -860,14 +860,18 @@ class TerminalMonitor:
     def _format_discovery_window(discovery: GlobalDiscoverySnapshot) -> str:
         """Return the exact ranked window for the last completed scan."""
         if (
-            discovery.rank_start is None
-            or discovery.rank_end is None
-            or discovery.universe_size is None
+            discovery.rank_start is not None
+            and discovery.rank_end is not None
+            and discovery.universe_size is not None
         ):
-            return "-"
-        return (
-            f"{discovery.rank_start}-{discovery.rank_end} / {discovery.universe_size}"
-        )
+            return (
+                f"{discovery.rank_start}-{discovery.rank_end} / "
+                f"{discovery.universe_size}"
+            )
+        if discovery.scanned_count is not None and discovery.scanned_count > 0:
+            total = discovery.universe_size or discovery.scanned_count
+            return f"1-{discovery.scanned_count} / {total}"
+        return "-"
 
     def _add_autonomous_entry_row(
         self, *, table: Table, status: TerminalStatus

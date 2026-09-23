@@ -56,6 +56,7 @@ from botragram.enums import (
     TradeMode,
 )
 from botragram.models import (
+    DiscoveryScanReport,
     ExecutionAuthorization,
     LiveMarketStreamIdentity,
     LiveMarketStreamState,
@@ -448,6 +449,7 @@ class FakeAutonomousExecutionService:
     """Record autonomous cycle requests without market or order I/O."""
 
     results: tuple[TradingResult, ...]
+    discovery_service: object | None = None
     calls: list[tuple[str, Interval, int, int, int, Decimal | None]] = field(
         default_factory=list[tuple[str, Interval, int, int, int, Decimal | None]],
     )
@@ -1386,6 +1388,55 @@ async def _run_autonomous_paper_cycle_test() -> None:
     assert service.calls == [
         ("USDT", Interval.M5, 120, 7, 3, Decimal("2500")),
     ]
+
+
+@dataclass(slots=True, kw_only=True)
+class _FakeDiscoveryHolder:
+    last_scan_report: DiscoveryScanReport | None = None
+
+
+def test_autonomous_paper_runner_records_scan_report_telemetry() -> None:
+    """Verify autonomous paper runner extracts scan_report and records telemetry."""
+    asyncio.run(_run_autonomous_paper_runner_scan_report_test())
+
+
+async def _run_autonomous_paper_runner_scan_report_test() -> None:
+    expected = (_create_result(),)
+    fake_discovery = _FakeDiscoveryHolder(
+        last_scan_report=DiscoveryScanReport(
+            universe_size=184,
+            scanned_count=184,
+            signals=(),
+        )
+    )
+    service = FakeAutonomousExecutionService(
+        results=expected,
+        discovery_service=fake_discovery,
+    )
+    telemetry = GlobalDiscoveryTelemetry(interval=Interval.M5)
+    runner = TradingRunner(
+        executor=AutonomousPaperTradingCycleExecutor(
+            autonomous_execution_service=service,
+            quote_asset="usdt",
+            max_symbols=750,
+            top_n=5,
+        ),
+        symbol="BTCUSDT",
+        interval=Interval.M5,
+        trade_mode=TradeMode.PAPER,
+        global_discovery_telemetry=telemetry,
+        runtime_control=TradingRuntimeControl(interval=Interval.M5),
+    )
+
+    results = await runner.run_once()
+    assert results == expected
+
+    snapshot = telemetry.get_snapshot()
+    assert snapshot.last_outcome is GlobalDiscoveryCycleOutcome.COMPLETED
+    assert snapshot.scanned_count == 184
+    assert snapshot.universe_size == 184
+    assert snapshot.rank_start == 1
+    assert snapshot.rank_end == 184
 
 
 def test_autonomous_executor_rejects_order_enabled_invocation() -> None:

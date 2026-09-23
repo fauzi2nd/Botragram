@@ -1496,3 +1496,38 @@ def test_terminal_strategy_display_reflects_configured_strategy() -> None:
 
     assert "EMA_SCALPING" in rendered
     assert "XLVUSDT" in rendered
+
+
+def test_terminal_paper_discovery_window_and_scanned_count() -> None:
+    """Verify terminal renders accurate window and scanned count for paper scans."""
+    telemetry = GlobalDiscoveryTelemetry(
+        interval=Interval.M5,
+        max_symbols=750,
+        universe_limit=750,
+        batch_size=100,
+        top_n=5,
+    )
+    telemetry.begin_cycle(interval=Interval.M5)
+    telemetry.complete_cycle(
+        results=(),
+        scanned_count=184,
+        universe_size=184,
+        rank_start=1,
+        rank_end=184,
+    )
+    monitor = _create_monitor(trade_mode=TradeMode.PAPER)
+    monitor.global_discovery_telemetry_provider = telemetry
+    status = asyncio.run(monitor.collect_status())
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=170, height=50).print(
+        monitor.render_dashboard(status)
+    )
+    rendered = output.getvalue()
+
+    assert "1-184 / 184" in rendered
+    assert "184" in rendered
+    assert status.global_discovery is not None
+    assert status.global_discovery.scanned_count == 184
+    assert status.global_discovery.universe_size == 184
+    assert status.global_discovery.rank_start == 1
+    assert status.global_discovery.rank_end == 184

@@ -126,6 +126,10 @@ class GlobalDiscoveryTelemetry:
         skipped_capacity: bool = False,
         skipped_rate_limit: bool = False,
         stopped_by_capacity: bool = False,
+        scanned_count: int | None = None,
+        universe_size: int | None = None,
+        rank_start: int | None = None,
+        rank_end: int | None = None,
     ) -> None:
         """Record one normal or explicitly skipped local discovery cycle."""
         if skipped_capacity and skipped_rate_limit:
@@ -149,6 +153,25 @@ class GlobalDiscoveryTelemetry:
             skipped_rate_limit=skipped_rate_limit,
             stopped_by_capacity=stopped_by_capacity,
         )
+        effective_universe_size = (
+            batch.universe_size if batch is not None else universe_size
+        )
+        effective_rank_start = batch.rank_start if batch is not None else rank_start
+        effective_rank_end = batch.rank_end if batch is not None else rank_end
+        effective_scanned_count = (
+            len(batch.entries)
+            if batch is not None
+            else scanned_count
+            if scanned_count is not None
+            else 0
+            if skipped_capacity or skipped_rate_limit
+            else None
+        )
+        effective_actionable_count = (
+            len(signals)
+            if batch is not None or scanned_count is not None
+            else len(candidates)
+        )
         self._snapshot = replace(
             self._snapshot,
             state=GlobalDiscoveryCycleState.COMPLETED,
@@ -162,17 +185,11 @@ class GlobalDiscoveryTelemetry:
             cycle_in_progress=False,
             last_finished_at=datetime.now(UTC),
             last_duration_ms=duration_ms,
-            universe_size=batch.universe_size if batch is not None else None,
-            rank_start=batch.rank_start if batch is not None else None,
-            rank_end=batch.rank_end if batch is not None else None,
-            scanned_count=(
-                len(batch.entries)
-                if batch is not None
-                else 0
-                if skipped_capacity or skipped_rate_limit
-                else None
-            ),
-            actionable_count=len(signals) if batch is not None else len(candidates),
+            universe_size=effective_universe_size,
+            rank_start=effective_rank_start,
+            rank_end=effective_rank_end,
+            scanned_count=effective_scanned_count,
+            actionable_count=effective_actionable_count,
             stopped_by_capacity=stopped_by_capacity,
             candidates=candidates,
         )

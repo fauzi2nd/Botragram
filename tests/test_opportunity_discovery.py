@@ -2376,3 +2376,50 @@ async def test_btc_benchmark_trend_filter_rejects_counter_trend_altcoins() -> No
     )
     assert len(signals_all) == 2
     assert {s.symbol for s in signals_all} == {"ETHUSDT", "SOLUSDT"}
+
+
+@pytest.mark.asyncio
+async def test_opportunity_discovery_records_last_scan_report() -> None:
+    """Verify that OpportunityDiscoveryService records truthful last_scan_report."""
+    candle = _create_candle(
+        symbol="BTCUSDT",
+        open_time=datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        close_time=datetime(2026, 4, 1, 0, 15, tzinfo=UTC),
+    )
+    market_service = FakeMarketService(
+        symbols=("BTCUSDT", "ETHUSDT", "SOLUSDT"),
+        candles_by_symbol_and_interval={
+            ("BTCUSDT", Interval.M15): (candle,),
+            ("ETHUSDT", Interval.M15): (candle,),
+        },
+    )
+    strategy_service = FakeStrategyService(
+        signals={
+            "BTCUSDT": _create_signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.BUY,
+                confidence="0.90",
+            ),
+        }
+    )
+    service = OpportunityDiscoveryService(
+        market_service=market_service,
+        strategy_service=strategy_service,
+        utc_now=lambda: _NOW,
+    )
+    assert service.last_scan_report is None
+
+    signals = await service.discover(
+        quote_asset="USDT",
+        interval=Interval.M15,
+        candle_limit=1,
+        max_symbols=2,
+        top_n=1,
+    )
+
+    report = service.last_scan_report
+    assert report is not None
+    assert report.universe_size == 3  # total from get_trading_symbols
+    assert report.scanned_count == 2  # max_symbols bounded
+    assert len(report.signals) == 1
+    assert report.signals == tuple(signals)
