@@ -34,7 +34,7 @@ from botragram.indicators import (
     calculate_rsi,
 )
 from botragram.models import Candle, Signal
-from botragram.strategies.base import BaseStrategy
+from botragram.strategies.base import BaseStrategy, resolve_effective_natr_bounds
 
 __all__ = [
     "RSIBBScalpingStrategy",
@@ -222,9 +222,13 @@ class RSIBBScalpingStrategy(BaseStrategy):
             )
             if atr_series:
                 current_atr = atr_series[-1]
+                _, eff_max_natr = resolve_effective_natr_bounds(
+                    current_candle.symbol, _DECIMAL_ZERO, self.max_natr_threshold
+                )
                 if (
                     current_close > _DECIMAL_ZERO
-                    and (current_atr / current_close) > self.max_natr_threshold
+                    and eff_max_natr is not None
+                    and (current_atr / current_close) > eff_max_natr
                 ):
                     return Signal(
                         symbol=current_candle.symbol,

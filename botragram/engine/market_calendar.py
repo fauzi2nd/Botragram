@@ -81,6 +81,16 @@ _COMMODITY_PREFIXES: Final[frozenset[str]] = frozenset(
         "BRENT",
         "COPPER",
         "NATGAS",
+        "COCOA",
+        "COFFEE",
+        "COTTON",
+        "SOYBEAN",
+        "WHEAT",
+        "CORN",
+        "SUGAR",
+        "GASOLINE",
+        "UKO",
+        "USO",
     )
 )
 
@@ -102,10 +112,20 @@ _INDEX_PREFIXES: Final[frozenset[str]] = frozenset(
         "HK50",
         "HSI",
         "FRA40",
+        "FRA",
         "EU50",
         "STOXX50",
+        "STOXX",
         "AUS200",
         "CHINA50",
+        "DE40",
+        "DE",
+        "ESP35",
+        "ESP",
+        "IT40",
+        "US500",
+        "SPY",
+        "QQQ",
     )
 )
 

@@ -609,11 +609,20 @@ def test_market_calendar_classify_asset() -> None:
     assert calendar.classify_asset("XAGUSD.s") == AssetClass.COMMODITY
     assert calendar.classify_asset("USOIL") == AssetClass.COMMODITY
     assert calendar.classify_asset("BRENT") == AssetClass.COMMODITY
+    assert calendar.classify_asset("COCOA") == AssetClass.COMMODITY
+    assert calendar.classify_asset("COFFEE") == AssetClass.COMMODITY
+    assert calendar.classify_asset("COTTON") == AssetClass.COMMODITY
+    assert calendar.classify_asset("UKOUSD") == AssetClass.COMMODITY
+    assert calendar.classify_asset("USOUSD") == AssetClass.COMMODITY
 
     assert calendar.classify_asset("US30") == AssetClass.INDEX
     assert calendar.classify_asset("SPX500.s") == AssetClass.INDEX
     assert calendar.classify_asset("NAS100") == AssetClass.INDEX
     assert calendar.classify_asset("GER40") == AssetClass.INDEX
+    assert calendar.classify_asset("DE40") == AssetClass.INDEX
+    assert calendar.classify_asset("ESP35") == AssetClass.INDEX
+    assert calendar.classify_asset("AUS200") == AssetClass.INDEX
+    assert calendar.classify_asset("SPY") == AssetClass.INDEX
 
     assert calendar.classify_asset("BTCUSD.cfd") == AssetClass.CRYPTO
     assert calendar.classify_asset("ETHUSDT") == AssetClass.CRYPTO

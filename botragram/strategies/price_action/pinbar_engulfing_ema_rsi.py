@@ -42,7 +42,11 @@ from botragram.indicators import (
 )
 from botragram.indicators.price_action import find_swing_levels
 from botragram.models import Candle, Signal
-from botragram.strategies.base import BaseStrategy
+from botragram.strategies.base import (
+    BaseStrategy,
+    resolve_effective_distance_pct,
+    resolve_effective_natr_bounds,
+)
 
 __all__ = [
     "PinbarEngulfingEmaRsiStrategy",
@@ -401,10 +405,17 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         current_vol_sma = volume_sma[-1]
         current_atr = atr_series[-1]
 
+        eff_min_natr, _ = resolve_effective_natr_bounds(
+            curr_candle.symbol, self.min_natr_threshold
+        )
+        eff_min_sl_pct, eff_min_trend_pct = resolve_effective_distance_pct(
+            curr_candle.symbol, self.min_sl_distance_pct, self.min_trend_distance_pct
+        )
+
         # HARD GATE: Volatility Gate (reject dead market)
         if (
             current_close > _DECIMAL_ZERO
-            and (current_atr / current_close) < self.min_natr_threshold
+            and (current_atr / current_close) < eff_min_natr
         ):
             return Signal(
                 symbol=curr_candle.symbol,
@@ -416,7 +427,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 reason=(
                     "Dead market volatility rejected (NATR="
                     f"{current_atr / current_close:.4f} < "
-                    f"{self.min_natr_threshold:.4f})"
+                    f"{eff_min_natr:.4f})"
                 ),
             )
 
@@ -483,7 +494,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         )
         uptrend_aligned = (
             current_close > current_trend
-            and trend_dist_long >= self.min_trend_distance_pct
+            and trend_dist_long >= eff_min_trend_pct
             and (not self.require_trend_filter or current_pullback >= current_trend)
         )
         if uptrend_aligned:
@@ -624,7 +635,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     stop_loss = current_close - (self.atr_multiplier_sl * current_atr)
                     risk_dist = self.atr_multiplier_sl * current_atr
 
-                min_risk_dist = current_close * self.min_sl_distance_pct
+                min_risk_dist = current_close * eff_min_sl_pct
                 if risk_dist < min_risk_dist:
                     risk_dist = min_risk_dist
                     stop_loss = current_close - risk_dist
@@ -656,7 +667,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         )
         downtrend_aligned = (
             current_close < current_trend
-            and trend_dist_short >= self.min_trend_distance_pct
+            and trend_dist_short >= eff_min_trend_pct
             and (not self.require_trend_filter or current_pullback <= current_trend)
         )
         if signal_type is SignalType.HOLD and downtrend_aligned:
@@ -797,7 +808,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     stop_loss = current_close - (self.atr_multiplier_sl * current_atr)
                     risk_dist = self.atr_multiplier_sl * current_atr
 
-                min_risk_dist = current_close * self.min_sl_distance_pct
+                min_risk_dist = current_close * eff_min_sl_pct
                 if risk_dist < min_risk_dist:
                     risk_dist = min_risk_dist
                     stop_loss = current_close + risk_dist

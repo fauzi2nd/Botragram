@@ -32,7 +32,7 @@ from botragram.indicators import (
     calculate_rsi,
 )
 from botragram.models import Candle, Signal
-from botragram.strategies.base import BaseStrategy
+from botragram.strategies.base import BaseStrategy, resolve_effective_natr_bounds
 
 __all__ = ["LiquiditySweepExhaustionStrategy"]
 
@@ -193,13 +193,16 @@ class LiquiditySweepExhaustionStrategy(BaseStrategy):
         )
         current_atr = atr_series[-1] if atr_series else _DECIMAL_ZERO
         if latest_candle.close_price > _DECIMAL_ZERO:
+            eff_min_natr, eff_max_natr = resolve_effective_natr_bounds(
+                latest_candle.symbol, self.min_natr_threshold, self.max_natr_threshold
+            )
             natr = current_atr / latest_candle.close_price
-            if natr < self.min_natr_threshold:
+            if natr < eff_min_natr:
                 return self._hold_signal(
                     candle=latest_candle,
                     reason=f"Volatility too low (NATR {natr:.4f}): flat market",
                 )
-            if natr >= self.max_natr_threshold:
+            if eff_max_natr is not None and natr >= eff_max_natr:
                 return self._hold_signal(
                     candle=latest_candle,
                     reason=f"Extreme volatility shock (NATR {natr:.4f}): withheld",

@@ -39,7 +39,7 @@ from botragram.indicators.price_action import (
 )
 from botragram.indicators.trend.ema import calculate_ema
 from botragram.models import Candle, Signal
-from botragram.strategies.base import BaseStrategy
+from botragram.strategies.base import BaseStrategy, resolve_effective_natr_bounds
 
 __all__ = [
     "MorphStrategy",
@@ -377,12 +377,12 @@ class MorphStrategy(BaseStrategy):
         current_atr = atr_series[-1] if atr_series else _DECIMAL_ZERO
 
         # Dead Market Volatility Gate (NATR)
-        if (
-            self.min_natr_threshold > _DECIMAL_ZERO
-            and curr_candle.close_price > _DECIMAL_ZERO
-        ):
+        eff_min_natr, _ = resolve_effective_natr_bounds(
+            curr_candle.symbol, self.min_natr_threshold
+        )
+        if eff_min_natr > _DECIMAL_ZERO and curr_candle.close_price > _DECIMAL_ZERO:
             natr = current_atr / curr_candle.close_price
-            if natr < self.min_natr_threshold:
+            if natr < eff_min_natr:
                 return Signal(
                     symbol=curr_candle.symbol,
                     signal_type=SignalType.HOLD,
@@ -392,7 +392,7 @@ class MorphStrategy(BaseStrategy):
                     generated_at=curr_candle.close_time,
                     reason=(
                         f"Dead market volatility rejected "
-                        f"(NATR {natr:.4f} < {self.min_natr_threshold})"
+                        f"(NATR {natr:.4f} < {eff_min_natr})"
                     ),
                 )
 
