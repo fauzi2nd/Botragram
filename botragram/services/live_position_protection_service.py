@@ -234,8 +234,7 @@ class LivePositionProtectionService:
             if adoptable_stop is not None:
                 adopted_stop_id = (
                     adoptable_stop.client_order_id
-                    if adoptable_stop.client_order_id
-                    else f"adopted-{adoptable_stop.order_id}"
+                    or f"adopted-{adoptable_stop.order_id}"
                 )
                 _LOGGER.info(
                     "Adopting valid manual/external STOP order from venue: "
@@ -267,9 +266,7 @@ class LivePositionProtectionService:
             )
             if adoptable_tp is not None:
                 adopted_tp_id = (
-                    adoptable_tp.client_order_id
-                    if adoptable_tp.client_order_id
-                    else f"adopted-{adoptable_tp.order_id}"
+                    adoptable_tp.client_order_id or f"adopted-{adoptable_tp.order_id}"
                 )
                 _LOGGER.info(
                     "Adopting valid manual/external TAKE_PROFIT order from venue: "
@@ -397,7 +394,7 @@ class LivePositionProtectionService:
                 except ExchangeOrderRejectedError as error:
                     _LOGGER.warning(
                         "Stop order rejected by venue (%s); refreshing mark "
-                        "price and retrying",
+                        "price and retrying with fresh client ID",
                         error,
                     )
                     fresh_rules = await self.exchange_client.get_market_entry_rules(
@@ -427,20 +424,24 @@ class LivePositionProtectionService:
                         order_type=OrderType.STOP_MARKET,
                         reference_price=fresh_reference,
                     )
-                    position = replace(position, stop_loss=fresh_stop)
+                    fresh_stop_id = Position.create_stop_loss_client_algo_id()
+                    position = replace(
+                        position,
+                        stop_loss=fresh_stop,
+                        stop_loss_client_algo_id=fresh_stop_id,
+                    )
                     await self.position_repository.save(position=position)
                     await self._submit_missing_leg(
                         position=position,
                         order_type=OrderType.STOP_MARKET,
                         trigger_price=fresh_stop,
-                        client_id=self._require_client_id(
-                            position.stop_loss_client_algo_id
-                        ),
+                        client_id=fresh_stop_id,
                     )
                 stop_order = await self._get_verified_submitted_leg(
                     position=position,
                     order_type=OrderType.STOP_MARKET,
                 )
+
             if take_profit_order is None:
                 if normalized_take_profit is None:
                     raise RuntimeError("Missing TAKE_PROFIT plan was not normalized")
@@ -450,14 +451,34 @@ class LivePositionProtectionService:
                     needs_take_profit=True,
                 )
                 await self.position_repository.save(position=position)
-                await self._submit_missing_leg(
-                    position=position,
-                    order_type=OrderType.TAKE_PROFIT_MARKET,
-                    trigger_price=normalized_take_profit,
-                    client_id=self._require_client_id(
-                        position.take_profit_client_algo_id
-                    ),
-                )
+                try:
+                    await self._submit_missing_leg(
+                        position=position,
+                        order_type=OrderType.TAKE_PROFIT_MARKET,
+                        trigger_price=normalized_take_profit,
+                        client_id=self._require_client_id(
+                            position.take_profit_client_algo_id
+                        ),
+                    )
+                except ExchangeOrderRejectedError as error:
+                    _LOGGER.warning(
+                        "Take-profit order rejected by venue (%s); "
+                        "retrying with fresh client ID",
+                        error,
+                    )
+                    fresh_tp_id = Position.create_take_profit_client_algo_id()
+                    position = replace(
+                        position,
+                        take_profit=normalized_take_profit,
+                        take_profit_client_algo_id=fresh_tp_id,
+                    )
+                    await self.position_repository.save(position=position)
+                    await self._submit_missing_leg(
+                        position=position,
+                        order_type=OrderType.TAKE_PROFIT_MARKET,
+                        trigger_price=normalized_take_profit,
+                        client_id=fresh_tp_id,
+                    )
                 take_profit_order = await self._get_verified_submitted_leg(
                     position=position,
                     order_type=OrderType.TAKE_PROFIT_MARKET,
@@ -1289,13 +1310,10 @@ class LivePositionProtectionService:
             ):
                 continue
 
-            if order.quantity < position.quantity:
+            if order.quantity > _DECIMAL_ZERO and order.quantity < position.quantity:
                 continue
 
             trigger = order.stop_price
-            if expected_trigger is not None and trigger != expected_trigger:
-                continue
-
             if is_stop_loss:
                 if position.side is PositionSide.LONG and trigger >= reference_price:
                     continue
@@ -1310,6 +1328,12 @@ class LivePositionProtectionService:
             candidates.append(order)
 
         if not candidates:
+            return None
+
+        if expected_trigger is not None:
+            for candidate in candidates:
+                if candidate.stop_price == expected_trigger:
+                    return candidate
             return None
 
         if is_stop_loss:

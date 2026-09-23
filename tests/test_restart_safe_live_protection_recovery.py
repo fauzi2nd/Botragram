@@ -25,6 +25,7 @@ from botragram.enums import (
 from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderPriceBandRejectedError,
+    ExchangeOrderRejectedError,
     VenueRuleValidationError,
 )
 from botragram.exchanges.binance.futures_client import BinanceFuturesExchangeClient
@@ -218,30 +219,34 @@ class RestartProtectionExchange(BinanceFuturesExchangeClient):
         stop_loss_client_algo_id: str | None = None,
         take_profit_client_algo_id: str | None = None,
     ) -> tuple[Order, ...]:
-        trigger = stop_loss if stop_loss is not None else take_profit
-        order_type = (
-            OrderType.STOP_MARKET
-            if stop_loss is not None
-            else OrderType.TAKE_PROFIT_MARKET
-        )
-        client_id = (
-            stop_loss_client_algo_id
-            if stop_loss is not None
-            else take_profit_client_algo_id
-        )
-        assert trigger is not None
-        assert client_id is not None
-        self.posts.append(client_id)
-        order = _order(
-            order_id=f"created-{len(self.orders)}",
-            client_id=client_id,
-            side=side,
-            order_type=order_type,
-            quantity=quantity,
-            trigger=trigger,
-        )
-        self.orders.append(order)
-        return (order,)
+        created: list[Order] = []
+        if stop_loss is not None:
+            assert stop_loss_client_algo_id is not None
+            self.posts.append(stop_loss_client_algo_id)
+            sl_order = _order(
+                order_id=f"created-{len(self.orders)}",
+                client_id=stop_loss_client_algo_id,
+                side=side,
+                order_type=OrderType.STOP_MARKET,
+                quantity=quantity,
+                trigger=stop_loss,
+            )
+            self.orders.append(sl_order)
+            created.append(sl_order)
+        if take_profit is not None:
+            assert take_profit_client_algo_id is not None
+            self.posts.append(take_profit_client_algo_id)
+            tp_order = _order(
+                order_id=f"created-{len(self.orders)}",
+                client_id=take_profit_client_algo_id,
+                side=side,
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                quantity=quantity,
+                trigger=take_profit,
+            )
+            self.orders.append(tp_order)
+            created.append(tp_order)
+        return tuple(created)
 
 
 @pytest.mark.asyncio
@@ -1702,3 +1707,165 @@ async def test_adoption_logs_adopted_id_instead_of_none(
         for r in caplog.records
     )
     assert not any("client_id=None" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_both_legs_missing_submits_both_legs_sequentially() -> None:
+    """Verify both missing legs are submitted sequentially with durable IDs."""
+    exchange = RestartProtectionExchange()
+    exchange.orders = []
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(
+            settings=replace(
+                RiskSettings(),
+                ema_cross_stop_loss_pct=Decimal("0.02"),
+                ema_cross_take_profit_pct=Decimal("0.04"),
+            )
+        ),
+    )
+    position = _position(
+        stop_loss=None,
+        take_profit=None,
+        stop_id=None,
+        tp_id=None,
+    )
+    await repository.save(position=position)
+
+    protected = await service.ensure(position=position)
+
+    assert protected.stop_loss is not None
+    assert protected.take_profit is not None
+    assert protected.stop_loss_client_algo_id is not None
+    assert protected.take_profit_client_algo_id is not None
+    # Both IDs were posted:
+    assert len(exchange.posts) == 2
+    assert protected.stop_loss_client_algo_id in exchange.posts
+    assert protected.take_profit_client_algo_id in exchange.posts
+
+
+@pytest.mark.asyncio
+async def test_stop_loss_rejection_retries_with_fresh_client_algo_id() -> None:
+    """Verify rejection (e.g. Duplicate clientOid) generates a fresh client ID."""
+
+    class RejectFirstPostExchange(RestartProtectionExchange):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failed_once = False
+
+        async def create_protection_orders(
+            self,
+            *,
+            symbol: str,
+            side: OrderSide,
+            quantity: Decimal,
+            stop_loss: Decimal | None = None,
+            take_profit: Decimal | None = None,
+            stop_loss_client_algo_id: str | None = None,
+            take_profit_client_algo_id: str | None = None,
+        ) -> tuple[Order, ...]:
+            if not self.failed_once:
+                self.failed_once = True
+                raise ExchangeOrderRejectedError(
+                    "Bitget REST API error 25212: message=Duplicate clientOid"
+                )
+            return await super().create_protection_orders(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                stop_loss_client_algo_id=stop_loss_client_algo_id,
+                take_profit_client_algo_id=take_profit_client_algo_id,
+            )
+
+    exchange = RejectFirstPostExchange()
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(
+            settings=replace(
+                RiskSettings(),
+                ema_cross_stop_loss_pct=Decimal("0.02"),
+                ema_cross_take_profit_pct=Decimal("0.04"),
+            )
+        ),
+    )
+    initial_stop_id = "bsl-rejected11111111111111111111"
+    position = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id=initial_stop_id,
+        tp_id="btp-existing",
+    )
+    # Existing TP on venue:
+    exchange.orders.append(
+        _order(
+            order_id="tp-001",
+            client_id="btp-existing",
+            side=OrderSide.SELL,
+            order_type=OrderType.TAKE_PROFIT_MARKET,
+            trigger=Decimal("104"),
+        )
+    )
+    await repository.save(position=position)
+
+    protected = await service.ensure(position=position)
+
+    # Must have succeeded on retry with a new client ID different from initial:
+    assert protected.stop_loss_client_algo_id is not None
+    assert protected.stop_loss_client_algo_id != initial_stop_id
+    assert protected.stop_loss_client_algo_id.startswith("bsl-")
+
+
+@pytest.mark.asyncio
+async def test_adopt_manual_stop_loss_with_zero_size() -> None:
+    """Verify manual SL placed via app with size=0 matching risk is adopted."""
+    exchange = RestartProtectionExchange()
+    # User manually created an SL in the app at 98 with size 0:
+    manual_sl = _order(
+        order_id="manual-sl-999",
+        client_id="",
+        side=OrderSide.SELL,
+        order_type=OrderType.STOP_MARKET,
+        quantity=Decimal("0"),
+        trigger=Decimal("98"),
+    )
+    existing_tp = _order(
+        order_id="tp-existing",
+        client_id="btp-existing",
+        side=OrderSide.SELL,
+        order_type=OrderType.TAKE_PROFIT_MARKET,
+        quantity=Decimal("1"),
+        trigger=Decimal("104"),
+    )
+    exchange.orders.extend([manual_sl, existing_tp])
+    repository = MemoryPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(
+            settings=replace(
+                RiskSettings(),
+                ema_cross_stop_loss_pct=Decimal("0.02"),
+                ema_cross_take_profit_pct=Decimal("0.04"),
+            )
+        ),
+    )
+    position = _position(
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        stop_id=None,
+        tp_id="btp-existing",
+    )
+    await repository.save(position=position)
+
+    protected = await service.ensure(position=position)
+
+    assert protected.stop_loss == Decimal("98")
+    assert protected.stop_loss_client_algo_id == "adopted-manual-sl-999"
+    # The manual SL must NOT have been cancelled:
+    assert exchange.cancelled == []

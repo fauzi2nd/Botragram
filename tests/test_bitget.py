@@ -1889,3 +1889,99 @@ async def test_bitget_cancel_protection_order_by_order_id_directly() -> None:
         "symbol": "BTCUSDT",
         "orderId": "9876543210",
     }
+
+
+@pytest.mark.asyncio
+async def test_bitget_create_protection_orders_tp_preserves_existing_venue_sl() -> None:
+    """Verify TP submission preserves active venue SL to avoid wiping position SL."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "list": [
+                    {
+                        "orderId": "sl-venue-123",
+                        "planType": "pos_loss",
+                        "symbol": "BTCUSDT",
+                        "posSide": "long",
+                        "stopLoss": "65000",
+                        "status": "live",
+                        "size": "1.5",
+                    }
+                ]
+            },
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "tp-plan-999"},
+        },
+    ]
+
+    orders = await client.create_protection_orders(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("1.5"),
+        take_profit=Decimal("75000"),
+        take_profit_client_algo_id="btp-unique-tp",
+    )
+
+    assert len(orders) == 1
+    assert orders[0].order_type is OrderType.TAKE_PROFIT_MARKET
+    assert rest.last_path == "/api/v3/trade/place-strategy-order"
+    assert rest.last_data is not None
+    assert rest.last_data["stopLoss"] == "65000"
+    assert rest.last_data["takeProfit"] == "75000"
+    assert rest.last_data["clientOid"] == "btp-unique-tp"
+
+
+@pytest.mark.asyncio
+async def test_bitget_create_protection_orders_sl_preserves_existing_venue_tp() -> None:
+    """Verify SL submission preserves active venue TP to avoid wiping position TP."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "list": [
+                    {
+                        "orderId": "tp-venue-123",
+                        "planType": "pos_profit",
+                        "symbol": "BTCUSDT",
+                        "posSide": "long",
+                        "takeProfit": "75000",
+                        "status": "live",
+                        "size": "1.5",
+                    }
+                ]
+            },
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "sl-plan-999"},
+        },
+    ]
+
+    orders = await client.create_protection_orders(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("1.5"),
+        stop_loss=Decimal("65000"),
+        stop_loss_client_algo_id="bsl-unique-sl",
+    )
+
+    assert len(orders) == 1
+    assert orders[0].order_type is OrderType.STOP_MARKET
+    assert rest.last_path == "/api/v3/trade/place-strategy-order"
+    assert rest.last_data is not None
+    assert rest.last_data["stopLoss"] == "65000"
+    assert rest.last_data["takeProfit"] == "75000"
+    assert rest.last_data["clientOid"] == "bsl-unique-sl"

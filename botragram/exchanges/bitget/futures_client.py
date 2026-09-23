@@ -97,7 +97,7 @@ class BitgetFuturesExchangeClient(BitgetClient):
         self._margin_mode: str = (
             margin_mode.value
             if isinstance(margin_mode, MarginMode)
-            else str(margin_mode).strip().lower()
+            else margin_mode.strip().lower()
         )
 
     async def get_margin_mode(self) -> str:
@@ -358,6 +358,27 @@ class BitgetFuturesExchangeClient(BitgetClient):
                 sl_data["clientOid"] = stop_loss_client_algo_id
 
             try:
+                open_orders = await self.get_open_protection_orders(
+                    symbol=normalized_symbol
+                )
+                existing_tp = next(
+                    (
+                        o
+                        for o in open_orders
+                        if o.order_type
+                        in (OrderType.TAKE_PROFIT_MARKET, OrderType.TAKE_PROFIT)
+                        and o.status is OrderStatus.NEW
+                        and o.side is side
+                        and o.stop_price is not None
+                    ),
+                    None,
+                )
+                if existing_tp is not None and existing_tp.stop_price is not None:
+                    sl_data["takeProfit"] = str(existing_tp.stop_price)
+            except Exception:
+                pass
+
+            try:
                 resp = await self._rest.post(
                     _PLACE_PLAN_ORDER_ENDPOINT,
                     data=sl_data,
@@ -409,6 +430,26 @@ class BitgetFuturesExchangeClient(BitgetClient):
             }
             if take_profit_client_algo_id:
                 tp_data["clientOid"] = take_profit_client_algo_id
+
+            try:
+                open_orders = await self.get_open_protection_orders(
+                    symbol=normalized_symbol
+                )
+                existing_sl = next(
+                    (
+                        o
+                        for o in open_orders
+                        if o.order_type in (OrderType.STOP_MARKET, OrderType.STOP)
+                        and o.status is OrderStatus.NEW
+                        and o.side is side
+                        and o.stop_price is not None
+                    ),
+                    None,
+                )
+                if existing_sl is not None and existing_sl.stop_price is not None:
+                    tp_data["stopLoss"] = str(existing_sl.stop_price)
+            except Exception:
+                pass
 
             try:
                 resp = await self._rest.post(

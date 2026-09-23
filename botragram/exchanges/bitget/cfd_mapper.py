@@ -367,7 +367,24 @@ class BitgetCfdMapper(BaseExchangeMapper):
             )
             return (sl_order, tp_order)
 
-        return (self.map_order(payload),)
+        base_order = self.map_order(payload)
+        if stop_loss_val > _DECIMAL_ZERO:
+            return (
+                replace(
+                    base_order,
+                    order_type=OrderType.STOP_MARKET,
+                    stop_price=stop_loss_val,
+                ),
+            )
+        if take_profit_val > _DECIMAL_ZERO:
+            return (
+                replace(
+                    base_order,
+                    order_type=OrderType.TAKE_PROFIT_MARKET,
+                    stop_price=take_profit_val,
+                ),
+            )
+        return (base_order,)
 
     def map_position(self, payload: ExchangePayload) -> Position:
         """Map Bitget CFD position payload into Position model."""

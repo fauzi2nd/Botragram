@@ -124,37 +124,47 @@ class ProtectionPlanExchange(BinanceFuturesExchangeClient):
         stop_loss_client_algo_id: str | None = None,
         take_profit_client_algo_id: str | None = None,
     ) -> tuple[Order, ...]:
-        """Record exactly one requested logical protection-leg mutation."""
-        trigger_price = stop_loss if stop_loss is not None else take_profit
-        order_type = (
-            OrderType.STOP_MARKET
-            if stop_loss is not None
-            else OrderType.TAKE_PROFIT_MARKET
-        )
-        assert trigger_price is not None
-        client_order_id = (
-            stop_loss_client_algo_id
-            if stop_loss is not None
-            else take_profit_client_algo_id
-        )
-        assert client_order_id is not None
-        self.events.append(f"post:{order_type.value}")
-        order = Order(
-            order_id=f"protection-{len(self.orders) + 1}",
-            symbol=symbol,
-            side=side,
-            order_type=order_type,
-            status=OrderStatus.NEW,
-            quantity=quantity,
-            executed_quantity=Decimal("0"),
-            price=None,
-            stop_price=trigger_price,
-            created_at=_NOW,
-            updated_at=_NOW,
-            client_order_id=client_order_id,
-        )
-        self.orders.append(order)
-        return (order,)
+        """Record requested logical protection-leg mutations."""
+        created: list[Order] = []
+        if stop_loss is not None:
+            assert stop_loss_client_algo_id is not None
+            self.events.append(f"post:{OrderType.STOP_MARKET.value}")
+            sl_order = Order(
+                order_id=f"protection-{len(self.orders) + 1}",
+                symbol=symbol,
+                side=side,
+                order_type=OrderType.STOP_MARKET,
+                status=OrderStatus.NEW,
+                quantity=quantity,
+                executed_quantity=Decimal("0"),
+                price=None,
+                stop_price=stop_loss,
+                created_at=_NOW,
+                updated_at=_NOW,
+                client_order_id=stop_loss_client_algo_id,
+            )
+            self.orders.append(sl_order)
+            created.append(sl_order)
+        if take_profit is not None:
+            assert take_profit_client_algo_id is not None
+            self.events.append(f"post:{OrderType.TAKE_PROFIT_MARKET.value}")
+            tp_order = Order(
+                order_id=f"protection-{len(self.orders) + 1}",
+                symbol=symbol,
+                side=side,
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                status=OrderStatus.NEW,
+                quantity=quantity,
+                executed_quantity=Decimal("0"),
+                price=None,
+                stop_price=take_profit,
+                created_at=_NOW,
+                updated_at=_NOW,
+                client_order_id=take_profit_client_algo_id,
+            )
+            self.orders.append(tp_order)
+            created.append(tp_order)
+        return tuple(created)
 
     async def get_protection_order_by_client_id(
         self,

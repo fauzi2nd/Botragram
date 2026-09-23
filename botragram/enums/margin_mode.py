@@ -16,7 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.base import StrEnum
+from botragram.enums.base import BaseEnum
 
 __all__ = [
     "MarginMode",
@@ -26,7 +26,7 @@ __all__ = [
 # =============================================================================
 # Enums
 # =============================================================================
-class MarginMode(StrEnum):
+class MarginMode(BaseEnum):
     """Margin mode for futures trading positions and orders."""
 
     CROSSED = "crossed"

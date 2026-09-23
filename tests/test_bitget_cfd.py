@@ -590,6 +590,106 @@ async def test_cfd_client_get_protection_order_by_client_id() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_cfd_create_protection_orders_tp_preserves_existing_venue_sl() -> None:
+    """Verify CFD TP submission preserves active venue SL."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [
+                {
+                    "orderId": "cfd_sl_venue",
+                    "clientOid": "bsl-venue-sl",
+                    "symbol": "XAUUSD",
+                    "side": "sell",
+                    "orderType": "tpsl",
+                    "status": "new",
+                    "stopLoss": "2600.00",
+                    "size": "1.0",
+                    "cTime": "1700000000000",
+                }
+            ],
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "cfd_tp_created"},
+        },
+    ]
+
+    orders = await client.create_protection_orders(
+        symbol="XAUUSD",
+        side=OrderSide.SELL,
+        quantity=Decimal("1.0"),
+        take_profit=Decimal("2700.00"),
+        take_profit_client_algo_id="btp-unique-tp",
+        bypass_calendar_guard=True,
+    )
+
+    assert len(orders) == 1
+    assert orders[0].order_type is OrderType.TAKE_PROFIT_MARKET
+    assert rest.last_path == "/api/v3/cfd/trade/place-strategy-order"
+    assert rest.last_data is not None
+    assert rest.last_data["stopLoss"] == "2600.00"
+    assert rest.last_data["takeProfit"] == "2700.00"
+    assert rest.last_data["clientOid"] == "btp-unique-tp"
+
+
+@pytest.mark.asyncio
+async def test_cfd_create_protection_orders_sl_preserves_existing_venue_tp() -> None:
+    """Verify CFD SL submission preserves active venue TP."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [
+                {
+                    "orderId": "cfd_tp_venue",
+                    "clientOid": "btp-venue-tp",
+                    "symbol": "XAUUSD",
+                    "side": "sell",
+                    "orderType": "tpsl",
+                    "status": "new",
+                    "takeProfit": "2700.00",
+                    "size": "1.0",
+                    "cTime": "1700000000000",
+                }
+            ],
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "cfd_sl_created"},
+        },
+    ]
+
+    orders = await client.create_protection_orders(
+        symbol="XAUUSD",
+        side=OrderSide.SELL,
+        quantity=Decimal("1.0"),
+        stop_loss=Decimal("2600.00"),
+        stop_loss_client_algo_id="bsl-unique-sl",
+        bypass_calendar_guard=True,
+    )
+
+    assert len(orders) == 1
+    assert orders[0].order_type is OrderType.STOP_MARKET
+    assert rest.last_path == "/api/v3/cfd/trade/place-strategy-order"
+    assert rest.last_data is not None
+    assert rest.last_data["stopLoss"] == "2600.00"
+    assert rest.last_data["takeProfit"] == "2700.00"
+    assert rest.last_data["clientOid"] == "bsl-unique-sl"
+
+
 # =============================================================================
 # Phase 2: Market Calendar and Trading Hours Guard Tests
 # =============================================================================
