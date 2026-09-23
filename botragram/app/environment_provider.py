@@ -32,6 +32,7 @@ from botragram.constants.env import (
     ENV_AUTONOMOUS_EXECUTION_ENABLED,
     ENV_AUTONOMOUS_LIVE_ENTRY_ENABLED,
     ENV_AUTONOMOUS_MAINNET_ENTRY_ENABLED,
+    ENV_BASE_ASSET,
     ENV_BASELINE_CONFIDENCE,
     ENV_BASELINE_VOLATILITY_PCT,
     ENV_BINANCE_API_KEY,
@@ -94,6 +95,7 @@ from botragram.constants.env import (
     ENV_LOG_LEVEL,
     ENV_LOG_LEVEL_LEGACY,
     ENV_MARKET_INTERVAL,
+    ENV_MARKET_SYMBOL,
     ENV_MAX_CONFIDENCE_MULTIPLIER,
     ENV_MAX_DRAWDOWN_PCT,
     ENV_MAX_EXECUTABLE_QUOTE_AGE_MS,
@@ -173,6 +175,7 @@ from botragram.constants.env import (
     ENV_PIER_TAKE_PROFIT_PCT,
     ENV_PIER_USE_MACD,
     ENV_PIER_USE_STOCH_RSI,
+    ENV_QUOTE_ASSET,
     ENV_REQUIRE_ACCOUNT_RATIO_CONFLUENCE,
     ENV_REQUIRE_FUNDING_SENTIMENT,
     ENV_REQUIRE_OI_CONFLUENCE,
@@ -190,6 +193,7 @@ from botragram.constants.env import (
     ENV_STRATEGY_TYPE,
     ENV_SWING_STOP_LOSS_PCT,
     ENV_SWING_TAKE_PROFIT_PCT,
+    ENV_SYMBOL,
     ENV_TAKE_PROFIT_PCT,
     ENV_TELEGRAM_CHAT_ID,
     ENV_TELEGRAM_TOKEN,
@@ -1124,6 +1128,21 @@ class EnvironmentProvider:
         to get_global_market_interval.
         """
         return self.get_global_market_interval()
+
+    def get_market_symbol(self) -> str:
+        """Return the optional configured trading symbol (e.g. XAUUSD, BTCUSDT)."""
+        symbol = self._get_var(ENV_SYMBOL)
+        if symbol:
+            return symbol
+        return self._get_var(ENV_MARKET_SYMBOL)
+
+    def get_base_asset(self) -> str:
+        """Return the optional configured base asset (e.g. XAU, EUR, BTC)."""
+        return self._get_var(ENV_BASE_ASSET)
+
+    def get_quote_asset(self) -> str:
+        """Return the optional configured quote asset (e.g. USD, USDT)."""
+        return self._get_var(ENV_QUOTE_ASSET)
 
     def get_strategy_timeframe_override_enabled(self) -> bool:
         """Return whether active strategy timeframe override is enabled."""

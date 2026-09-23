@@ -524,3 +524,54 @@ async def test_opportunity_discovery_dynamic_volume_accepts_momentary_dip() -> N
     assert len(signals) == 1
     assert signals[0].symbol == symbol
     assert symbol in strategy.evaluated_symbols
+
+
+@pytest.mark.asyncio
+async def test_discovery_bypasses_liquidity_for_zero_volume_tradfi_candles() -> None:
+    """Verify TradFi symbols with zero volume bypass liquidity rejection."""
+    symbol = "XAUUSD"
+    base_time = _NOW - timedelta(minutes=15 * 20)
+    candles = [
+        _make_candle(
+            symbol=symbol,
+            close_price=Decimal("2500"),
+            high_price=Decimal("2505"),
+            low_price=Decimal("2495"),
+            open_price=Decimal("2500"),
+            volume=Decimal("0"),
+            close_time=base_time + timedelta(minutes=15 * (i + 1)),
+        )
+        for i in range(20)
+    ]
+
+    market = FakeMarketService(
+        symbols=(symbol,),
+        candles_by_symbol={symbol: tuple(candles)},
+    )
+    strategy = FakeStrategyService(
+        signals={symbol: _make_signal(symbol=symbol, price=Decimal("2500"))}
+    )
+
+    service = OpportunityDiscoveryService(
+        market_service=market,
+        strategy_service=strategy,
+        candle_request_delay_seconds=0.0,
+        utc_now=lambda: _NOW + timedelta(seconds=1),
+        filter_min_liquidity=True,
+        use_dynamic_volume=True,
+        volume_sma_period=20,
+        min_24h_turnover_usdt=Decimal("1000000"),
+        min_quote_volume_usdt=Decimal("25000"),
+    )
+
+    signals = await service.discover(
+        quote_asset="USD",
+        interval=Interval.M15,
+        candle_limit=20,
+        max_symbols=10,
+        top_n=5,
+    )
+
+    assert len(signals) == 1
+    assert signals[0].symbol == symbol
+    assert symbol in strategy.evaluated_symbols

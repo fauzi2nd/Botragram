@@ -358,40 +358,75 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         start_time: datetime | None = None,
         end_time: datetime | None = None,
     ) -> Sequence[Candle]:
-        """Return historical CFD candlestick data."""
+        """Return historical CFD candlestick data with pagination support."""
         vendor_symbol = self._mapper.to_vendor_symbol(symbol, mode=self._mode)
         interval_str = BITGET_CFD_INTERVAL_MAP.get(interval, "15m")
-        params: dict[str, str | int] = {
-            "symbol": vendor_symbol,
-            "interval": interval_str,
-            "side": "buy",
-            "limit": min(limit, 100),
-        }
-        if start_time is not None:
-            params["startTime"] = int(start_time.timestamp() * 1000)
-        if end_time is not None:
-            params["endTime"] = int(end_time.timestamp() * 1000)
-
-        payload = await self._rest.get(
-            _CFD_CANDLES_ENDPOINT,
-            params=params,
-            authenticated=False,
+        target_limit = max(1, limit)
+        all_candles: list[Candle] = []
+        current_end_time_ms: int | None = (
+            int(end_time.timestamp() * 1000) if end_time is not None else None
         )
-        candles: list[Candle] = []
-        if isinstance(payload, dict):
-            raw_data = payload.get("data")
-            if isinstance(raw_data, list):
-                for row in cast(list[object], raw_data):
-                    if isinstance(row, (list, tuple)):
-                        row_items = cast(Sequence[object], row)
-                        candles.append(
-                            self._mapper.map_candle(
-                                tuple(row_items),
-                                symbol=symbol,
-                                interval=interval,
+        min_start_time_ms: int | None = (
+            int(start_time.timestamp() * 1000) if start_time is not None else None
+        )
+
+        while len(all_candles) < target_limit:
+            batch_limit = min(target_limit - len(all_candles), 100)
+            params: dict[str, str | int] = {
+                "symbol": vendor_symbol,
+                "interval": interval_str,
+                "side": "buy",
+                "limit": batch_limit,
+            }
+            if min_start_time_ms is not None:
+                params["startTime"] = min_start_time_ms
+            if current_end_time_ms is not None:
+                params["endTime"] = current_end_time_ms
+
+            payload = await self._rest.get(
+                _CFD_CANDLES_ENDPOINT,
+                params=params,
+                authenticated=False,
+            )
+            batch_candles: list[Candle] = []
+            if isinstance(payload, dict):
+                raw_data = payload.get("data")
+                if isinstance(raw_data, list):
+                    for row in cast(list[object], raw_data):
+                        if isinstance(row, (list, tuple)):
+                            row_items = cast(Sequence[object], row)
+                            batch_candles.append(
+                                self._mapper.map_candle(
+                                    tuple(row_items),
+                                    symbol=symbol,
+                                    interval=interval,
+                                )
                             )
-                        )
-        return tuple(candles)
+            if not batch_candles:
+                break
+
+            all_candles = batch_candles + all_candles
+
+            oldest_open_time_ms = int(batch_candles[0].open_time.timestamp() * 1000)
+            new_end_time_ms = oldest_open_time_ms - 1
+            if (
+                current_end_time_ms is not None
+                and new_end_time_ms >= current_end_time_ms
+            ):
+                break
+            current_end_time_ms = new_end_time_ms
+            if (
+                min_start_time_ms is not None
+                and current_end_time_ms <= min_start_time_ms
+            ):
+                break
+            if len(batch_candles) < batch_limit:
+                break
+
+        if len(all_candles) > target_limit:
+            all_candles = all_candles[-target_limit:]
+
+        return tuple(all_candles)
 
     async def get_trades(
         self,

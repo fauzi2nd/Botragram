@@ -89,6 +89,7 @@ class MockBitgetRestClient(BitgetRestClient):
             "msg": "success",
             "data": {},
         }
+        self.canned_responses: list[JsonResponse] = []
 
     async def connect(self) -> None:
         pass
@@ -109,6 +110,8 @@ class MockBitgetRestClient(BitgetRestClient):
         self.last_method = "GET"
         self.last_path = path
         self.last_params = params
+        if self.canned_responses:
+            return self._validate_response_envelope(self.canned_responses.pop(0))
         return self._validate_response_envelope(self.canned_response)
 
     async def post(
@@ -1256,6 +1259,51 @@ async def test_cfd_client_get_candles() -> None:
     assert len(candles) == 1
     assert candles[0].close_price == Decimal("1.0865")
     assert candles[0].volume == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_get_candles_backward_pagination() -> None:
+    """Verify get_candles paginates backward when limit exceeds 100."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="zero_fee")
+
+    batch_1 = [
+        [
+            str(100_000 + i * 1_000),
+            "1.0800",
+            "1.0850",
+            "1.0790",
+            "1.0820",
+        ]
+        for i in range(100)
+    ]
+    batch_2 = [
+        [
+            str(50_000 + i * 1_000),
+            "1.0750",
+            "1.0810",
+            "1.0740",
+            "1.0790",
+        ]
+        for i in range(50)
+    ]
+
+    rest.canned_responses = [
+        {"code": "00000", "msg": "success", "data": batch_1},
+        {"code": "00000", "msg": "success", "data": batch_2},
+    ]
+
+    candles = await client.get_candles(
+        symbol="EURUSD",
+        interval=Interval.M15,
+        limit=150,
+    )
+
+    assert len(candles) == 150
+    assert len(rest.history) == 2
+    assert candles[0].close_price == Decimal("1.0790")
+    assert candles[-1].close_price == Decimal("1.0820")
 
 
 @pytest.mark.asyncio

@@ -190,6 +190,7 @@ async def _run_trading(
     sync_task = asyncio.create_task(
         dependency_provider.candle_sync_service.run_adaptive_background_sync(
             quote_asset=active_settings.market.quote_asset,
+            interval=active_settings.market.interval,
             is_positions_full_provider=_check_positions_full,
             stop_event=sync_stop_event,
         ),

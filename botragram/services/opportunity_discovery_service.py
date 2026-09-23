@@ -739,6 +739,10 @@ class OpportunityDiscoveryService:
         if not closed_candles:
             return False, "no closed candles available"
 
+        # TradFi / zero-volume feeds (e.g. CFDs) do not report trading volume
+        if all(c.volume == Decimal("0") for c in closed_candles):
+            return True, ""
+
         latest_closed_candle = closed_candles[-1]
         quote_volume = latest_closed_candle.volume * latest_closed_candle.close_price
 

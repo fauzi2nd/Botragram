@@ -1393,3 +1393,41 @@ def test_settings_manager_load_logging_settings_with_scope(
         exchange=live_exchange,
     )
     assert custom_logging.filename == "custom-bot.log"
+
+
+def test_settings_manager_cfd_market_defaults_symbol_to_xauusd(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify market settings default to XAUUSD when market type is CFD."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    exchange = ExchangeSettings(
+        exchange=ExchangeType.BITGET,
+        market_type=MarketType.CFD,
+    )
+    settings = SettingsManager(environment_provider=provider).load_market_settings(
+        exchange=exchange
+    )
+    assert settings.base_asset == "XAU"
+    assert settings.quote_asset == "USD"
+    assert settings.symbol == "XAUUSD"
+
+
+def test_settings_manager_respects_explicit_symbol_and_quote_asset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify market settings parse explicit SYMBOL and QUOTE_ASSET values."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("SYMBOL", "EURUSD")
+    monkeypatch.setenv("QUOTE_ASSET", "USD")
+    settings = SettingsManager(environment_provider=provider).load_market_settings()
+    assert settings.symbol == "EURUSD"
+    assert settings.base_asset == "EUR"
+    assert settings.quote_asset == "USD"

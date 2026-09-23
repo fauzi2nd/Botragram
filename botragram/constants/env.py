@@ -19,6 +19,7 @@ __all__ = [
     "ENV_OPENROUTER_API_KEY",
     "ENV_AI_PROVIDER",
     "ENV_AI_MODEL",
+    "ENV_BASE_ASSET",
     "ENV_TELEGRAM_TOKEN",
     "ENV_TELEGRAM_TOKEN_LEGACY",
     "ENV_TELEGRAM_CHAT_ID",
@@ -168,6 +169,9 @@ __all__ = [
     "ENV_MAX_SPREAD_BPS",
     "ENV_GLOBAL_MARKET_INTERVAL",
     "ENV_MARKET_INTERVAL",
+    "ENV_MARKET_SYMBOL",
+    "ENV_SYMBOL",
+    "ENV_QUOTE_ASSET",
     "ENV_STRATEGY_TIMEFRAME_OVERRIDE_ENABLED",
     "ENV_STRATEGY_TIMEFRAME_OVERRIDE",
     "ENV_DISCOVERY_MAX_UNIVERSE_SYMBOLS",
@@ -384,6 +388,14 @@ ENV_DISCOVERY_CADENCE_SECONDS: str = "DISCOVERY_CADENCE_SECONDS"
 ENV_DISCOVERY_CANDLE_DELAY_SECONDS: str = "DISCOVERY_CANDLE_DELAY_SECONDS"
 ENV_CANDLE_RETENTION_DAYS: str = "CANDLE_RETENTION_DAYS"
 ENV_CANDLE_PRUNING_INTERVAL_HOURS: str = "CANDLE_PRUNING_INTERVAL_HOURS"
+
+# =============================================================================
+# Constants — Market Symbol and Assets
+# =============================================================================
+ENV_SYMBOL: str = "SYMBOL"
+ENV_MARKET_SYMBOL: str = "MARKET_SYMBOL"
+ENV_BASE_ASSET: str = "BASE_ASSET"
+ENV_QUOTE_ASSET: str = "QUOTE_ASSET"
 
 # =============================================================================
 # Constants — Exchange

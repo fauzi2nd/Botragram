@@ -95,7 +95,10 @@ class SettingsManager:
                 ),
             ),
             exchange=exchange,
-            market=self.load_market_settings(strategy_type=strategy.strategy_type),
+            market=self.load_market_settings(
+                strategy_type=strategy.strategy_type,
+                exchange=exchange,
+            ),
             risk=self.load_risk_settings(),
             strategy=strategy,
             telegram=self.load_telegram_settings(),
@@ -228,8 +231,11 @@ class SettingsManager:
     def load_market_settings(
         self,
         strategy_type: StrategyType | None = None,
+        *,
+        exchange: ExchangeSettings | None = None,
     ) -> MarketSettings:
         """Load market settings defining global market timeframe and discovery."""
+        del strategy_type
         environment = self._environment_provider
         if environment.has_legacy_market_interval_only():
             _LOGGER.warning(
@@ -246,7 +252,41 @@ class SettingsManager:
             if environment.has_legacy_market_interval_only()
             else "GLOBAL_MARKET_INTERVAL"
         )
+
+        raw_symbol = environment.get_market_symbol().strip().upper()
+        raw_base = environment.get_base_asset().strip().upper()
+        raw_quote = environment.get_quote_asset().strip().upper()
+
+        if raw_base and raw_quote:
+            base_asset = raw_base
+            quote_asset = raw_quote
+        elif raw_symbol:
+            if raw_symbol.endswith("USDT"):
+                base_asset = raw_symbol[:-4]
+                quote_asset = "USDT"
+            elif raw_symbol.endswith("USD"):
+                base_asset = raw_symbol[:-3]
+                quote_asset = "USD"
+            elif raw_symbol.endswith("USDC"):
+                base_asset = raw_symbol[:-4]
+                quote_asset = "USDC"
+            else:
+                base_asset = raw_symbol
+                quote_asset = (
+                    "USD"
+                    if exchange is not None and exchange.market_type is MarketType.CFD
+                    else "USDT"
+                )
+        elif exchange is not None and exchange.market_type is MarketType.CFD:
+            base_asset = "XAU"
+            quote_asset = "USD"
+        else:
+            base_asset = "BTC"
+            quote_asset = "USDT"
+
         return MarketSettings(
+            base_asset=base_asset,
+            quote_asset=quote_asset,
             interval=(
                 self._parse_market_interval(
                     raw_value=raw_interval,
