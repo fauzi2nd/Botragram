@@ -16,6 +16,9 @@ from __future__ import annotations
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.engine.cfd_financing_engine import CfdFinancingEngine
+from botragram.engine.cfd_sizing_engine import CfdSizingEngine
+from botragram.engine.market_calendar import MarketCalendarEngine
 from botragram.engine.order_engine import OrderEngine
 from botragram.engine.pnl_engine import PnLEngine
 from botragram.engine.portfolio_engine import PortfolioEngine
@@ -29,6 +32,9 @@ from botragram.engine.trading_engine import TradingEngine
 # Exports
 # =============================================================================
 __all__ = [
+    "CfdFinancingEngine",
+    "CfdSizingEngine",
+    "MarketCalendarEngine",
     "OrderEngine",
     "PnLEngine",
     "PortfolioEngine",

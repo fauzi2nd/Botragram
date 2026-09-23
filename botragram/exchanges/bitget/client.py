@@ -628,5 +628,15 @@ class BitgetClient(BaseExchangeClient):
     ) -> Order:
         raise NotImplementedError("close_position must be implemented by subclass")
 
+    async def close_position_exact(
+        self,
+        *,
+        position: Position,
+        client_order_id: str,
+    ) -> Order:
+        raise NotImplementedError(
+            "close_position_exact must be implemented by subclass"
+        )
+
     async def close_all_positions(self) -> Sequence[Order]:
         raise NotImplementedError("close_all_positions must be implemented by subclass")

@@ -18,18 +18,25 @@ from __future__ import annotations
 # =============================================================================
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import Interval, OrderSide, OrderType
+from botragram.enums import (
+    AssetClass,
+    Interval,
+    MarketSessionStatus,
+    OrderSide,
+    OrderType,
+)
 from botragram.models import (
     Account,
     Candle,
     ExchangeSymbolRules,
     ExecutableQuote,
+    MarketSession,
     MarketUniverseEntry,
     Order,
     Position,
@@ -136,6 +143,44 @@ class BaseExchangeClient(ABC):
         """Return typed market-universe facts when the exchange supports them."""
         del quote_asset
         raise NotImplementedError("Market-universe discovery is not supported")
+
+    async def is_market_open(
+        self,
+        *,
+        symbol: str,
+        at: datetime | None = None,
+    ) -> bool:
+        """Return whether the market is open for trading the symbol.
+
+        Defaults to True for continuous 24/7 crypto markets. TradFi CFD clients
+        override this method with weekend and session-hours checks.
+        """
+        del symbol, at
+        return True
+
+    async def get_market_session(
+        self,
+        *,
+        symbol: str,
+        at: datetime | None = None,
+    ) -> MarketSession:
+        """Return trading session status and schedule information.
+
+        Defaults to continuous 24/7 OPEN status for crypto markets.
+        """
+        current_time = (
+            datetime.now(timezone.utc)
+            if at is None
+            else (at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc))
+        )
+        return MarketSession(
+            symbol=symbol,
+            asset_class=AssetClass.CRYPTO,
+            status=MarketSessionStatus.OPEN,
+            is_open=True,
+            current_time=current_time,
+            reason="Crypto market trades 24/7",
+        )
 
     @property
     def supported_intervals(self) -> frozenset[Interval]:

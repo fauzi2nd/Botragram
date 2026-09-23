@@ -503,6 +503,7 @@ def test_main_menu_and_exchange_keyboard_have_stable_actions() -> None:
         "cb_exchange_bitget",
         "cb_product_spot",
         "cb_product_futures",
+        "cb_product_cfd",
     }
     futures_button = next(
         button
@@ -511,6 +512,13 @@ def test_main_menu_and_exchange_keyboard_have_stable_actions() -> None:
         if button.callback_data == "cb_product_futures"
     )
     assert not futures_button.text.startswith("✅")
+    cfd_button = next(
+        button
+        for row in exchange_menu.inline_keyboard
+        for button in row
+        if button.callback_data == "cb_product_cfd"
+    )
+    assert not cfd_button.text.startswith("✅")
 
     unconfirmed_keyboards = (
         exchange_menu,
@@ -547,6 +555,18 @@ def test_main_menu_and_exchange_keyboard_have_stable_actions() -> None:
         button.text for row in confirmed_bitget.inline_keyboard for button in row
     }
     assert "✅ 🔵 BITGET" in confirmed_bitget_labels
+
+    confirmed_bitget_cfd = get_exchange_keyboard(
+        "BITGET",
+        MarketType.CFD,
+        exchange_confirmed=True,
+        market_type_confirmed=True,
+    )
+    confirmed_bitget_cfd_labels = {
+        button.text for row in confirmed_bitget_cfd.inline_keyboard for button in row
+    }
+    assert "✅ 🔵 BITGET" in confirmed_bitget_cfd_labels
+    assert "✅ CFD" in confirmed_bitget_cfd_labels
 
 
 def test_market_keyboard_paginates_dynamic_exchange_symbols() -> None:

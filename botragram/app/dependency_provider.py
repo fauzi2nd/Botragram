@@ -59,6 +59,8 @@ from botragram.constants import (
     BYBIT_WEBSOCKET_BASE_URL,
 )
 from botragram.engine import (
+    CfdFinancingEngine,
+    CfdSizingEngine,
     OrderEngine,
     PnLEngine,
     PortfolioEngine,
@@ -1241,10 +1243,15 @@ class DependencyProvider:
         self._risk_engine = RiskEngine(settings=self._settings.risk)
         self._pnl_engine = PnLEngine()
         self._portfolio_engine = PortfolioEngine()
+        cfd_sizing = CfdSizingEngine()
+        cfd_financing = CfdFinancingEngine(sizing=cfd_sizing)
         self._trading_engine = TradingEngine(
             risk_engine=self.risk_engine,
             portfolio_engine=self.portfolio_engine,
             min_signal_confidence=self._settings.strategy.min_signal_confidence,
+            cfd_sizing_engine=cfd_sizing,
+            cfd_financing_engine=cfd_financing,
+            market_type=self._settings.exchange.market_type,
         )
         self._order_engine = OrderEngine(exchange_client=exchange_client)
         self._position_engine = PositionEngine(exchange_client=exchange_client)
@@ -1512,6 +1519,8 @@ class DependencyProvider:
         self._live_trading_performance_service = LiveTradingPerformanceService(
             lifecycle_repository=self.closed_position_lifecycle_repository,
         )
+        cfd_sizing = CfdSizingEngine()
+        cfd_financing = CfdFinancingEngine(sizing=cfd_sizing)
         self._paper_trading_service = PaperTradingService(
             order_repository=self.order_repository,
             trade_repository=self.trade_repository,
@@ -1520,6 +1529,9 @@ class DependencyProvider:
             pnl_engine=self.pnl_engine,
             notification_publisher=self.telegram_bot,
             quote_asset=self._settings.market.quote_asset,
+            cfd_sizing_engine=cfd_sizing,
+            cfd_financing_engine=cfd_financing,
+            market_type=self._settings.exchange.market_type,
         )
         self._trading_service = TradingService(
             market_service=self.market_service,

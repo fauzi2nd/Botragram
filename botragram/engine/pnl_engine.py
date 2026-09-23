@@ -63,6 +63,7 @@ class PnLEngine:
         *,
         position: Position,
         current_price: Decimal | None = None,
+        contract_size: Decimal = _DECIMAL_ONE,
     ) -> Decimal:
         """Calculate unrealized PnL for an open position.
 
@@ -70,6 +71,7 @@ class PnLEngine:
             position: Open trading position.
             current_price: Optional current market price. When omitted,
                 the current price stored in the position is used.
+            contract_size: Multiplier per unit/lot (defaults to 1 for spot/futures).
 
         Returns:
             Unrealized profit or loss.
@@ -91,7 +93,7 @@ class PnLEngine:
             exit_price=price,
         )
 
-        return price_difference * position.quantity
+        return price_difference * position.quantity * contract_size
 
     def calculate_realized(
         self,
@@ -102,6 +104,7 @@ class PnLEngine:
         quantity: Decimal,
         entry_fee: Decimal = _DECIMAL_ZERO,
         exit_fee: Decimal = _DECIMAL_ZERO,
+        contract_size: Decimal = _DECIMAL_ONE,
     ) -> Decimal:
         """Calculate realized PnL after a position is closed.
 
@@ -112,6 +115,7 @@ class PnLEngine:
             quantity: Closed position quantity.
             entry_fee: Fee paid when opening the position.
             exit_fee: Fee paid when closing the position.
+            contract_size: Multiplier per unit/lot (defaults to 1 for spot/futures).
 
         Returns:
             Realized profit or loss after fees.
@@ -138,6 +142,7 @@ class PnLEngine:
                 exit_price=exit_price,
             )
             * quantity
+            * contract_size
         )
 
         return gross_pnl - entry_fee - exit_fee
@@ -148,6 +153,7 @@ class PnLEngine:
         pnl: Decimal,
         entry_price: Decimal,
         quantity: Decimal,
+        contract_size: Decimal = _DECIMAL_ONE,
     ) -> Decimal:
         """Calculate return relative to position notional.
 
@@ -155,6 +161,7 @@ class PnLEngine:
             pnl: Profit or loss amount.
             entry_price: Position entry price.
             quantity: Position quantity.
+            contract_size: Multiplier per unit/lot (defaults to 1 for spot/futures).
 
         Returns:
             Percentage return relative to entry notional.
@@ -168,7 +175,7 @@ class PnLEngine:
         if quantity <= _DECIMAL_ZERO:
             raise ValueError(_QUANTITY_ERROR)
 
-        entry_notional = entry_price * quantity
+        entry_notional = entry_price * quantity * contract_size
 
         return pnl / entry_notional * _DECIMAL_ONE_HUNDRED
 
@@ -179,6 +186,7 @@ class PnLEngine:
         entry_price: Decimal,
         quantity: Decimal,
         leverage: int,
+        contract_size: Decimal = _DECIMAL_ONE,
     ) -> Decimal:
         """Calculate return relative to initial margin.
 
@@ -187,6 +195,7 @@ class PnLEngine:
             entry_price: Position entry price.
             quantity: Position quantity.
             leverage: Position leverage.
+            contract_size: Multiplier per unit/lot (defaults to 1 for spot/futures).
 
         Returns:
             Percentage return relative to initial margin.
@@ -203,7 +212,7 @@ class PnLEngine:
         if quantity <= _DECIMAL_ZERO:
             raise ValueError("Position quantity must be greater than zero")
 
-        initial_margin = entry_price * quantity / Decimal(leverage)
+        initial_margin = entry_price * quantity * contract_size / Decimal(leverage)
 
         return pnl / initial_margin * _DECIMAL_ONE_HUNDRED
 

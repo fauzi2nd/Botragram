@@ -424,6 +424,8 @@ def get_positions_message(
                 roi_str = f" ({sign}{roi_val:.2f}%)"
 
         qty_str = format_price(position.quantity, min_decimals=0)
+        pnl_currency = "USD" if "." in position.symbol else "USDT"
+        pnl_val = format_currency(position.unrealized_pnl, symbol=pnl_currency)
         lines.append(
             f"\n{side_icon} <b>{escape(position.symbol)}</b> · "
             f"{position.side.value.upper()} · {position.leverage}x\n"
@@ -432,7 +434,7 @@ def get_positions_message(
             f"{_format_optional_price(position.current_price)}\n"
             f"SL / TP: {_format_optional_price(position.stop_loss)} / "
             f"{_format_optional_price(position.take_profit)}\n"
-            f"PnL={format_currency(position.unrealized_pnl, symbol='USDT')}{roi_str} · "
+            f"PnL={pnl_val}{roi_str} · "
             f"SL+ Step {position.protection_step}"
         )
 
@@ -473,15 +475,18 @@ def get_exchange_message(
         if exchange_confirmed
         else "Belum dipilih"
     )
-    product = (
-        escape(market_type.value.title()) if market_type_confirmed else "Belum dipilih"
+    product_label = (
+        market_type.value.upper()
+        if market_type is MarketType.CFD
+        else market_type.value.title()
     )
+    product = escape(product_label) if market_type_confirmed else "Belum dipilih"
 
     return (
         "🔄 <b>Exchange &amp; Product</b>\n\n"
         f"<b>Exchange:</b> {exchange}\n"
         f"<b>Product:</b> {product}\n\n"
-        "Pilih Spot atau Futures. Botragram akan menutup connector lama dan "
+        "Pilih Spot, Futures, atau CFD. Botragram akan menutup connector lama dan "
         "melakukan soft restart otomatis setelah pemeriksaan keamanan."
     )
 

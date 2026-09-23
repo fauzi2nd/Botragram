@@ -14,10 +14,19 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from botragram.engine.cfd_financing_engine import CfdFinancingEngine
+from botragram.engine.cfd_sizing_engine import CfdSizingEngine
 from botragram.engine.portfolio_engine import PortfolioEngine
 from botragram.engine.risk_engine import RiskEngine
-from botragram.enums import SignalType
-from botragram.models import Position, Signal, TradingDecision
+from botragram.enums import MarketType, PositionSide, SignalType, StrategyType
+from botragram.models import (
+    Position,
+    PositionSize,
+    RiskMetrics,
+    RiskResult,
+    Signal,
+    TradingDecision,
+)
 
 __all__ = ["TradingEngine"]
 
@@ -34,6 +43,9 @@ class TradingEngine:
     risk_engine: RiskEngine
     portfolio_engine: PortfolioEngine = field(default_factory=PortfolioEngine)
     min_signal_confidence: Decimal = _DECIMAL_ZERO
+    cfd_sizing_engine: CfdSizingEngine | None = None
+    cfd_financing_engine: CfdFinancingEngine | None = None
+    market_type: MarketType = MarketType.FUTURES
 
     def evaluate(
         self,
@@ -116,6 +128,14 @@ class TradingEngine:
             effective_max_open_positions - current_open_positions_count,
         )
 
+        if self.market_type is MarketType.CFD and self.cfd_sizing_engine is not None:
+            return self._evaluate_cfd(
+                signal=signal,
+                account_balance=account_balance,
+                current_drawdown_pct=current_drawdown_pct,
+                leverage=leverage,
+            )
+
         risk_result = self.risk_engine.evaluate(
             signal=signal,
             account_balance=account_balance,
@@ -135,6 +155,139 @@ class TradingEngine:
                 reason=risk_result.reason,
             )
 
+        return TradingDecision(
+            should_execute=True,
+            signal=signal,
+            risk_result=risk_result,
+        )
+
+    def _evaluate_cfd(
+        self,
+        *,
+        signal: Signal,
+        account_balance: Decimal,
+        current_drawdown_pct: Decimal,
+        leverage: int | None,
+    ) -> TradingDecision:
+        """Evaluate a CFD signal calculating lots, margin, and leverage."""
+        if self.cfd_sizing_engine is None:
+            raise RuntimeError("CFD sizing engine is required for MarketType.CFD")
+
+        if current_drawdown_pct >= self.risk_engine.settings.max_drawdown_pct:
+            return TradingDecision(
+                should_execute=False,
+                signal=signal,
+                risk_result=None,
+                reason="Maximum account drawdown reached",
+            )
+
+        requested_lev = (
+            leverage
+            if (
+                leverage is not None and not isinstance(leverage, bool) and leverage > 0
+            )
+            else self.risk_engine.settings.leverage
+        )
+        effective_leverage = (
+            self.cfd_financing_engine.validate_leverage(signal.symbol, requested_lev)
+            if self.cfd_financing_engine is not None
+            else requested_lev
+        )
+
+        try:
+            strategy_type = StrategyType(signal.strategy_name)
+        except ValueError:
+            strategy_type = None
+
+        if signal.stop_loss is not None and signal.take_profit is not None:
+            stop_loss = signal.stop_loss
+            take_profit = signal.take_profit
+        else:
+            side = (
+                PositionSide.LONG
+                if signal.signal_type is SignalType.BUY
+                else PositionSide.SHORT
+            )
+            calc_sl, calc_tp = self.risk_engine.calculate_protection_levels(
+                side=side,
+                entry_price=signal.price,
+                strategy_type=strategy_type,
+            )
+            stop_loss = signal.stop_loss if signal.stop_loss is not None else calc_sl
+            take_profit = (
+                signal.take_profit if signal.take_profit is not None else calc_tp
+            )
+
+        risk_amount = account_balance * self.risk_engine.settings.risk_per_trade_pct
+        try:
+            sizing = self.cfd_sizing_engine.calculate_lot_size(
+                symbol=signal.symbol,
+                entry_price=signal.price,
+                stop_loss=stop_loss,
+                risk_amount=risk_amount,
+            )
+        except ValueError as err:
+            return TradingDecision(
+                should_execute=False,
+                signal=signal,
+                risk_result=None,
+                reason=f"CFD sizing calculation failed: {err}",
+            )
+
+        normalized_lots = sizing.normalized_lots
+        if normalized_lots <= _DECIMAL_ZERO:
+            return TradingDecision(
+                should_execute=False,
+                signal=signal,
+                risk_result=None,
+                reason="Calculated CFD lot size is zero",
+            )
+
+        if self.cfd_financing_engine is not None:
+            margin_req = self.cfd_financing_engine.calculate_margin_requirement(
+                symbol=signal.symbol,
+                lots=normalized_lots,
+                price=signal.price,
+                leverage=effective_leverage,
+                free_margin=account_balance,
+            )
+            if not margin_req.is_sufficient:
+                return TradingDecision(
+                    should_execute=False,
+                    signal=signal,
+                    risk_result=None,
+                    reason=(
+                        f"Insufficient free margin {account_balance} for "
+                        f"CFD required margin {margin_req.required_margin}"
+                    ),
+                )
+
+        spec = self.cfd_sizing_engine.get_contract_spec(signal.symbol)
+        reward_dist_pips = abs(take_profit - signal.price) / spec.pip_size
+        reward_amount = reward_dist_pips * sizing.pip_value_per_lot * normalized_lots
+        sl_dist = abs(signal.price - stop_loss)
+        rrr = (
+            abs(take_profit - signal.price) / sl_dist
+            if sl_dist > _DECIMAL_ZERO
+            else _DECIMAL_ZERO
+        )
+
+        risk_result = RiskResult(
+            approved=True,
+            position=PositionSize(
+                quantity=normalized_lots,
+                notional=sizing.notional_value,
+                leverage=effective_leverage,
+            ),
+            metrics=RiskMetrics(
+                entry_price=signal.price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                risk_amount=risk_amount,
+                reward_amount=reward_amount,
+                risk_reward_ratio=rrr,
+            ),
+        )
         return TradingDecision(
             should_execute=True,
             signal=signal,

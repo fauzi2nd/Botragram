@@ -184,7 +184,12 @@ class BitgetFuturesExchangeClient(BitgetClient):
 
         if order_id:
             try:
-                return await self.get_order(symbol=normalized_symbol, order_id=order_id)
+                order = await self.get_order(
+                    symbol=normalized_symbol, order_id=order_id
+                )
+                if client_order_id and not order.client_order_id:
+                    return replace(order, client_order_id=client_order_id)
+                return order
             except (
                 ExchangeError,
                 ExchangeOrderNotFoundError,
@@ -932,6 +937,28 @@ class BitgetFuturesExchangeClient(BitgetClient):
             side=close_side,
             order_type=OrderType.MARKET,
             quantity=pos.quantity,
+            client_order_id=client_order_id,
+            reduce_only=True,
+            pos_side=pos_side,
+        )
+
+    async def close_position_exact(
+        self,
+        *,
+        position: Position,
+        client_order_id: str,
+    ) -> Order:
+        """Submit one reduce-only close from an authoritative snapshot."""
+        normalized_symbol = position.symbol.strip().upper()
+        close_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+        )
+        pos_side = "long" if position.side is PositionSide.LONG else "short"
+        return await self.create_order(
+            symbol=normalized_symbol,
+            side=close_side,
+            order_type=OrderType.MARKET,
+            quantity=position.quantity,
             client_order_id=client_order_id,
             reduce_only=True,
             pos_side=pos_side,

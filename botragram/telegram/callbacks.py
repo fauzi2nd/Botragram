@@ -1562,10 +1562,15 @@ async def handle_callback_query(
             )
             return
 
+        product_label = (
+            market_type.value.upper()
+            if market_type is MarketType.CFD
+            else market_type.value.title()
+        )
         await query.edit_message_text(
             "🔄 <b>Perpindahan connector dimulai.</b>\n\n"
             f"Target: <b>{escape(bot_context.exchange_type.title())} "
-            f"{escape(market_type.value.title())}</b>\n"
+            f"{escape(product_label)}</b>\n"
             "Botragram akan tersambung kembali secara otomatis.",
             parse_mode=DEFAULT_PARSE_MODE,
         )

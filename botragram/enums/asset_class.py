@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Market type enumeration.
+    Asset class enumeration for market categorization.
 
 Python:
     3.14+
@@ -14,25 +14,25 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library Imports
+# Standard Library
 # =============================================================================
-from enum import unique
+from enum import StrEnum
 
 # =============================================================================
-# Local Imports
+# Exports
 # =============================================================================
-from botragram.enums.base import BaseEnum
-
-__all__ = ["MarketType"]
+__all__ = [
+    "AssetClass",
+]
 
 
 # =============================================================================
-# Enums
+# Asset Class Enum
 # =============================================================================
-@unique
-class MarketType(BaseEnum):
-    """Supported market types."""
+class AssetClass(StrEnum):
+    """Financial asset class for market categorization."""
 
-    SPOT = "spot"
-    FUTURES = "futures"
-    CFD = "cfd"
+    CRYPTO = "crypto"
+    FOREX = "forex"
+    COMMODITY = "commodity"
+    INDEX = "index"

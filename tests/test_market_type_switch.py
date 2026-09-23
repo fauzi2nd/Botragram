@@ -359,3 +359,44 @@ async def test_exchange_switch_blocked_by_open_positions() -> None:
         await service.prepare_exchange(exchange_type=ExchangeType.BYBIT)
 
     assert not coordinator.has_committed_restart
+
+
+@pytest.mark.asyncio
+async def test_market_type_switch_cfd_validations() -> None:
+    """Verify market type switch compatibility between Bitget and CFD."""
+    coordinator = RuntimeRestartCoordinator()
+
+    # 1. Binance rejects CFD
+    binance_service = MarketTypeSwitchService(
+        trade_mode=TradeMode.PAPER,
+        runtime_control=TradingRuntimeControl(
+            exchange_type=ExchangeType.BINANCE,
+            market_type=MarketType.SPOT,
+        ),
+        position_repository=FakeStoredPositions(),
+        position_service=FakeLivePositions(),
+        restart_coordinator=coordinator,
+    )
+    with pytest.raises(ValueError, match="CFD market type is only supported on Bitget"):
+        await binance_service.prepare(market_type=MarketType.CFD)
+
+    # 2. Bitget rejects Spot
+    bitget_service = MarketTypeSwitchService(
+        trade_mode=TradeMode.PAPER,
+        runtime_control=TradingRuntimeControl(
+            exchange_type=ExchangeType.BITGET,
+            market_type=MarketType.FUTURES,
+        ),
+        position_repository=FakeStoredPositions(),
+        position_service=FakeLivePositions(),
+        restart_coordinator=coordinator,
+    )
+    with pytest.raises(
+        ValueError, match="Bitget connector only supports Futures and CFD"
+    ):
+        await bitget_service.prepare(market_type=MarketType.SPOT)
+
+    # 3. Bitget accepts CFD
+    assert await bitget_service.prepare(market_type=MarketType.CFD)
+    bitget_service.commit(market_type=MarketType.CFD)
+    assert coordinator.consume() is MarketType.CFD

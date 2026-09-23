@@ -1237,6 +1237,47 @@ async def _run_market_type_switch_callback_test() -> None:
     assert "Binance Futures" in query.replies[-1]
 
 
+def test_telegram_can_request_a_cfd_soft_restart() -> None:
+    """Acknowledge CFD product before committing its restart."""
+    asyncio.run(_run_cfd_switch_callback_test())
+
+
+async def _run_cfd_switch_callback_test() -> None:
+    """Select CFD through the exchange configuration callback."""
+    switcher = FakeMarketTypeSwitcher()
+    query = FakeCallbackQuery(data="cb_product_cfd")
+    update = cast(
+        Update,
+        FakeUpdate(
+            message=FakeMessage(),
+            effective_chat=FakeChat(id=_ALLOWED_CHAT_ID),
+            callback_query=query,
+        ),
+    )
+    context = cast(
+        ContextTypes.DEFAULT_TYPE,
+        FakeContext(
+            bot_data={
+                ALLOWED_CHAT_IDS_KEY: frozenset({_ALLOWED_CHAT_ID}),
+                BOT_CONTEXT_KEY: BotContext(
+                    exchange_type="BITGET",
+                    runtime_control=TradingRuntimeControl(
+                        exchange_type=ExchangeType.BITGET,
+                        market_type=MarketType.FUTURES,
+                    ),
+                    market_type_switcher=switcher,
+                ),
+            }
+        ),
+    )
+
+    await handle_callback_query(update, context)
+
+    assert switcher.prepared == [MarketType.CFD]
+    assert switcher.committed == [MarketType.CFD]
+    assert "Bitget CFD" in query.replies[-1]
+
+
 async def _run_open_position_startup_recovery_test() -> None:
     """Confirm active selections and retain guards for different values."""
     runtime_control = TradingRuntimeControl()

@@ -574,6 +574,7 @@ def get_exchange_keyboard(
     futures_check = (
         "✅ " if market_type_confirmed and market_type is MarketType.FUTURES else ""
     )
+    cfd_check = "✅ " if market_type_confirmed and market_type is MarketType.CFD else ""
     keyboard = [
         [
             InlineKeyboardButton(
@@ -594,6 +595,10 @@ def get_exchange_keyboard(
             InlineKeyboardButton(
                 f"{futures_check}Futures",
                 callback_data="cb_product_futures",
+            ),
+            InlineKeyboardButton(
+                f"{cfd_check}CFD",
+                callback_data="cb_product_cfd",
             ),
         ],
         [InlineKeyboardButton("◀️ Back", callback_data="cb_back_main")],

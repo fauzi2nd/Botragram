@@ -121,7 +121,11 @@ async def _run_trading(
             top_n=active_settings.market.discovery_top_n,
         )
         if active_settings.app.effective_execution_policy
-        is ExecutionPolicy.AUTONOMOUS_LIVE
+        in (
+            ExecutionPolicy.AUTONOMOUS_LIVE,
+            ExecutionPolicy.AUTONOMOUS_PAPER,
+            ExecutionPolicy.HUMAN_CONFIRMED_PAPER,
+        )
         else None
     )
     live_user_data = dependency_provider.live_futures_user_data_service
@@ -266,7 +270,11 @@ async def _run_trading(
             cycle_interval_seconds=(
                 settings.market.discovery_cadence_seconds
                 if settings.app.effective_execution_policy
-                is ExecutionPolicy.AUTONOMOUS_LIVE
+                in (
+                    ExecutionPolicy.AUTONOMOUS_LIVE,
+                    ExecutionPolicy.AUTONOMOUS_PAPER,
+                    ExecutionPolicy.HUMAN_CONFIRMED_PAPER,
+                )
                 else None
             ),
             global_discovery_telemetry=global_discovery_telemetry,

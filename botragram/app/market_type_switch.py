@@ -246,16 +246,26 @@ class MarketTypeSwitchService:
         )
 
     async def prepare(self, *, market_type: MarketType) -> bool:
-        """Validate and stage a Spot or Futures switch without restarting yet."""
+        """Validate and stage a Spot, Futures, or CFD switch without restarting yet."""
         if market_type is self.runtime_control.market_type:
             self.runtime_control.confirm_market_type(market_type)
             return False
 
         self.runtime_control.require_configuration_change_allowed()
         if await self._get_positions():
-            raise RuntimeError(
-                "Close every active position before switching Spot or Futures"
-            )
+            raise RuntimeError("Close every active position before switching product")
+
+        if (
+            market_type is MarketType.CFD
+            and self.runtime_control.exchange_type is not ExchangeType.BITGET
+        ):
+            raise ValueError("CFD market type is only supported on Bitget")
+
+        if (
+            market_type is MarketType.SPOT
+            and self.runtime_control.exchange_type is ExchangeType.BITGET
+        ):
+            raise ValueError("Bitget connector only supports Futures and CFD")
 
         self.restart_coordinator.stage(market_type=market_type)
         return True

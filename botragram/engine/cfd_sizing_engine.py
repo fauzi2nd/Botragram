@@ -1,0 +1,265 @@
+"""
+Botragram
+
+Description:
+    TradFi CFD sizing engine calculating pip distances, pip values, and lots.
+
+Python:
+    3.14+
+"""
+
+# =============================================================================
+# Future
+# =============================================================================
+from __future__ import annotations
+
+# =============================================================================
+# Standard Library
+# =============================================================================
+import re
+from decimal import Decimal
+from typing import Final
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from botragram.engine.market_calendar import MarketCalendarEngine
+from botragram.enums import AssetClass
+from botragram.models import CfdContractSpec, PipCalculationResult
+
+# =============================================================================
+# Exports
+# =============================================================================
+__all__ = [
+    "CfdSizingEngine",
+]
+
+# =============================================================================
+# Constants
+# =============================================================================
+_DECIMAL_ZERO: Final[Decimal] = Decimal("0")
+_DEFAULT_LOT_STEP: Final[Decimal] = Decimal("0.01")
+_DEFAULT_MIN_LOT: Final[Decimal] = Decimal("0.01")
+_DEFAULT_MAX_LOT: Final[Decimal] = Decimal("100.0")
+
+_FOREX_CONTRACT_SIZE: Final[Decimal] = Decimal("100000")
+_XAU_CONTRACT_SIZE: Final[Decimal] = Decimal("100")
+_XAG_CONTRACT_SIZE: Final[Decimal] = Decimal("5000")
+_OIL_CONTRACT_SIZE: Final[Decimal] = Decimal("1000")
+_INDEX_CONTRACT_SIZE: Final[Decimal] = Decimal("1")
+_CRYPTO_CONTRACT_SIZE: Final[Decimal] = Decimal("1")
+
+_STANDARD_FX_PIP: Final[Decimal] = Decimal("0.0001")
+_JPY_FX_PIP: Final[Decimal] = Decimal("0.01")
+_XAU_PIP: Final[Decimal] = Decimal("0.10")
+_XAG_PIP: Final[Decimal] = Decimal("0.01")
+_OIL_PIP: Final[Decimal] = Decimal("0.01")
+_INDEX_PIP: Final[Decimal] = Decimal("1.0")
+_CRYPTO_PIP: Final[Decimal] = Decimal("1.0")
+
+
+# =============================================================================
+# CFD Sizing Engine
+# =============================================================================
+class CfdSizingEngine:
+    """Deterministic calculation of pip metrics, contract specs, and lot sizing."""
+
+    __slots__ = ("_calendar",)
+
+    def __init__(self, calendar: MarketCalendarEngine | None = None) -> None:
+        """Initialize the CFD sizing engine with an optional calendar."""
+        self._calendar = calendar if calendar is not None else MarketCalendarEngine()
+
+    def get_contract_spec(self, symbol: str) -> CfdContractSpec:
+        """Resolve authoritative contract and pip specification for a CFD symbol."""
+        clean = re.sub(
+            r"(\.(s|pro|cfd|std)|(_ecn|_std|-cfd))$",
+            "",
+            symbol.strip(),
+            flags=re.IGNORECASE,
+        ).upper()
+        asset_class = self._calendar.classify_asset(symbol)
+
+        if asset_class is AssetClass.CRYPTO:
+            return CfdContractSpec(
+                symbol=symbol,
+                asset_class=asset_class,
+                contract_size=_CRYPTO_CONTRACT_SIZE,
+                pip_size=_CRYPTO_PIP,
+                tick_size=Decimal("0.01"),
+                min_lot=_DEFAULT_MIN_LOT,
+                max_lot=_DEFAULT_MAX_LOT,
+                lot_step=_DEFAULT_LOT_STEP,
+            )
+
+        if asset_class is AssetClass.COMMODITY:
+            if clean.startswith("XAU"):
+                return CfdContractSpec(
+                    symbol=symbol,
+                    asset_class=asset_class,
+                    contract_size=_XAU_CONTRACT_SIZE,
+                    pip_size=_XAU_PIP,
+                    tick_size=Decimal("0.01"),
+                    min_lot=_DEFAULT_MIN_LOT,
+                    max_lot=_DEFAULT_MAX_LOT,
+                    lot_step=_DEFAULT_LOT_STEP,
+                )
+            if clean.startswith("XAG"):
+                return CfdContractSpec(
+                    symbol=symbol,
+                    asset_class=asset_class,
+                    contract_size=_XAG_CONTRACT_SIZE,
+                    pip_size=_XAG_PIP,
+                    tick_size=Decimal("0.001"),
+                    min_lot=_DEFAULT_MIN_LOT,
+                    max_lot=_DEFAULT_MAX_LOT,
+                    lot_step=_DEFAULT_LOT_STEP,
+                )
+            return CfdContractSpec(
+                symbol=symbol,
+                asset_class=asset_class,
+                contract_size=_OIL_CONTRACT_SIZE,
+                pip_size=_OIL_PIP,
+                tick_size=Decimal("0.01"),
+                min_lot=_DEFAULT_MIN_LOT,
+                max_lot=_DEFAULT_MAX_LOT,
+                lot_step=_DEFAULT_LOT_STEP,
+            )
+
+        if asset_class is AssetClass.INDEX:
+            return CfdContractSpec(
+                symbol=symbol,
+                asset_class=asset_class,
+                contract_size=_INDEX_CONTRACT_SIZE,
+                pip_size=_INDEX_PIP,
+                tick_size=Decimal("0.01"),
+                min_lot=_DEFAULT_MIN_LOT,
+                max_lot=_DEFAULT_MAX_LOT,
+                lot_step=_DEFAULT_LOT_STEP,
+            )
+
+        # Forex
+        is_jpy = clean.endswith("JPY")
+        pip_size = _JPY_FX_PIP if is_jpy else _STANDARD_FX_PIP
+        tick_size = Decimal("0.001") if is_jpy else Decimal("0.00001")
+        return CfdContractSpec(
+            symbol=symbol,
+            asset_class=AssetClass.FOREX,
+            contract_size=_FOREX_CONTRACT_SIZE,
+            pip_size=pip_size,
+            tick_size=tick_size,
+            min_lot=_DEFAULT_MIN_LOT,
+            max_lot=_DEFAULT_MAX_LOT,
+            lot_step=_DEFAULT_LOT_STEP,
+        )
+
+    def calculate_pip_distance(
+        self,
+        symbol: str,
+        entry_price: Decimal,
+        target_price: Decimal,
+    ) -> Decimal:
+        """Calculate the absolute distance in pips between two price levels."""
+        spec = self.get_contract_spec(symbol)
+        diff = abs(entry_price - target_price)
+        return diff / spec.pip_size
+
+    def calculate_pip_value_per_lot(
+        self,
+        symbol: str,
+        price: Decimal,
+        quote_to_account_rate: Decimal = Decimal("1.0"),
+    ) -> Decimal:
+        """Calculate the monetary value of 1.0 pip per 1.0 standard lot.
+
+        Args:
+            symbol: Trading instrument.
+            price: Current market price (used when base is USD).
+            quote_to_account_rate: Rate to convert quote currency to account currency
+                (defaults to 1.0 when account is USD and quote is USD).
+        """
+        spec = self.get_contract_spec(symbol)
+        clean = re.sub(
+            r"(\.(s|pro|cfd|std)|(_ecn|_std|-cfd))$",
+            "",
+            symbol.strip(),
+            flags=re.IGNORECASE,
+        ).upper()
+
+        # If base is USD (e.g. USDJPY, USDCAD, USDCHF) and rate is 1.0
+        if (
+            spec.asset_class is AssetClass.FOREX
+            and clean.startswith("USD")
+            and len(clean) == 6
+            and quote_to_account_rate == Decimal("1.0")
+            and price > _DECIMAL_ZERO
+        ):
+            pip_in_quote = spec.contract_size * spec.pip_size
+            return pip_in_quote / price
+
+        # Standard: quote currency is converted by quote_to_account_rate
+        return (spec.contract_size * spec.pip_size) * quote_to_account_rate
+
+    def calculate_lot_size(
+        self,
+        *,
+        symbol: str,
+        entry_price: Decimal,
+        stop_loss: Decimal,
+        risk_amount: Decimal,
+        quote_to_account_rate: Decimal = Decimal("1.0"),
+    ) -> PipCalculationResult:
+        """Calculate position sizing in lots based on risk capital budget."""
+        if entry_price <= _DECIMAL_ZERO:
+            raise ValueError("entry_price must be positive")
+        if stop_loss <= _DECIMAL_ZERO:
+            raise ValueError("stop_loss must be positive")
+        if risk_amount < _DECIMAL_ZERO:
+            raise ValueError("risk_amount cannot be negative")
+
+        spec = self.get_contract_spec(symbol)
+        distance = abs(entry_price - stop_loss)
+        if distance <= _DECIMAL_ZERO:
+            raise ValueError("Stop-loss distance must be greater than zero")
+
+        distance_in_pips = distance / spec.pip_size
+        pip_val_per_lot = self.calculate_pip_value_per_lot(
+            symbol=symbol,
+            price=entry_price,
+            quote_to_account_rate=quote_to_account_rate,
+        )
+
+        loss_per_lot = distance_in_pips * pip_val_per_lot
+        raw_lots = (
+            risk_amount / loss_per_lot
+            if loss_per_lot > _DECIMAL_ZERO
+            else _DECIMAL_ZERO
+        )
+        normalized_lots = self.normalize_lot(symbol, raw_lots)
+        notional_value = normalized_lots * spec.contract_size * entry_price
+
+        return PipCalculationResult(
+            symbol=symbol,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            distance_in_pips=distance_in_pips,
+            pip_value_per_lot=pip_val_per_lot,
+            risk_amount=risk_amount,
+            calculated_lots=raw_lots,
+            normalized_lots=normalized_lots,
+            notional_value=notional_value,
+        )
+
+    def normalize_lot(self, symbol: str, raw_lots: Decimal) -> Decimal:
+        """Normalize raw lots to the symbol's step size, min_lot, and max_lot."""
+        if raw_lots <= _DECIMAL_ZERO:
+            return _DECIMAL_ZERO
+
+        spec = self.get_contract_spec(symbol)
+        if raw_lots < spec.min_lot:
+            return spec.min_lot
+
+        # Round down to discrete lot_step
+        steps = raw_lots // spec.lot_step
+        stepped = steps * spec.lot_step
+        return min(spec.max_lot, max(spec.min_lot, stepped))

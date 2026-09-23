@@ -30,6 +30,8 @@ from botragram.exchanges.binance.mapper import BinanceExchangeMapper
 from botragram.exchanges.binance.rest import BinanceRestClient
 from botragram.exchanges.binance.stream import BinanceStreamClient
 from botragram.exchanges.bitget import (
+    BitgetCfdExchangeClient,
+    BitgetCfdMapper,
     BitgetExchangeMapper,
     BitgetFuturesExchangeClient,
     BitgetRestClient,
@@ -157,17 +159,19 @@ class ExchangeFactory:
                 if not isinstance(rest_client, BitgetRestClient):
                     raise TypeError("Bitget exchange client requires BitgetRestClient")
 
-                bitget_mapper = BitgetExchangeMapper()
-
                 if market_type is MarketType.FUTURES:
                     return BitgetFuturesExchangeClient(
                         rest=rest_client,
-                        mapper=bitget_mapper,
+                        mapper=BitgetExchangeMapper(),
                     )
 
-                raise ValueError(
-                    "Bitget exchange client currently only supports FUTURES"
-                )
+                if market_type is MarketType.CFD:
+                    return BitgetCfdExchangeClient(
+                        rest=rest_client,
+                        mapper=BitgetCfdMapper(),
+                    )
+
+                raise ValueError("Bitget exchange client only supports FUTURES and CFD")
             case _:
                 raise ExchangeFactory._unsupported_exchange(exchange_type)
 

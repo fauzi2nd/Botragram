@@ -1187,6 +1187,8 @@ class TradingRunner:
         """Return the configured cadence for exactly one executable context."""
         if self._is_global_cycle_executor():
             return self._get_global_cadence_seconds()
+        if self._is_paper_discovery_executor():
+            return self._get_global_cadence_seconds()
         return self._get_context_cadence_seconds(
             context=self._get_single_cycle_context(),
         )
@@ -1244,6 +1246,13 @@ class TradingRunner:
         )
         self.runtime_control.begin_cycle()
 
+        is_paper_discovery = self._is_paper_discovery_executor()
+        if is_paper_discovery:
+            self._observe_global_discovery(
+                operation="starting",
+                observation=self._start_global_discovery_telemetry,
+            )
+
         try:
             results = tuple(
                 await self._execute_context(
@@ -1252,10 +1261,26 @@ class TradingRunner:
                     live_management_authorization=live_management_authorization,
                 )
             )
+        except Exception:
+            if is_paper_discovery and self._global_discovery_telemetry is not None:
+                self._observe_global_discovery(
+                    operation="failing",
+                    observation=lambda current: current.fail_cycle(),
+                )
+            raise
         finally:
             self.runtime_control.end_cycle()
 
         self._log_results(context=context, results=results)
+        if is_paper_discovery and self._global_discovery_telemetry is not None:
+            self._observe_global_discovery(
+                operation="completing",
+                observation=lambda current: self._complete_global_discovery_telemetry(
+                    telemetry=current,
+                    results=results,
+                    report=None,
+                ),
+            )
 
         return results
 
@@ -2244,6 +2269,16 @@ class TradingRunner:
     def _is_global_cycle_executor(self) -> bool:
         """Return whether composition selected one market-wide cycle executor."""
         return isinstance(self.executor, GlobalTradingCycleExecutor)
+
+    def _is_paper_discovery_executor(self) -> bool:
+        """Return whether this runner executes paper-mode market discovery."""
+        return self._global_discovery_telemetry is not None and isinstance(
+            self.executor,
+            (
+                AutonomousPaperTradingCycleExecutor,
+                HumanConfirmedPaperTradingCycleExecutor,
+            ),
+        )
 
     async def _run_global_cycle(self) -> tuple[TradingResult, ...]:
         """Execute one discovery cycle without selecting a recovered context."""

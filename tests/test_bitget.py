@@ -50,6 +50,7 @@ from botragram.exchanges.bitget.mapper import BitgetExchangeMapper
 from botragram.exchanges.bitget.rest import BitgetRestClient, BitgetRestResponseError
 from botragram.exchanges.bitget.stream import BitgetStreamClient
 from botragram.exchanges.factory import ExchangeFactory
+from botragram.models import Position
 
 
 # =============================================================================
@@ -730,6 +731,128 @@ async def test_bitget_futures_exchange_client_get_trades_for_order() -> None:
         "orderId": "ord-123",
         "limit": 100,
     }
+
+
+@pytest.mark.asyncio
+async def test_bitget_futures_client_close_position_exact() -> None:
+    """Verify close_position_exact places reduce-only market order with clientOid."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    # 1. Close Short position (like ASTERUSDT short) -> buy, posSide=short
+    rest.canned_responses = [
+        # get_hold_mode
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"productType": "USDT-FUTURES", "posMode": "hedge_mode"},
+        },
+        # place-order
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "ord-close-short"},
+        },
+        # get_order
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "orderId": "ord-close-short",
+                "clientOid": "bop-attempt-short",
+                "symbol": "ASTERUSDT",
+                "side": "buy",
+                "orderType": "market",
+                "status": "live",
+                "size": "33",
+                "cTime": "1700000000000",
+            },
+        },
+    ]
+
+    now = datetime.now(UTC)
+    short_pos = Position(
+        symbol="ASTERUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("33"),
+        entry_price=Decimal("0.7443"),
+        current_price=Decimal("0.7400"),
+        leverage=8,
+        unrealized_pnl=Decimal("0.14"),
+        opened_at=now,
+        updated_at=now,
+    )
+    closed = await client.close_position_exact(
+        position=short_pos,
+        client_order_id="bop-attempt-short",
+    )
+
+    assert closed.order_id == "ord-close-short"
+    assert closed.client_order_id == "bop-attempt-short"
+    assert closed.symbol == "ASTERUSDT"
+    assert closed.side is OrderSide.BUY
+    assert closed.order_type is OrderType.MARKET
+    assert closed.quantity == Decimal("33")
+
+    # Verify REST call parameters for placing order
+    place_calls = [c for c in rest.history if c[1] == "/api/v3/trade/place-order"]
+    assert len(place_calls) == 1
+    assert rest.last_data is not None
+    assert rest.last_data["symbol"] == "ASTERUSDT"
+    assert rest.last_data["side"] == "buy"
+    assert rest.last_data["orderType"] == "market"
+    assert rest.last_data["qty"] == "33"
+    assert rest.last_data["clientOid"] == "bop-attempt-short"
+    assert rest.last_data["posSide"] == "short"
+
+    # 2. Close Long position -> sell, posSide=long
+    rest.history.clear()
+    rest.canned_responses = [
+        # place-order (hold_mode is cached)
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "ord-close-long"},
+        },
+        # get_order
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "orderId": "ord-close-long",
+                "clientOid": "bop-attempt-long",
+                "symbol": "BTCUSDT",
+                "side": "sell",
+                "orderType": "market",
+                "status": "live",
+                "size": "0.5",
+                "cTime": "1700000000000",
+            },
+        },
+    ]
+
+    long_pos = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("0.5"),
+        entry_price=Decimal("60000"),
+        current_price=Decimal("61000"),
+        leverage=10,
+        unrealized_pnl=Decimal("500"),
+        opened_at=now,
+        updated_at=now,
+    )
+    closed_long = await client.close_position_exact(
+        position=long_pos,
+        client_order_id="bop-attempt-long",
+    )
+    assert closed_long.order_id == "ord-close-long"
+    assert closed_long.client_order_id == "bop-attempt-long"
+    assert closed_long.side is OrderSide.SELL
+    assert rest.last_data is not None
+    assert rest.last_data["symbol"] == "BTCUSDT"
+    assert rest.last_data["side"] == "sell"
+    assert rest.last_data["posSide"] == "long"
 
 
 @pytest.mark.asyncio

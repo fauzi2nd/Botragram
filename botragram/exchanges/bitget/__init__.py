@@ -16,6 +16,8 @@ from __future__ import annotations
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.exchanges.bitget.cfd_client import BitgetCfdExchangeClient
+from botragram.exchanges.bitget.cfd_mapper import BitgetCfdMapper
 from botragram.exchanges.bitget.client import BITGET_INTERVAL_MAP, BitgetClient
 from botragram.exchanges.bitget.futures_client import BitgetFuturesExchangeClient
 from botragram.exchanges.bitget.mapper import BitgetExchangeMapper, BitgetMapper
@@ -24,6 +26,8 @@ from botragram.exchanges.bitget.stream import BitgetStreamClient
 
 __all__ = [
     "BITGET_INTERVAL_MAP",
+    "BitgetCfdExchangeClient",
+    "BitgetCfdMapper",
     "BitgetClient",
     "BitgetExchangeMapper",
     "BitgetFuturesExchangeClient",

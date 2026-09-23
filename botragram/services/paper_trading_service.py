@@ -18,9 +18,15 @@ from decimal import Decimal
 from typing import Final, Protocol
 from uuid import NAMESPACE_URL, uuid5
 
-from botragram.engine import PnLEngine, TradingEngine
+from botragram.engine import (
+    CfdFinancingEngine,
+    CfdSizingEngine,
+    PnLEngine,
+    TradingEngine,
+)
 from botragram.enums import (
     Interval,
+    MarketType,
     NotificationType,
     OrderSide,
     OrderStatus,
@@ -96,6 +102,9 @@ class PaperTradingService:
     fee_rate: Decimal = _DEFAULT_FEE_RATE
     slippage_rate: Decimal = _DEFAULT_SLIPPAGE_RATE
     close_on_opposite_signal: bool = False
+    cfd_sizing_engine: CfdSizingEngine | None = None
+    cfd_financing_engine: CfdFinancingEngine | None = None
+    market_type: MarketType = MarketType.FUTURES
     _execution_lock: asyncio.Lock = field(
         default_factory=asyncio.Lock,
         init=False,
@@ -120,6 +129,12 @@ class PaperTradingService:
             raise ValueError("Paper slippage rate must be between zero and one")
 
         object.__setattr__(self, "quote_asset", normalized_asset)
+
+    def _get_contract_size(self, symbol: str) -> Decimal:
+        """Return the contract size multiplier for a symbol."""
+        if self.market_type is MarketType.CFD and self.cfd_sizing_engine is not None:
+            return self.cfd_sizing_engine.get_contract_spec(symbol).contract_size
+        return _DECIMAL_ONE
 
     async def execute(
         self,
@@ -167,12 +182,14 @@ class PaperTradingService:
                 generated_at=ticker.timestamp,
                 reason="Paper stream protection check",
             )
+            contract_size = self._get_contract_size(ticker.symbol)
             marked_position = replace(
                 position,
                 current_price=ticker.last_price,
                 unrealized_pnl=self.pnl_engine.calculate_unrealized(
                     position=position,
                     current_price=ticker.last_price,
+                    contract_size=contract_size,
                 ),
                 updated_at=ticker.timestamp,
             )
@@ -237,12 +254,14 @@ class PaperTradingService:
                 generated_at=closed_at,
                 reason="Operator Exit",
             )
+            contract_size = self._get_contract_size(normalized_symbol)
             marked_position = replace(
                 position,
                 current_price=current_price,
                 unrealized_pnl=self.pnl_engine.calculate_unrealized(
                     position=position,
                     current_price=current_price,
+                    contract_size=contract_size,
                 ),
                 updated_at=closed_at,
             )
@@ -301,12 +320,14 @@ class PaperTradingService:
                 generated_at=closed_at,
                 reason=reason,
             )
+            contract_size = self._get_contract_size(normalized_symbol)
             marked_position = replace(
                 position,
                 current_price=current_price,
                 unrealized_pnl=self.pnl_engine.calculate_unrealized(
                     position=position,
                     current_price=current_price,
+                    contract_size=contract_size,
                 ),
                 updated_at=closed_at,
             )
@@ -354,13 +375,16 @@ class PaperTradingService:
                     f"than active position quantity {position.quantity}"
                 )
 
+            contract_size = self._get_contract_size(normalized_symbol)
             remaining_qty = position.quantity - close_quantity
             order_side = (
                 OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
             )
             fill_price = self._apply_slippage(price=reference_price, side=order_side)
-            quote_quantity = fill_price * close_quantity
-            entry_fee = position.entry_price * close_quantity * self.fee_rate
+            quote_quantity = fill_price * close_quantity * contract_size
+            entry_fee = (
+                position.entry_price * close_quantity * contract_size * self.fee_rate
+            )
             exit_fee = quote_quantity * self.fee_rate
             realized_pnl = self.pnl_engine.calculate_realized(
                 side=position.side,
@@ -369,6 +393,7 @@ class PaperTradingService:
                 quantity=close_quantity,
                 entry_fee=entry_fee,
                 exit_fee=exit_fee,
+                contract_size=contract_size,
             )
 
             timestamp_micros = int(executed_at.timestamp() * 1_000_000)
@@ -429,6 +454,7 @@ class PaperTradingService:
             unrealized_pnl = self.pnl_engine.calculate_unrealized(
                 position=remaining_position,
                 current_price=fill_price,
+                contract_size=contract_size,
             )
             updated_position = replace(
                 remaining_position,
@@ -598,7 +624,8 @@ class PaperTradingService:
         reference_price = signal.price if price is None else price
         fill_price = self._apply_slippage(price=reference_price, side=order_side)
         quantity = risk_result.position.quantity
-        quote_quantity = fill_price * quantity
+        contract_size = self._get_contract_size(signal.symbol)
+        quote_quantity = fill_price * quantity * contract_size
         fee = quote_quantity * self.fee_rate
         required_balance = quote_quantity / Decimal(risk_result.position.leverage) + fee
 
@@ -691,12 +718,14 @@ class PaperTradingService:
         price: Decimal | None,
     ) -> TradingResult:
         """Mark an active position and close it when an exit condition fires."""
+        contract_size = self._get_contract_size(position.symbol)
         marked_position = replace(
             position,
             current_price=signal.price,
             unrealized_pnl=self.pnl_engine.calculate_unrealized(
                 position=position,
                 current_price=signal.price,
+                contract_size=contract_size,
             ),
             updated_at=signal.generated_at,
         )
@@ -732,13 +761,16 @@ class PaperTradingService:
         price: Decimal | None,
     ) -> TradingResult:
         """Persist a simulated exit fill and remove the active position."""
+        contract_size = self._get_contract_size(position.symbol)
         order_side = (
             OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
         reference_price = signal.price if price is None else price
         fill_price = self._apply_slippage(price=reference_price, side=order_side)
-        quote_quantity = fill_price * position.quantity
-        entry_fee = position.entry_price * position.quantity * self.fee_rate
+        quote_quantity = fill_price * position.quantity * contract_size
+        entry_fee = (
+            position.entry_price * position.quantity * contract_size * self.fee_rate
+        )
         exit_fee = quote_quantity * self.fee_rate
         realized_pnl = self.pnl_engine.calculate_realized(
             side=position.side,
@@ -747,6 +779,7 @@ class PaperTradingService:
             quantity=position.quantity,
             entry_fee=entry_fee,
             exit_fee=exit_fee,
+            contract_size=contract_size,
         )
         order_id = self._identifier(signal=signal, action="order")
         duplicate = await self.order_repository.get_by_id(
@@ -866,7 +899,8 @@ class PaperTradingService:
 
     def _reserved_balance(self, position: Position) -> Decimal:
         """Return margin and entry fee reserved by an open position."""
-        notional = position.entry_price * position.quantity
+        contract_size = self._get_contract_size(position.symbol)
+        notional = position.entry_price * position.quantity * contract_size
         return notional / Decimal(position.leverage) + notional * self.fee_rate
 
     def _apply_slippage(self, *, price: Decimal, side: OrderSide) -> Decimal:

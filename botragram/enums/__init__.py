@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 from botragram.enums.ai_model_type import AiModelType
 from botragram.enums.ai_provider import AiProvider
+from botragram.enums.asset_class import AssetClass
 from botragram.enums.authorization_status import AuthorizationStatus
 from botragram.enums.autonomous_live_entry_execution_status import (
     AutonomousLiveEntryExecutionStatus,
@@ -54,6 +55,7 @@ from botragram.enums.live_portfolio_recovery_unsafe_reason import (
 from botragram.enums.live_runtime_health_reason import LiveRuntimeHealthReason
 from botragram.enums.live_runtime_health_status import LiveRuntimeHealthStatus
 from botragram.enums.log_level import LogLevel
+from botragram.enums.market_session_status import MarketSessionStatus
 from botragram.enums.market_type import MarketType
 from botragram.enums.notification_type import NotificationType
 from botragram.enums.open_interest_regime import OpenInterestRegime
@@ -105,7 +107,9 @@ __all__ = [
     "LivePortfolioRecoveryStatus",
     "LivePortfolioRecoveryUnsafeReason",
     # Market
+    "AssetClass",
     "Interval",
+    "MarketSessionStatus",
     "OpenInterestRegime",
     # Trading
     "OrderType",

@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Market type enumeration.
+    Market session status enumeration for trading calendar states.
 
 Python:
     3.14+
@@ -14,25 +14,25 @@ Python:
 from __future__ import annotations
 
 # =============================================================================
-# Standard Library Imports
+# Standard Library
 # =============================================================================
-from enum import unique
+from enum import StrEnum
 
 # =============================================================================
-# Local Imports
+# Exports
 # =============================================================================
-from botragram.enums.base import BaseEnum
-
-__all__ = ["MarketType"]
+__all__ = [
+    "MarketSessionStatus",
+]
 
 
 # =============================================================================
-# Enums
+# Market Session Status Enum
 # =============================================================================
-@unique
-class MarketType(BaseEnum):
-    """Supported market types."""
+class MarketSessionStatus(StrEnum):
+    """Trading session state indicating current market availability."""
 
-    SPOT = "spot"
-    FUTURES = "futures"
-    CFD = "cfd"
+    OPEN = "open"
+    CLOSED = "closed"
+    BREAK = "break"
+    WEEKEND = "weekend"

@@ -42,6 +42,15 @@ from botragram.models.backtest import (
 )
 from botragram.models.balance import Balance
 from botragram.models.candle import Candle
+from botragram.models.cfd_contract import (
+    CfdContractSpec,
+    PipCalculationResult,
+)
+from botragram.models.cfd_financing import (
+    CfdFinancingSchedule,
+    CfdMarginRequirement,
+    CfdOvernightSwapEstimate,
+)
 from botragram.models.closed_position_lifecycle import (
     ClosedPositionLifecycle,
     PendingClosedPositionLifecycle,
@@ -73,6 +82,7 @@ from botragram.models.live_recovered_position_management_authorization import (
 from botragram.models.live_runtime_health_snapshot import LiveRuntimeHealthSnapshot
 from botragram.models.live_runtime_portfolio_context import LiveRuntimePortfolioContext
 from botragram.models.live_runtime_position_context import LiveRuntimePositionContext
+from botragram.models.market_session import MarketSession
 from botragram.models.market_universe_entry import MarketUniverseEntry
 from botragram.models.notification import Notification
 from botragram.models.operator_exit import (
@@ -116,6 +126,10 @@ __all__ = [
     "BacktestResult",
     "BacktestTrade",
     "Candle",
+    "CfdContractSpec",
+    "CfdFinancingSchedule",
+    "CfdMarginRequirement",
+    "CfdOvernightSwapEstimate",
     "DiscoveryUniverseBatch",
     "ExecutionAuthorization",
     "ExecutionAuthorizationOutcome",
@@ -137,6 +151,7 @@ __all__ = [
     "LiveRuntimePortfolioContext",
     "LiveRuntimeHealthSnapshot",
     "LiveRuntimePositionContext",
+    "MarketSession",
     "MarketUniverseEntry",
     "Notification",
     "Order",
@@ -144,6 +159,7 @@ __all__ = [
     "OperatorExitConfirmation",
     "OperatorExitOperation",
     "OperatorExitSnapshot",
+    "PipCalculationResult",
     "Position",
     "PositionExitDecision",
     "PositionSize",
