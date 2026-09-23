@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -13,9 +13,11 @@ import pytest
 from botragram.app import (
     MarketTypeSwitchService,
     RuntimeRestartCoordinator,
+    SettingsManager,
     TradingRuntimeControl,
     run_until_restart,
 )
+from botragram.app.environment_provider import EnvironmentProvider
 from botragram.config import Settings
 from botragram.config.app_settings import AppSettings
 from botragram.config.exchange_settings import ExchangeSettings
@@ -400,3 +402,33 @@ async def test_market_type_switch_cfd_validations() -> None:
     assert await bitget_service.prepare(market_type=MarketType.CFD)
     bitget_service.commit(market_type=MarketType.CFD)
     assert coordinator.consume() is MarketType.CFD
+
+
+def test_market_type_switch_reloads_market_settings_symmetrically() -> None:
+    """Verify market settings reload updates symbol and quote asset on switch."""
+    provider = EnvironmentProvider()
+    settings_manager = SettingsManager(environment_provider=provider)
+
+    initial_exchange = ExchangeSettings(
+        exchange=ExchangeType.BITGET,
+        market_type=MarketType.FUTURES,
+    )
+    initial_market = settings_manager.load_market_settings(
+        exchange=initial_exchange,
+    )
+    assert initial_market.symbol == "BTCUSDT"
+    assert initial_market.quote_asset == "USDT"
+
+    # Switch to CFD (symbol adapts to XAUUSD, quote to USD)
+    new_exchange = replace(initial_exchange, market_type=MarketType.CFD)
+    new_market = settings_manager.load_market_settings(exchange=new_exchange)
+    assert new_market.symbol == "XAUUSD"
+    assert new_market.quote_asset == "USD"
+
+    # Switch back to Futures (symbol adapts to BTCUSDT, quote to USDT)
+    restored_exchange = replace(new_exchange, market_type=MarketType.FUTURES)
+    restored_market = settings_manager.load_market_settings(
+        exchange=restored_exchange,
+    )
+    assert restored_market.symbol == "BTCUSDT"
+    assert restored_market.quote_asset == "USDT"

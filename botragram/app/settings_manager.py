@@ -253,36 +253,65 @@ class SettingsManager:
             else "GLOBAL_MARKET_INTERVAL"
         )
 
-        raw_symbol = environment.get_market_symbol().strip().upper()
+        market_type = (
+            exchange.market_type if exchange is not None else MarketType.FUTURES
+        )
+
+        cfd_symbol = environment.get_cfd_symbol().strip().upper()
+        futures_symbol = environment.get_futures_symbol().strip().upper()
+        spot_symbol = environment.get_spot_symbol().strip().upper()
+
+        if market_type is MarketType.CFD and cfd_symbol:
+            raw_symbol = cfd_symbol
+        elif market_type is MarketType.FUTURES and futures_symbol:
+            raw_symbol = futures_symbol
+        elif market_type is MarketType.SPOT and spot_symbol:
+            raw_symbol = spot_symbol
+        else:
+            raw_symbol = environment.get_market_symbol().strip().upper()
+
+        cfd_quote = environment.get_cfd_quote_asset().strip().upper()
+        futures_quote = environment.get_futures_quote_asset().strip().upper()
+        if market_type is MarketType.CFD and cfd_quote:
+            raw_quote = cfd_quote
+        elif market_type is MarketType.FUTURES and futures_quote:
+            raw_quote = futures_quote
+        else:
+            raw_quote = environment.get_quote_asset().strip().upper()
+
         raw_base = environment.get_base_asset().strip().upper()
-        raw_quote = environment.get_quote_asset().strip().upper()
 
         if raw_base and raw_quote:
             base_asset = raw_base
             quote_asset = raw_quote
         elif raw_symbol:
-            if raw_symbol.endswith("USDT"):
-                base_asset = raw_symbol[:-4]
-                quote_asset = "USDT"
-            elif raw_symbol.endswith("USD"):
-                base_asset = raw_symbol[:-3]
-                quote_asset = "USD"
-            elif raw_symbol.endswith("USDC"):
-                base_asset = raw_symbol[:-4]
-                quote_asset = "USDC"
+            if market_type is MarketType.CFD:
+                if raw_symbol.endswith("USDT"):
+                    base_asset = raw_symbol[:-4]
+                elif raw_symbol.endswith("USD"):
+                    base_asset = raw_symbol[:-3]
+                else:
+                    base_asset = raw_symbol
+                quote_asset = raw_quote or "USD"
             else:
-                base_asset = raw_symbol
-                quote_asset = (
-                    "USD"
-                    if exchange is not None and exchange.market_type is MarketType.CFD
-                    else "USDT"
-                )
-        elif exchange is not None and exchange.market_type is MarketType.CFD:
+                if raw_symbol.endswith("USDT"):
+                    base_asset = raw_symbol[:-4]
+                    quote_asset = raw_quote or "USDT"
+                elif raw_symbol.endswith("USD"):
+                    base_asset = raw_symbol[:-3]
+                    quote_asset = raw_quote or "USDT"
+                elif raw_symbol.endswith("USDC"):
+                    base_asset = raw_symbol[:-4]
+                    quote_asset = raw_quote or "USDC"
+                else:
+                    base_asset = raw_symbol
+                    quote_asset = raw_quote or "USDT"
+        elif market_type is MarketType.CFD:
             base_asset = "XAU"
-            quote_asset = "USD"
+            quote_asset = raw_quote or "USD"
         else:
             base_asset = "BTC"
-            quote_asset = "USDT"
+            quote_asset = raw_quote or "USDT"
 
         return MarketSettings(
             base_asset=base_asset,

@@ -58,6 +58,8 @@ from botragram.constants.env import (
     ENV_BYBIT_TESTNET,
     ENV_CANDLE_PRUNING_INTERVAL_HOURS,
     ENV_CANDLE_RETENTION_DAYS,
+    ENV_CFD_QUOTE_ASSET,
+    ENV_CFD_SYMBOL,
     ENV_CONFIDENCE_SIZING_ENABLED,
     ENV_CONFIRM_HTF_ACCOUNT_RATIO,
     ENV_DISCOVERY_BATCH_SIZE,
@@ -87,6 +89,8 @@ from botragram.constants.env import (
     ENV_EXECUTION_POLICY,
     ENV_FILTER_ACCOUNT_RATIO,
     ENV_FILTER_FUNDING_SENTIMENT,
+    ENV_FUTURES_QUOTE_ASSET,
+    ENV_FUTURES_SYMBOL,
     ENV_GEMINI_API_KEY,
     ENV_GLOBAL_MARKET_INTERVAL,
     ENV_INVERT_SIGNALS,
@@ -184,6 +188,7 @@ from botragram.constants.env import (
     ENV_SCALPING_TAKE_PROFIT_PCT,
     ENV_SLOT_MARGIN_BUFFER_PCT,
     ENV_SLOT_SIZING_ENABLED,
+    ENV_SPOT_SYMBOL,
     ENV_STEPPED_STOP_ENABLED,
     ENV_STEPPED_STOP_LOCKED_LAG,
     ENV_STEPPED_STOP_THRESHOLDS,
@@ -1143,6 +1148,26 @@ class EnvironmentProvider:
     def get_quote_asset(self) -> str:
         """Return the optional configured quote asset (e.g. USD, USDT)."""
         return self._get_var(ENV_QUOTE_ASSET)
+
+    def get_cfd_symbol(self) -> str:
+        """Return the optional configured CFD market symbol (e.g. XAUUSD)."""
+        return self._get_var(ENV_CFD_SYMBOL)
+
+    def get_futures_symbol(self) -> str:
+        """Return the optional configured Futures market symbol (e.g. BTCUSDT)."""
+        return self._get_var(ENV_FUTURES_SYMBOL)
+
+    def get_spot_symbol(self) -> str:
+        """Return the optional configured Spot market symbol (e.g. BTCUSDT)."""
+        return self._get_var(ENV_SPOT_SYMBOL)
+
+    def get_cfd_quote_asset(self) -> str:
+        """Return the optional configured CFD quote asset (e.g. USD)."""
+        return self._get_var(ENV_CFD_QUOTE_ASSET)
+
+    def get_futures_quote_asset(self) -> str:
+        """Return the optional configured Futures quote asset (e.g. USDT)."""
+        return self._get_var(ENV_FUTURES_QUOTE_ASSET)
 
     def get_strategy_timeframe_override_enabled(self) -> bool:
         """Return whether active strategy timeframe override is enabled."""

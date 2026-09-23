@@ -394,20 +394,28 @@ async def main() -> None:
                 break
 
             if isinstance(requested_restart, MarketType):
+                new_exchange_settings = replace(
+                    settings.exchange,
+                    market_type=requested_restart,
+                )
+                new_market_settings = settings_manager.load_market_settings(
+                    exchange=new_exchange_settings,
+                )
                 settings = replace(
                     settings,
-                    exchange=replace(
-                        settings.exchange,
-                        market_type=requested_restart,
-                    ),
+                    exchange=new_exchange_settings,
+                    market=new_market_settings,
                 )
                 settings_manager.validate(settings=settings)
                 market_type_confirmed = True
                 session_restart_target = requested_restart
                 _LOGGER.info(
-                    "Application restarting with %s market type: %s",
+                    "Application restarting with %s market type: %s "
+                    "(symbol=%s quote_asset=%s)",
                     settings.exchange.exchange.value.title(),
                     requested_restart.value,
+                    new_market_settings.symbol,
+                    new_market_settings.quote_asset,
                 )
                 continue
 
@@ -415,9 +423,13 @@ async def main() -> None:
                 new_exchange_settings = settings_manager.load_exchange_settings(
                     exchange_override=requested_restart,
                 )
+                new_market_settings = settings_manager.load_market_settings(
+                    exchange=new_exchange_settings,
+                )
                 settings = replace(
                     settings,
                     exchange=new_exchange_settings,
+                    market=new_market_settings,
                     app=replace(
                         settings.app,
                         database_path=SettingsManager.get_scoped_database_path(
@@ -430,9 +442,12 @@ async def main() -> None:
                 market_type_confirmed = True
                 session_restart_target = requested_restart
                 _LOGGER.info(
-                    "Application restarting with %s connector: market_type=%s",
+                    "Application restarting with %s connector: market_type=%s "
+                    "(symbol=%s quote_asset=%s)",
                     requested_restart.value.title(),
                     new_exchange_settings.market_type.value,
+                    new_market_settings.symbol,
+                    new_market_settings.quote_asset,
                 )
                 continue
 

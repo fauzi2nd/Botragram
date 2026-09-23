@@ -1431,3 +1431,66 @@ def test_settings_manager_respects_explicit_symbol_and_quote_asset(
     assert settings.symbol == "EURUSD"
     assert settings.base_asset == "EUR"
     assert settings.quote_asset == "USD"
+
+
+def test_settings_manager_respects_market_specific_symbol_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify CFD_SYMBOL and FUTURES_SYMBOL take precedence in their markets."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    monkeypatch.setenv("CFD_SYMBOL", "EURUSD")
+    monkeypatch.setenv("FUTURES_SYMBOL", "ETHUSDT")
+
+    manager = SettingsManager(environment_provider=provider)
+
+    cfd_exchange = ExchangeSettings(
+        exchange=ExchangeType.BITGET,
+        market_type=MarketType.CFD,
+    )
+    cfd_settings = manager.load_market_settings(exchange=cfd_exchange)
+    assert cfd_settings.symbol == "EURUSD"
+    assert cfd_settings.base_asset == "EUR"
+    assert cfd_settings.quote_asset == "USD"
+
+    futures_exchange = ExchangeSettings(
+        exchange=ExchangeType.BITGET,
+        market_type=MarketType.FUTURES,
+    )
+    futures_settings = manager.load_market_settings(exchange=futures_exchange)
+    assert futures_settings.symbol == "ETHUSDT"
+    assert futures_settings.base_asset == "ETH"
+    assert futures_settings.quote_asset == "USDT"
+
+
+def test_settings_manager_market_type_switch_symmetrical_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify switching markets resolves clean defaults without any env variables."""
+    provider = _create_environment_provider(
+        monkeypatch=monkeypatch,
+        temporary_path=tmp_path,
+    )
+    manager = SettingsManager(environment_provider=provider)
+
+    cfd_exchange = ExchangeSettings(
+        exchange=ExchangeType.BITGET,
+        market_type=MarketType.CFD,
+    )
+    cfd_settings = manager.load_market_settings(exchange=cfd_exchange)
+    assert cfd_settings.symbol == "XAUUSD"
+    assert cfd_settings.quote_asset == "USD"
+    assert cfd_settings.base_asset == "XAU"
+
+    futures_exchange = ExchangeSettings(
+        exchange=ExchangeType.BITGET,
+        market_type=MarketType.FUTURES,
+    )
+    futures_settings = manager.load_market_settings(exchange=futures_exchange)
+    assert futures_settings.symbol == "BTCUSDT"
+    assert futures_settings.quote_asset == "USDT"
+    assert futures_settings.base_asset == "BTC"
