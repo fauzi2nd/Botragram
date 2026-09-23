@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import asyncio
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -44,6 +45,7 @@ from botragram.enums import (
     PositionSide,
 )
 from botragram.exceptions import (
+    ExchangeError,
     ExchangeOrderNotFoundError,
     ExchangeOrderRejectedError,
 )
@@ -54,6 +56,7 @@ from botragram.exchanges.bitget import (
     BitgetCfdMapper,
     BitgetRestClient,
 )
+from botragram.exchanges.bitget.rest import BitgetRestResponseError
 from botragram.exchanges.factory import ExchangeFactory
 from botragram.models import (
     CfdContractSpec,
@@ -688,6 +691,118 @@ async def test_cfd_create_protection_orders_sl_preserves_existing_venue_tp() -> 
     assert rest.last_data["stopLoss"] == "2600.00"
     assert rest.last_data["takeProfit"] == "2700.00"
     assert rest.last_data["clientOid"] == "bsl-unique-sl"
+
+
+@pytest.mark.asyncio
+async def test_cfd_create_protection_orders_sl_fails_closed_when_lookup_errors() -> (
+    None
+):
+    """Fail closed when CFD opposite-leg lookup returns exchange error: ZERO POST."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.canned_responses = [
+        {
+            "code": "40014",
+            "msg": "Param error",
+            "data": {},
+        }
+    ]
+
+    with pytest.raises(BitgetRestResponseError):
+        await client.create_protection_orders(
+            symbol="XAUUSD",
+            side=OrderSide.SELL,
+            quantity=Decimal("1.0"),
+            stop_loss=Decimal("2600.00"),
+            stop_loss_client_algo_id="bsl-fail-sl",
+            bypass_calendar_guard=True,
+        )
+
+    assert not any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_cfd_create_protection_orders_tp_fails_closed_when_lookup_errors() -> (
+    None
+):
+    """Fail closed when CFD opposite-leg lookup returns exchange error: ZERO POST."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.canned_responses = [
+        {
+            "code": "40014",
+            "msg": "Param error",
+            "data": {},
+        }
+    ]
+
+    with pytest.raises(BitgetRestResponseError):
+        await client.create_protection_orders(
+            symbol="XAUUSD",
+            side=OrderSide.SELL,
+            quantity=Decimal("1.0"),
+            take_profit=Decimal("2700.00"),
+            take_profit_client_algo_id="btp-fail-tp",
+            bypass_calendar_guard=True,
+        )
+
+    assert not any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_cfd_create_protection_orders_fails_closed_on_network_timeout() -> None:
+    """Fail closed when CFD opposite-leg lookup times out: ZERO POST."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    async def _failing_get(*args: object, **kwargs: object) -> JsonResponse:
+        del args, kwargs
+        raise TimeoutError("Network timeout querying cfd open orders")
+
+    rest.get = _failing_get  # type: ignore
+
+    with pytest.raises(ExchangeError, match="Bitget CFD network failure"):
+        await client.create_protection_orders(
+            symbol="XAUUSD",
+            side=OrderSide.SELL,
+            quantity=Decimal("1.0"),
+            stop_loss=Decimal("2600.00"),
+            stop_loss_client_algo_id="bsl-timeout-sl",
+            bypass_calendar_guard=True,
+        )
+
+    assert not any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_cfd_create_protection_orders_cancellation_propagates() -> None:
+    """Cancellation during CFD opposite-leg lookup must propagate: ZERO POST."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    async def _cancelled_get(*args: object, **kwargs: object) -> JsonResponse:
+        del args, kwargs
+        raise asyncio.CancelledError()
+
+    rest.get = _cancelled_get  # type: ignore
+
+    with pytest.raises(asyncio.CancelledError):
+        await client.create_protection_orders(
+            symbol="XAUUSD",
+            side=OrderSide.SELL,
+            quantity=Decimal("1.0"),
+            stop_loss=Decimal("2600.00"),
+            stop_loss_client_algo_id="bsl-cancel-sl",
+            bypass_calendar_guard=True,
+        )
+
+    assert not any(method == "POST" for method, _ in rest.history)
 
 
 # =============================================================================

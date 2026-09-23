@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import asyncio
 from datetime import UTC, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -1985,3 +1986,110 @@ async def test_bitget_create_protection_orders_sl_preserves_existing_venue_tp() 
     assert rest.last_data["stopLoss"] == "65000"
     assert rest.last_data["takeProfit"] == "75000"
     assert rest.last_data["clientOid"] == "bsl-unique-sl"
+
+
+@pytest.mark.asyncio
+async def test_bitget_create_protection_orders_sl_fails_closed_when_lookup_errors() -> (
+    None
+):
+    """Fail closed when opposite-leg lookup returns exchange error: ZERO POST."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    rest.canned_responses = [
+        {
+            "code": "40014",
+            "msg": "Param error",
+            "data": {},
+        }
+    ]
+
+    with pytest.raises(BitgetRestResponseError):
+        await client.create_protection_orders(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            quantity=Decimal("1.5"),
+            stop_loss=Decimal("65000"),
+            stop_loss_client_algo_id="bsl-fail-sl",
+        )
+
+    # Invariant: No POST may be sent if opposite leg status is unknown
+    assert not any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_bitget_create_protection_orders_tp_fails_closed_when_lookup_errors() -> (
+    None
+):
+    """Fail closed when opposite-leg lookup returns exchange error: ZERO POST."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    rest.canned_responses = [
+        {
+            "code": "40014",
+            "msg": "Param error",
+            "data": {},
+        }
+    ]
+
+    with pytest.raises(BitgetRestResponseError):
+        await client.create_protection_orders(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            quantity=Decimal("1.5"),
+            take_profit=Decimal("75000"),
+            take_profit_client_algo_id="btp-fail-tp",
+        )
+
+    assert not any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_bitget_create_protection_orders_fails_closed_on_network_timeout() -> (
+    None
+):
+    """Fail closed when opposite-leg lookup times out: ZERO POST."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    async def _failing_get(*args: object, **kwargs: object) -> JsonResponse:
+        del args, kwargs
+        raise TimeoutError("Network timeout querying open orders")
+
+    rest.get = _failing_get  # type: ignore
+
+    with pytest.raises(ExchangeError, match="Bitget network failure"):
+        await client.create_protection_orders(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            quantity=Decimal("1.5"),
+            stop_loss=Decimal("65000"),
+            stop_loss_client_algo_id="bsl-timeout-sl",
+        )
+
+    assert not any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_bitget_create_protection_orders_cancellation_propagates() -> None:
+    """Cancellation during opposite-leg lookup must propagate immediately: ZERO POST."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    async def _cancelled_get(*args: object, **kwargs: object) -> JsonResponse:
+        del args, kwargs
+        raise asyncio.CancelledError()
+
+    rest.get = _cancelled_get  # type: ignore
+
+    with pytest.raises(asyncio.CancelledError):
+        await client.create_protection_orders(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            quantity=Decimal("1.5"),
+            stop_loss=Decimal("65000"),
+            stop_loss_client_algo_id="bsl-cancel-sl",
+        )
+
+    assert not any(method == "POST" for method, _ in rest.history)

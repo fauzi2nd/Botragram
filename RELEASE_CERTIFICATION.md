@@ -63,6 +63,7 @@ All previously discovered occurrences were remediated with specific exception ty
 8. `botragram/services/candle_retention_service.py`: Logged `_LOGGER.debug` when candle retention worker is cancelled cleanly during stop.
 9. `botragram/exchanges/bitget/stream.py` & `bybit/stream.py`: Logged `_LOGGER.debug` on heartbeat cancellation.
 10. `botragram/telegram/callbacks.py`: Replaced 20 `except Exception: pass` occurrences with `TelegramError` handling and structured `_LOGGER.debug` / `_LOGGER.warning`.
+11. `botragram/exchanges/bitget/futures_client.py` & `cfd_client.py`: Replaced `except Exception: pass` during opposite-leg protection order lookup with fail-closed error propagation (`(TimeoutError, ConnectionError, RuntimeError)` -> `ExchangeError`), ensuring zero protection POST occurs if opposite protection status is unknown.
 
 The diagnostic position query in `_resume_pending_partial_take_profit()` (after the NOT_FOUND path) is wrapped in a broad `except Exception` — this is intentional and safe because:
 - The query result is logged at `DEBUG` only; no mutation decision is ever made from it.

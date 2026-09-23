@@ -29,7 +29,59 @@ from botragram.strategies.factory import StrategyResolver
 
 __all__ = [
     "SignalEngine",
+    "has_account_ratio_evaluation",
+    "has_funding_evaluation",
+    "has_oi_evaluation",
 ]
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+def has_oi_evaluation(reason: str | None) -> bool:
+    """Return whether Open Interest analysis was already applied to signal reason."""
+    if not reason:
+        return False
+    return (
+        "[REJECTED_OI]" in reason
+        or "[OI_CONFLUENCE]" in reason
+        or "[OI:" in reason
+        or "[Bullish Long Buildup" in reason
+        or "[Transient Long Buildup" in reason
+        or "[Warning: Short Covering" in reason
+        or "[Contradictory Short Buildup" in reason
+        or "[Warning: Long Liquidation" in reason
+        or "[Bearish Short Buildup" in reason
+        or "[Transient Short Buildup" in reason
+        or "[Contradictory Long Buildup" in reason
+        or "Short Covering squeeze" in reason
+        or "Long Liquidation flush" in reason
+    )
+
+
+def has_funding_evaluation(reason: str | None) -> bool:
+    """Return whether Funding sentiment filter was already applied to signal reason."""
+    if not reason:
+        return False
+    return (
+        "[REJECTED_FUNDING_CROWDED]" in reason
+        or "[CROWDED_LONG: funding" in reason
+        or "[CROWDED_SHORT: funding" in reason
+    )
+
+
+def has_account_ratio_evaluation(reason: str | None) -> bool:
+    """Return whether Account L/S Ratio filter was already applied to signal reason."""
+    if not reason:
+        return False
+    return (
+        "[REJECTED_LS_RATIO]" in reason
+        or "crowded long)" in reason
+        or "crowded short)" in reason
+        or "Top Trader L/S" in reason
+        or "Account L/S" in reason
+        or "Global L/S" in reason
+    )
 
 
 # =============================================================================
@@ -100,15 +152,7 @@ class SignalEngine:
                 )
 
         if self.use_open_interest and signal.signal_type is not SignalType.HOLD:
-            reason = signal.reason or ""
-            has_oi_evaluated = (
-                "[REJECTED_OI]" in reason
-                or "OI" in reason
-                or "Short Covering" in reason
-                or "Long Liquidation" in reason
-                or "Contradictory" in reason
-            )
-            if not has_oi_evaluated:
+            if not has_oi_evaluation(signal.reason):
                 signal = strategy.apply_open_interest_confluence(
                     signal=signal,
                     candles=candles,
@@ -118,8 +162,7 @@ class SignalEngine:
                 )
 
         if self.filter_funding_sentiment and signal.signal_type is not SignalType.HOLD:
-            reason = signal.reason or ""
-            if "[REJECTED_FUNDING_CROWDED]" not in reason and "CROWDED_" not in reason:
+            if not has_funding_evaluation(signal.reason):
                 signal = strategy.apply_funding_sentiment_filter(
                     signal=signal,
                     candles=candles,
@@ -129,8 +172,7 @@ class SignalEngine:
                 )
 
         if self.filter_account_ratio and signal.signal_type is not SignalType.HOLD:
-            reason = signal.reason or ""
-            if "[REJECTED_LS_RATIO]" not in reason and "CROWDED_" not in reason:
+            if not has_account_ratio_evaluation(signal.reason):
                 signal = strategy.apply_account_ratio_filter(
                     signal=signal,
                     candles=candles,

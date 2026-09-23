@@ -360,13 +360,33 @@ class RiskEngine:
         ):
             # Origin strategy produces canonical structural SL and contractual RR TP.
             # Validate safety boundary without silently truncating TP or breaking RR.
-            max_origin_sl_dist = signal.price * self.settings.origin_stop_loss_pct
             actual_sl_dist = abs(signal.price - signal.stop_loss)
+            if actual_sl_dist <= _DECIMAL_ZERO:
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Origin stop-loss distance must be greater than zero",
+                )
+
+            max_origin_sl_dist = signal.price * self.settings.origin_stop_loss_pct
             if actual_sl_dist > max_origin_sl_dist:
                 return self._rejected_result(
                     entry_price=signal.price,
                     reason="Origin stop-loss distance exceeds maximum risk ceiling",
                 )
+
+            actual_tp_dist = abs(signal.price - signal.take_profit)
+            if actual_tp_dist <= _DECIMAL_ZERO:
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Origin take-profit distance must be greater than zero",
+                )
+
+            if actual_tp_dist < actual_sl_dist:
+                return self._rejected_result(
+                    entry_price=signal.price,
+                    reason="Origin risk-reward ratio cannot be less than 1.0R",
+                )
+
             stop_loss = signal.stop_loss
             take_profit = signal.take_profit
         else:
