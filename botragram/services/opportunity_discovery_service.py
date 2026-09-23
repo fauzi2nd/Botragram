@@ -312,6 +312,13 @@ class OpportunityDiscoveryService:
                 candidate_minimum = minimum_value
                 effective_candle_limit = max(candle_limit, candidate_minimum)
 
+        _LOGGER.info(
+            "Discovery scanning %d symbols (interval=%s, candle_limit=%d, top_n=%d)",
+            len(symbols),
+            interval.value,
+            candle_limit,
+            top_n,
+        )
         for index, symbol in enumerate(symbols):
             if index > 0 and self.candle_request_delay_seconds > 0:
                 await asyncio.sleep(self.candle_request_delay_seconds)
@@ -451,100 +458,131 @@ class OpportunityDiscoveryService:
                     signal=signal,
                 )
 
-            if (
-                signal.signal_type in _ACTIONABLE_ENTRY_SIGNAL_TYPES
-                and signal.confidence >= self.min_confidence
-            ):
-                if self.mtf_confirmation_enabled:
-                    mtf_candles = await self.market_service.get_candles(
-                        symbol=symbol,
-                        interval=self.mtf_interval,
-                        limit=self.mtf_ema_period + 5,
-                        persist=False,
-                        prefer_stored=True,
+            if signal.signal_type not in _ACTIONABLE_ENTRY_SIGNAL_TYPES:
+                _LOGGER.info(
+                    "Discovery evaluated %s: signal=%s reason=%s",
+                    symbol,
+                    signal.signal_type.value,
+                    signal.reason,
+                )
+                continue
+
+            if signal.confidence < self.min_confidence:
+                _LOGGER.info(
+                    "Discovery evaluated %s: signal=%s confidence=%s < "
+                    "min_confidence=%s (skipped)",
+                    symbol,
+                    signal.signal_type.value,
+                    signal.confidence,
+                    self.min_confidence,
+                )
+                continue
+
+            if self.mtf_confirmation_enabled:
+                mtf_candles = await self.market_service.get_candles(
+                    symbol=symbol,
+                    interval=self.mtf_interval,
+                    limit=self.mtf_ema_period + 5,
+                    persist=False,
+                    prefer_stored=True,
+                    as_of=as_of,
+                )
+                closed_mtf_candles = self._select_closed_candles(
+                    candles=mtf_candles,
+                    as_of=as_of,
+                    candle_limit=self.mtf_ema_period + 1,
+                    require_strict_sequence=False,
+                )
+                trend_result = evaluate_mtf_trend(
+                    closed_mtf_candles,
+                    ema_period=self.mtf_ema_period,
+                )
+                if (
+                    signal.signal_type is SignalType.BUY
+                    and not trend_result.is_aligned_with_buy
+                ):
+                    _LOGGER.info(
+                        "MTF trend filter rejected BUY signal for %s: "
+                        "higher_tf=%s trend=%s close=%s ema=%s",
+                        symbol,
+                        self.mtf_interval.value,
+                        trend_result.direction.value,
+                        trend_result.current_close,
+                        trend_result.ema_value,
+                    )
+                    continue
+                if (
+                    signal.signal_type is SignalType.SELL
+                    and not trend_result.is_aligned_with_sell
+                ):
+                    _LOGGER.info(
+                        "MTF trend filter rejected SELL signal for %s: "
+                        "higher_tf=%s trend=%s close=%s ema=%s",
+                        symbol,
+                        self.mtf_interval.value,
+                        trend_result.direction.value,
+                        trend_result.current_close,
+                        trend_result.ema_value,
+                    )
+                    continue
+
+            if self.btc_trend_filter_enabled and symbol != "BTCUSDT":
+                if btc_trend_result is None:
+                    btc_trend_result = await self._evaluate_btc_benchmark_trend(
                         as_of=as_of,
                     )
-                    closed_mtf_candles = self._select_closed_candles(
-                        candles=mtf_candles,
-                        as_of=as_of,
-                        candle_limit=self.mtf_ema_period + 1,
-                        require_strict_sequence=False,
+                if (
+                    signal.signal_type is SignalType.BUY
+                    and not btc_trend_result.is_aligned_with_buy
+                ):
+                    _LOGGER.info(
+                        "BTC benchmark trend filter rejected BUY signal for %s: "
+                        "btc_tf=%s btc_trend=%s btc_close=%s btc_ema=%s",
+                        symbol,
+                        self.btc_trend_interval.value,
+                        btc_trend_result.direction.value,
+                        btc_trend_result.current_close,
+                        btc_trend_result.ema_value,
                     )
-                    trend_result = evaluate_mtf_trend(
-                        closed_mtf_candles,
-                        ema_period=self.mtf_ema_period,
+                    continue
+                if (
+                    signal.signal_type is SignalType.SELL
+                    and not btc_trend_result.is_aligned_with_sell
+                ):
+                    _LOGGER.info(
+                        "BTC benchmark trend filter rejected SELL signal for %s: "
+                        "btc_tf=%s btc_trend=%s btc_close=%s btc_ema=%s",
+                        symbol,
+                        self.btc_trend_interval.value,
+                        btc_trend_result.direction.value,
+                        btc_trend_result.current_close,
+                        btc_trend_result.ema_value,
                     )
-                    if (
-                        signal.signal_type is SignalType.BUY
-                        and not trend_result.is_aligned_with_buy
-                    ):
-                        _LOGGER.info(
-                            "MTF trend filter rejected BUY signal for %s: "
-                            "higher_tf=%s trend=%s close=%s ema=%s",
-                            symbol,
-                            self.mtf_interval.value,
-                            trend_result.direction.value,
-                            trend_result.current_close,
-                            trend_result.ema_value,
-                        )
-                        continue
-                    if (
-                        signal.signal_type is SignalType.SELL
-                        and not trend_result.is_aligned_with_sell
-                    ):
-                        _LOGGER.info(
-                            "MTF trend filter rejected SELL signal for %s: "
-                            "higher_tf=%s trend=%s close=%s ema=%s",
-                            symbol,
-                            self.mtf_interval.value,
-                            trend_result.direction.value,
-                            trend_result.current_close,
-                            trend_result.ema_value,
-                        )
-                        continue
+                    continue
 
-                if self.btc_trend_filter_enabled and symbol != "BTCUSDT":
-                    if btc_trend_result is None:
-                        btc_trend_result = await self._evaluate_btc_benchmark_trend(
-                            as_of=as_of,
-                        )
-                    if (
-                        signal.signal_type is SignalType.BUY
-                        and not btc_trend_result.is_aligned_with_buy
-                    ):
-                        _LOGGER.info(
-                            "BTC benchmark trend filter rejected BUY signal for %s: "
-                            "btc_tf=%s btc_trend=%s btc_close=%s btc_ema=%s",
-                            symbol,
-                            self.btc_trend_interval.value,
-                            btc_trend_result.direction.value,
-                            btc_trend_result.current_close,
-                            btc_trend_result.ema_value,
-                        )
-                        continue
-                    if (
-                        signal.signal_type is SignalType.SELL
-                        and not btc_trend_result.is_aligned_with_sell
-                    ):
-                        _LOGGER.info(
-                            "BTC benchmark trend filter rejected SELL signal for %s: "
-                            "btc_tf=%s btc_trend=%s btc_close=%s btc_ema=%s",
-                            symbol,
-                            self.btc_trend_interval.value,
-                            btc_trend_result.direction.value,
-                            btc_trend_result.current_close,
-                            btc_trend_result.ema_value,
-                        )
-                        continue
+            _LOGGER.info(
+                "Discovery actionable opportunity found: symbol=%s side=%s "
+                "confidence=%s",
+                symbol,
+                signal.signal_type.value,
+                signal.confidence,
+            )
+            actionable_signals.append(signal)
 
-                actionable_signals.append(signal)
-
-        return tuple(
+        ranked = tuple(
             sorted(
                 actionable_signals,
                 key=lambda signal: (-signal.confidence, signal.symbol),
             )[:top_n]
         )
+        _LOGGER.info(
+            "Discovery scan completed: symbols_scanned=%d actionable_found=%d "
+            "selected=%d",
+            len(symbols),
+            len(actionable_signals),
+            len(ranked),
+        )
+        return ranked
 
     @classmethod
     def _validate_closed_candle_provenance(

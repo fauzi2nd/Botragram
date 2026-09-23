@@ -993,19 +993,19 @@ def test_cfd_financing_schedules() -> None:
     assert eurusd_sched.asset_class == AssetClass.FOREX
     assert eurusd_sched.rollover_cutoff_hour_utc == 21
     assert eurusd_sched.triple_swap_day == 2  # Wednesday
-    assert eurusd_sched.max_leverage == 100
+    assert eurusd_sched.max_leverage == 1000
 
     xau_sched = financing.get_financing_schedule("XAUUSD")
     assert xau_sched.asset_class == AssetClass.COMMODITY
-    assert xau_sched.max_leverage == 50
+    assert xau_sched.max_leverage == 800
 
     us30_sched = financing.get_financing_schedule("US30")
     assert us30_sched.asset_class == AssetClass.INDEX
-    assert us30_sched.max_leverage == 20
+    assert us30_sched.max_leverage == 200
 
     btc_sched = financing.get_financing_schedule("BTCUSD.cfd")
     assert btc_sched.asset_class == AssetClass.CRYPTO
-    assert btc_sched.max_leverage == 10
+    assert btc_sched.max_leverage == 100
 
 
 def test_cfd_financing_triple_swap_detection() -> None:
@@ -1089,15 +1089,16 @@ def test_cfd_financing_validate_leverage() -> None:
     """Verify leverage capping according to asset class boundaries."""
     financing = CfdFinancingEngine()
 
-    # EURUSD max 100x
-    assert financing.validate_leverage("EURUSD", 200) == 100
+    # EURUSD max 1000x
+    assert financing.validate_leverage("EURUSD", 1200) == 1000
     assert financing.validate_leverage("EURUSD", 50) == 50
 
-    # XAUUSD max 50x
-    assert financing.validate_leverage("XAUUSD", 100) == 50
+    # XAUUSD max 800x
+    assert financing.validate_leverage("XAUUSD", 1000) == 800
+    assert financing.validate_leverage("XAUUSD", 500) == 500
 
-    # BTCUSD max 10x
-    assert financing.validate_leverage("BTCUSD.cfd", 50) == 10
+    # BTCUSD max 100x
+    assert financing.validate_leverage("BTCUSD.cfd", 150) == 100
 
 
 def test_cfd_client_financing_integration() -> None:
@@ -1108,7 +1109,7 @@ def test_cfd_client_financing_integration() -> None:
 
     sched = client.get_financing_schedule("EURUSD")
     assert isinstance(sched, CfdFinancingSchedule)
-    assert sched.max_leverage == 100
+    assert sched.max_leverage == 1000
 
     est = client.estimate_overnight_swap(
         symbol="EURUSD",
@@ -1220,9 +1221,14 @@ async def test_cfd_client_get_trading_symbols() -> None:
     assert rest.last_path == "/api/v3/cfd/market/tickers"
     assert "EURUSD" in symbols
     assert "XAUUSD" in symbols
-    assert "EURGBP" not in symbols
+    assert "US30" in symbols
+    assert "EURGBP" in symbols
     # Ensure deduplicated
     assert symbols.count("EURUSD") == 1
+
+    gbp_symbols = await client.get_trading_symbols(quote_asset="GBP")
+    assert "EURGBP" in gbp_symbols
+    assert "EURUSD" not in gbp_symbols
 
 
 @pytest.mark.asyncio

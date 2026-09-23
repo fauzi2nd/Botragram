@@ -181,12 +181,13 @@ class TradingEngine:
                 reason="Maximum account drawdown reached",
             )
 
+        spec = self.cfd_sizing_engine.get_contract_spec(signal.symbol)
         requested_lev = (
             leverage
             if (
                 leverage is not None and not isinstance(leverage, bool) and leverage > 0
             )
-            else self.risk_engine.settings.leverage
+            else spec.default_leverage
         )
         effective_leverage = (
             self.cfd_financing_engine.validate_leverage(signal.symbol, requested_lev)

@@ -50,6 +50,8 @@ class CfdContractSpec:
     min_lot: Decimal = Decimal("0.01")
     max_lot: Decimal = Decimal("100.0")
     lot_step: Decimal = Decimal("0.01")
+    default_leverage: int = 100
+    max_leverage: int = 100
 
     def __post_init__(self) -> None:
         """Validate CFD contract invariants."""
@@ -67,6 +69,12 @@ class CfdContractSpec:
             raise ValueError("max_lot must be greater than or equal to min_lot")
         if self.lot_step <= _DECIMAL_ZERO:
             raise ValueError("lot_step must be positive")
+        if self.default_leverage <= 0:
+            raise ValueError("default_leverage must be positive")
+        if self.max_leverage <= 0:
+            raise ValueError("max_leverage must be positive")
+        if self.default_leverage > self.max_leverage:
+            raise ValueError("default_leverage cannot exceed max_leverage")
 
 
 # =============================================================================

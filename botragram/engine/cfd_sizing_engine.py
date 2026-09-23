@@ -90,6 +90,8 @@ class CfdSizingEngine:
                 min_lot=_DEFAULT_MIN_LOT,
                 max_lot=_DEFAULT_MAX_LOT,
                 lot_step=_DEFAULT_LOT_STEP,
+                default_leverage=50,
+                max_leverage=100,
             )
 
         if asset_class is AssetClass.COMMODITY:
@@ -103,6 +105,8 @@ class CfdSizingEngine:
                     min_lot=_DEFAULT_MIN_LOT,
                     max_lot=_DEFAULT_MAX_LOT,
                     lot_step=_DEFAULT_LOT_STEP,
+                    default_leverage=800,
+                    max_leverage=800,
                 )
             if clean.startswith("XAG"):
                 return CfdContractSpec(
@@ -114,6 +118,8 @@ class CfdSizingEngine:
                     min_lot=_DEFAULT_MIN_LOT,
                     max_lot=_DEFAULT_MAX_LOT,
                     lot_step=_DEFAULT_LOT_STEP,
+                    default_leverage=200,
+                    max_leverage=200,
                 )
             return CfdContractSpec(
                 symbol=symbol,
@@ -124,6 +130,8 @@ class CfdSizingEngine:
                 min_lot=_DEFAULT_MIN_LOT,
                 max_lot=_DEFAULT_MAX_LOT,
                 lot_step=_DEFAULT_LOT_STEP,
+                default_leverage=100,
+                max_leverage=200,
             )
 
         if asset_class is AssetClass.INDEX:
@@ -136,12 +144,25 @@ class CfdSizingEngine:
                 min_lot=_DEFAULT_MIN_LOT,
                 max_lot=_DEFAULT_MAX_LOT,
                 lot_step=_DEFAULT_LOT_STEP,
+                default_leverage=100,
+                max_leverage=200,
             )
 
         # Forex
         is_jpy = clean.endswith("JPY")
+        is_major_fx = clean in {
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "NZDUSD",
+            "USDCAD",
+            "USDCHF",
+        }
         pip_size = _JPY_FX_PIP if is_jpy else _STANDARD_FX_PIP
         tick_size = Decimal("0.001") if is_jpy else Decimal("0.00001")
+        default_fx_lev = 500 if is_major_fx else 200
+        max_fx_lev = 1000 if is_major_fx else 500
         return CfdContractSpec(
             symbol=symbol,
             asset_class=AssetClass.FOREX,
@@ -151,6 +172,8 @@ class CfdSizingEngine:
             min_lot=_DEFAULT_MIN_LOT,
             max_lot=_DEFAULT_MAX_LOT,
             lot_step=_DEFAULT_LOT_STEP,
+            default_leverage=default_fx_lev,
+            max_leverage=max_fx_lev,
         )
 
     def calculate_pip_distance(

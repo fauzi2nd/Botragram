@@ -71,7 +71,8 @@ class CfdFinancingEngine:
 
     def get_financing_schedule(self, symbol: str) -> CfdFinancingSchedule:
         """Return the authoritative financing interest schedule for a symbol."""
-        asset_class = self._calendar.classify_asset(symbol)
+        spec = self._sizing.get_contract_spec(symbol)
+        asset_class = spec.asset_class
 
         if asset_class is AssetClass.FOREX:
             return CfdFinancingSchedule(
@@ -81,7 +82,7 @@ class CfdFinancingEngine:
                 swap_short_apr=Decimal("0.0050"),
                 rollover_cutoff_hour_utc=21,
                 triple_swap_day=2,
-                max_leverage=100,
+                max_leverage=spec.max_leverage,
             )
 
         if asset_class is AssetClass.COMMODITY:
@@ -92,7 +93,7 @@ class CfdFinancingEngine:
                 swap_short_apr=Decimal("-0.0150"),
                 rollover_cutoff_hour_utc=21,
                 triple_swap_day=2,
-                max_leverage=50,
+                max_leverage=spec.max_leverage,
             )
 
         if asset_class is AssetClass.INDEX:
@@ -103,7 +104,7 @@ class CfdFinancingEngine:
                 swap_short_apr=Decimal("-0.0200"),
                 rollover_cutoff_hour_utc=21,
                 triple_swap_day=4,
-                max_leverage=20,
+                max_leverage=spec.max_leverage,
             )
 
         return CfdFinancingSchedule(
@@ -113,7 +114,7 @@ class CfdFinancingEngine:
             swap_short_apr=Decimal("-0.0800"),
             rollover_cutoff_hour_utc=21,
             triple_swap_day=4,
-            max_leverage=10,
+            max_leverage=spec.max_leverage,
         )
 
     def is_triple_swap_rollover(self, symbol: str, at: datetime) -> bool:

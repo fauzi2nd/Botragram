@@ -130,15 +130,15 @@ def test_cfd_paper_trading_lot_margin_and_leverage() -> None:
     assert result.executed
     assert result.decision.should_execute
     assert result.decision.risk_result is not None
-    # Leverage capped to 50 for commodity
-    assert result.decision.risk_result.position.leverage == 50
+    # Leverage is native 800 for Gold commodity
+    assert result.decision.risk_result.position.leverage == 800
     # Quantity is lots (contract size 100 oz per lot)
     lots = result.decision.risk_result.position.quantity
     assert lots > Decimal("0")
     # Position saved in repository has correct lots and leverage
     saved_pos = asyncio.run(positions.get_by_symbol(symbol="XAUUSD"))
     assert saved_pos is not None
-    assert saved_pos.leverage == 50
+    assert saved_pos.leverage == 800
     assert saved_pos.quantity == lots
 
 
@@ -163,8 +163,8 @@ def test_cfd_paper_trading_forex_leverage_and_pnl() -> None:
     result = asyncio.run(service.execute(signal=eur_signal))
     assert result.executed
     assert result.decision.risk_result is not None
-    # Forex leverage capped at 100
-    assert result.decision.risk_result.position.leverage == 100
+    # Forex leverage is native 500
+    assert result.decision.risk_result.position.leverage == 500
 
     pos = asyncio.run(positions.get_by_symbol(symbol="EURUSD"))
     assert pos is not None
@@ -332,3 +332,45 @@ def test_terminal_monitor_renders_global_discovery_in_paper_mode() -> None:
     # Render dashboard
     dashboard = monitor.render_dashboard(status)
     assert dashboard is not None
+
+
+def test_cfd_paper_trading_gold_min_lot_800x_margin_on_small_balance() -> None:
+    """Verify Gold 0.01 min lot executes on a 100 USDT balance using 800x leverage."""
+    service, positions = _create_cfd_paper_fixture(
+        initial_balance=Decimal("100"),
+    )
+
+    gold_signal = Signal(
+        symbol="XAUUSD",
+        signal_type=SignalType.BUY,
+        price=Decimal("2650"),
+        stop_loss=Decimal("2640"),  # $10 SL distance = 100 pips
+        take_profit=Decimal("2670"),
+        confidence=Decimal("0.90"),
+        strategy_name="botragram_origin",
+        generated_at=_NOW,
+    )
+
+    result = asyncio.run(service.execute(signal=gold_signal))
+
+    assert result.executed is True
+    assert result.decision.should_execute is True
+    assert result.decision.risk_result is not None
+    # Native leverage 800x
+    assert result.decision.risk_result.position.leverage == 800
+    # Minimum lot clamped to 0.01
+    assert result.decision.risk_result.position.quantity == Decimal("0.01")
+    # Notional value: 0.01 * 100 * 2650 = $2650
+    assert result.decision.risk_result.position.notional == Decimal("2650.00")
+
+    # Position is persisted with 800x leverage
+    saved_pos = asyncio.run(positions.get_by_symbol(symbol="XAUUSD"))
+    assert saved_pos is not None
+    assert saved_pos.leverage == 800
+    assert saved_pos.quantity == Decimal("0.01")
+
+    # Available balance after required margin (~$3.31) and fee (~$1.59)
+    available_balance = asyncio.run(service.get_available_balance())
+    # 100 - (2650 / 800 + fee) > 90 USDT
+    assert available_balance > Decimal("90")
+    assert available_balance < Decimal("100")

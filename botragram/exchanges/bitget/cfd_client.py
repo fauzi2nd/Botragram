@@ -333,14 +333,12 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                             item_payload = cast(ExchangePayload, item)
                             sym = str(item_payload.get("symbol", ""))
                             clean_sym = self._mapper.normalize_symbol(sym)
+                            if not clean_sym:
+                                continue
                             if clean_sym in seen:
                                 continue
-                            if clean_sym.endswith(quote_upper) or (
-                                quote_upper in ("USD", "USDT")
-                                and (
-                                    clean_sym.endswith("USD")
-                                    or clean_sym.endswith("USDT")
-                                )
+                            if quote_upper in ("USD", "USDT") or clean_sym.endswith(
+                                quote_upper
                             ):
                                 seen.add(clean_sym)
                                 result.append(clean_sym)
