@@ -8,6 +8,7 @@ from collections.abc import Coroutine
 import pytest
 
 import main as main_module
+from botragram.app.terminal_monitor import TerminalMonitor
 
 type _MainCoroutine = Coroutine[object, object, None]
 
@@ -21,7 +22,7 @@ def test_run_treats_keyboard_interrupt_as_intentional_shutdown(
         coroutine.close()
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(main_module.asyncio, "run", raise_keyboard_interrupt)
+    monkeypatch.setattr(asyncio, "run", raise_keyboard_interrupt)
 
     main_module.run()
 
@@ -36,7 +37,7 @@ def test_run_does_not_swallow_ordinary_failures(
         coroutine.close()
         raise failure
 
-    monkeypatch.setattr(main_module.asyncio, "run", raise_failure)
+    monkeypatch.setattr(asyncio, "run", raise_failure)
 
     with pytest.raises(RuntimeError) as captured:
         main_module.run()
@@ -54,7 +55,7 @@ def test_run_does_not_swallow_async_cancellation(
         coroutine.close()
         raise cancellation
 
-    monkeypatch.setattr(main_module.asyncio, "run", raise_cancellation)
+    monkeypatch.setattr(asyncio, "run", raise_cancellation)
 
     with pytest.raises(asyncio.CancelledError) as captured:
         main_module.run()
@@ -141,7 +142,7 @@ def test_autonomous_paper_auto_resumes_when_paused(
     restart_coordinator.has_committed_restart = False
 
     monkeypatch.setattr(
-        main_module.TerminalMonitor,
+        TerminalMonitor,
         "run",
         AsyncMock(return_value=None),
     )

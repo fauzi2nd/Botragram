@@ -1707,7 +1707,7 @@ def test_select_strategy_updates_singular_runtime_context() -> None:
     )
     assert control.strategy_type == StrategyType.EMA_CROSS
     assert control.select_strategy(StrategyType.SUPERTREND)
-    assert control.strategy_type == StrategyType.SUPERTREND
+    assert getattr(control, "strategy_type") == StrategyType.SUPERTREND
     assert control.runtime_contexts[0].strategy_type == StrategyType.SUPERTREND
 
 

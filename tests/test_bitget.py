@@ -855,9 +855,9 @@ async def test_bitget_futures_client_close_position_exact() -> None:
     assert closed_long.client_order_id == "bop-attempt-long"
     assert closed_long.side is OrderSide.SELL
     assert rest.last_data is not None
-    assert rest.last_data["symbol"] == "BTCUSDT"
-    assert rest.last_data["side"] == "sell"
-    assert rest.last_data["posSide"] == "long"
+    assert str(rest.last_data["symbol"]) == "BTCUSDT"
+    assert str(rest.last_data["side"]) == "sell"
+    assert str(rest.last_data["posSide"]) == "long"
 
 
 @pytest.mark.asyncio
@@ -938,8 +938,8 @@ async def test_bitget_futures_create_order_hedge_mode() -> None:
     )
     assert order_sell.order_id == "ord-sell-1"
     assert rest.last_data is not None
-    assert rest.last_data["side"] == "sell"
-    assert rest.last_data["posSide"] == "short"
+    assert str(rest.last_data["side"]) == "sell"
+    assert str(rest.last_data["posSide"]) == "short"
 
 
 @pytest.mark.asyncio
@@ -1309,7 +1309,7 @@ async def test_bitget_futures_create_protection_orders_atomic_combined_submissio
             authenticated=authenticated,
         )
 
-    rest.post = recording_post  # type: ignore[assignment]
+    rest.post = recording_post  # type: ignore[method-assign]
 
     orders = await client.create_protection_orders(
         symbol="XRPUSDT",

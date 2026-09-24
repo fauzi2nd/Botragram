@@ -234,7 +234,7 @@ def test_paper_trading_global_discovery_telemetry() -> None:
 
     fake_service = FakePaperDiscoveryService(results=(dummy_result,))
     executor = AutonomousPaperTradingCycleExecutor(
-        autonomous_execution_service=fake_service,  # type: ignore[arg-type]
+        autonomous_execution_service=fake_service,
         quote_asset="USDT",
         max_symbols=10,
         top_n=3,

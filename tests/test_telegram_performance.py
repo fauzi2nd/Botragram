@@ -25,6 +25,7 @@ from botragram.models import (
     PendingClosedPositionLifecycle,
     Trade,
 )
+from botragram.services.live_market_stream_service import LiveMarketStreamService
 from botragram.services.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
@@ -39,10 +40,7 @@ from botragram.telegram.messages import (
     get_performance_card_message,
     get_trade_completed_message,
 )
-from botragram.telegram.query_service import (
-    LiveMarketStreamService,
-    TelegramQueryService,
-)
+from botragram.telegram.query_service import TelegramQueryService
 
 
 def _make_dummy_trade(

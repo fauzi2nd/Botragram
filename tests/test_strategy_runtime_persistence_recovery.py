@@ -191,10 +191,10 @@ async def test_runtime_strategy_selection_updates_interval(
         await asyncio.sleep(0.05)
 
         assert (
-            provider.runtime_control.strategy_type
+            getattr(provider.runtime_control, "strategy_type")
             == StrategyType.PINBAR_ENGULFING_EMA_RSI
         )
-        assert provider.runtime_control.interval == Interval.M15
+        assert getattr(provider.runtime_control, "interval") == Interval.M15
         assert provider.settings.strategy.strategy_interval is Interval.M15
         assert provider.settings.strategy.strategy_interval_source == "PIER_INTERVAL"
     finally:
