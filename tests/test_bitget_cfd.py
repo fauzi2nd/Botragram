@@ -266,6 +266,83 @@ def test_cfd_mapper_map_position() -> None:
     assert position.position_id == "pos-cfd-12345"
 
 
+def test_cfd_mapper_enable_mapping() -> None:
+    """Test Bitget CFD enable mapping: 2=tradable, 1=close-only, 0=prohibited."""
+    mapper = BitgetCfdMapper()
+    base_payload = {
+        "symbol": "EURUSD.s",
+        "contractSize": "100000",
+        "tickSize": "0.00001",
+        "pipSize": "0.0001",
+        "minVolume": "0.01",
+        "maxVolume": "100.0",
+        "stepVolume": "0.01",
+    }
+
+    # "2" => tradable (True)
+    spec_tradable = mapper.map_instrument_spec({**base_payload, "enable": "2"})
+    assert spec_tradable.enable is True
+
+    # "1" => close-only (False)
+    spec_close_only = mapper.map_instrument_spec({**base_payload, "enable": "1"})
+    assert spec_close_only.enable is False
+
+    # "0" => prohibited (False)
+    spec_prohibited = mapper.map_instrument_spec({**base_payload, "enable": "0"})
+    assert spec_prohibited.enable is False
+
+    # Unknown / invalid / missing => fail closed (False)
+    spec_unknown = mapper.map_instrument_spec({**base_payload, "enable": "99"})
+    assert spec_unknown.enable is False
+
+    spec_invalid = mapper.map_instrument_spec({**base_payload, "enable": "unknown"})
+    assert spec_invalid.enable is False
+
+    spec_missing = mapper.map_instrument_spec({**base_payload})
+    assert spec_missing.enable is False
+
+
+def test_cfd_mapper_map_position_actual_api() -> None:
+    """Verify map_position parses actual Bitget CFD current-positions payload."""
+    mapper = BitgetCfdMapper()
+    payload = {
+        "positionId": "pos-cfd-real-12345",
+        "symbol": "EURUSD.s",
+        "side": "LONG",
+        "qty": "2.5",
+        "openPrice": "1.0850",
+        "takeProfit": "1.0950",
+        "stopLoss": "1.0800",
+        "interest": "0.15",
+        "unrealizedPnl": "125.00",
+        "totalProfit": "125.00",
+    }
+    position = mapper.map_position(payload)
+    assert position.symbol == "EURUSD"
+    assert position.side is PositionSide.LONG
+    assert position.quantity == Decimal("2.5")
+    assert position.entry_price == Decimal("1.0850")
+    assert position.position_id == "pos-cfd-real-12345"
+    assert position.unrealized_pnl == Decimal("125.00")
+
+    # Short position
+    payload_short = {
+        "positionId": "pos-cfd-short-67890",
+        "symbol": "USDJPY",
+        "side": "SHORT",
+        "qty": "1.0",
+        "openPrice": "155.20",
+        "unrealizedPnl": "-45.00",
+    }
+    pos_short = mapper.map_position(payload_short)
+    assert pos_short.symbol == "USDJPY"
+    assert pos_short.side is PositionSide.SHORT
+    assert pos_short.quantity == Decimal("1.0")
+    assert pos_short.entry_price == Decimal("155.20")
+    assert pos_short.position_id == "pos-cfd-short-67890"
+    assert pos_short.unrealized_pnl == Decimal("-45.00")
+
+
 # =============================================================================
 # Client Tests
 # =============================================================================
@@ -1801,3 +1878,202 @@ async def test_cfd_client_get_market_entry_rules() -> None:
     # USDJPY: pip_size is 0.01, but authoritative price_tick_size must be 0.001
     jpy_rules = await client.get_market_entry_rules(symbol="USDJPY")
     assert jpy_rules.price_tick_size == Decimal("0.001")
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_create_order_trx_id_only_resolved_via_unfilled() -> None:
+    """Verify place-order returning only trxId resolves orderId via unfilled-order."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    # 1. place-order returns only trxId
+    # 2. unfilled-order returns the order with real orderId and matching trxId
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "trxId": "trx_cfd_1001",
+            },
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [
+                {
+                    "orderId": "actual_ord_1001",
+                    "trxId": "trx_cfd_1001",
+                    "symbol": "EURUSD",
+                    "side": "buy",
+                    "orderType": "market",
+                    "qty": "0.1",
+                    "status": "new",
+                    "cTime": "1700000000000",
+                }
+            ],
+        },
+    ]
+
+    order = await client.create_order(
+        symbol="EURUSD",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.1"),
+    )
+    assert order.order_id == "actual_ord_1001"
+    assert order.execution_order_id == "trx_cfd_1001"
+    assert order.order_id != "trx_cfd_1001"  # No fake orderId
+    # Verify clientOid was NOT sent in place-order body
+    assert rest.last_data is not None
+    assert "clientOid" not in rest.last_data
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_create_order_trx_id_only_resolved_via_history() -> None:
+    """Verify place-order returning only trxId resolves orderId via history-order."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    # 1. place-order returns only trxId
+    # 2. unfilled-order returns empty list
+    # 3. history-order returns filled order with matching trxId
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "trxId": "trx_cfd_1002",
+            },
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [],
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [
+                {
+                    "orderId": "actual_ord_1002",
+                    "trxId": "trx_cfd_1002",
+                    "symbol": "EURUSD",
+                    "side": "buy",
+                    "orderType": "market",
+                    "qty": "0.1",
+                    "status": "filled",
+                    "cTime": "1700000000000",
+                }
+            ],
+        },
+    ]
+
+    order = await client.create_order(
+        symbol="EURUSD",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.1"),
+    )
+    assert order.order_id == "actual_ord_1002"
+    assert order.execution_order_id == "trx_cfd_1002"
+    assert order.status is OrderStatus.FILLED
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_create_order_trx_id_not_found_fails_unknown() -> None:
+    """Verify unresolved order identity raises outcome unknown error."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    # 1. place-order returns only trxId
+    # 2. unfilled-order returns empty list
+    # 3. history-order returns empty list
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "trxId": "trx_cfd_unresolved",
+            },
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [],
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [],
+        },
+    ]
+
+    with pytest.raises(ExchangeOrderOutcomeUnknownError):
+        await client.create_order(
+            symbol="EURUSD",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=Decimal("0.1"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_cache_ttl_expiry_enforced() -> None:
+    """Verify cache TTL is strictly enforced and expired cache fails closed in LIVE."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn", is_live=True)
+
+    spec = CfdContractSpec(
+        symbol="EURUSD",
+        asset_class=AssetClass.FOREX,
+        contract_size=Decimal("100000"),
+        pip_size=Decimal("0.0001"),
+        tick_size=Decimal("0.00001"),
+        enable=True,
+    )
+
+    # 1. Fresh cache is valid
+    setattr(client, "_instruments_cache", {"EURUSD": spec})
+    setattr(client, "_instruments_cache_time", datetime.now(timezone.utc))
+    assert client.get_cached_contract_spec("EURUSD") is spec
+
+    # 2. Expired cache returns None
+    setattr(
+        client,
+        "_instruments_cache_time",
+        datetime.now(timezone.utc) - timedelta(seconds=301),
+    )
+    assert client.get_cached_contract_spec("EURUSD") is None
+
+    # 3. Sizing engine with LIVE mode fails closed when cache is expired
+    match_msg = "Authoritative CFD instrument metadata unavailable"
+    with pytest.raises(ValueError, match=match_msg):
+        client.sizing.get_contract_spec("EURUSD")
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_history_order_limit_normalized_to_50() -> None:
+    """Verify Bitget CFD history-order limit is normalized to maximum 50."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": [],
+    }
+
+    # get_trades with limit=100 must normalize to 50
+    await client.get_trades(symbol="EURUSD", limit=100)
+    assert rest.last_params is not None
+    assert rest.last_params.get("limit") == 50
+
+    # get_history_orders with limit=100 must normalize to 50
+    await client.get_history_orders(symbol="EURUSD", limit=100)
+    assert rest.last_params is not None
+    assert rest.last_params.get("limit") == 50

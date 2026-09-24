@@ -114,6 +114,18 @@ class CfdSizingEngine:
         clean = self._clean_symbol(symbol)
         upper = symbol.strip().upper()
 
+        if self._spec_provider is not None:
+            provided = self._spec_provider(clean) or self._spec_provider(upper)
+            if provided is not None:
+                if self._is_live and not provided.enable:
+                    raise ValueError(f"CFD instrument {symbol} is disabled on exchange")
+                return provided
+            if self._is_live:
+                raise ValueError(
+                    f"Authoritative CFD instrument metadata unavailable"
+                    f" for {symbol} in LIVE mode"
+                )
+
         if clean in self._specs:
             spec = self._specs[clean]
             if self._is_live and not spec.enable:
@@ -125,14 +137,6 @@ class CfdSizingEngine:
             if self._is_live and not spec.enable:
                 raise ValueError(f"CFD instrument {symbol} is disabled on exchange")
             return spec
-
-        if self._spec_provider is not None:
-            provided = self._spec_provider(clean) or self._spec_provider(upper)
-            if provided is not None:
-                self.register_contract_spec(provided)
-                if self._is_live and not provided.enable:
-                    raise ValueError(f"CFD instrument {symbol} is disabled on exchange")
-                return provided
 
         if self._is_live:
             raise ValueError(
@@ -319,6 +323,8 @@ class CfdSizingEngine:
                     f"cannot default to 1.0 in LIVE mode for {symbol}"
                 )
             effective_rate = quote_to_account_rate
+        elif spec.exchange_rate is not None and spec.exchange_rate > _DECIMAL_ZERO:
+            effective_rate = spec.exchange_rate
         else:
             if quote_cur in ("USD", "USDT"):
                 effective_rate = Decimal("1.0")
@@ -385,6 +391,8 @@ class CfdSizingEngine:
         base_cur, quote_cur = self._extract_base_and_quote(symbol)
         if quote_to_account_rate is not None:
             rate_for_notional = quote_to_account_rate
+        elif spec.exchange_rate is not None and spec.exchange_rate > _DECIMAL_ZERO:
+            rate_for_notional = spec.exchange_rate
         elif quote_cur in ("USD", "USDT"):
             rate_for_notional = Decimal("1.0")
         elif base_cur == "USD" and entry_price > _DECIMAL_ZERO:

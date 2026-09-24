@@ -255,3 +255,42 @@ def test_trading_engine_cfd_enforces_risk_budget_post_normalization() -> None:
     )
     assert not decision.should_execute
     assert "Calculated CFD lot size is zero" in decision.reason
+
+
+def test_cfd_currency_conversion_authoritative_spec_metadata() -> None:
+    """EURJPY conversion in LIVE must use authoritative exchange_rate when available."""
+    eurjpy_spec = CfdContractSpec(
+        symbol="EURJPY",
+        asset_class=AssetClass.FOREX,
+        contract_size=Decimal("100000"),
+        pip_size=Decimal("0.01"),
+        tick_size=Decimal("0.001"),
+        exchange_rate=Decimal("0.00667"),
+        price_currency="JPY",
+        profit_currency="JPY",
+    )
+    live_sizing = CfdSizingEngine(is_live=True)
+    live_sizing.register_contract_spec(eurjpy_spec)
+
+    # Calling calculate_pip_value_per_lot with quote_to_account_rate=None
+    # uses spec.exchange_rate
+    pip_val = live_sizing.calculate_pip_value_per_lot(
+        "EURJPY",
+        price=Decimal("150.0"),
+        quote_to_account_rate=None,
+    )
+    # Pip in quote = 100,000 * 0.01 = 1,000 JPY
+    # Pip in account (USD) = 1,000 * 0.00667 = 6.67 USD
+    expected = Decimal("100000") * Decimal("0.01") * Decimal("0.00667")
+    assert abs(pip_val - expected) < Decimal("0.00001")
+
+    # calculate_lot_size also uses spec.exchange_rate for notional calculation
+    result = live_sizing.calculate_lot_size(
+        symbol="EURJPY",
+        entry_price=Decimal("150.0"),
+        stop_loss=Decimal("149.0"),
+        risk_amount=Decimal("100.0"),
+        quote_to_account_rate=None,
+    )
+    assert result.pip_value_per_lot == pip_val
+    assert result.notional_value > Decimal("0")

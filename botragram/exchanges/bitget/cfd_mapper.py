@@ -291,7 +291,7 @@ class BitgetCfdMapper(BaseExchangeMapper):
 
         quantity = self._to_decimal(
             payload.get(
-                "size", payload.get("quantity", payload.get("qty", _DECIMAL_ZERO))
+                "qty", payload.get("size", payload.get("quantity", _DECIMAL_ZERO))
             )
         )
         filled_quantity = self._to_decimal(
@@ -416,7 +416,7 @@ class BitgetCfdMapper(BaseExchangeMapper):
         )
 
         raw_side = (
-            self._to_string(payload.get("posSide", payload.get("side", "LONG")))
+            self._to_string(payload.get("side", payload.get("posSide", "LONG")))
             .strip()
             .upper()
         )
@@ -424,14 +424,20 @@ class BitgetCfdMapper(BaseExchangeMapper):
 
         quantity = self._to_decimal(
             payload.get(
-                "total",
-                payload.get("holdAmount", payload.get("size", _DECIMAL_ZERO)),
+                "qty",
+                payload.get(
+                    "total",
+                    payload.get("holdAmount", payload.get("size", _DECIMAL_ZERO)),
+                ),
             )
         )
         entry_price = self._to_decimal(
             payload.get(
-                "openPriceAvg",
-                payload.get("entryPrice", payload.get("avgPrice", _DECIMAL_ZERO)),
+                "openPrice",
+                payload.get(
+                    "openPriceAvg",
+                    payload.get("entryPrice", payload.get("avgPrice", _DECIMAL_ZERO)),
+                ),
             )
         )
         current_price = self._to_decimal(
@@ -442,8 +448,11 @@ class BitgetCfdMapper(BaseExchangeMapper):
 
         unrealized_pnl = self._to_decimal(
             payload.get(
-                "unrealizedPl",
-                payload.get("upl", payload.get("unrealizedPnl", _DECIMAL_ZERO)),
+                "unrealizedPnl",
+                payload.get(
+                    "unrealizedPl",
+                    payload.get("upl", payload.get("totalProfit", _DECIMAL_ZERO)),
+                ),
             )
         )
 
@@ -632,17 +641,18 @@ class BitgetCfdMapper(BaseExchangeMapper):
         if margin_usd_rate is not None and margin_usd_rate <= _DECIMAL_ZERO:
             margin_usd_rate = None
 
-        raw_enable = payload.get("enable", payload.get("enabled", True))
-        if isinstance(raw_enable, str):
-            enable = raw_enable.strip().lower() in (
-                "true",
-                "1",
-                "online",
-                "open",
-                "yes",
-            )
+        raw_enable = payload.get("enable", payload.get("enabled"))
+        enable: bool
+        if raw_enable is None:
+            enable = False
         else:
-            enable = bool(raw_enable)
+            match str(raw_enable).strip().lower():
+                case "2" | "true":
+                    enable = True
+                case "1" | "0" | "false":
+                    enable = False
+                case _:
+                    enable = False
 
         # Pip size derivation
         raw_pip = payload.get("pipSize", payload.get("pip_size"))
