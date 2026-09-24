@@ -549,11 +549,6 @@ class LiveNaturalExitRecoveryService:
                 if quantity == position.quantity
             )
         )
-        if len(candidate_ids) > 1:
-            raise RuntimeError(
-                "Natural exit requires exactly one authoritative full manual-close "
-                "order"
-            )
         if len(candidate_ids) == 1:
             order_id = candidate_ids[0]
             recovered = await self.exchange_client.get_order(
@@ -595,12 +590,75 @@ class LiveNaturalExitRecoveryService:
                 )
             return recovered, is_liquidation
 
-        # Candidate IDs is empty: ordinary exact manual-close matching did not
-        # find an order matching stored_position.quantity.
-        # In one-way position mode, an operator manual reversal executes an
-        # opposite-side order strictly larger than the stored position (e.g.,
-        # SELL 2Q to close LONG Q and open SHORT Q). Fall back to proving
-        # the complete reversal sequence (Order A + subsequent Order B).
+        if len(candidate_ids) > 1:
+            matching_reduce_only_orders: list[Order] = []
+            for candidate_order_id in candidate_ids:
+                try:
+                    cand_order = await self.exchange_client.get_order(
+                        symbol=position.symbol,
+                        order_id=candidate_order_id,
+                    )
+                except ExchangeOrderNotFoundError:
+                    continue
+                if (
+                    cand_order.client_order_id is None
+                    or not cand_order.client_order_id.strip()
+                ):
+                    cand_order = replace(
+                        cand_order,
+                        client_order_id=f"manual-{cand_order.order_id}",
+                    )
+                try:
+                    self._validate_manual_close_order(
+                        order=cand_order,
+                        order_id=candidate_order_id,
+                        position=position,
+                        threshold_time=effective_threshold,
+                    )
+                except RuntimeError:
+                    continue
+                if cand_order.reduce_only is True:
+                    matching_reduce_only_orders.append(cand_order)
+
+            if len(matching_reduce_only_orders) == 1:
+                recovered = matching_reduce_only_orders[0]
+                order_id = recovered.order_id
+                is_liquidation = any(
+                    trade.is_liquidation
+                    for trade in trades
+                    if trade.order_id == order_id
+                )
+                if is_liquidation:
+                    _LOGGER.error(
+                        "Natural LIVE exit detected a LIQUIDATION execution from "
+                        "exchange account history: symbol=%s exit_client_id=%s "
+                        "order_id=%s",
+                        position.symbol,
+                        recovered.client_order_id,
+                        recovered.order_id,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Natural LIVE exit recovered a manual close from "
+                        "authoritative account history (disambiguated via "
+                        "reduce_only): symbol=%s exit_client_id=%s order_id=%s",
+                        position.symbol,
+                        recovered.client_order_id,
+                        recovered.order_id,
+                    )
+                return recovered, is_liquidation
+
+            if len(matching_reduce_only_orders) > 1:
+                raise RuntimeError(
+                    "Natural exit requires exactly one authoritative full "
+                    "manual-close order (ambiguous multiple reduce-only orders found: "
+                    f"count={len(matching_reduce_only_orders)})"
+                )
+
+        # Candidate IDs is empty, or >1 candidates were found but none had
+        # reduce_only=True: ordinary exact manual-close matching did not
+        # find a uniquely authoritative exit order.
+        # Fall back to proving the complete reversal sequence (Order A + Order B).
         return await self._recover_filled_manual_reversal_from_history(
             position=position,
             trades=trades,

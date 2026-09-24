@@ -363,6 +363,17 @@ class BitgetExchangeMapper(BaseExchangeMapper):
             if client_order_id.startswith("btp-"):
                 client_order_id = None
 
+        raw_reduce_only = payload.get("reduceOnly")
+        reduce_only: bool | None = None
+        if isinstance(raw_reduce_only, bool):
+            reduce_only = raw_reduce_only
+        elif isinstance(raw_reduce_only, str):
+            cleaned = raw_reduce_only.strip().upper()
+            if cleaned in ("YES", "TRUE", "1"):
+                reduce_only = True
+            elif cleaned in ("NO", "FALSE", "0"):
+                reduce_only = False
+
         return Order(
             order_id=order_id,
             symbol=symbol,
@@ -376,6 +387,7 @@ class BitgetExchangeMapper(BaseExchangeMapper):
             client_order_id=client_order_id,
             created_at=created_at,
             updated_at=updated_at,
+            reduce_only=reduce_only,
         )
 
     def map_protection_orders(self, payload: ExchangePayload) -> Sequence[Order]:

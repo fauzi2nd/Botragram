@@ -317,6 +317,40 @@ def test_bitget_mapper_map_order() -> None:
     assert order.price == Decimal("50000.0")
     assert order.quantity == Decimal("0.100")
     assert order.executed_quantity == Decimal("0.100")
+    assert order.reduce_only is None
+
+
+def test_bitget_mapper_map_order_reduce_only() -> None:
+    """Map Bitget reduceOnly field variants into Order.reduce_only."""
+    mapper = BitgetExchangeMapper()
+    base_payload = {
+        "orderId": "1234567890",
+        "symbol": "BTCUSDT",
+        "side": "buy",
+        "orderType": "market",
+        "status": "filled",
+        "size": "0.100",
+        "cumExecQty": "0.100",
+        "cTime": "1700000000000",
+    }
+
+    # Default missing reduceOnly -> None
+    order_none = mapper.map_order(base_payload)
+    assert order_none.reduce_only is None
+
+    # YES / yes / true / True -> True
+    for val in ("YES", "yes", "true", "TRUE", "1", True):
+        order = mapper.map_order({**base_payload, "reduceOnly": val})
+        assert order.reduce_only is True
+
+    # NO / no / false / False -> False
+    for val in ("NO", "no", "false", "FALSE", "0", False):
+        order = mapper.map_order({**base_payload, "reduceOnly": val})
+        assert order.reduce_only is False
+
+    # unknown string -> None
+    order_unknown = mapper.map_order({**base_payload, "reduceOnly": "UNKNOWN"})
+    assert order_unknown.reduce_only is None
 
 
 def test_bitget_mapper_map_position() -> None:

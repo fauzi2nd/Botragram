@@ -323,6 +323,17 @@ class BitgetCfdMapper(BaseExchangeMapper):
         stop_price_val = self._to_decimal(raw_stop_price)
         stop_price = stop_price_val if stop_price_val > _DECIMAL_ZERO else None
 
+        raw_reduce_only = payload.get("reduceOnly", payload.get("reduce_only"))
+        reduce_only: bool | None = None
+        if isinstance(raw_reduce_only, bool):
+            reduce_only = raw_reduce_only
+        elif isinstance(raw_reduce_only, str):
+            cleaned = raw_reduce_only.strip().upper()
+            if cleaned in ("YES", "TRUE", "1"):
+                reduce_only = True
+            elif cleaned in ("NO", "FALSE", "0"):
+                reduce_only = False
+
         return Order(
             order_id=order_id,
             client_order_id=client_order_id,
@@ -337,6 +348,7 @@ class BitgetCfdMapper(BaseExchangeMapper):
             executed_quantity=filled_quantity,
             created_at=created_at,
             updated_at=updated_at,
+            reduce_only=reduce_only,
         )
 
     def map_protection_orders(self, payload: ExchangePayload) -> Sequence[Order]:

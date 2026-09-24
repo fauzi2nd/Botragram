@@ -58,3 +58,4 @@ class Order:
     stop_price: Decimal | None = None
     client_order_id: str | None = None
     execution_order_id: str | None = None
+    reduce_only: bool | None = None

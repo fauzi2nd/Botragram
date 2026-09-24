@@ -24,6 +24,7 @@ from botragram.exceptions import (
     ExchangeOrderNotFoundError,
     ExchangeOrderOutcomeUnknownError,
 )
+from botragram.exchanges.bitget.mapper import BitgetExchangeMapper
 from botragram.models import (
     ClosedPositionLifecycle,
     Order,
@@ -3040,3 +3041,1212 @@ async def test_reversal_scenario_12_recovery_is_idempotent() -> None:
     completed_pass_2 = await lifecycles.get_completed()
     assert len(completed_pass_2) == 1
     assert completed_pass_1[0] == completed_pass_2[0]
+
+
+# =============================================================================
+# Reduce-Only Disambiguation Regressions (Production MRVL Scenario)
+# =============================================================================
+def _mrvl_position() -> Position:
+    return Position(
+        symbol="MRVLUSDT",
+        side=PositionSide.SHORT,
+        quantity=Decimal("0.09"),
+        entry_price=Decimal("252.6"),
+        current_price=Decimal("254.17"),
+        unrealized_pnl=Decimal("0"),
+        leverage=8,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("257.14"),
+        take_profit=Decimal("243.51"),
+        interval=Interval.M5,
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+        stop_loss_client_algo_id="bsl-6d7600797b0d468eaac6a92193a1ef27",
+        take_profit_client_algo_id="btp-53b8d7b723494fea898614df70ef650e",
+        entry_client_order_id="btg-910f0e6570f142ff89b9e253b0edb4cc",
+    )
+
+
+def _mrvl_attempt(*, position: Position) -> SubmissionAttempt:
+    return SubmissionAttempt(
+        client_order_id="btg-910f0e6570f142ff89b9e253b0edb4cc",
+        symbol=position.symbol,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        quantity=position.quantity,
+        signal_generated_at=position.opened_at,
+        interval=Interval.M5,
+        strategy_type=position.strategy_type,
+        status=SubmissionAttemptStatus.COMPLETED,
+        exchange_order_id="entry-mrvl-order",
+        created_at=position.opened_at,
+        updated_at=position.opened_at,
+    )
+
+
+@pytest.mark.asyncio
+async def test_mrvl_production_scenario_reverse_disambiguation() -> None:
+    """Exact regression test for production MRVLUSDT reverse incident.
+
+    - Bot opens MRVLUSDT SHORT 0.09.
+    - Operator triggers Bitget 'Reverse', which executes two orders:
+      1. BUY 0.09 with reduceOnly='YES' (closing the SHORT)
+      2. BUY 0.09 with reduceOnly='NO' (opening the new LONG)
+    - Operator later closes the new LONG: SELL 0.09 with reduceOnly='YES'.
+    - Exchange is flat.
+    - Recovery must disambiguate and pick ONLY order 1 (reduceOnly='YES') as exit.
+    - Stored position must be deleted, old lifecycle completed with exact PnL.
+    """
+    position = _mrvl_position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_mrvl_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    mapper = BitgetExchangeMapper()
+    t_rev = _NOW + timedelta(minutes=23)
+    t_rev_open = _NOW + timedelta(minutes=23, seconds=1)
+    t_later_close = _NOW + timedelta(minutes=25)
+
+    reverse_close_payload = {
+        "orderId": "1486969485356396544",
+        "clientOid": "1486969485356396545",
+        "symbol": "MRVLUSDT",
+        "side": "buy",
+        "orderType": "market",
+        "status": "filled",
+        "size": "0.09",
+        "cumExecQty": "0.09",
+        "price": "254.17",
+        "cTime": str(int(t_rev.timestamp() * 1000)),
+        "uTime": str(int(t_rev.timestamp() * 1000)),
+        "reduceOnly": "YES",
+    }
+    reverse_open_payload = {
+        "orderId": "1486969485373173760",
+        "clientOid": "1486969485356396544",
+        "symbol": "MRVLUSDT",
+        "side": "buy",
+        "orderType": "market",
+        "status": "filled",
+        "size": "0.09",
+        "cumExecQty": "0.09",
+        "price": "254.17",
+        "cTime": str(int(t_rev_open.timestamp() * 1000)),
+        "uTime": str(int(t_rev_open.timestamp() * 1000)),
+        "reduceOnly": "NO",
+    }
+    later_close_payload = {
+        "orderId": "1486970142691913728",
+        "clientOid": "1486970142691913729",
+        "symbol": "MRVLUSDT",
+        "side": "sell",
+        "orderType": "market",
+        "status": "filled",
+        "size": "0.09",
+        "cumExecQty": "0.09",
+        "price": "253.81",
+        "cTime": str(int(t_later_close.timestamp() * 1000)),
+        "uTime": str(int(t_later_close.timestamp() * 1000)),
+        "reduceOnly": "YES",
+    }
+
+    order_rev_close = mapper.map_order(reverse_close_payload)
+    order_rev_open = mapper.map_order(reverse_open_payload)
+    order_later_close = mapper.map_order(later_close_payload)
+
+    assert order_rev_close.reduce_only is True
+    assert order_rev_open.reduce_only is False
+    assert order_later_close.reduce_only is True
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="trade-entry",
+                order_id="entry-mrvl-order",
+                symbol="MRVLUSDT",
+                side=OrderSide.SELL,
+                price=Decimal("252.6"),
+                quantity=Decimal("0.09"),
+                quote_quantity=Decimal("22.734"),
+                fee=Decimal("0.0136"),
+                fee_asset="USDT",
+                executed_at=_NOW,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="trade-rev-close",
+                order_id=order_rev_close.order_id,
+                symbol="MRVLUSDT",
+                side=OrderSide.BUY,
+                price=Decimal("254.17"),
+                quantity=Decimal("0.09"),
+                quote_quantity=Decimal("22.8753"),
+                fee=Decimal("0.0137"),
+                fee_asset="USDT",
+                executed_at=t_rev,
+                realized_pnl=Decimal("-0.1413"),
+            ),
+            Trade(
+                trade_id="trade-rev-open",
+                order_id=order_rev_open.order_id,
+                symbol="MRVLUSDT",
+                side=OrderSide.BUY,
+                price=Decimal("254.17"),
+                quantity=Decimal("0.09"),
+                quote_quantity=Decimal("22.8753"),
+                fee=Decimal("0.0137"),
+                fee_asset="USDT",
+                executed_at=t_rev_open,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="trade-later-close",
+                order_id=order_later_close.order_id,
+                symbol="MRVLUSDT",
+                side=OrderSide.SELL,
+                price=Decimal("253.81"),
+                quantity=Decimal("0.09"),
+                quote_quantity=Decimal("22.8429"),
+                fee=Decimal("0.0137"),
+                fee_asset="USDT",
+                executed_at=t_later_close,
+                realized_pnl=Decimal("-0.0324"),
+            ),
+        ),
+        standard_orders=(order_rev_close, order_rev_open, order_later_close),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    # 1. Reconciliation must succeed
+    await service.reconcile()
+
+    # 2. Local position must be deleted
+    assert await positions.get_by_symbol(symbol="MRVLUSDT") is None
+
+    # 3. Exactly one closed lifecycle
+    completed = await lifecycles.get_completed()
+    assert len(completed) == 1
+    record = completed[0]
+
+    # 4. Exit identity must be reverse-close order
+    assert record.ownership.exit_order_id == order_rev_close.order_id
+    assert record.ownership.exit_client_order_id == order_rev_close.client_order_id
+    assert record.ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
+    assert record.ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+
+    # 5. Financial accounting matches old SHORT entry + reverse-close fill
+    assert record.gross_realized_pnl == Decimal("-0.1413")
+    assert record.fee == Decimal("0.0136") + Decimal("0.0137")
+
+    # 6. Idempotency check: running reconcile again does not duplicate
+    await service.reconcile()
+    completed_again = await lifecycles.get_completed()
+    assert len(completed_again) == 1
+    assert completed_again[0] == record
+
+
+@pytest.mark.asyncio
+async def test_two_exact_candidates_one_reduce_only_true_one_false_picks_true() -> None:
+    """Disambiguate two exact-quantity candidates by selecting reduce_only=True."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    mapper = BitgetExchangeMapper()
+    t_close = _NOW + timedelta(minutes=5)
+
+    order_true = mapper.map_order(
+        {
+            "orderId": "close-true",
+            "symbol": _SYMBOL,
+            "side": "buy",
+            "orderType": "market",
+            "status": "filled",
+            "size": str(position.quantity),
+            "cumExecQty": str(position.quantity),
+            "cTime": str(int(t_close.timestamp() * 1000)),
+            "uTime": str(int(t_close.timestamp() * 1000)),
+            "reduceOnly": "YES",
+        }
+    )
+    order_false = mapper.map_order(
+        {
+            "orderId": "close-false",
+            "symbol": _SYMBOL,
+            "side": "buy",
+            "orderType": "market",
+            "status": "filled",
+            "size": str(position.quantity),
+            "cumExecQty": str(position.quantity),
+            "cTime": str(int(t_close.timestamp() * 1000)),
+            "uTime": str(int(t_close.timestamp() * 1000)),
+            "reduceOnly": "NO",
+        }
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="t-entry",
+                order_id="entry-1",
+                symbol=_SYMBOL,
+                side=OrderSide.SELL,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=_NOW,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="t-true",
+                order_id=order_true.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("9"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("7965"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("885"),
+            ),
+            Trade(
+                trade_id="t-false",
+                order_id=order_false.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("9"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("7965"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("0"),
+            ),
+        ),
+        standard_orders=(order_true, order_false),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+    assert len(completed) == 1
+    assert completed[0].ownership.exit_order_id == order_true.order_id
+
+
+@pytest.mark.asyncio
+async def test_two_exact_candidates_both_reduce_only_true_fails_closed() -> None:
+    """Fail closed when multiple candidates both claim reduce_only=True."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    mapper = BitgetExchangeMapper()
+    t_close = _NOW + timedelta(minutes=5)
+
+    order_1 = mapper.map_order(
+        {
+            "orderId": "close-1",
+            "symbol": _SYMBOL,
+            "side": "buy",
+            "orderType": "market",
+            "status": "filled",
+            "size": str(position.quantity),
+            "cumExecQty": str(position.quantity),
+            "cTime": str(int(t_close.timestamp() * 1000)),
+            "uTime": str(int(t_close.timestamp() * 1000)),
+            "reduceOnly": "YES",
+        }
+    )
+    order_2 = mapper.map_order(
+        {
+            "orderId": "close-2",
+            "symbol": _SYMBOL,
+            "side": "buy",
+            "orderType": "market",
+            "status": "filled",
+            "size": str(position.quantity),
+            "cumExecQty": str(position.quantity),
+            "cTime": str(int(t_close.timestamp() * 1000)),
+            "uTime": str(int(t_close.timestamp() * 1000)),
+            "reduceOnly": "YES",
+        }
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="t-1",
+                order_id=order_1.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("10"),
+            ),
+            Trade(
+                trade_id="t-2",
+                order_id=order_2.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("10"),
+            ),
+        ),
+        standard_orders=(order_1, order_2),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError, match="ambiguous multiple reduce-only orders found"
+    ):
+        await service.reconcile()
+
+
+@pytest.mark.asyncio
+async def test_two_exact_candidates_both_metadata_none_fails_closed() -> None:
+    """Fail closed when multiple candidates have reduce_only=None and cannot prove."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    mapper = BitgetExchangeMapper()
+    t_close = _NOW + timedelta(minutes=5)
+
+    order_1 = mapper.map_order(
+        {
+            "orderId": "close-none-1",
+            "symbol": _SYMBOL,
+            "side": "buy",
+            "orderType": "market",
+            "status": "filled",
+            "size": str(position.quantity),
+            "cumExecQty": str(position.quantity),
+            "cTime": str(int(t_close.timestamp() * 1000)),
+            "uTime": str(int(t_close.timestamp() * 1000)),
+        }
+    )
+    order_2 = mapper.map_order(
+        {
+            "orderId": "close-none-2",
+            "symbol": _SYMBOL,
+            "side": "buy",
+            "orderType": "market",
+            "status": "filled",
+            "size": str(position.quantity),
+            "cumExecQty": str(position.quantity),
+            "cTime": str(int(t_close.timestamp() * 1000)),
+            "uTime": str(int(t_close.timestamp() * 1000)),
+        }
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="t-none-1",
+                order_id=order_1.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("10"),
+            ),
+            Trade(
+                trade_id="t-none-2",
+                order_id=order_2.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("10"),
+            ),
+        ),
+        standard_orders=(order_1, order_2),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Natural exit requires exactly one authoritative full manual-close order",
+    ):
+        await service.reconcile()
+
+
+@pytest.mark.asyncio
+async def test_single_exact_candidate_reduce_only_false_succeeds() -> None:
+    """Existing behavior preserved: single exact candidate with reduce_only=False."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    mapper = BitgetExchangeMapper()
+    t_close = _NOW + timedelta(minutes=5)
+
+    order = mapper.map_order(
+        {
+            "orderId": "close-single-false",
+            "symbol": _SYMBOL,
+            "side": "buy",
+            "orderType": "market",
+            "status": "filled",
+            "size": str(position.quantity),
+            "cumExecQty": str(position.quantity),
+            "cTime": str(int(t_close.timestamp() * 1000)),
+            "uTime": str(int(t_close.timestamp() * 1000)),
+            "reduceOnly": "NO",
+        }
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="t-entry",
+                order_id="entry-1",
+                symbol=_SYMBOL,
+                side=OrderSide.SELL,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=_NOW,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="t-single",
+                order_id=order.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("10"),
+            ),
+        ),
+        standard_orders=(order,),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+    assert len(completed) == 1
+    assert completed[0].ownership.exit_order_id == order.order_id
+
+
+@pytest.mark.asyncio
+async def test_normal_manual_close_existing() -> None:
+    """Verify normal single manual close behavior remains fully functional."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_close = _NOW + timedelta(minutes=5)
+    order = Order(
+        order_id="normal-manual-close",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        created_at=t_close,
+        updated_at=t_close,
+        reduce_only=True,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="t-entry",
+                order_id="entry-1",
+                symbol=_SYMBOL,
+                side=OrderSide.SELL,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=_NOW,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="t-close",
+                order_id=order.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("9.5"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8407.5"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("442.5"),
+            ),
+        ),
+        standard_orders=(order,),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+    assert len(completed) == 1
+    assert completed[0].ownership.exit_order_id == order.order_id
+    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
+
+
+@pytest.mark.asyncio
+async def test_short_normal_manual_close() -> None:
+    """Dedicated test for SHORT position manual close with single exact order."""
+    position = replace(_position(), side=PositionSide.SHORT)
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(
+        attempt=replace(_completed_attempt(position=position), side=OrderSide.SELL)
+    )
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_close = _NOW + timedelta(minutes=7)
+    order = Order(
+        order_id="short-close-1",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        created_at=t_close,
+        updated_at=t_close,
+        reduce_only=True,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="t-short-entry",
+                order_id="entry-1",
+                symbol=_SYMBOL,
+                side=OrderSide.SELL,
+                price=Decimal("20"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("17700"),
+                fee=Decimal("2"),
+                fee_asset="USDT",
+                executed_at=_NOW,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="t-short-close",
+                order_id=order.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("19"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("16815"),
+                fee=Decimal("2"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("885"),
+            ),
+        ),
+        standard_orders=(order,),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+    assert len(completed) == 1
+    assert completed[0].ownership.position_side is PositionSide.SHORT
+    assert completed[0].ownership.exit_order_id == order.order_id
+
+
+@pytest.mark.asyncio
+async def test_long_normal_manual_close() -> None:
+    """Dedicated test for LONG position manual close with single exact order."""
+    position = replace(_position(), side=PositionSide.LONG)
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(
+        attempt=replace(_completed_attempt(position=position), side=OrderSide.BUY)
+    )
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_close = _NOW + timedelta(minutes=7)
+    order = Order(
+        order_id="long-close-1",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        created_at=t_close,
+        updated_at=t_close,
+        reduce_only=True,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="t-long-entry",
+                order_id="entry-1",
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("19"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("16815"),
+                fee=Decimal("2"),
+                fee_asset="USDT",
+                executed_at=_NOW,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="t-long-close",
+                order_id=order.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.SELL,
+                price=Decimal("20"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("17700"),
+                fee=Decimal("2"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("885"),
+            ),
+        ),
+        standard_orders=(order,),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+    assert len(completed) == 1
+    assert completed[0].ownership.position_side is PositionSide.LONG
+    assert completed[0].ownership.exit_order_id == order.order_id
+
+
+@pytest.mark.asyncio
+async def test_reverse_with_subsequent_opposite_position_close() -> None:
+    """LONG reversed to SHORT and subsequently closed: old LONG only uses close."""
+    position = replace(_position(), side=PositionSide.LONG)
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(
+        attempt=replace(_completed_attempt(position=position), side=OrderSide.BUY)
+    )
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    mapper = BitgetExchangeMapper()
+    t_rev = _NOW + timedelta(minutes=15)
+    t_rev_open = _NOW + timedelta(minutes=15, seconds=1)
+    t_opp_close = _NOW + timedelta(minutes=30)
+
+    # 1. Close old LONG
+    order_close_long = mapper.map_order(
+        {
+            "orderId": "rev-close-long",
+            "symbol": _SYMBOL,
+            "side": "sell",
+            "orderType": "market",
+            "status": "filled",
+            "size": str(position.quantity),
+            "cumExecQty": str(position.quantity),
+            "cTime": str(int(t_rev.timestamp() * 1000)),
+            "uTime": str(int(t_rev.timestamp() * 1000)),
+            "reduceOnly": "YES",
+        }
+    )
+    # 2. Open new SHORT
+    order_open_short = mapper.map_order(
+        {
+            "orderId": "rev-open-short",
+            "symbol": _SYMBOL,
+            "side": "sell",
+            "orderType": "market",
+            "status": "filled",
+            "size": str(position.quantity),
+            "cumExecQty": str(position.quantity),
+            "cTime": str(int(t_rev_open.timestamp() * 1000)),
+            "uTime": str(int(t_rev_open.timestamp() * 1000)),
+            "reduceOnly": "NO",
+        }
+    )
+    # 3. Later close new SHORT
+    order_close_short = mapper.map_order(
+        {
+            "orderId": "later-close-short",
+            "symbol": _SYMBOL,
+            "side": "buy",
+            "orderType": "market",
+            "status": "filled",
+            "size": str(position.quantity),
+            "cumExecQty": str(position.quantity),
+            "cTime": str(int(t_opp_close.timestamp() * 1000)),
+            "uTime": str(int(t_opp_close.timestamp() * 1000)),
+            "reduceOnly": "YES",
+        }
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="t-long-entry",
+                order_id="entry-1",
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=_NOW,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="t-rev-close-long",
+                order_id=order_close_long.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.SELL,
+                price=Decimal("11"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("9735"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_rev,
+                realized_pnl=Decimal("885"),
+            ),
+            Trade(
+                trade_id="t-rev-open-short",
+                order_id=order_open_short.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.SELL,
+                price=Decimal("11"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("9735"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_rev_open,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="t-later-close-short",
+                order_id=order_close_short.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("10.5"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("9292.5"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_opp_close,
+                realized_pnl=Decimal("442.5"),
+            ),
+        ),
+        standard_orders=(order_close_long, order_open_short, order_close_short),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+    assert len(completed) == 1
+    assert completed[0].ownership.exit_order_id == order_close_long.order_id
+    assert completed[0].gross_realized_pnl == Decimal("885")
+
+
+@pytest.mark.asyncio
+async def test_unrelated_same_symbol_orders_not_misattributed() -> None:
+    """Unrelated same-symbol orders (wrong time, side, size) are not attributed."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_before = _NOW - timedelta(minutes=10)
+    t_after = _NOW + timedelta(minutes=10)
+
+    # 1. Past trade before position opened
+    order_before = Order(
+        order_id="old-order",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        created_at=t_before,
+        updated_at=t_before,
+        reduce_only=True,
+    )
+    # 2. Wrong quantity order
+    order_wrong_qty = Order(
+        order_id="wrong-qty-order",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("10"),
+        executed_quantity=Decimal("10"),
+        created_at=t_after,
+        updated_at=t_after,
+        reduce_only=True,
+    )
+    # 3. Legitimate close order
+    order_legit = Order(
+        order_id="legit-close",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        created_at=t_after,
+        updated_at=t_after,
+        reduce_only=True,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="t-before",
+                order_id=order_before.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_before,
+                realized_pnl=Decimal("10"),
+            ),
+            Trade(
+                trade_id="t-wrong-qty",
+                order_id=order_wrong_qty.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("10"),
+                quantity=Decimal("10"),
+                quote_quantity=Decimal("100"),
+                fee=Decimal("0.1"),
+                fee_asset="USDT",
+                executed_at=t_after,
+                realized_pnl=Decimal("1"),
+            ),
+            Trade(
+                trade_id="t-entry",
+                order_id="entry-1",
+                symbol=_SYMBOL,
+                side=OrderSide.SELL,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=_NOW,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="t-legit",
+                order_id=order_legit.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("9"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("7965"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_after,
+                realized_pnl=Decimal("885"),
+            ),
+        ),
+        standard_orders=(order_before, order_wrong_qty, order_legit),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+    assert len(completed) == 1
+    assert completed[0].ownership.exit_order_id == order_legit.order_id
+
+
+@pytest.mark.asyncio
+async def test_recovery_twice_is_idempotent() -> None:
+    """Running recovery twice in reduce_only scenario is completely idempotent."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_close = _NOW + timedelta(minutes=5)
+    order = Order(
+        order_id="close-idemp-test",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        created_at=t_close,
+        updated_at=t_close,
+        reduce_only=True,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            Trade(
+                trade_id="t-entry",
+                order_id="entry-1",
+                symbol=_SYMBOL,
+                side=OrderSide.SELL,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=_NOW,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="t-close",
+                order_id=order.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("10"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("8850"),
+                fee=Decimal("1"),
+                fee_asset="USDT",
+                executed_at=t_close,
+                realized_pnl=Decimal("10"),
+            ),
+        ),
+        standard_orders=(order,),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    first_pass = await lifecycles.get_completed()
+    assert len(first_pass) == 1
+
+    await service.reconcile()
+    second_pass = await lifecycles.get_completed()
+    assert len(second_pass) == 1
+    assert first_pass[0] == second_pass[0]
+
+
+@pytest.mark.asyncio
+async def test_protection_exit_prioritized() -> None:
+    """Filled protection order (SL/TP) is prioritized over manual close scan."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    filled_tp = Order(
+        order_id="tp-filled-order",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.TAKE_PROFIT_MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        price=Decimal("0.01084"),
+        stop_price=Decimal("0.01084"),
+        created_at=_NOW,
+        updated_at=_NOW + timedelta(minutes=5),
+        client_order_id=position.take_profit_client_algo_id,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        exact_only_protections=(filled_tp,),
+        trades=(
+            Trade(
+                trade_id="t-entry",
+                order_id="entry-1",
+                symbol=_SYMBOL,
+                side=OrderSide.SELL,
+                price=Decimal("0.01129"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("9.99165"),
+                fee=Decimal("0.01"),
+                fee_asset="USDT",
+                executed_at=_NOW,
+                realized_pnl=Decimal("0"),
+            ),
+            Trade(
+                trade_id="t-tp",
+                order_id=filled_tp.order_id,
+                symbol=_SYMBOL,
+                side=OrderSide.BUY,
+                price=Decimal("0.01084"),
+                quantity=position.quantity,
+                quote_quantity=Decimal("9.5934"),
+                fee=Decimal("0.01"),
+                fee_asset="USDT",
+                executed_at=_NOW + timedelta(minutes=5),
+                realized_pnl=Decimal("0.39825"),
+            ),
+        ),
+    )
+
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+    assert len(completed) == 1
+    assert completed[0].ownership.exit_order_id == filled_tp.order_id
+    assert completed[0].ownership.close_reason is ClosedPositionReason.TAKE_PROFIT
