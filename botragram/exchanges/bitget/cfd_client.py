@@ -84,9 +84,9 @@ _CFD_SYMBOLS_ENDPOINT: Final[str] = "/api/v3/cfd/market/tickers"
 _CFD_PLACE_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/place-order"
 _CFD_CANCEL_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/cancel-order"
 _CFD_ORDER_INFO_ENDPOINT: Final[str] = "/api/v3/cfd/trade/order-info"
-_CFD_OPEN_ORDERS_ENDPOINT: Final[str] = "/api/v3/cfd/trade/open-orders"
-_CFD_TRADES_ENDPOINT: Final[str] = "/api/v3/cfd/trade/history-orders"
-_CFD_POSITIONS_ENDPOINT: Final[str] = "/api/v3/cfd/trade/positions"
+_CFD_OPEN_ORDERS_ENDPOINT: Final[str] = "/api/v3/cfd/trade/unfilled-orders"
+_CFD_TRADES_ENDPOINT: Final[str] = "/api/v3/cfd/trade/history-order"
+_CFD_POSITIONS_ENDPOINT: Final[str] = "/api/v3/cfd/trade/current-positions"
 _CFD_CLOSE_POSITION_ENDPOINT: Final[str] = "/api/v3/cfd/trade/close-positions"
 
 _CFD_PLACE_PLAN_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/place-strategy-order"
@@ -320,7 +320,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
             market_min_quantity=spec.min_lot,
             market_max_quantity=spec.max_lot,
             market_quantity_step=spec.lot_step,
-            price_tick_size=spec.pip_size,
+            price_tick_size=spec.tick_size,
         )
 
     async def get_trading_symbols(self, *, quote_asset: str) -> Sequence[str]:
@@ -522,7 +522,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
             "symbol": vendor_symbol,
             "side": side_str,
             "orderType": type_str,
-            "size": str(quantity),
+            "qty": str(quantity),
         }
         if price is not None:
             body["price"] = str(price)
@@ -1137,6 +1137,8 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         client_order_id: str | None = None,
         bypass_calendar_guard: bool = False,
         side: PositionSide | None = None,
+        position_id: str | None = None,
+        quantity: Decimal | None = None,
     ) -> Order:
         """Close an open CFD position."""
         if not bypass_calendar_guard:
@@ -1147,25 +1149,45 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                     f"(status: {session.status.value}, reason: {session.reason})"
                 )
 
-        pos_side_str: str | None = None
-        if side is not None:
-            pos_side_str = "long" if side is PositionSide.LONG else "short"
-        else:
+        target_position_id = position_id
+        target_quantity = quantity
+
+        if target_position_id is None or target_quantity is None:
             open_positions = await self.get_positions(symbol=symbol)
-            if len(open_positions) > 1:
+            if side is not None:
+                matched_positions = [p for p in open_positions if p.side is side]
+            else:
+                matched_positions = list(open_positions)
+
+            if len(matched_positions) > 1:
                 raise RuntimeError(
                     f"Multiple active CFD positions found for {symbol!r}. "
-                    "Explicit side parameter is required to close."
+                    "Explicit side/position_id parameter is required to close."
                 )
-            if len(open_positions) == 1:
-                pos_side_str = (
-                    "long" if open_positions[0].side is PositionSide.LONG else "short"
+            if not matched_positions:
+                raise ExchangeError(
+                    f"No active CFD position found for {symbol!r} to close"
                 )
 
-        vendor_symbol = self._mapper.to_vendor_symbol(symbol, mode=self._mode)
-        body: dict[str, object] = {"symbol": vendor_symbol}
-        if pos_side_str is not None:
-            body["posSide"] = pos_side_str
+            matched_pos = matched_positions[0]
+            if target_position_id is None:
+                target_position_id = matched_pos.position_id
+            if target_quantity is None:
+                target_quantity = matched_pos.quantity
+
+        if not target_position_id:
+            raise ExchangeError(
+                f"Missing authoritative positionId for CFD position {symbol!r}"
+            )
+        if target_quantity <= Decimal("0"):
+            raise ExchangeError(
+                f"Invalid quantity {target_quantity} for CFD position {symbol!r}"
+            )
+
+        body: dict[str, object] = {
+            "positionId": target_position_id,
+            "qty": str(target_quantity),
+        }
         if client_order_id is not None:
             body["clientOid"] = client_order_id
 
@@ -1177,7 +1199,10 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         if isinstance(payload, dict):
             raw_data = payload.get("data")
             if isinstance(raw_data, dict):
-                mapped = self._mapper.map_order(cast(ExchangePayload, raw_data))
+                data_dict = dict(cast(ExchangePayload, raw_data))
+                if not data_dict.get("symbol"):
+                    data_dict["symbol"] = symbol
+                mapped = self._mapper.map_order(cast(ExchangePayload, data_dict))
                 if client_order_id and not mapped.client_order_id:
                     return replace(mapped, client_order_id=client_order_id)
                 return mapped
@@ -1195,6 +1220,8 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
             symbol=position.symbol,
             client_order_id=client_order_id,
             side=position.side,
+            position_id=position.position_id,
+            quantity=position.quantity,
         )
 
     async def close_all_positions(self) -> Sequence[Order]:
@@ -1207,6 +1234,8 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                     await self.close_position(
                         symbol=position.symbol,
                         side=position.side,
+                        position_id=position.position_id,
+                        quantity=position.quantity,
                     )
                 )
             except Exception as error:

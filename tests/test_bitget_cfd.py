@@ -133,6 +133,8 @@ class MockBitgetRestClient(BitgetRestClient):
         self.last_path = path
         self.last_params = params
         self.last_data = data
+        if self.canned_responses:
+            return self._validate_response_envelope(self.canned_responses.pop(0))
         return self._validate_response_envelope(self.canned_response)
 
 
@@ -251,6 +253,7 @@ def test_cfd_mapper_map_position() -> None:
         "margin": "500.00",
         "leverage": "50",
         "uTime": "1700000000000",
+        "positionId": "pos-cfd-12345",
     }
     position = mapper.map_position(payload)
     assert position.symbol == "XAUUSD"
@@ -260,6 +263,7 @@ def test_cfd_mapper_map_position() -> None:
     assert position.current_price == Decimal("2650.00")
     assert position.unrealized_pnl == Decimal("125.00")
     assert position.leverage == 50
+    assert position.position_id == "pos-cfd-12345"
 
 
 # =============================================================================
@@ -387,7 +391,102 @@ async def test_cfd_client_get_positions() -> None:
     assert len(positions) == 1
     assert positions[0].symbol == "XAUUSD"
     assert positions[0].side == PositionSide.LONG
-    assert rest.last_path == "/api/v3/cfd/trade/positions"
+    assert rest.last_path == "/api/v3/cfd/trade/current-positions"
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_create_order_uses_qty_payload() -> None:
+    """Verify create_order submits 'qty' rather than 'size' per Bitget CFD contract."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {
+            "orderId": "order_cfd_001",
+            "clientOid": "client_order_001",
+            "symbol": "XAUUSD",
+            "side": "buy",
+            "orderType": "market",
+            "status": "new",
+            "qty": "0.15",
+            "cTime": "1700000000000",
+        },
+    }
+
+    order = await client.create_order(
+        symbol="XAUUSD",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.15"),
+        client_order_id="client_order_001",
+        bypass_calendar_guard=True,
+    )
+
+    assert order.order_id == "order_cfd_001"
+    assert rest.last_path == "/api/v3/cfd/trade/place-order"
+    assert rest.last_data is not None
+    assert rest.last_data["qty"] == "0.15"
+    assert "size" not in rest.last_data
+
+
+@pytest.mark.asyncio
+async def test_cfd_client_close_position_resolves_position_id() -> None:
+    """Verify close_position automatically resolves positionId and qty."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    # First call: get_positions
+    # Second call: close-positions
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [
+                {
+                    "symbol": "XAUUSD",
+                    "posSide": "long",
+                    "positionId": "pos-cfd-resolved-789",
+                    "total": "0.25",
+                    "openPriceAvg": "2600.0",
+                    "markPrice": "2610.0",
+                    "unrealizedPl": "25.0",
+                    "leverage": "50",
+                    "uTime": "1700000000000",
+                }
+            ],
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "orderId": "close_order_999",
+                "clientOid": "close_client_999",
+                "symbol": "XAUUSD",
+                "side": "sell",
+                "orderType": "market",
+                "status": "closed",
+                "qty": "0.25",
+                "cTime": "1700000000000",
+            },
+        },
+    ]
+
+    closed = await client.close_position(
+        symbol="XAUUSD",
+        client_order_id="close_client_999",
+        bypass_calendar_guard=True,
+    )
+
+    assert closed.order_id == "close_order_999"
+    assert rest.last_path == "/api/v3/cfd/trade/close-positions"
+    assert rest.last_data is not None
+    assert rest.last_data["positionId"] == "pos-cfd-resolved-789"
+    assert rest.last_data["qty"] == "0.25"
+    assert rest.last_data["clientOid"] == "close_client_999"
 
 
 # =============================================================================
@@ -1286,7 +1385,7 @@ def test_cfd_sizing_engine_normalize_lot() -> None:
     """Verify lot normalization rules (step size, min lot, max lot)."""
     sizing = CfdSizingEngine()
 
-    assert sizing.normalize_lot("EURUSD", Decimal("0.004")) == Decimal("0.01")
+    assert sizing.normalize_lot("EURUSD", Decimal("0.004")) == Decimal("0")
     assert sizing.normalize_lot("EURUSD", Decimal("0.258")) == Decimal("0.25")
     assert sizing.normalize_lot("EURUSD", Decimal("120.0")) == Decimal("100.0")
     assert sizing.normalize_lot("EURUSD", Decimal("0.0")) == Decimal("0")
@@ -1499,6 +1598,7 @@ async def test_cfd_client_close_position_exact() -> None:
         unrealized_pnl=Decimal("40.0"),
         opened_at=now,
         updated_at=now,
+        position_id="cfd_pos_001",
     )
 
     closed = await client.close_position_exact(
@@ -1509,7 +1609,8 @@ async def test_cfd_client_close_position_exact() -> None:
     assert closed.client_order_id == "bop_cfd_exact_1"
     assert rest.last_path == "/api/v3/cfd/trade/close-positions"
     assert rest.last_data is not None
-    assert rest.last_data["symbol"] == "EURUSD"
+    assert rest.last_data["positionId"] == "cfd_pos_001"
+    assert rest.last_data["qty"] == "1.0"
     assert rest.last_data["clientOid"] == "bop_cfd_exact_1"
 
 
@@ -1659,4 +1760,13 @@ async def test_cfd_client_get_market_entry_rules() -> None:
     assert rules.market_min_quantity == Decimal("0.01")
     assert rules.market_max_quantity == Decimal("100.0")
     assert rules.market_quantity_step == Decimal("0.01")
-    assert rules.price_tick_size == Decimal("0.0001")
+    # EURUSD: pip_size is 0.0001, but authoritative price_tick_size must be 0.00001
+    assert rules.price_tick_size == Decimal("0.00001")
+
+    # XAUUSD: pip_size is 0.10, but authoritative price_tick_size must be 0.01
+    xau_rules = await client.get_market_entry_rules(symbol="XAUUSD")
+    assert xau_rules.price_tick_size == Decimal("0.01")
+
+    # USDJPY: pip_size is 0.01, but authoritative price_tick_size must be 0.001
+    jpy_rules = await client.get_market_entry_rules(symbol="USDJPY")
+    assert jpy_rules.price_tick_size == Decimal("0.001")

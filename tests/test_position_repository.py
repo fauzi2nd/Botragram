@@ -554,6 +554,36 @@ async def _run_v21_to_v22_pending_partial_tp_migration() -> None:
             await database.close()
 
 
+def test_sqlite_v22_to_v23_adds_position_id_column() -> None:
+    """Upgrade existing schema to v23 adding position_id column."""
+    asyncio.run(_run_v22_to_v23_position_id_migration())
+
+
+async def _run_v22_to_v23_position_id_migration() -> None:
+    with TemporaryDirectory() as temporary_directory:
+        database = SQLiteDatabase(
+            database_path=Path(temporary_directory) / "migration-v22-v23.db",
+        )
+        await database.connect()
+        try:
+            manager = SQLiteMigrationManager(database=database)
+            assert await manager.initialize(target_version=22) == 22
+            columns_before = await database.fetch_all(
+                statement="PRAGMA table_info(positions)",
+            )
+            names_before = {str(row["name"]) for row in columns_before}
+            assert "position_id" not in names_before
+
+            assert await manager.initialize(target_version=23) == 23
+            columns_after = await database.fetch_all(
+                statement="PRAGMA table_info(positions)",
+            )
+            names_after = {str(row["name"]) for row in columns_after}
+            assert "position_id" in names_after
+        finally:
+            await database.close()
+
+
 def test_sqlite_position_pending_partial_tp_fields_round_trip() -> None:
     """Persist and restore a position with pending partial TP fields."""
     asyncio.run(_run_sqlite_pending_partial_tp_fields_round_trip())
@@ -610,3 +640,30 @@ async def test_position_service_sync_preserves_pending_partial_tp_fields() -> No
     assert len(synced) == 1
     assert synced[0].pending_partial_tp_client_order_id == "ptp-pending-sync-999"
     assert synced[0].pending_partial_tp_quantity == Decimal("1.25")
+
+
+def test_sqlite_position_position_id_round_trip() -> None:
+    """Persist and restore a position with CFD venue position_id."""
+    asyncio.run(_run_sqlite_position_id_round_trip())
+
+
+async def _run_sqlite_position_id_round_trip() -> None:
+    with TemporaryDirectory() as temporary_directory:
+        database = SQLiteDatabase(
+            database_path=Path(temporary_directory) / "positions-pos-id.db",
+        )
+        await database.connect()
+        try:
+            await SQLiteMigrationManager(database=database).initialize()
+            repository = SQLitePositionRepository(database=database)
+            pos = replace(
+                _position(),
+                position_id="bitget-cfd-pos-998877",
+            )
+            await repository.save(position=pos)
+
+            loaded = await repository.get_by_symbol(symbol=pos.symbol)
+            assert loaded is not None
+            assert loaded.position_id == "bitget-cfd-pos-998877"
+        finally:
+            await database.close()

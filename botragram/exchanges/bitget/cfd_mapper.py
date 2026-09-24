@@ -437,6 +437,11 @@ class BitgetCfdMapper(BaseExchangeMapper):
             payload.get("uTime", payload.get("cTime", payload.get("ts")))
         )
 
+        raw_pos_id = self._to_string(
+            payload.get("positionId", payload.get("posId", ""))
+        ).strip()
+        position_id = raw_pos_id if raw_pos_id else None
+
         return Position(
             symbol=symbol,
             side=position_side,
@@ -447,6 +452,7 @@ class BitgetCfdMapper(BaseExchangeMapper):
             leverage=max(1, leverage),
             opened_at=created_at,
             updated_at=updated_at,
+            position_id=position_id,
         )
 
     def map_trade(self, payload: ExchangePayload) -> Trade:

@@ -185,7 +185,7 @@ async def test_bitget_cfd_get_trades() -> None:
     assert t.side is OrderSide.BUY
     assert t.price == Decimal("2650.50")
     assert t.quantity == Decimal("0.1")
-    assert rest.last_path == "/api/v3/cfd/trade/history-orders"
+    assert rest.last_path == "/api/v3/cfd/trade/history-order"
 
 
 @pytest.mark.asyncio
@@ -202,12 +202,14 @@ async def test_bitget_cfd_close_position_side_disambiguation() -> None:
             {
                 "symbol": "XAUUSD",
                 "posSide": "long",
+                "positionId": "pos_long_123",
                 "size": "1.0",
                 "openPrice": "2650.0",
             },
             {
                 "symbol": "XAUUSD",
                 "posSide": "short",
+                "positionId": "pos_short_456",
                 "size": "1.0",
                 "openPrice": "2650.0",
             },
@@ -217,17 +219,39 @@ async def test_bitget_cfd_close_position_side_disambiguation() -> None:
     with pytest.raises(RuntimeError, match="Multiple active CFD positions"):
         await client.close_position(symbol="XAUUSD", bypass_calendar_guard=True)
 
-    # When side is specified, directly closes with posSide
-    rest.canned_response = {
-        "code": "00000",
-        "msg": "success",
-        "data": {
-            "orderId": "close_order_123",
-            "symbol": "XAUUSD",
-            "side": "sell",
-            "status": "closed",
+    # When side is specified, resolves positionId and qty, then closes
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [
+                {
+                    "symbol": "XAUUSD",
+                    "posSide": "long",
+                    "positionId": "pos_long_123",
+                    "size": "1.0",
+                    "openPrice": "2650.0",
+                },
+                {
+                    "symbol": "XAUUSD",
+                    "posSide": "short",
+                    "positionId": "pos_short_456",
+                    "size": "1.0",
+                    "openPrice": "2650.0",
+                },
+            ],
         },
-    }
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "orderId": "close_order_123",
+                "symbol": "XAUUSD",
+                "side": "sell",
+                "status": "closed",
+            },
+        },
+    ]
 
     order = await client.close_position(
         symbol="XAUUSD",
@@ -236,4 +260,5 @@ async def test_bitget_cfd_close_position_side_disambiguation() -> None:
     )
     assert order.order_id == "close_order_123"
     assert rest.last_data is not None
-    assert rest.last_data.get("posSide") == "long"
+    assert rest.last_data.get("positionId") == "pos_long_123"
+    assert rest.last_data.get("qty") == "1.0"
