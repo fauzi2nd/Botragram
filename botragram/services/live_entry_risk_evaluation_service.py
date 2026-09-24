@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Protocol
+from typing import Final, Protocol
 
 from botragram.engine import TradingEngine
 from botragram.models import (
@@ -21,6 +22,7 @@ from botragram.services.live_account_drawdown_service import (
 
 __all__ = ["LiveEntryRiskEvaluationService"]
 
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _DECIMAL_ZERO = Decimal("0")
 
 
@@ -66,6 +68,17 @@ class _RuntimeControlLeverageProvider(Protocol):
         ...
 
 
+class _LiveInstrumentMetadataRefresher(Protocol):
+    async def refresh_instrument_metadata(
+        self,
+        *,
+        symbol: str,
+        force_refresh: bool = False,
+    ) -> None:
+        """Refresh authoritative instrument metadata before risk evaluation."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class LiveEntryRiskEvaluationService:
     """Evaluate one signal against a fresh authoritative LIVE portfolio."""
@@ -79,6 +92,7 @@ class LiveEntryRiskEvaluationService:
     natural_exit_recovery_service: _LiveNaturalExitRecovery | None = None
     runtime_risk_limit_provider: _RuntimeRiskLimitProvider | None = None
     runtime_control: _RuntimeControlLeverageProvider | None = None
+    instrument_refresher: _LiveInstrumentMetadataRefresher | None = None
 
     def __post_init__(self) -> None:
         """Normalize and validate the balance asset boundary."""
@@ -131,6 +145,30 @@ class LiveEntryRiskEvaluationService:
                 decision=decision,
                 has_existing_position=has_existing_position,
             )
+
+        if self.instrument_refresher is not None:
+            try:
+                await self.instrument_refresher.refresh_instrument_metadata(
+                    symbol=signal.symbol,
+                )
+            except Exception as error:
+                _LOGGER.warning(
+                    "Authoritative instrument metadata refresh failed for %s: %s",
+                    signal.symbol,
+                    error,
+                )
+                decision = TradingDecision(
+                    should_execute=False,
+                    signal=evaluation_signal,
+                    risk_result=None,
+                    reason=f"Authoritative instrument metadata refresh failed: {error}",
+                )
+                if entry_price_override is not None:
+                    decision = replace(decision, signal=signal)
+                return LiveEntryRiskEvaluation(
+                    decision=decision,
+                    has_existing_position=has_existing_position,
+                )
 
         current_drawdown_pct = _DECIMAL_ZERO
         equity_provider = self.equity_provider

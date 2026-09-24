@@ -183,6 +183,18 @@ class BaseExchangeClient(ABC):
             reason="Crypto market trades 24/7",
         )
 
+    async def refresh_instrument_metadata(
+        self,
+        *,
+        symbol: str,
+        force_refresh: bool = False,
+    ) -> None:
+        """Refresh authoritative instrument metadata if cached or expired.
+
+        No-op by default for exchange clients without expiring metadata cache.
+        """
+        del symbol, force_refresh
+
     @property
     def supported_intervals(self) -> frozenset[Interval]:
         """Return candlestick intervals natively supported by the exchange."""

@@ -13,14 +13,12 @@ Python:
 # =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Standard Library
-# =============================================================================
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Final, Protocol, runtime_checkable
 
 # =============================================================================
 # Local Imports
@@ -56,6 +54,7 @@ __all__ = [
 # =============================================================================
 # Constants
 # =============================================================================
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _DECIMAL_ZERO = Decimal("0")
 _DEFAULT_BALANCE_ASSET = "USDT"
 _APPROVED_DECISION_RISK_ERROR = "Approved trading decision requires a risk result"
@@ -87,6 +86,20 @@ class _MarketDataProvider(Protocol):
         limit: int,
     ) -> Sequence[Candle]:
         """Return normalized candles for a market interval."""
+        ...
+
+
+@runtime_checkable
+class _InstrumentMetadataRefresher(Protocol):
+    """Provide authoritative instrument metadata refreshing."""
+
+    async def refresh_instrument_metadata(
+        self,
+        *,
+        symbol: str,
+        force_refresh: bool = False,
+    ) -> None:
+        """Refresh authoritative instrument metadata for a symbol if needed."""
         ...
 
 
@@ -365,6 +378,32 @@ class TradingService:
             balance = await self.account_service.get_free_balance(
                 asset=self.balance_asset,
             )
+
+        if self.trade_mode is TradeMode.LIVE and isinstance(
+            self.market_service, _InstrumentMetadataRefresher
+        ):
+            try:
+                await self.market_service.refresh_instrument_metadata(
+                    symbol=normalized_symbol,
+                )
+            except Exception as error:
+                _LOGGER.warning(
+                    "LIVE instrument metadata refresh failed for %s: %s",
+                    normalized_symbol,
+                    error,
+                )
+                decision = TradingDecision(
+                    should_execute=False,
+                    signal=signal,
+                    risk_result=None,
+                    reason=f"Authoritative instrument metadata refresh failed: {error}",
+                )
+                return TradingResult(
+                    executed=False,
+                    decision=decision,
+                    order=None,
+                    reason=decision.reason,
+                )
 
         decision = self.trading_engine.evaluate(
             signal=signal,

@@ -187,7 +187,15 @@ class TradingEngine:
             runtime_limit=max_position_size_usdt,
         )
 
-        spec = self.cfd_sizing_engine.get_contract_spec(signal.symbol)
+        try:
+            spec = self.cfd_sizing_engine.get_contract_spec(signal.symbol)
+        except ValueError as err:
+            return TradingDecision(
+                should_execute=False,
+                signal=signal,
+                risk_result=None,
+                reason=f"CFD sizing calculation failed: {err}",
+            )
         # CFD leverage must originate from authoritative instrument metadata,
         # not generic futures assumptions
         requested_lev = spec.default_leverage

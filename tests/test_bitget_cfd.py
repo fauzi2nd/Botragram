@@ -17,6 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import asyncio
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -28,10 +29,14 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.config.risk_settings import RiskSettings
 from botragram.engine import (
     CfdFinancingEngine,
     CfdSizingEngine,
     MarketCalendarEngine,
+    PortfolioEngine,
+    RiskEngine,
+    TradingEngine,
 )
 from botragram.enums import (
     AssetClass,
@@ -43,6 +48,8 @@ from botragram.enums import (
     OrderStatus,
     OrderType,
     PositionSide,
+    SignalType,
+    StrategyType,
 )
 from botragram.exceptions import (
     ExchangeError,
@@ -67,7 +74,9 @@ from botragram.models import (
     MarketSession,
     PipCalculationResult,
     Position,
+    Signal,
 )
+from botragram.services import LiveEntryRiskEvaluationService
 
 
 # =============================================================================
@@ -84,6 +93,7 @@ class MockBitgetRestClient(BitgetRestClient):
             passphrase="mock-passphrase",
         )
         self.history: list[tuple[str, str]] = []
+        self.post_bodies: list[dict[str, object]] = []
         self.last_method = ""
         self.last_path = ""
         self.last_params: QueryParams | None = None
@@ -129,6 +139,8 @@ class MockBitgetRestClient(BitgetRestClient):
     ) -> JsonResponse:
         del headers, authenticated
         self.history.append(("POST", path))
+        if data is not None:
+            self.post_bodies.append(dict(data))
         self.last_method = "POST"
         self.last_path = path
         self.last_params = params
@@ -496,26 +508,6 @@ async def test_cfd_client_create_order_uses_qty_payload() -> None:
         },
     }
 
-    # Track POST data before calling create_order
-    post_bodies: list[dict[str, object]] = []
-    _orig_post = rest.post
-
-    async def _patched_post(
-        path: str,
-        *,
-        params: QueryParams | None = None,
-        data: dict[str, object] | None = None,
-        headers: RequestHeaders | None = None,
-        authenticated: bool = True,
-    ) -> object:
-        if data is not None:
-            post_bodies.append(dict(data))
-        return await _orig_post(
-            path, params=params, data=data, headers=headers, authenticated=authenticated
-        )  # type: ignore[arg-type]
-
-    rest.post = _patched_post  # type: ignore[method-assign]
-
     order = await client.create_order(
         symbol="XAUUSD",
         side=OrderSide.BUY,
@@ -532,8 +524,8 @@ async def test_cfd_client_create_order_uses_qty_payload() -> None:
         for method, path in rest.history
     ), f"place-order POST not found in history: {rest.history}"
     # Verify the place-order payload used 'qty' not 'size'
-    assert post_bodies, "No POST body recorded"
-    place_body = post_bodies[0]
+    assert rest.post_bodies, "No POST body recorded"
+    place_body = rest.post_bodies[0]
     assert place_body.get("qty") == "0.15", f"qty not in place-order body: {place_body}"
     assert "size" not in place_body, (
         f"'size' must not appear in place-order body: {place_body}"
@@ -2077,3 +2069,319 @@ async def test_cfd_client_history_order_limit_normalized_to_50() -> None:
     await client.get_history_orders(symbol="EURUSD", limit=100)
     assert rest.last_params is not None
     assert rest.last_params.get("limit") == 50
+
+
+# =============================================================================
+# CFD Metadata TTL / Refresh Tests
+# =============================================================================
+@pytest.mark.asyncio
+async def test_cfd_refresh_metadata_fresh_cache_skips_network() -> None:
+    """Fresh cache (< 300s) executes without additional network calls."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, is_live=True)
+
+    spec = CfdContractSpec(
+        symbol="XAUUSD",
+        asset_class=AssetClass.COMMODITY,
+        contract_size=Decimal("100"),
+        pip_size=Decimal("0.01"),
+        tick_size=Decimal("0.01"),
+        min_lot=Decimal("0.01"),
+        max_lot=Decimal("50"),
+        lot_step=Decimal("0.01"),
+        enable=True,
+    )
+    setattr(client, "_instruments_cache", {"XAUUSD": spec})
+    setattr(client, "_instruments_cache_time", datetime.now(timezone.utc))
+
+    # Calling refresh_instrument_metadata on fresh cache does not make REST calls
+    await client.refresh_instrument_metadata(symbol="XAUUSD")
+    assert not any(path == "/api/v3/cfd/market/contracts" for _, path in rest.history)
+    assert client.get_cached_contract_spec("XAUUSD") is spec
+
+
+@pytest.mark.asyncio
+async def test_cfd_refresh_metadata_expired_cache_refreshes_from_exchange() -> None:
+    """Expired cache (> 300s) triggers async refresh before sizing and updates cache."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, is_live=True)
+
+    old_spec = CfdContractSpec(
+        symbol="XAUUSD",
+        asset_class=AssetClass.COMMODITY,
+        contract_size=Decimal("100"),
+        pip_size=Decimal("0.01"),
+        tick_size=Decimal("0.01"),
+        min_lot=Decimal("0.01"),
+        max_lot=Decimal("50"),
+        lot_step=Decimal("0.01"),
+        enable=True,
+    )
+    setattr(client, "_instruments_cache", {"XAUUSD": old_spec})
+    setattr(
+        client,
+        "_instruments_cache_time",
+        datetime.now(timezone.utc) - timedelta(seconds=305),
+    )
+
+    # Initial state: cache expired -> get_cached_contract_spec is None
+    assert client.get_cached_contract_spec("XAUUSD") is None
+
+    # Exchange returns updated metadata with new tick_size and max_lots
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            {
+                "symbol": "XAUUSD",
+                "assetClass": "COMMODITY",
+                "contractSize": "100",
+                "tickSize": "0.001",
+                "pipSize": "0.01",
+                "minVolume": "0.01",
+                "maxVolume": "100",
+                "stepVolume": "0.01",
+                "enable": "2",
+            }
+        ],
+    }
+
+    # Refresh
+    await client.refresh_instrument_metadata(symbol="XAUUSD")
+
+    # REST call was executed
+    assert any(path == "/api/v3/cfd/account/instruments" for _, path in rest.history)
+
+    # Cache is refreshed and unexpired
+    cached = client.get_cached_contract_spec("XAUUSD")
+    assert cached is not None
+    assert cached.tick_size == Decimal("0.001")
+    assert cached.max_lot == Decimal("100")
+
+    # Sizing engine resolves the updated metadata without failing
+    sizing_spec = client.sizing.get_contract_spec("XAUUSD")
+    assert sizing_spec.tick_size == Decimal("0.001")
+
+
+@pytest.mark.asyncio
+async def test_cfd_refresh_metadata_failure_fails_closed_in_live() -> None:
+    """Failed metadata refresh in LIVE mode fails closed and never falls back."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, is_live=True)
+
+    # Expired cache
+    setattr(client, "_instruments_cache", {})
+    setattr(
+        client,
+        "_instruments_cache_time",
+        datetime.now(timezone.utc) - timedelta(seconds=400),
+    )
+
+    rest.canned_response = {
+        "code": "40001",
+        "msg": "Network failure on exchange",
+        "data": [],
+    }
+
+    with pytest.raises(
+        ExchangeError, match="Failed to fetch authoritative CFD instruments"
+    ):
+        await client.refresh_instrument_metadata(symbol="XAUUSD")
+
+    # Sizing engine remains fail closed
+    with pytest.raises(
+        ValueError, match="Authoritative CFD instrument metadata unavailable"
+    ):
+        client.sizing.get_contract_spec("XAUUSD")
+
+
+@pytest.mark.asyncio
+async def test_cfd_refresh_metadata_paper_mode_preserves_deterministic_fallback() -> (
+    None
+):
+    """Non-live PAPER/TEST mode preserves existing deterministic behavior."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, is_live=False)
+
+    # No network response (canned response returns empty)
+    rest.canned_response = {
+        "code": "50000",
+        "msg": "error",
+        "data": [],
+    }
+
+    # In paper mode, refresh does not raise ExchangeError
+    await client.refresh_instrument_metadata(symbol="BTCUSD")
+
+    # Sizing resolves fallback deterministic spec
+    spec = client.sizing.get_contract_spec("BTCUSD")
+    assert spec.symbol == "BTCUSD"
+    assert spec.asset_class == AssetClass.CRYPTO
+
+
+@pytest.mark.asyncio
+async def test_live_entry_risk_evaluation_service_refreshes_expired_cfd_metadata() -> (
+    None
+):
+    """LiveEntryRiskEvaluationService refreshes expired metadata before LIVE sizing."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, is_live=True)
+
+    # Populate expired cache
+    spec = CfdContractSpec(
+        symbol="XAUUSD",
+        asset_class=AssetClass.COMMODITY,
+        contract_size=Decimal("100"),
+        pip_size=Decimal("0.01"),
+        tick_size=Decimal("0.01"),
+        min_lot=Decimal("0.01"),
+        max_lot=Decimal("50"),
+        lot_step=Decimal("0.01"),
+        enable=True,
+    )
+    setattr(client, "_instruments_cache", {"XAUUSD": spec})
+    setattr(
+        client,
+        "_instruments_cache_time",
+        datetime.now(timezone.utc) - timedelta(seconds=350),
+    )
+
+    # REST endpoint returns valid fresh data
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            {
+                "symbol": "XAUUSD",
+                "assetClass": "COMMODITY",
+                "contractSize": "100",
+                "tickSize": "0.01",
+                "pipSize": "0.01",
+                "minVolume": "0.01",
+                "maxVolume": "50",
+                "stepVolume": "0.01",
+                "enable": "2",
+            }
+        ],
+    }
+
+    trading_engine = TradingEngine(
+        risk_engine=RiskEngine(
+            settings=RiskSettings(max_position_size_usdt=Decimal("100000"))
+        ),
+        portfolio_engine=PortfolioEngine(),
+        cfd_sizing_engine=client.sizing,
+        market_type=MarketType.CFD,
+    )
+
+    class _MockBalance:
+        async def get_free_balance(self, *, asset: str) -> Decimal:
+            del asset
+            return Decimal("10000")
+
+    class _MockPosition:
+        async def get_all(self, *, synchronize: bool = False) -> Sequence[Position]:
+            del synchronize
+            return ()
+
+    service = LiveEntryRiskEvaluationService(
+        account_service=_MockBalance(),
+        position_service=_MockPosition(),
+        trading_engine=trading_engine,
+        balance_asset="USDT",
+        instrument_refresher=client,
+    )
+
+    signal = Signal(
+        symbol="XAUUSD",
+        signal_type=SignalType.BUY,
+        price=Decimal("2600.00"),
+        stop_loss=Decimal("2590.00"),
+        take_profit=Decimal("2620.00"),
+        confidence=Decimal("0.9"),
+        strategy_name=StrategyType.EMA_CROSS.value,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+    # Evaluate
+    evaluation = await service.evaluate(signal=signal)
+
+    # The evaluation succeeded because metadata was refreshed
+    assert evaluation.decision.should_execute is True
+    assert evaluation.decision.risk_result is not None
+    assert any(path == "/api/v3/cfd/account/instruments" for _, path in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_live_entry_risk_evaluation_service_fails_closed_when_refresh_fails() -> (
+    None
+):
+    """LiveEntryRiskEvaluationService fails closed when metadata refresh fails."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, is_live=True)
+
+    # Expired cache
+    setattr(client, "_instruments_cache", {})
+    setattr(
+        client,
+        "_instruments_cache_time",
+        datetime.now(timezone.utc) - timedelta(seconds=350),
+    )
+
+    # Refresh will fail with network error
+    rest.canned_response = {
+        "code": "50000",
+        "msg": "Connection error",
+        "data": [],
+    }
+
+    trading_engine = TradingEngine(
+        risk_engine=RiskEngine(settings=RiskSettings()),
+        portfolio_engine=PortfolioEngine(),
+        cfd_sizing_engine=client.sizing,
+        market_type=MarketType.CFD,
+    )
+
+    class _MockBalance:
+        async def get_free_balance(self, *, asset: str) -> Decimal:
+            del asset
+            return Decimal("10000")
+
+    class _MockPosition:
+        async def get_all(self, *, synchronize: bool = False) -> Sequence[Position]:
+            del synchronize
+            return ()
+
+    service = LiveEntryRiskEvaluationService(
+        account_service=_MockBalance(),
+        position_service=_MockPosition(),
+        trading_engine=trading_engine,
+        balance_asset="USDT",
+        instrument_refresher=client,
+    )
+
+    signal = Signal(
+        symbol="XAUUSD",
+        signal_type=SignalType.BUY,
+        price=Decimal("2600.00"),
+        stop_loss=Decimal("2590.00"),
+        take_profit=Decimal("2620.00"),
+        confidence=Decimal("0.9"),
+        strategy_name=StrategyType.EMA_CROSS.value,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+    # Evaluate
+    evaluation = await service.evaluate(signal=signal)
+
+    # Fails closed
+    assert evaluation.decision.should_execute is False
+    assert "Authoritative instrument metadata refresh failed" in (
+        evaluation.decision.reason or ""
+    )

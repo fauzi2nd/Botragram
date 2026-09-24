@@ -108,6 +108,18 @@ class MarketService:
             quote_asset=self._normalize_quote_asset(quote_asset),
         )
 
+    async def refresh_instrument_metadata(
+        self,
+        *,
+        symbol: str,
+        force_refresh: bool = False,
+    ) -> None:
+        """Refresh authoritative instrument metadata for a symbol if needed."""
+        await self.exchange_client.refresh_instrument_metadata(
+            symbol=self._normalize_symbol(symbol),
+            force_refresh=force_refresh,
+        )
+
     async def get_candles(
         self,
         *,

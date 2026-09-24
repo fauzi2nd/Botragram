@@ -244,7 +244,20 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         if specs:
             self._instruments_cache.update(specs)
             self._instruments_cache_time = datetime.now(timezone.utc)
+        elif self._is_live:
+            raise ExchangeError(
+                "Authoritative CFD instrument metadata list returned empty in LIVE mode"
+            )
         return specs
+
+    async def refresh_instrument_metadata(
+        self,
+        *,
+        symbol: str,
+        force_refresh: bool = False,
+    ) -> None:
+        """Refresh authoritative CFD instrument metadata if cache is expired."""
+        await self.get_instrument_spec(symbol, force_refresh=force_refresh)
 
     async def get_instrument_spec(
         self,

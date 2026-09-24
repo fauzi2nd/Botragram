@@ -572,13 +572,31 @@ class BitgetCfdMapper(BaseExchangeMapper):
             payload.get("contractSize", payload.get("contract_size", _DECIMAL_ZERO))
         )
         min_lot = self._to_decimal(
-            payload.get("minVolume", payload.get("min_volume", _DECIMAL_ZERO))
+            payload.get(
+                "minVolume",
+                payload.get(
+                    "min_volume",
+                    payload.get("minLots", payload.get("min_lot", _DECIMAL_ZERO)),
+                ),
+            )
         )
         max_lot = self._to_decimal(
-            payload.get("maxVolume", payload.get("max_volume", _DECIMAL_ZERO))
+            payload.get(
+                "maxVolume",
+                payload.get(
+                    "max_volume",
+                    payload.get("maxLots", payload.get("max_lot", _DECIMAL_ZERO)),
+                ),
+            )
         )
         lot_step = self._to_decimal(
-            payload.get("stepVolume", payload.get("step_volume", _DECIMAL_ZERO))
+            payload.get(
+                "stepVolume",
+                payload.get(
+                    "step_volume",
+                    payload.get("lotStep", payload.get("lot_step", _DECIMAL_ZERO)),
+                ),
+            )
         )
         tick_size = self._to_decimal(
             payload.get("tickSize", payload.get("tick_size", _DECIMAL_ZERO))

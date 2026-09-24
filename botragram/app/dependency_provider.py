@@ -1453,6 +1453,7 @@ class DependencyProvider:
             natural_exit_recovery_service=None,
             runtime_risk_limit_provider=runtime_limits,
             runtime_control=self.runtime_control,
+            instrument_refresher=self.market_service,
         )
         self._live_position_protection_service = LivePositionProtectionService(
             exchange_client=exchange_client,
