@@ -862,7 +862,7 @@ class BitgetFuturesExchangeClient(BitgetClient):
                 )
                 if clean_id and not clean_id.startswith("bitget-"):
                     resolved_order_id = clean_id
-            except Exception:
+            except ExchangeOrderNotFoundError:
                 resolved_order_id = None
 
             if resolved_order_id is not None:

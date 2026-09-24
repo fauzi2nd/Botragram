@@ -366,3 +366,43 @@ def test_signal_engine_hold_signals_unaffected() -> None:
     assert strategy.oi_calls == 0
     assert strategy.funding_calls == 0
     assert strategy.account_ratio_calls == 0
+
+
+def test_signal_engine_sell_signals_symmetry() -> None:
+    """SELL signals evaluate filters symmetrically and respect rejection markers."""
+    # 1. Clean SELL signal evaluates all three filters symmetrically
+    sell_strategy = MockStrategy(
+        initial_signal=_dummy_signal(
+            signal_type=SignalType.SELL, reason="Bearish Engulfing setup"
+        )
+    )
+    resolver = MockResolver(sell_strategy)
+    engine = SignalEngine(
+        strategy_resolver=resolver,
+        default_strategy_type=StrategyType.BOTRAGRAM_ORIGIN,
+        use_open_interest=True,
+        filter_funding_sentiment=True,
+        filter_account_ratio=True,
+    )
+
+    signal = engine.generate(candles=[_dummy_candle()])
+    assert signal.signal_type is SignalType.SELL
+    assert sell_strategy.oi_calls == 1
+    assert sell_strategy.funding_calls == 1
+    assert sell_strategy.account_ratio_calls == 1
+
+    # 2. Rejection marker on SELL prevents double-evaluation
+    rejected_sell_strategy = MockStrategy(
+        initial_signal=_dummy_signal(
+            signal_type=SignalType.SELL,
+            reason="[REJECTED_FUNDING_CROWDED] Excessive negative funding for SHORT",
+        )
+    )
+    rejected_resolver = MockResolver(rejected_sell_strategy)
+    engine_rejected = SignalEngine(
+        strategy_resolver=rejected_resolver,
+        default_strategy_type=StrategyType.BOTRAGRAM_ORIGIN,
+        filter_funding_sentiment=True,
+    )
+    engine_rejected.generate(candles=[_dummy_candle()])
+    assert rejected_sell_strategy.funding_calls == 0

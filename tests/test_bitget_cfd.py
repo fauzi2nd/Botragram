@@ -47,6 +47,7 @@ from botragram.enums import (
 from botragram.exceptions import (
     ExchangeError,
     ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
     ExchangeOrderRejectedError,
 )
 from botragram.exchanges.base.client import BaseExchangeClient
@@ -799,6 +800,116 @@ async def test_cfd_create_protection_orders_cancellation_propagates() -> None:
             quantity=Decimal("1.0"),
             stop_loss=Decimal("2600.00"),
             stop_loss_client_algo_id="bsl-cancel-sl",
+            bypass_calendar_guard=True,
+        )
+
+    assert not any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_cfd_create_protection_orders_sl_only_posts_when_no_opposite_leg() -> (
+    None
+):
+    """When no opposite TP exists, CFD SL single-leg is posted without takeProfit."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [],
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "cfd_sl_solo"},
+        },
+    ]
+
+    orders = await client.create_protection_orders(
+        symbol="XAUUSD",
+        side=OrderSide.SELL,
+        quantity=Decimal("1.0"),
+        stop_loss=Decimal("2600.00"),
+        stop_loss_client_algo_id="bsl-cfd-solo-sl",
+        bypass_calendar_guard=True,
+    )
+
+    assert len(orders) == 1
+    assert orders[0].order_type is OrderType.STOP_MARKET
+    assert orders[0].client_order_id == "bsl-cfd-solo-sl"
+    assert rest.last_path == "/api/v3/cfd/trade/place-strategy-order"
+    assert rest.last_data is not None
+    assert rest.last_data["stopLoss"] == "2600.00"
+    assert "takeProfit" not in rest.last_data
+    assert rest.last_data["clientOid"] == "bsl-cfd-solo-sl"
+    assert any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_cfd_create_protection_orders_tp_only_posts_when_no_opposite_leg() -> (
+    None
+):
+    """When no opposite SL exists, CFD TP single-leg is posted without stopLoss."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [],
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "cfd_tp_solo"},
+        },
+    ]
+
+    orders = await client.create_protection_orders(
+        symbol="XAUUSD",
+        side=OrderSide.SELL,
+        quantity=Decimal("1.0"),
+        take_profit=Decimal("2700.00"),
+        take_profit_client_algo_id="btp-cfd-solo-tp",
+        bypass_calendar_guard=True,
+    )
+
+    assert len(orders) == 1
+    assert orders[0].order_type is OrderType.TAKE_PROFIT_MARKET
+    assert orders[0].client_order_id == "btp-cfd-solo-tp"
+    assert rest.last_path == "/api/v3/cfd/trade/place-strategy-order"
+    assert rest.last_data is not None
+    assert rest.last_data["takeProfit"] == "2700.00"
+    assert "stopLoss" not in rest.last_data
+    assert rest.last_data["clientOid"] == "btp-cfd-solo-tp"
+    assert any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_cfd_create_protection_orders_fails_closed_when_outcome_unknown() -> None:
+    """Fail closed when CFD opposite-leg lookup outcome is unknown: ZERO POST."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    async def _unknown_get(*args: object, **kwargs: object) -> JsonResponse:
+        del args, kwargs
+        raise ExchangeOrderOutcomeUnknownError("Outcome unknown querying CFD orders")
+
+    rest.get = _unknown_get  # type: ignore
+
+    with pytest.raises(ExchangeOrderOutcomeUnknownError):
+        await client.create_protection_orders(
+            symbol="XAUUSD",
+            side=OrderSide.SELL,
+            quantity=Decimal("1.0"),
+            stop_loss=Decimal("2600.00"),
+            stop_loss_client_algo_id="bsl-cfd-unknown-sl",
             bypass_calendar_guard=True,
         )
 

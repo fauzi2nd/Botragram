@@ -39,7 +39,11 @@ from botragram.enums import (
     OrderType,
     PositionSide,
 )
-from botragram.exceptions import ExchangeError, ExchangeOrderNotFoundError
+from botragram.exceptions import (
+    ExchangeError,
+    ExchangeOrderNotFoundError,
+    ExchangeOrderOutcomeUnknownError,
+)
 from botragram.exchanges.base.rest import (
     JsonResponse,
     QueryParams,
@@ -2090,6 +2094,112 @@ async def test_bitget_create_protection_orders_cancellation_propagates() -> None
             quantity=Decimal("1.5"),
             stop_loss=Decimal("65000"),
             stop_loss_client_algo_id="bsl-cancel-sl",
+        )
+
+    assert not any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_bitget_create_protection_orders_sl_only_posts_when_no_opposite_leg() -> (
+    None
+):
+    """When no opposite TP exists, SL single-leg is posted without takeProfit."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"list": []},
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "sl-plan-solo"},
+        },
+    ]
+
+    orders = await client.create_protection_orders(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("1.5"),
+        stop_loss=Decimal("65000"),
+        stop_loss_client_algo_id="bsl-solo-sl",
+    )
+
+    assert len(orders) == 1
+    assert orders[0].order_type is OrderType.STOP_MARKET
+    assert orders[0].client_order_id == "bsl-solo-sl"
+    assert rest.last_path == "/api/v3/trade/place-strategy-order"
+    assert rest.last_data is not None
+    assert rest.last_data["stopLoss"] == "65000"
+    assert "takeProfit" not in rest.last_data
+    assert rest.last_data["clientOid"] == "bsl-solo-sl"
+    assert any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_bitget_create_protection_orders_tp_only_posts_when_no_opposite_leg() -> (
+    None
+):
+    """When no opposite SL exists, TP single-leg is posted without stopLoss."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"list": []},
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {"orderId": "tp-plan-solo"},
+        },
+    ]
+
+    orders = await client.create_protection_orders(
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=Decimal("1.5"),
+        take_profit=Decimal("75000"),
+        take_profit_client_algo_id="btp-solo-tp",
+    )
+
+    assert len(orders) == 1
+    assert orders[0].order_type is OrderType.TAKE_PROFIT_MARKET
+    assert orders[0].client_order_id == "btp-solo-tp"
+    assert rest.last_path == "/api/v3/trade/place-strategy-order"
+    assert rest.last_data is not None
+    assert rest.last_data["takeProfit"] == "75000"
+    assert "stopLoss" not in rest.last_data
+    assert rest.last_data["clientOid"] == "btp-solo-tp"
+    assert any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_bitget_create_protection_orders_fails_closed_when_outcome_unknown() -> (
+    None
+):
+    """Fail closed when opposite-leg lookup outcome is unknown: ZERO POST."""
+    rest = MockBitgetRestClient()
+    client = BitgetFuturesExchangeClient(rest=rest, mapper=BitgetExchangeMapper())
+
+    async def _unknown_get(*args: object, **kwargs: object) -> JsonResponse:
+        del args, kwargs
+        raise ExchangeOrderOutcomeUnknownError("Outcome unknown querying open orders")
+
+    rest.get = _unknown_get  # type: ignore
+
+    with pytest.raises(ExchangeOrderOutcomeUnknownError):
+        await client.create_protection_orders(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            quantity=Decimal("1.5"),
+            stop_loss=Decimal("65000"),
+            stop_loss_client_algo_id="bsl-unknown-sl",
         )
 
     assert not any(method == "POST" for method, _ in rest.history)
