@@ -29,6 +29,7 @@ from botragram.enums.autonomous_live_entry_intent_status import (
 from botragram.enums.autonomous_live_recovery_reason import AutonomousLiveRecoveryReason
 from botragram.enums.autonomous_live_recovery_status import AutonomousLiveRecoveryStatus
 from botragram.enums.base import BaseEnum
+from botragram.enums.cfd_instrument_status import CfdInstrumentStatus
 from botragram.enums.closed_position_provenance import ClosedPositionProvenance
 from botragram.enums.closed_position_reason import ClosedPositionReason
 from botragram.enums.environment import Environment
@@ -110,6 +111,7 @@ __all__ = [
     "LivePortfolioRecoveryUnsafeReason",
     # Market
     "AssetClass",
+    "CfdInstrumentStatus",
     "Interval",
     "MarketSessionStatus",
     "OpenInterestRegime",

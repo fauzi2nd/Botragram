@@ -42,6 +42,7 @@ from botragram.engine import (
 )
 from botragram.enums import (
     AssetClass,
+    CfdInstrumentStatus,
     ExchangeType,
     Interval,
     MarketSessionStatus,
@@ -309,27 +310,45 @@ def test_cfd_mapper_enable_mapping() -> None:
         "stepVolume": "0.01",
     }
 
-    # "2" => tradable (True)
+    # "2" => tradable (True / TRADING_ALLOWED)
     spec_tradable = mapper.map_instrument_spec({**base_payload, "enable": "2"})
     assert spec_tradable.enable is True
+    assert spec_tradable.status is CfdInstrumentStatus.TRADING_ALLOWED
+    assert spec_tradable.is_tradable is True
+    assert spec_tradable.is_close_only is False
+    assert spec_tradable.is_disabled is False
 
-    # "1" => close-only (False)
+    # "1" => close-only (False / CLOSE_ONLY)
     spec_close_only = mapper.map_instrument_spec({**base_payload, "enable": "1"})
     assert spec_close_only.enable is False
+    assert spec_close_only.status is CfdInstrumentStatus.CLOSE_ONLY
+    assert spec_close_only.is_tradable is False
+    assert spec_close_only.is_close_only is True
+    assert spec_close_only.is_disabled is False
 
-    # "0" => prohibited (False)
+    # "0" => prohibited (False / DISABLED)
     spec_prohibited = mapper.map_instrument_spec({**base_payload, "enable": "0"})
     assert spec_prohibited.enable is False
+    assert spec_prohibited.status is CfdInstrumentStatus.DISABLED
+    assert spec_prohibited.is_tradable is False
+    assert spec_prohibited.is_close_only is False
+    assert spec_prohibited.is_disabled is True
 
-    # Unknown / invalid / missing => fail closed (False)
+    # Unknown / invalid / missing => fail closed (False / DISABLED)
     spec_unknown = mapper.map_instrument_spec({**base_payload, "enable": "99"})
     assert spec_unknown.enable is False
+    assert spec_unknown.status is CfdInstrumentStatus.DISABLED
+    assert spec_unknown.is_tradable is False
+    assert spec_unknown.is_close_only is False
+    assert spec_unknown.is_disabled is True
 
     spec_invalid = mapper.map_instrument_spec({**base_payload, "enable": "unknown"})
     assert spec_invalid.enable is False
+    assert spec_invalid.status is CfdInstrumentStatus.DISABLED
 
     spec_missing = mapper.map_instrument_spec({**base_payload})
     assert spec_missing.enable is False
+    assert spec_missing.status is CfdInstrumentStatus.DISABLED
 
 
 def test_cfd_mapper_map_position_actual_api() -> None:
@@ -774,6 +793,251 @@ async def test_cfd_client_create_order_sends_vendor_symbol_by_mode(
     assert rest.post_bodies[0]["symbol"] == expected_vendor_symbol
     # Returned domain Order symbol must remain canonical internal symbol
     assert order.symbol == "XAUUSD"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "expected_vendor_symbol"),
+    [
+        ("ecn", "XAUUSD"),
+        ("zero_fee", "XAUUSD.s"),
+        ("pro", "XAUUSD.pro"),
+    ],
+)
+async def test_cfd_client_create_order_sends_vendor_symbol_by_mode_trx_id_only_unfilled(
+    mode: str,
+    expected_vendor_symbol: str,
+) -> None:
+    """Verify place-order returning only trxId sends mode vendor symbol
+    and reconciles via unfilled-order.
+    """
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode=mode)
+
+    trx_id = f"trx_{mode}_999"
+    actual_order_id = f"ord_{mode}_actual_999"
+
+    # 1. place-order returns ONLY trxId
+    # 2. unfilled-order returns order matching trxId
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "trxId": trx_id,
+            },
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [
+                {
+                    "orderId": actual_order_id,
+                    "trxId": trx_id,
+                    "symbol": expected_vendor_symbol,
+                    "side": "buy",
+                    "orderType": "market",
+                    "qty": "0.1",
+                    "status": "new",
+                    "cTime": "1700000000000",
+                }
+            ],
+        },
+    ]
+
+    order = await client.create_order(
+        symbol="XAUUSD",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.1"),
+        client_order_id=f"cl_{mode}_999",
+        bypass_calendar_guard=True,
+    )
+
+    # 1. Verify vendor symbol sent in POST place-order payload matches the mode
+    assert rest.post_bodies, "No POST body was captured"
+    assert rest.post_bodies[0]["symbol"] == expected_vendor_symbol
+    # 2. Verify trxId successfully reconciled to actual venue orderId
+    assert order.order_id == actual_order_id
+    assert order.execution_order_id == trx_id
+    # 3. Domain Order symbol remains internal canonical
+    assert order.symbol == "XAUUSD"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "expected_vendor_symbol"),
+    [
+        ("ecn", "XAUUSD"),
+        ("zero_fee", "XAUUSD.s"),
+        ("pro", "XAUUSD.pro"),
+    ],
+)
+async def test_cfd_client_create_order_sends_vendor_symbol_by_mode_trx_id_only_history(
+    mode: str,
+    expected_vendor_symbol: str,
+) -> None:
+    """Verify place-order returning only trxId sends mode vendor symbol
+    and reconciles via history-order.
+    """
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode=mode)
+
+    trx_id = f"trx_{mode}_hist_888"
+    actual_order_id = f"ord_{mode}_hist_888"
+
+    # 1. place-order returns ONLY trxId
+    # 2. unfilled-order returns empty list
+    # 3. history-order returns order matching trxId
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": {
+                "trxId": trx_id,
+            },
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [],
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [
+                {
+                    "orderId": actual_order_id,
+                    "trxId": trx_id,
+                    "symbol": expected_vendor_symbol,
+                    "side": "buy",
+                    "orderType": "market",
+                    "qty": "0.1",
+                    "status": "filled",
+                    "cTime": "1700000000000",
+                }
+            ],
+        },
+    ]
+
+    order = await client.create_order(
+        symbol="XAUUSD",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.1"),
+        client_order_id=f"cl_{mode}_888",
+        bypass_calendar_guard=True,
+    )
+
+    assert rest.post_bodies, "No POST body was captured"
+    assert rest.post_bodies[0]["symbol"] == expected_vendor_symbol
+    assert order.order_id == actual_order_id
+    assert order.execution_order_id == trx_id
+    assert order.symbol == "XAUUSD"
+
+
+@pytest.mark.asyncio
+async def test_cfd_enable_semantics_and_live_entry_guard() -> None:
+    """Verify enable=0, enable=1, enable=2 semantics and LIVE entry guard."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+
+    base_payload = {
+        "symbol": "EURUSD",
+        "contractSize": "100000",
+        "tickSize": "0.00001",
+        "pipSize": "0.0001",
+        "minVolume": "0.01",
+        "maxVolume": "100.0",
+        "stepVolume": "0.01",
+    }
+
+    # 1. enable=2 -> TRADING_ALLOWED (tradable)
+    spec_tradable = mapper.map_instrument_spec({**base_payload, "enable": "2"})
+    assert spec_tradable.enable is True
+    assert spec_tradable.status is CfdInstrumentStatus.TRADING_ALLOWED
+    assert spec_tradable.is_tradable is True
+    assert spec_tradable.is_close_only is False
+    assert spec_tradable.is_disabled is False
+
+    # 2. enable=1 -> CLOSE_ONLY (close-only)
+    spec_close_only = mapper.map_instrument_spec({**base_payload, "enable": "1"})
+    assert spec_close_only.enable is False
+    assert spec_close_only.status is CfdInstrumentStatus.CLOSE_ONLY
+    assert spec_close_only.is_tradable is False
+    assert spec_close_only.is_close_only is True
+    assert spec_close_only.is_disabled is False
+
+    # 3. enable=0 -> DISABLED (prohibited)
+    spec_disabled = mapper.map_instrument_spec({**base_payload, "enable": "0"})
+    assert spec_disabled.enable is False
+    assert spec_disabled.status is CfdInstrumentStatus.DISABLED
+    assert spec_disabled.is_tradable is False
+    assert spec_disabled.is_close_only is False
+    assert spec_disabled.is_disabled is True
+
+    # 4. LIVE entry: client with is_live=True
+    client_live = BitgetCfdExchangeClient(
+        rest=rest, mapper=mapper, mode="ecn", is_live=True
+    )
+
+    # When spec is TRADING_ALLOWED (enable=2), LIVE contract spec succeeds
+    setattr(client_live, "_instruments_cache", {"EURUSD": spec_tradable})
+    setattr(client_live, "_instruments_cache_time", datetime.now(timezone.utc))
+    live_spec = client_live.get_contract_spec("EURUSD")
+    assert live_spec.status is CfdInstrumentStatus.TRADING_ALLOWED
+    sizing_spec = client_live.sizing.get_contract_spec("EURUSD")
+    assert sizing_spec.status is CfdInstrumentStatus.TRADING_ALLOWED
+
+    # When spec is CLOSE_ONLY (enable=1), LIVE entry is rejected fail-closed
+    setattr(client_live, "_instruments_cache", {"EURUSD": spec_close_only})
+    with pytest.raises(ExchangeError, match="disabled"):
+        client_live.get_contract_spec("EURUSD")
+    with pytest.raises(ValueError, match="disabled on exchange"):
+        client_live.sizing.get_contract_spec("EURUSD")
+
+    # But position management / close path remains accessible and functional
+    assert spec_close_only.is_close_only
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {
+            "orderId": "close_order_close_only_1",
+            "clientOid": "close_cl_1",
+            "symbol": "EURUSD",
+            "side": "sell",
+            "orderType": "market",
+            "status": "closed",
+            "size": "0.5",
+            "cTime": "1700000000000",
+        },
+    }
+    pos = Position(
+        symbol="EURUSD",
+        side=PositionSide.LONG,
+        quantity=Decimal("0.5"),
+        entry_price=Decimal("1.0850"),
+        current_price=Decimal("1.0890"),
+        leverage=50,
+        unrealized_pnl=Decimal("20.0"),
+        opened_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        position_id="pos_close_only_99",
+    )
+    close_order = await client_live.close_position_exact(
+        position=pos,
+        client_order_id="close_cl_1",
+    )
+    assert close_order.order_id == "close_order_close_only_1"
+
+    # When spec is DISABLED (enable=0), LIVE entry is rejected fail-closed
+    setattr(client_live, "_instruments_cache", {"EURUSD": spec_disabled})
+    with pytest.raises(ExchangeError, match="disabled"):
+        client_live.get_contract_spec("EURUSD")
+    with pytest.raises(ValueError, match="disabled on exchange"):
+        client_live.sizing.get_contract_spec("EURUSD")
 
 
 def test_settings_manager_bitget_cfd_mode_pipeline(

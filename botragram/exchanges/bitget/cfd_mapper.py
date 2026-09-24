@@ -28,6 +28,7 @@ from typing import Final, cast
 from botragram.engine.market_calendar import MarketCalendarEngine
 from botragram.enums import (
     AssetClass,
+    CfdInstrumentStatus,
     Interval,
     OrderSide,
     OrderStatus,
@@ -666,16 +667,24 @@ class BitgetCfdMapper(BaseExchangeMapper):
 
         raw_enable = payload.get("enable", payload.get("enabled"))
         enable: bool
+        status: CfdInstrumentStatus
         if raw_enable is None:
             enable = False
+            status = CfdInstrumentStatus.DISABLED
         else:
             match str(raw_enable).strip().lower():
                 case "2" | "true":
                     enable = True
-                case "1" | "0" | "false":
+                    status = CfdInstrumentStatus.TRADING_ALLOWED
+                case "1":
                     enable = False
+                    status = CfdInstrumentStatus.CLOSE_ONLY
+                case "0" | "false":
+                    enable = False
+                    status = CfdInstrumentStatus.DISABLED
                 case _:
                     enable = False
+                    status = CfdInstrumentStatus.DISABLED
 
         # Pip size derivation
         raw_pip = payload.get("pipSize", payload.get("pip_size"))
@@ -722,6 +731,7 @@ class BitgetCfdMapper(BaseExchangeMapper):
             exchange_rate=exchange_rate,
             margin_usd_rate=margin_usd_rate,
             enable=enable,
+            status=status,
         )
 
     # =========================================================================

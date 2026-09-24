@@ -22,7 +22,7 @@ from decimal import Decimal
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import AssetClass
+from botragram.enums import AssetClass, CfdInstrumentStatus
 
 # =============================================================================
 # Exports
@@ -59,6 +59,22 @@ class CfdContractSpec:
     exchange_rate: Decimal | None = None
     margin_usd_rate: Decimal | None = None
     enable: bool = True
+    status: CfdInstrumentStatus = CfdInstrumentStatus.TRADING_ALLOWED
+
+    @property
+    def is_tradable(self) -> bool:
+        """Return True if new entries and full trading are allowed."""
+        return self.status is CfdInstrumentStatus.TRADING_ALLOWED and self.enable
+
+    @property
+    def is_close_only(self) -> bool:
+        """Return True if only closing existing positions is permitted."""
+        return self.status is CfdInstrumentStatus.CLOSE_ONLY
+
+    @property
+    def is_disabled(self) -> bool:
+        """Return True if trading is completely disabled."""
+        return self.status is CfdInstrumentStatus.DISABLED
 
     def __post_init__(self) -> None:
         """Validate CFD contract invariants."""
@@ -86,6 +102,10 @@ class CfdContractSpec:
             raise ValueError("exchange_rate must be positive")
         if self.margin_usd_rate is not None and self.margin_usd_rate <= _DECIMAL_ZERO:
             raise ValueError("margin_usd_rate must be positive")
+        if self.status is CfdInstrumentStatus.TRADING_ALLOWED and not self.enable:
+            object.__setattr__(self, "status", CfdInstrumentStatus.DISABLED)
+        elif self.status is not CfdInstrumentStatus.TRADING_ALLOWED and self.enable:
+            object.__setattr__(self, "enable", False)
 
 
 # =============================================================================
