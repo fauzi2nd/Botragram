@@ -663,11 +663,34 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         elif client_id is not None:
             data["orderLinkId"] = client_id.strip()
 
-        await self._rest.post(
-            _ORDER_CANCEL_ENDPOINT,
-            data=data,
-            authenticated=True,
-        )
+        try:
+            await self._rest.post(
+                _ORDER_CANCEL_ENDPOINT,
+                data=data,
+                authenticated=True,
+            )
+        except BybitRestResponseError as error:
+            if (
+                error.ret_code in (110001, 110003, 110004)
+                or "not exist" in str(error).lower()
+                or "not found" in str(error).lower()
+                or "canceled" in str(error).lower()
+                or "cancelled" in str(error).lower()
+            ):
+                _LOGGER.info(
+                    "Bybit protection order %s already finished/not found: %s",
+                    order_id or client_id,
+                    error,
+                )
+                return
+            raise ExchangeError(
+                f"Failed to cancel protection order {order_id or client_id} "
+                f"on Bybit: {error}"
+            ) from error
+        except (TimeoutError, ConnectionError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                f"Bybit protection cancellation outcome is unknown: {error}"
+            ) from error
 
     async def ensure_stop_loss_order(
         self,
@@ -680,28 +703,49 @@ class BybitFuturesExchangeClient(BybitExchangeClient):
         previous_client_algo_id: str | None = None,
     ) -> Order:
         """Ensure one durable stop replacement and retire its predecessor."""
-        if previous_client_algo_id:
-            try:
-                await self.cancel_protection_order(
-                    symbol=symbol, client_id=previous_client_algo_id
-                )
-            except Exception as err:
-                _LOGGER.warning(
-                    "Failed to cancel previous stop %s: %s",
-                    previous_client_algo_id,
-                    err,
-                )
+        if quantity <= Decimal("0"):
+            raise ValueError("Stop-loss quantity must be greater than zero")
+        if stop_loss <= Decimal("0"):
+            raise ValueError("Stop-loss trigger price must be greater than zero")
 
-        created = await self.create_protection_orders(
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            stop_loss=stop_loss,
-            stop_loss_client_algo_id=client_algo_id,
-        )
-        if not created:
-            raise RuntimeError(f"Failed to create replacement stop order for {symbol}")
-        return created[0]
+        target: Order | None = None
+        if client_algo_id is not None:
+            try:
+                existing = await self.get_protection_order_by_client_id(
+                    symbol=symbol,
+                    client_id=client_algo_id,
+                )
+                if (
+                    existing.status is OrderStatus.NEW
+                    and existing.stop_price == stop_loss
+                ):
+                    target = existing
+            except ExchangeOrderNotFoundError:
+                target = None
+
+        if target is None:
+            created = await self.create_protection_orders(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                stop_loss=stop_loss,
+                stop_loss_client_algo_id=client_algo_id,
+            )
+            if not created:
+                raise ExchangeOrderRejectedError(
+                    f"Failed to create replacement stop order for {symbol}"
+                )
+            target = created[0]
+
+        if (
+            previous_client_algo_id is not None
+            and previous_client_algo_id != target.client_order_id
+        ):
+            await self.cancel_protection_order(
+                symbol=symbol, client_id=previous_client_algo_id
+            )
+
+        return target
 
     async def get_positions(self, *, symbol: str | None = None) -> Sequence[Position]:
         """Return active open positions."""

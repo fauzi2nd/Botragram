@@ -875,12 +875,29 @@ class BitgetFuturesExchangeClient(BitgetClient):
                 data=data,
                 authenticated=True,
             )
-        except Exception as error:
-            _LOGGER.warning(
-                "Failed to cancel protection order %s on Bitget: %s",
-                client_id,
-                error,
-            )
+        except BitgetRestResponseError as error:
+            if (
+                error.code in ("25204", "40004", "40404", "43025")
+                or "not exist" in error.message.lower()
+                or "canceled" in error.message.lower()
+                or "cancelled" in error.message.lower()
+                or "finished" in error.message.lower()
+                or error.http_status == 404
+            ):
+                _LOGGER.info(
+                    "Bitget protection order %s already finished/not found: %s",
+                    order_id or client_id,
+                    error.message,
+                )
+                return
+            raise ExchangeError(
+                f"Failed to cancel protection order {order_id or client_id} "
+                f"on Bitget: {error.message}"
+            ) from error
+        except (TimeoutError, ConnectionError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                f"Bitget protection cancellation outcome is unknown: {error}"
+            ) from error
 
     async def ensure_stop_loss_order(
         self,
@@ -892,25 +909,52 @@ class BitgetFuturesExchangeClient(BitgetClient):
         client_algo_id: str | None = None,
         previous_client_algo_id: str | None = None,
     ) -> Order:
-        """Replace or ensure a stop-loss plan order."""
-        if previous_client_algo_id:
+        """Replace or ensure a stop-loss plan order using new-stop-first sequence."""
+        if quantity <= Decimal("0"):
+            raise ValueError("Stop-loss quantity must be greater than zero")
+        if stop_loss <= Decimal("0"):
+            raise ValueError("Stop-loss trigger price must be greater than zero")
+
+        normalized_symbol = symbol.strip().upper()
+        target: Order | None = None
+        if client_algo_id is not None:
+            try:
+                existing = await self.get_protection_order_by_client_id(
+                    symbol=normalized_symbol,
+                    client_id=client_algo_id,
+                )
+                if (
+                    existing.status is OrderStatus.NEW
+                    and existing.stop_price == stop_loss
+                ):
+                    target = existing
+            except ExchangeOrderNotFoundError:
+                target = None
+
+        if target is None:
+            orders = await self.create_protection_orders(
+                symbol=normalized_symbol,
+                side=side,
+                quantity=quantity,
+                stop_loss=stop_loss,
+                stop_loss_client_algo_id=client_algo_id,
+            )
+            if not orders:
+                raise ExchangeOrderRejectedError(
+                    f"Failed to place stop loss order for {symbol} at {stop_loss}"
+                )
+            target = orders[0]
+
+        if (
+            previous_client_algo_id is not None
+            and previous_client_algo_id != target.client_order_id
+        ):
             await self.cancel_protection_order(
-                symbol=symbol,
+                symbol=normalized_symbol,
                 client_id=previous_client_algo_id,
             )
 
-        orders = await self.create_protection_orders(
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            stop_loss=stop_loss,
-            stop_loss_client_algo_id=client_algo_id,
-        )
-        if not orders:
-            raise ExchangeOrderRejectedError(
-                f"Failed to place stop loss order for {symbol} at {stop_loss}"
-            )
-        return orders[0]
+        return target
 
     # =========================================================================
     # Positions

@@ -1020,12 +1020,29 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                 data=data,
                 authenticated=True,
             )
-        except Exception as error:
-            _LOGGER.warning(
-                "Failed to cancel CFD protection order %s: %s",
-                order_id or client_id,
-                error,
-            )
+        except BitgetRestResponseError as error:
+            if (
+                error.code in ("25204", "40004", "40404", "43025")
+                or "not exist" in error.message.lower()
+                or "canceled" in error.message.lower()
+                or "cancelled" in error.message.lower()
+                or "finished" in error.message.lower()
+                or error.http_status == 404
+            ):
+                _LOGGER.info(
+                    "Bitget CFD protection order %s already finished/not found: %s",
+                    order_id or client_id,
+                    error.message,
+                )
+                return
+            raise ExchangeError(
+                f"Failed to cancel CFD protection order {order_id or client_id}: "
+                f"{error.message}"
+            ) from error
+        except (TimeoutError, ConnectionError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                f"Bitget CFD protection cancellation outcome is unknown: {error}"
+            ) from error
 
     async def ensure_stop_loss_order(
         self,
@@ -1037,25 +1054,51 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         client_algo_id: str | None = None,
         previous_client_algo_id: str | None = None,
     ) -> Order:
-        """Replace or ensure a stop-loss plan order for CFD position."""
-        if previous_client_algo_id:
+        """Replace or ensure a stop-loss plan order using new-stop-first sequence."""
+        if quantity <= Decimal("0"):
+            raise ValueError("Stop-loss quantity must be greater than zero")
+        if stop_loss <= Decimal("0"):
+            raise ValueError("Stop-loss trigger price must be greater than zero")
+
+        target: Order | None = None
+        if client_algo_id is not None:
+            try:
+                existing = await self.get_protection_order_by_client_id(
+                    symbol=symbol,
+                    client_id=client_algo_id,
+                )
+                if (
+                    existing.status is OrderStatus.NEW
+                    and existing.stop_price == stop_loss
+                ):
+                    target = existing
+            except ExchangeOrderNotFoundError:
+                target = None
+
+        if target is None:
+            orders = await self.create_protection_orders(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                stop_loss=stop_loss,
+                stop_loss_client_algo_id=client_algo_id,
+            )
+            if not orders:
+                raise ExchangeOrderRejectedError(
+                    f"Failed to place stop loss order for CFD {symbol} at {stop_loss}"
+                )
+            target = orders[0]
+
+        if (
+            previous_client_algo_id is not None
+            and previous_client_algo_id != target.client_order_id
+        ):
             await self.cancel_protection_order(
                 symbol=symbol,
                 client_id=previous_client_algo_id,
             )
 
-        orders = await self.create_protection_orders(
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            stop_loss=stop_loss,
-            stop_loss_client_algo_id=client_algo_id,
-        )
-        if not orders:
-            raise ExchangeOrderRejectedError(
-                f"Failed to place stop loss order for CFD {symbol} at {stop_loss}"
-            )
-        return orders[0]
+        return target
 
     async def get_protection_order_history(
         self,
