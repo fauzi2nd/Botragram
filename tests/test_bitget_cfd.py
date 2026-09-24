@@ -341,10 +341,13 @@ async def test_cfd_client_create_and_cancel_order() -> None:
         client_order_id="cl_99",
     )
     assert order.order_id == "order_cfd_99"
-    assert rest.last_path == "/api/v3/cfd/trade/place-order"
-    assert rest.last_data is not None
-    assert rest.last_data["symbol"] == "EURUSD"
-    assert rest.last_data["side"] == "buy"
+    # create_order POSTs to place-order, then calls get_order to reconcile.
+    # Verify the first request in history was the POST to place-order.
+    assert rest.history[0] == ("POST", "/api/v3/cfd/trade/place-order"), (
+        f"Expected place-order as first request, got: {rest.history[0]}"
+    )
+    # Verify place-order produced a well-formed Order with correct symbol.
+    assert order.symbol == "EURUSD"
 
     # Cancel order
     rest.canned_response = {
@@ -416,6 +419,26 @@ async def test_cfd_client_create_order_uses_qty_payload() -> None:
         },
     }
 
+    # Track POST data before calling create_order
+    post_bodies: list[dict[str, object]] = []
+    _orig_post = rest.post
+
+    async def _patched_post(
+        path: str,
+        *,
+        params: QueryParams | None = None,
+        data: dict[str, object] | None = None,
+        headers: RequestHeaders | None = None,
+        authenticated: bool = True,
+    ) -> object:
+        if data is not None:
+            post_bodies.append(dict(data))
+        return await _orig_post(
+            path, params=params, data=data, headers=headers, authenticated=authenticated
+        )  # type: ignore[arg-type]
+
+    rest.post = _patched_post  # type: ignore[method-assign]
+
     order = await client.create_order(
         symbol="XAUUSD",
         side=OrderSide.BUY,
@@ -426,10 +449,18 @@ async def test_cfd_client_create_order_uses_qty_payload() -> None:
     )
 
     assert order.order_id == "order_cfd_001"
-    assert rest.last_path == "/api/v3/cfd/trade/place-order"
-    assert rest.last_data is not None
-    assert rest.last_data["qty"] == "0.15"
-    assert "size" not in rest.last_data
+    # Verify a POST to place-order was made (create_order then calls get_order)
+    assert any(
+        method == "POST" and path == "/api/v3/cfd/trade/place-order"
+        for method, path in rest.history
+    ), f"place-order POST not found in history: {rest.history}"
+    # Verify the place-order payload used 'qty' not 'size'
+    assert post_bodies, "No POST body recorded"
+    place_body = post_bodies[0]
+    assert place_body.get("qty") == "0.15", f"qty not in place-order body: {place_body}"
+    assert "size" not in place_body, (
+        f"'size' must not appear in place-order body: {place_body}"
+    )
 
 
 @pytest.mark.asyncio

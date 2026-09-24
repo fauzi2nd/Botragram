@@ -52,6 +52,13 @@ class CfdContractSpec:
     lot_step: Decimal = Decimal("0.01")
     default_leverage: int = 100
     max_leverage: int = 100
+    trade_time: str | None = None
+    margin_currency: str | None = None
+    profit_currency: str | None = None
+    price_currency: str | None = None
+    exchange_rate: Decimal | None = None
+    margin_usd_rate: Decimal | None = None
+    enable: bool = True
 
     def __post_init__(self) -> None:
         """Validate CFD contract invariants."""
@@ -75,6 +82,10 @@ class CfdContractSpec:
             raise ValueError("max_leverage must be positive")
         if self.default_leverage > self.max_leverage:
             raise ValueError("default_leverage cannot exceed max_leverage")
+        if self.exchange_rate is not None and self.exchange_rate <= _DECIMAL_ZERO:
+            raise ValueError("exchange_rate must be positive")
+        if self.margin_usd_rate is not None and self.margin_usd_rate <= _DECIMAL_ZERO:
+            raise ValueError("margin_usd_rate must be positive")
 
 
 # =============================================================================

@@ -25,7 +25,9 @@ from typing import Final, cast
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.engine.market_calendar import MarketCalendarEngine
 from botragram.enums import (
+    AssetClass,
     Interval,
     OrderSide,
     OrderStatus,
@@ -41,6 +43,7 @@ from botragram.models import (
     Account,
     Balance,
     Candle,
+    CfdContractSpec,
     ExchangeSymbolRules,
     Order,
     Position,
@@ -99,6 +102,12 @@ _STATUS_MAP: Final[Mapping[str, OrderStatus]] = {
 # =============================================================================
 class BitgetCfdMapper(BaseExchangeMapper):
     """Payload mapper for Bitget CFD endpoints."""
+
+    __slots__ = ("_calendar",)
+
+    def __init__(self, calendar: MarketCalendarEngine | None = None) -> None:
+        """Initialize the Bitget CFD mapper with an optional calendar."""
+        self._calendar = calendar if calendar is not None else MarketCalendarEngine()
 
     # =========================================================================
     # Symbol Formatting Helpers
@@ -237,11 +246,24 @@ class BitgetCfdMapper(BaseExchangeMapper):
         order_id = self._to_string(
             payload.get("orderId", payload.get("order_id", ""))
         ).strip()
+        if not order_id:
+            raise ValueError("Bitget CFD order payload missing required orderId")
+
         client_order_id = (
             self._to_string(
                 payload.get("clientOid", payload.get("clientOrderId", ""))
             ).strip()
             or None
+        )
+        trx_id = (
+            self._to_string(payload.get("trxId", payload.get("trx_id", ""))).strip()
+            or None
+        )
+        execution_order_id = (
+            self._to_string(
+                payload.get("executionOrderId", payload.get("execution_order_id", ""))
+            ).strip()
+            or trx_id
         )
         symbol = self.normalize_symbol(
             self._to_string(payload.get("symbol")).strip().upper()
@@ -298,6 +320,7 @@ class BitgetCfdMapper(BaseExchangeMapper):
         return Order(
             order_id=order_id,
             client_order_id=client_order_id,
+            execution_order_id=execution_order_id,
             symbol=symbol,
             side=side,
             order_type=order_type,
@@ -526,6 +549,146 @@ class BitgetCfdMapper(BaseExchangeMapper):
             price_tick_size=(
                 tick_size if tick_size > _DECIMAL_ZERO else _DEFAULT_TICK_SIZE
             ),
+        )
+
+    def map_instrument_spec(self, payload: ExchangePayload) -> CfdContractSpec:
+        """Map Bitget CFD instrument metadata payload into CfdContractSpec model."""
+        raw_symbol = self._to_string(payload.get("symbol")).strip()
+        if not raw_symbol:
+            raise ValueError("Instrument payload missing symbol")
+        symbol = self.normalize_symbol(raw_symbol)
+        asset_class = self._calendar.classify_asset(symbol)
+
+        contract_size = self._to_decimal(
+            payload.get("contractSize", payload.get("contract_size", _DECIMAL_ZERO))
+        )
+        min_lot = self._to_decimal(
+            payload.get("minVolume", payload.get("min_volume", _DECIMAL_ZERO))
+        )
+        max_lot = self._to_decimal(
+            payload.get("maxVolume", payload.get("max_volume", _DECIMAL_ZERO))
+        )
+        lot_step = self._to_decimal(
+            payload.get("stepVolume", payload.get("step_volume", _DECIMAL_ZERO))
+        )
+        tick_size = self._to_decimal(
+            payload.get("tickSize", payload.get("tick_size", _DECIMAL_ZERO))
+        )
+
+        leverage_raw = payload.get("leverage", payload.get("maxLeverage", 100))
+        try:
+            leverage = int(float(self._to_string(leverage_raw)))
+        except ValueError, TypeError:
+            leverage = 100
+
+        max_lev_raw = payload.get("maxLeverage", payload.get("leverage", leverage))
+        try:
+            max_leverage = int(float(self._to_string(max_lev_raw)))
+        except ValueError, TypeError:
+            max_leverage = leverage
+        if max_leverage < leverage:
+            max_leverage = leverage
+
+        trade_time = (
+            self._to_string(
+                payload.get("tradeTime", payload.get("trade_time", ""))
+            ).strip()
+            or None
+        )
+        margin_currency = (
+            self._to_string(
+                payload.get("marginCurrency", payload.get("margin_currency", ""))
+            )
+            .strip()
+            .upper()
+            or None
+        )
+        profit_currency = (
+            self._to_string(
+                payload.get("profitCurrency", payload.get("profit_currency", ""))
+            )
+            .strip()
+            .upper()
+            or None
+        )
+        price_currency = (
+            self._to_string(
+                payload.get("priceCurrency", payload.get("price_currency", ""))
+            )
+            .strip()
+            .upper()
+            or None
+        )
+
+        ex_rate_raw = payload.get("exchangeRate", payload.get("exchange_rate"))
+        exchange_rate = (
+            self._to_decimal(ex_rate_raw) if ex_rate_raw is not None else None
+        )
+        if exchange_rate is not None and exchange_rate <= _DECIMAL_ZERO:
+            exchange_rate = None
+
+        m_usd_raw = payload.get("marginUsdRate", payload.get("margin_usd_rate"))
+        margin_usd_rate = self._to_decimal(m_usd_raw) if m_usd_raw is not None else None
+        if margin_usd_rate is not None and margin_usd_rate <= _DECIMAL_ZERO:
+            margin_usd_rate = None
+
+        raw_enable = payload.get("enable", payload.get("enabled", True))
+        if isinstance(raw_enable, str):
+            enable = raw_enable.strip().lower() in (
+                "true",
+                "1",
+                "online",
+                "open",
+                "yes",
+            )
+        else:
+            enable = bool(raw_enable)
+
+        # Pip size derivation
+        raw_pip = payload.get("pipSize", payload.get("pip_size"))
+        if raw_pip is not None:
+            pip_size = self._to_decimal(raw_pip)
+        elif asset_class is AssetClass.FOREX:
+            pip_size = (
+                tick_size * Decimal("10")
+                if tick_size < Decimal("0.001")
+                else Decimal("0.01")
+            )
+            if pip_size <= _DECIMAL_ZERO:
+                pip_size = (
+                    Decimal("0.0001") if not symbol.endswith("JPY") else Decimal("0.01")
+                )
+        elif asset_class is AssetClass.COMMODITY:
+            clean = symbol.upper()
+            if clean.startswith("XAU"):
+                pip_size = Decimal("0.10")
+            elif clean.startswith("XAG"):
+                pip_size = Decimal("0.01")
+            else:
+                pip_size = tick_size if tick_size > _DECIMAL_ZERO else Decimal("0.01")
+        elif asset_class is AssetClass.INDEX:
+            pip_size = Decimal("1.0")
+        else:
+            pip_size = Decimal("1.0")
+
+        return CfdContractSpec(
+            symbol=symbol,
+            asset_class=asset_class,
+            contract_size=contract_size,
+            pip_size=pip_size,
+            tick_size=tick_size,
+            min_lot=min_lot,
+            max_lot=max_lot,
+            lot_step=lot_step,
+            default_leverage=leverage,
+            max_leverage=max_leverage,
+            trade_time=trade_time,
+            margin_currency=margin_currency,
+            profit_currency=profit_currency,
+            price_currency=price_currency,
+            exchange_rate=exchange_rate,
+            margin_usd_rate=margin_usd_rate,
+            enable=enable,
         )
 
     # =========================================================================

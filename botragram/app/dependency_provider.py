@@ -83,7 +83,10 @@ from botragram.exchanges.binance import (
     BinanceFuturesExchangeClient,
     BinanceFuturesUserDataStream,
 )
-from botragram.exchanges.bitget import BitgetFuturesExchangeClient
+from botragram.exchanges.bitget import (
+    BitgetCfdExchangeClient,
+    BitgetFuturesExchangeClient,
+)
 from botragram.exchanges.bybit import BybitFuturesExchangeClient
 from botragram.exchanges.bybit.futures_user_data_stream import (
     BybitFuturesUserDataStream,
@@ -1125,6 +1128,10 @@ class DependencyProvider:
             passphrase=exchange.passphrase,
             market_type=exchange.market_type,
             margin_mode=exchange.margin_mode,
+            is_live=(
+                self._settings.app.trade_mode is TradeMode.LIVE
+                and self._settings.exchange.is_live
+            ),
         )
         self._exchange_client = exchange_client
         self._stream_client = stream_client
@@ -1248,7 +1255,12 @@ class DependencyProvider:
             self._settings.app.trade_mode is TradeMode.LIVE
             and self._settings.exchange.is_live
         )
-        cfd_sizing = CfdSizingEngine(is_live=is_live)
+        spec_provider = (
+            exchange_client.get_cached_contract_spec
+            if isinstance(exchange_client, BitgetCfdExchangeClient)
+            else None
+        )
+        cfd_sizing = CfdSizingEngine(is_live=is_live, spec_provider=spec_provider)
         cfd_financing = CfdFinancingEngine(sizing=cfd_sizing)
         self._trading_engine = TradingEngine(
             risk_engine=self.risk_engine,

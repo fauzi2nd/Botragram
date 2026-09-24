@@ -17,7 +17,8 @@ from __future__ import annotations
 # Standard Library
 # =============================================================================
 import logging
-from collections.abc import Sequence
+import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -78,13 +79,14 @@ _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 _PING_ENDPOINT: Final[str] = "/api/v2/public/time"
 _CFD_ACCOUNT_ENDPOINT: Final[str] = "/api/v3/cfd/account/fund-detail"
+_CFD_INSTRUMENTS_ENDPOINT: Final[str] = "/api/v3/cfd/account/instruments"
 _CFD_TICKERS_ENDPOINT: Final[str] = "/api/v3/cfd/market/tickers"
 _CFD_CANDLES_ENDPOINT: Final[str] = "/api/v3/cfd/market/history-candlestick"
 _CFD_SYMBOLS_ENDPOINT: Final[str] = "/api/v3/cfd/market/tickers"
 _CFD_PLACE_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/place-order"
 _CFD_CANCEL_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/cancel-order"
 _CFD_ORDER_INFO_ENDPOINT: Final[str] = "/api/v3/cfd/trade/order-info"
-_CFD_OPEN_ORDERS_ENDPOINT: Final[str] = "/api/v3/cfd/trade/unfilled-orders"
+_CFD_OPEN_ORDERS_ENDPOINT: Final[str] = "/api/v3/cfd/trade/unfilled-order"
 _CFD_TRADES_ENDPOINT: Final[str] = "/api/v3/cfd/trade/history-order"
 _CFD_POSITIONS_ENDPOINT: Final[str] = "/api/v3/cfd/trade/current-positions"
 _CFD_CLOSE_POSITION_ENDPOINT: Final[str] = "/api/v3/cfd/trade/close-positions"
@@ -93,6 +95,9 @@ _CFD_PLACE_PLAN_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/place-strategy-o
 _CFD_CANCEL_PLAN_ORDER_ENDPOINT: Final[str] = "/api/v3/cfd/trade/cancel-strategy-order"
 _CFD_PLAN_OPEN_ENDPOINT: Final[str] = "/api/v3/cfd/trade/unfilled-strategy-orders"
 _CFD_PLAN_HISTORY_ENDPOINT: Final[str] = "/api/v3/cfd/trade/history-strategy-orders"
+
+_INSTRUMENTS_CACHE_TTL_SECONDS: Final[int] = 300
+_DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 
 BITGET_CFD_INTERVAL_MAP: Final[dict[Interval, str]] = {
     Interval.M1: "1m",
@@ -115,6 +120,9 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
     __slots__ = (
         "_calendar",
         "_financing",
+        "_instruments_cache",
+        "_instruments_cache_time",
+        "_is_live",
         "_mapper",
         "_mode",
         "_rest",
@@ -130,6 +138,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         calendar: MarketCalendarEngine | None = None,
         sizing: CfdSizingEngine | None = None,
         financing: CfdFinancingEngine | None = None,
+        is_live: bool = False,
     ) -> None:
         """Initialize the Bitget CFD client.
 
@@ -140,13 +149,23 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
             calendar: Optional market calendar engine for session evaluation.
             sizing: Optional CFD sizing engine for pip/lot calculations.
             financing: Optional CFD financing engine for rollover swap calculations.
+            is_live: Whether trading in live mode requiring authoritative metadata.
         """
         self._rest = rest
         self._mapper = mapper
         self._mode = mode
+        self._is_live = is_live
         self._calendar = calendar if calendar is not None else MarketCalendarEngine()
+        self._instruments_cache: dict[str, CfdContractSpec] = {}
+        self._instruments_cache_time: datetime | None = None
         self._sizing = (
-            sizing if sizing is not None else CfdSizingEngine(calendar=self._calendar)
+            sizing
+            if sizing is not None
+            else CfdSizingEngine(
+                calendar=self._calendar,
+                is_live=self._is_live,
+                spec_provider=self.get_cached_contract_spec,
+            )
         )
         self._financing = (
             financing
@@ -179,8 +198,115 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         """Return candlestick intervals natively supported by Bitget CFD."""
         return _CFD_NATIVE_INTERVALS
 
+    def get_cached_contract_spec(self, symbol: str) -> CfdContractSpec | None:
+        """Return cached authoritative contract spec if available."""
+        clean = self._mapper.normalize_symbol(symbol)
+        upper = symbol.strip().upper()
+        return self._instruments_cache.get(clean) or self._instruments_cache.get(upper)
+
+    def _is_cache_valid(self) -> bool:
+        """Return True if instruments cache is populated and unexpired."""
+        if not self._instruments_cache or self._instruments_cache_time is None:
+            return False
+        age = (
+            datetime.now(timezone.utc) - self._instruments_cache_time
+        ).total_seconds()
+        return age < _INSTRUMENTS_CACHE_TTL_SECONDS
+
+    async def _fetch_and_cache_instruments(self) -> Mapping[str, CfdContractSpec]:
+        """Fetch authoritative CFD instruments from exchange and refresh cache."""
+        payload = await self._rest.get(_CFD_INSTRUMENTS_ENDPOINT, authenticated=True)
+        if not isinstance(payload, dict):
+            raise ExchangeError(f"Invalid instruments response payload: {payload}")
+        raw_data = payload.get("data")
+        raw_list: list[object] = []
+        if isinstance(raw_data, list):
+            raw_list = cast(list[object], raw_data)
+        elif isinstance(raw_data, dict):
+            ent_list = cast(dict[str, object], raw_data).get("list")
+            if isinstance(ent_list, list):
+                raw_list = cast(list[object], ent_list)
+            else:
+                raw_list = [raw_data]
+
+        specs: dict[str, CfdContractSpec] = {}
+        for item in raw_list:
+            if isinstance(item, dict):
+                try:
+                    spec = self._mapper.map_instrument_spec(cast(ExchangePayload, item))
+                    specs[spec.symbol] = spec
+                    specs[self._mapper.normalize_symbol(spec.symbol)] = spec
+                    self._sizing.register_contract_spec(spec)
+                except Exception as error:
+                    _LOGGER.warning("Failed to map CFD instrument spec item: %s", error)
+
+        if specs:
+            self._instruments_cache.update(specs)
+            self._instruments_cache_time = datetime.now(timezone.utc)
+        return specs
+
+    async def get_instrument_spec(
+        self,
+        symbol: str,
+        *,
+        force_refresh: bool = False,
+    ) -> CfdContractSpec:
+        """Return authoritative contract specification for a symbol."""
+        clean = self._mapper.normalize_symbol(symbol)
+        upper = symbol.strip().upper()
+
+        if not force_refresh and self._is_cache_valid():
+            if clean in self._instruments_cache:
+                spec = self._instruments_cache[clean]
+                if self._is_live and not spec.enable:
+                    raise ExchangeError(f"Bitget CFD instrument {symbol} is disabled")
+                return spec
+            if upper in self._instruments_cache:
+                spec = self._instruments_cache[upper]
+                if self._is_live and not spec.enable:
+                    raise ExchangeError(f"Bitget CFD instrument {symbol} is disabled")
+                return spec
+
+        try:
+            await self._fetch_and_cache_instruments()
+        except Exception as error:
+            if self._is_live:
+                raise ExchangeError(
+                    f"Failed to fetch authoritative CFD instruments"
+                    f" for {symbol}: {error}"
+                ) from error
+            _LOGGER.debug(
+                "Unable to query Bitget CFD instruments for %s: %s",
+                symbol,
+                error,
+            )
+
+        if clean in self._instruments_cache:
+            spec = self._instruments_cache[clean]
+            if self._is_live and not spec.enable:
+                raise ExchangeError(f"Bitget CFD instrument {symbol} is disabled")
+            return spec
+        if upper in self._instruments_cache:
+            spec = self._instruments_cache[upper]
+            if self._is_live and not spec.enable:
+                raise ExchangeError(f"Bitget CFD instrument {symbol} is disabled")
+            return spec
+
+        if self._is_live:
+            raise ExchangeError(
+                f"Authoritative CFD instrument metadata unavailable"
+                f" for {symbol} in LIVE mode"
+            )
+
+        return self._sizing.get_fallback_contract_spec(symbol)
+
     def get_contract_spec(self, symbol: str) -> CfdContractSpec:
         """Return the contract and pip specifications for a symbol."""
+        cached = self.get_cached_contract_spec(symbol)
+        if cached is not None:
+            if self._is_live and not cached.enable:
+                raise ExchangeError(f"Bitget CFD instrument {symbol} is disabled")
+            return cached
         return self._sizing.get_contract_spec(symbol)
 
     def get_financing_schedule(self, symbol: str) -> CfdFinancingSchedule:
@@ -266,6 +392,18 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
     async def connect(self) -> None:
         """Initialize connections and verify connectivity."""
         await self.ping()
+        try:
+            await self._fetch_and_cache_instruments()
+        except Exception as error:
+            if self._is_live:
+                raise ExchangeError(
+                    "Bitget CFD connection failed: unable to fetch"
+                    f" authoritative instruments in LIVE mode: {error}"
+                ) from error
+            _LOGGER.debug(
+                "Non-live Bitget CFD client could not prefetch instruments: %s",
+                error,
+            )
 
     async def close(self) -> None:
         """Release underlying REST sessions."""
@@ -314,7 +452,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
 
     async def get_market_entry_rules(self, *, symbol: str) -> ExchangeSymbolRules:
         """Return quantity and pricing rules for a CFD symbol."""
-        spec = self._sizing.get_contract_spec(symbol)
+        spec = await self.get_instrument_spec(symbol)
         return ExchangeSymbolRules(
             symbol=self._mapper.normalize_symbol(symbol),
             market_min_quantity=spec.min_lot,
@@ -526,21 +664,131 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         }
         if price is not None:
             body["price"] = str(price)
-        if client_order_id is not None:
-            body["clientOid"] = client_order_id
+        effective_client_oid = client_order_id or f"cfd-{uuid.uuid4().hex[:16]}"
+        body["clientOid"] = effective_client_oid
 
-        payload = await self._rest.post(
-            _CFD_PLACE_ORDER_ENDPOINT,
-            data=body,
-            authenticated=True,
+        try:
+            payload = await self._rest.post(
+                _CFD_PLACE_ORDER_ENDPOINT,
+                data=body,
+                authenticated=True,
+            )
+        except BitgetRestResponseError as error:
+            raise ExchangeOrderRejectedError(
+                f"Bitget CFD order was rejected: {error}"
+            ) from error
+        except (TimeoutError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                f"Bitget CFD order outcome is unknown: {error}"
+            ) from error
+
+        if not isinstance(payload, dict):
+            raise ExchangeOrderRejectedError(
+                f"Bitget CFD order submission failed for {symbol}: {payload}"
+            )
+
+        raw_data = payload.get("data")
+        if not isinstance(raw_data, dict):
+            raise ExchangeOrderRejectedError(
+                f"Bitget CFD order submission returned invalid data"
+                f" for {symbol}: {payload}"
+            )
+
+        raw_payload = cast(ExchangePayload, raw_data)
+        order_id = self._to_string(
+            raw_payload.get("orderId", raw_payload.get("order_id", ""))
+        ).strip()
+        trx_id = (
+            self._to_string(
+                raw_payload.get("trxId", raw_payload.get("trx_id", ""))
+            ).strip()
+            or None
         )
-        if isinstance(payload, dict):
-            raw_data = payload.get("data")
-            if isinstance(raw_data, dict):
-                return self._mapper.map_order(cast(ExchangePayload, raw_data))
+        resp_client_oid = (
+            self._to_string(
+                raw_payload.get("clientOid", raw_payload.get("clientOrderId", ""))
+            ).strip()
+            or effective_client_oid
+        )
 
-        raise ExchangeOrderRejectedError(
-            f"Bitget CFD order submission failed for {symbol}: {payload}"
+        # Case 1: Order ID returned directly and non-empty
+        if order_id:
+            try:
+                order = await self.get_order(symbol=symbol, order_id=order_id)
+                if not order.client_order_id and resp_client_oid:
+                    order = replace(order, client_order_id=resp_client_oid)
+                if trx_id and not order.execution_order_id:
+                    order = replace(order, execution_order_id=trx_id)
+                return order
+            except ExchangeError, ExchangeOrderNotFoundError, BitgetRestResponseError:
+                now = datetime.now(timezone.utc)
+                return Order(
+                    order_id=order_id,
+                    client_order_id=resp_client_oid,
+                    execution_order_id=trx_id,
+                    symbol=self._mapper.normalize_symbol(symbol),
+                    side=side,
+                    order_type=order_type,
+                    status=OrderStatus.NEW,
+                    quantity=quantity,
+                    executed_quantity=_DECIMAL_ZERO,
+                    price=price,
+                    created_at=now,
+                    updated_at=now,
+                )
+
+        # Case 2: Order ID not in response, but clientOid or trxId is present
+        # Reconcile via get_order_by_client_order_id, unfilled-order, or history
+        if resp_client_oid:
+            try:
+                order = await self.get_order_by_client_order_id(
+                    symbol=symbol,
+                    client_order_id=resp_client_oid,
+                )
+                if trx_id and not order.execution_order_id:
+                    order = replace(order, execution_order_id=trx_id)
+                return order
+            except ExchangeError, ExchangeOrderNotFoundError, BitgetRestResponseError:
+                pass
+
+        try:
+            open_orders = await self.get_open_orders(symbol=symbol)
+            for o in open_orders:
+                if (
+                    (resp_client_oid and o.client_order_id == resp_client_oid)
+                    or (trx_id and o.execution_order_id == trx_id)
+                ) and o.order_id:
+                    if trx_id and not o.execution_order_id:
+                        return replace(o, execution_order_id=trx_id)
+                    return o
+        except ExchangeError, BitgetRestResponseError:
+            pass
+
+        try:
+            trades = await self.get_trades(symbol=symbol, limit=20)
+            for t in trades:
+                if t.order_id:
+                    try:
+                        matched = await self.get_order(
+                            symbol=symbol, order_id=t.order_id
+                        )
+                        if (
+                            resp_client_oid
+                            and matched.client_order_id == resp_client_oid
+                        ) or (trx_id and matched.execution_order_id == trx_id):
+                            if trx_id and not matched.execution_order_id:
+                                return replace(matched, execution_order_id=trx_id)
+                            return matched
+                    except ExchangeError, ExchangeOrderNotFoundError:
+                        pass
+        except ExchangeError, BitgetRestResponseError:
+            pass
+
+        # Fail closed: typed outcome unknown rather than fabricating order_id
+        raise ExchangeOrderOutcomeUnknownError(
+            f"Bitget CFD order placed with trxId={trx_id} and"
+            f" clientOid={resp_client_oid}, but order identity could not"
+            " be resolved from venue. Fail closed for reconciliation."
         )
 
     async def create_protection_orders(
@@ -896,12 +1144,19 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         orders: list[Order] = []
         if isinstance(payload, dict):
             raw_data = payload.get("data")
+            raw_list: list[object] = []
             if isinstance(raw_data, list):
-                for item in cast(list[object], raw_data):
-                    if isinstance(item, dict):
-                        orders.append(
-                            self._mapper.map_order(cast(ExchangePayload, item))
-                        )
+                raw_list = cast(list[object], raw_data)
+            elif isinstance(raw_data, dict):
+                ent_list = cast(dict[str, object], raw_data).get("list")
+                if isinstance(ent_list, list):
+                    raw_list = cast(list[object], ent_list)
+                else:
+                    raw_list = [raw_data]
+
+            for item in raw_list:
+                if isinstance(item, dict):
+                    orders.append(self._mapper.map_order(cast(ExchangePayload, item)))
         return tuple(orders)
 
     async def get_open_protection_orders(
@@ -1288,3 +1543,10 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                     error,
                 )
         return tuple(closed_orders)
+
+    @staticmethod
+    def _to_string(value: object | None) -> str:
+        """Safely convert object to string."""
+        if value is None:
+            return ""
+        return str(value)

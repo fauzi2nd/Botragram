@@ -13,10 +13,12 @@ Python:
 # =============================================================================
 from __future__ import annotations
 
+import re
+
 # =============================================================================
 # Standard Library
 # =============================================================================
-import re
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import Final
 
@@ -67,6 +69,8 @@ class CfdSizingEngine:
     __slots__ = (
         "_calendar",
         "_is_live",
+        "_spec_provider",
+        "_specs",
     )
 
     def __init__(
@@ -74,19 +78,73 @@ class CfdSizingEngine:
         calendar: MarketCalendarEngine | None = None,
         *,
         is_live: bool = False,
+        specs: Mapping[str, CfdContractSpec] | None = None,
+        spec_provider: Callable[[str], CfdContractSpec | None] | None = None,
     ) -> None:
         """Initialize the CFD sizing engine with an optional calendar."""
         self._calendar = calendar if calendar is not None else MarketCalendarEngine()
         self._is_live = is_live
+        self._specs: dict[str, CfdContractSpec] = dict(specs) if specs else {}
+        self._spec_provider = spec_provider
 
-    def get_contract_spec(self, symbol: str) -> CfdContractSpec:
-        """Resolve authoritative contract and pip specification for a CFD symbol."""
-        clean = re.sub(
+    def register_contract_spec(self, spec: CfdContractSpec) -> None:
+        """Register or update an authoritative contract specification."""
+        clean = self._clean_symbol(spec.symbol)
+        self._specs[clean] = spec
+        self._specs[spec.symbol.upper()] = spec
+
+    def set_contract_specs(self, specs: Mapping[str, CfdContractSpec]) -> None:
+        """Set all authoritative contract specifications."""
+        self._specs.clear()
+        for spec in specs.values():
+            self.register_contract_spec(spec)
+
+    def _clean_symbol(self, symbol: str) -> str:
+        """Strip CFD mode suffixes (.s, .pro, etc.) and delimiters."""
+        s = re.sub(
             r"(\.(s|pro|cfd|std)|(_ecn|_std|-cfd))$",
             "",
             symbol.strip(),
             flags=re.IGNORECASE,
         ).upper()
+        return s.replace("/", "").replace("-", "")
+
+    def get_contract_spec(self, symbol: str) -> CfdContractSpec:
+        """Resolve authoritative contract and pip specification for a CFD symbol."""
+        clean = self._clean_symbol(symbol)
+        upper = symbol.strip().upper()
+
+        if clean in self._specs:
+            spec = self._specs[clean]
+            if self._is_live and not spec.enable:
+                raise ValueError(f"CFD instrument {symbol} is disabled on exchange")
+            return spec
+
+        if upper in self._specs:
+            spec = self._specs[upper]
+            if self._is_live and not spec.enable:
+                raise ValueError(f"CFD instrument {symbol} is disabled on exchange")
+            return spec
+
+        if self._spec_provider is not None:
+            provided = self._spec_provider(clean) or self._spec_provider(upper)
+            if provided is not None:
+                self.register_contract_spec(provided)
+                if self._is_live and not provided.enable:
+                    raise ValueError(f"CFD instrument {symbol} is disabled on exchange")
+                return provided
+
+        if self._is_live:
+            raise ValueError(
+                f"Authoritative CFD instrument metadata unavailable"
+                f" for {symbol} in LIVE mode"
+            )
+
+        return self.get_fallback_contract_spec(symbol)
+
+    def get_fallback_contract_spec(self, symbol: str) -> CfdContractSpec:
+        """Resolve deterministic fixture/fallback spec for a CFD symbol."""
+        clean = self._clean_symbol(symbol)
         asset_class = self._calendar.classify_asset(symbol)
 
         if asset_class is AssetClass.CRYPTO:

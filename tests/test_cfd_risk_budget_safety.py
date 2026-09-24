@@ -33,13 +33,54 @@ from botragram.engine.cfd_financing_engine import CfdFinancingEngine
 from botragram.engine.cfd_sizing_engine import CfdSizingEngine
 from botragram.engine.risk_engine import RiskEngine
 from botragram.engine.trading_engine import TradingEngine
-from botragram.enums import MarketType, SignalType
-from botragram.models import Signal
+from botragram.enums import AssetClass, MarketType, SignalType
+from botragram.models import CfdContractSpec, Signal
 
 # =============================================================================
 # Constants
 # =============================================================================
 _NOW = datetime.now(timezone.utc)
+
+# ---------------------------------------------------------------------------
+# Fixture helpers: deterministic contract specs matching fallback values
+# Used in is_live=True tests that must supply authoritative metadata.
+# ---------------------------------------------------------------------------
+_EURUSD_SPEC = CfdContractSpec(
+    symbol="EURUSD",
+    asset_class=AssetClass.FOREX,
+    contract_size=Decimal("100000"),
+    pip_size=Decimal("0.0001"),
+    tick_size=Decimal("0.00001"),
+    min_lot=Decimal("0.01"),
+    max_lot=Decimal("100.0"),
+    lot_step=Decimal("0.01"),
+    default_leverage=500,
+    max_leverage=1000,
+)
+_USDJPY_SPEC = CfdContractSpec(
+    symbol="USDJPY",
+    asset_class=AssetClass.FOREX,
+    contract_size=Decimal("100000"),
+    pip_size=Decimal("0.01"),
+    tick_size=Decimal("0.001"),
+    min_lot=Decimal("0.01"),
+    max_lot=Decimal("100.0"),
+    lot_step=Decimal("0.01"),
+    default_leverage=500,
+    max_leverage=1000,
+)
+_EURJPY_SPEC = CfdContractSpec(
+    symbol="EURJPY",
+    asset_class=AssetClass.FOREX,
+    contract_size=Decimal("100000"),
+    pip_size=Decimal("0.01"),
+    tick_size=Decimal("0.001"),
+    min_lot=Decimal("0.01"),
+    max_lot=Decimal("100.0"),
+    lot_step=Decimal("0.01"),
+    default_leverage=200,
+    max_leverage=500,
+)
 
 
 def test_cfd_sizing_normalize_lot_below_minimum() -> None:
@@ -69,6 +110,7 @@ def test_cfd_sizing_normalize_lot_step_rounding_down() -> None:
 def test_cfd_currency_conversion_usd_quote() -> None:
     """Instruments quoted in USD require no FX conversion."""
     sizing = CfdSizingEngine(is_live=True)
+    sizing.register_contract_spec(_EURUSD_SPEC)
     # EURUSD: contract_size=100000, pip_size=0.0001 -> 10 USD per pip
     pip_val = sizing.calculate_pip_value_per_lot("EURUSD", price=Decimal("1.1000"))
     assert pip_val == Decimal("10.00000000")
@@ -77,6 +119,7 @@ def test_cfd_currency_conversion_usd_quote() -> None:
 def test_cfd_currency_conversion_usd_base() -> None:
     """Instruments with USD base use quote/USD exchange rate."""
     sizing = CfdSizingEngine(is_live=True)
+    sizing.register_contract_spec(_USDJPY_SPEC)
     # USDJPY: pip_size=0.01, contract_size=100000 -> 1000 JPY / 150.0 = 6.66666667 USD
     pip_val = sizing.calculate_pip_value_per_lot(
         "USDJPY",
@@ -89,6 +132,7 @@ def test_cfd_currency_conversion_usd_base() -> None:
 def test_cfd_currency_conversion_non_usd_quote_with_valid_rate() -> None:
     """Non-USD quote pairs apply conversion rate to USD correctly."""
     sizing = CfdSizingEngine(is_live=True)
+    sizing.register_contract_spec(_EURJPY_SPEC)
     # EURJPY: contract_size=100000, pip_size=0.01 -> 1000 JPY
     # JPY/USD rate = 0.00666667 (i.e. 1/150) -> 6.66667 USD
     rate = Decimal("0.00666667")
@@ -104,6 +148,7 @@ def test_cfd_currency_conversion_non_usd_quote_with_valid_rate() -> None:
 def test_cfd_currency_conversion_missing_in_live_fails_closed() -> None:
     """Missing or invalid conversion for non-USD quote must fail closed in LIVE."""
     live_sizing = CfdSizingEngine(is_live=True)
+    live_sizing.register_contract_spec(_EURJPY_SPEC)
     with pytest.raises(ValueError, match="Currency conversion rate is required"):
         live_sizing.calculate_pip_value_per_lot(
             "EURJPY",
