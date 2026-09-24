@@ -143,6 +143,10 @@ None of these outcomes are distinguishable from the specific partial TP order wi
 
 * **Milestone Monotonicity:** `protection_step` monotonically advances (never regresses).
 * **Stop Clamping:** `stop_loss` is monotonically tighter; same-step equal or widening stop mutations are rejected.
+* **New-Stop-First Sequence:** For all exchanges (Bitget Futures, Bitget CFD, Bybit Futures, Binance Futures), stop-loss and trailing stop replacements place and verify the replacement stop active BEFORE retiring predecessor stops. If placement fails or times out, existing stops remain intact. Predecessor cancellation failures propagate without silent suppression.
+* **CFD Risk-Budget Fail-Closed:** Lot sizing never clamps up above configured risk budget; if minimum executable lot exceeds risk amount, the trade is rejected. Step normalization strictly rounds down. Multi-currency pip valuation requires valid live FX conversion; missing or default 1.0 rates in LIVE fail closed. Position ceiling `MAX_POSITION_SIZE_USDT` is strictly enforced against CFD notional.
+* **Benchmark Trend Filter Fail-Closed:** When `BTC_TREND_FILTER_ENABLED=true`, insufficient candle data (< EMA period) or fetch failures cause the filter to fail closed (`buy=False, sell=False`). Bypass is permitted only when the filter is explicitly disabled.
+* **Bitget CFD API Contract Alignment:** Bitget CFD client adheres to v3 endpoints (`unfilled-orders`, `history-order`, `current-positions`), passes lot quantities via `qty`, enforces `price_tick_size` via contract spec `tick_size`, and uses authoritative `position_id` for position lifecycle and closure.
 * **LONG & SHORT Symmetry:** Identical state machine progression and break-even preservation for both position sides.
 * **PnL & Fee Accuracy:**
   * Unrealized PnL is computed on remaining post-exit quantity.
