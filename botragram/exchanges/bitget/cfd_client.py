@@ -150,9 +150,21 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
             financing: Optional CFD financing engine for rollover swap calculations.
             is_live: Whether trading in live mode requiring authoritative metadata.
         """
+        normalized_mode = mode.strip().lower()
+        if normalized_mode in ("zero_fee", "zerofee", "zero"):
+            normalized_mode = "zero_fee"
+        elif normalized_mode == "pro":
+            normalized_mode = "pro"
+        elif normalized_mode == "ecn":
+            normalized_mode = "ecn"
+        else:
+            raise ValueError(
+                f"Invalid CFD mode: {mode!r}. Accepted values are: "
+                "'ecn', 'zero_fee', 'pro'."
+            )
         self._rest = rest
         self._mapper = mapper
-        self._mode = mode
+        self._mode = normalized_mode
         self._is_live = is_live
         self._calendar = calendar if calendar is not None else MarketCalendarEngine()
         self._instruments_cache: dict[str, CfdContractSpec] = {}

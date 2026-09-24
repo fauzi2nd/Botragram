@@ -20,6 +20,7 @@ import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 # =============================================================================
 # Third-Party Imports
@@ -29,6 +30,7 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.config.exchange_settings import ExchangeSettings
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine import (
     CfdFinancingEngine,
@@ -62,6 +64,7 @@ from botragram.exchanges.base.rest import JsonResponse, QueryParams, RequestHead
 from botragram.exchanges.bitget import (
     BitgetCfdExchangeClient,
     BitgetCfdMapper,
+    BitgetFuturesExchangeClient,
     BitgetRestClient,
 )
 from botragram.exchanges.bitget.rest import BitgetRestResponseError
@@ -166,6 +169,21 @@ def test_cfd_mapper_normalize_and_vendor_symbol() -> None:
     assert mapper.to_vendor_symbol("XAUUSD", mode="zero_fee") == "XAUUSD.s"
     assert mapper.to_vendor_symbol("EURUSD", mode="pro") == "EURUSD.pro"
     assert mapper.to_vendor_symbol("US100", mode="ecn") == "US100"
+
+    # Case-insensitive mode
+    assert mapper.to_vendor_symbol("XAUUSD", mode="ZERO_FEE") == "XAUUSD.s"
+    assert mapper.to_vendor_symbol("EURUSD", mode="Pro") == "EURUSD.pro"
+    assert mapper.to_vendor_symbol("US100", mode="ECN") == "US100"
+
+    # Prevent double suffix if symbol already has suffix
+    assert mapper.to_vendor_symbol("XAUUSD.s", mode="zero_fee") == "XAUUSD.s"
+    assert mapper.to_vendor_symbol("EURUSD.pro", mode="pro") == "EURUSD.pro"
+    assert mapper.to_vendor_symbol("XAUUSD.s", mode="ecn") == "XAUUSD"
+    assert mapper.to_vendor_symbol("EURUSD.pro", mode="ecn") == "EURUSD"
+
+    # Invalid mode fails fast
+    with pytest.raises(ValueError, match="Invalid CFD mode"):
+        mapper.to_vendor_symbol("XAUUSD", mode="unsupported")
 
 
 def test_cfd_mapper_map_ticker() -> None:
@@ -612,6 +630,197 @@ def test_exchange_factory_bitget_unsupported_market() -> None:
             rest_client=rest,
             market_type=MarketType.SPOT,
         )
+
+
+def test_exchange_settings_cfd_mode_validation() -> None:
+    """Verify ExchangeSettings validates and normalizes cfd_mode."""
+    # Default is ecn
+    default_settings = ExchangeSettings(exchange=ExchangeType.BITGET)
+    assert default_settings.cfd_mode == "ecn"
+
+    # Accepted values (case-insensitive)
+    assert ExchangeSettings(cfd_mode="ecn").cfd_mode == "ecn"
+    assert ExchangeSettings(cfd_mode="ECN").cfd_mode == "ecn"
+    assert ExchangeSettings(cfd_mode="zero_fee").cfd_mode == "zero_fee"
+    assert ExchangeSettings(cfd_mode="ZERO_FEE").cfd_mode == "zero_fee"
+    assert ExchangeSettings(cfd_mode="pro").cfd_mode == "pro"
+    assert ExchangeSettings(cfd_mode="PRO").cfd_mode == "pro"
+
+    # Invalid values fail fast
+    with pytest.raises(ValueError, match="Invalid CFD mode"):
+        ExchangeSettings(cfd_mode="invalid_mode")
+    with pytest.raises(ValueError, match="Invalid CFD mode"):
+        ExchangeSettings(cfd_mode="")
+
+
+def test_cfd_client_init_mode_validation() -> None:
+    """Verify BitgetCfdExchangeClient validates mode on initialization."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+
+    # Default is ecn
+    client_default = BitgetCfdExchangeClient(rest=rest, mapper=mapper)
+    assert client_default.mode == "ecn"
+
+    # Explicit accepted values
+    client_zf = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ZERO_FEE")
+    assert client_zf.mode == "zero_fee"
+
+    client_pro = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="Pro")
+    assert client_pro.mode == "pro"
+
+    # Invalid value rejected
+    with pytest.raises(ValueError, match="Invalid CFD mode"):
+        BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="vip")
+
+
+def test_exchange_factory_bitget_cfd_mode_configuration() -> None:
+    """Verify ExchangeFactory forwards cfd_mode correctly to CFD client."""
+    rest = MockBitgetRestClient()
+
+    # Default cfd_mode
+    client_ecn = ExchangeFactory.create_exchange_client(
+        exchange_type=ExchangeType.BITGET,
+        rest_client=rest,
+        market_type=MarketType.CFD,
+    )
+    assert isinstance(client_ecn, BitgetCfdExchangeClient)
+    assert client_ecn.mode == "ecn"
+
+    # Explicit cfd_mode zero_fee
+    client_zf = ExchangeFactory.create_exchange_client(
+        exchange_type=ExchangeType.BITGET,
+        rest_client=rest,
+        market_type=MarketType.CFD,
+        cfd_mode="zero_fee",
+    )
+    assert isinstance(client_zf, BitgetCfdExchangeClient)
+    assert client_zf.mode == "zero_fee"
+
+    # Explicit cfd_mode pro
+    client_pro = ExchangeFactory.create_exchange_client(
+        exchange_type=ExchangeType.BITGET,
+        rest_client=rest,
+        market_type=MarketType.CFD,
+        cfd_mode="pro",
+    )
+    assert isinstance(client_pro, BitgetCfdExchangeClient)
+    assert client_pro.mode == "pro"
+
+    # ExchangeFactory.create with cfd_mode
+    full_client, _ = ExchangeFactory.create(
+        exchange_type=ExchangeType.BITGET,
+        rest_base_url="https://api.bitget.com",
+        websocket_base_url="wss://ws.bitget.com",
+        market_type=MarketType.CFD,
+        cfd_mode="zero_fee",
+    )
+    assert isinstance(full_client, BitgetCfdExchangeClient)
+    assert full_client.mode == "zero_fee"
+
+    # Futures client remains unaffected
+    futures_client = ExchangeFactory.create_exchange_client(
+        exchange_type=ExchangeType.BITGET,
+        rest_client=rest,
+        market_type=MarketType.FUTURES,
+        cfd_mode="zero_fee",
+    )
+    assert isinstance(futures_client, BitgetFuturesExchangeClient)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "expected_vendor_symbol"),
+    [
+        ("ecn", "XAUUSD"),
+        ("zero_fee", "XAUUSD.s"),
+        ("pro", "XAUUSD.pro"),
+    ],
+)
+async def test_cfd_client_create_order_sends_vendor_symbol_by_mode(
+    mode: str,
+    expected_vendor_symbol: str,
+) -> None:
+    """Verify create_order sends vendor symbol according to CFD account mode."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode=mode)
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {
+            "orderId": "order_cfd_test_mode",
+            "clientOid": "cl_test_mode",
+            "symbol": expected_vendor_symbol,
+            "side": "buy",
+            "orderType": "market",
+            "status": "new",
+            "size": "0.1",
+            "cTime": "1700000000000",
+        },
+    }
+
+    order = await client.create_order(
+        symbol="XAUUSD",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.1"),
+        client_order_id="cl_test_mode",
+        bypass_calendar_guard=True,
+    )
+
+    assert rest.post_bodies, "No POST body was captured"
+    assert rest.post_bodies[0]["symbol"] == expected_vendor_symbol
+    # Returned domain Order symbol must remain canonical internal symbol
+    assert order.symbol == "XAUUSD"
+
+
+def test_settings_manager_bitget_cfd_mode_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify settings manager pipeline parses BITGET_CFD_MODE from environment."""
+    from botragram.app.environment_provider import EnvironmentProvider
+    from botragram.app.settings_manager import SettingsManager
+
+    env_file = tmp_path / "test.env"
+    env_file.write_text(
+        "ACTIVE_EXCHANGE=BITGET\nBITGET_MARKET_TYPE=CFD\nBITGET_CFD_MODE=zero_fee\n",
+        encoding="utf-8",
+    )
+
+    env = EnvironmentProvider(env_path=str(env_file))
+    assert env.get_bitget_cfd_mode() == "zero_fee"
+
+    mgr = SettingsManager(environment_provider=env)
+    settings = mgr.load_exchange_settings()
+    assert settings.cfd_mode == "zero_fee"
+
+    # Default when BITGET_CFD_MODE is omitted
+    monkeypatch.delenv("BITGET_CFD_MODE", raising=False)
+    env_default_file = tmp_path / "default.env"
+    env_default_file.write_text(
+        "ACTIVE_EXCHANGE=BITGET\nBITGET_MARKET_TYPE=CFD\n",
+        encoding="utf-8",
+    )
+    env_default = EnvironmentProvider(env_path=str(env_default_file))
+    assert env_default.get_bitget_cfd_mode() == "ecn"
+    mgr_default = SettingsManager(environment_provider=env_default)
+    assert mgr_default.load_exchange_settings().cfd_mode == "ecn"
+
+    # Invalid mode in environment raises ValueError on load_exchange_settings
+    env_invalid_file = tmp_path / "invalid.env"
+    env_invalid_file.write_text(
+        "ACTIVE_EXCHANGE=BITGET\n"
+        "BITGET_MARKET_TYPE=CFD\n"
+        "BITGET_CFD_MODE=invalid_value\n",
+        encoding="utf-8",
+    )
+    env_invalid = EnvironmentProvider(env_path=str(env_invalid_file))
+    mgr_invalid = SettingsManager(environment_provider=env_invalid)
+    with pytest.raises(ValueError, match="Invalid CFD mode"):
+        mgr_invalid.load_exchange_settings()
 
 
 # =============================================================================

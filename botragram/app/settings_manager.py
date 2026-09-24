@@ -184,6 +184,7 @@ class SettingsManager:
                     raw_value=environment.get_bitget_margin_mode(),
                     setting_name="BITGET_MARGIN_MODE",
                 )
+                cfd_mode = environment.get_bitget_cfd_mode()
                 return ExchangeSettings(
                     exchange=exchange,
                     market_type=market_type,
@@ -192,6 +193,7 @@ class SettingsManager:
                     passphrase=environment.get_bitget_passphrase(),
                     testnet=environment.get_bitget_testnet(),
                     margin_mode=margin_mode,
+                    cfd_mode=cfd_mode,
                 )
             case ExchangeType.BYBIT:
                 market_type = self._parse_enum(

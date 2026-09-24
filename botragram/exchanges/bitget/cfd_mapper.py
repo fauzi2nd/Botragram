@@ -140,8 +140,13 @@ class BitgetCfdMapper(BaseExchangeMapper):
                 return f"{cleaned}.s"
             case "pro":
                 return f"{cleaned}.pro"
-            case _:
+            case "ecn":
                 return cleaned
+            case _:
+                raise ValueError(
+                    f"Invalid CFD mode: {mode!r}. Accepted values are: "
+                    "'ecn', 'zero_fee', 'pro'."
+                )
 
     # =========================================================================
     # Mapping Implementations

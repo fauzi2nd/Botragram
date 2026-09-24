@@ -1128,6 +1128,7 @@ class DependencyProvider:
             passphrase=exchange.passphrase,
             market_type=exchange.market_type,
             margin_mode=exchange.margin_mode,
+            cfd_mode=exchange.cfd_mode,
             is_live=(
                 self._settings.app.trade_mode is TradeMode.LIVE
                 and self._settings.exchange.is_live

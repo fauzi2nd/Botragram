@@ -112,6 +112,7 @@ class ExchangeFactory:
         rest_client: BaseRestClient,
         market_type: MarketType = MarketType.SPOT,
         margin_mode: MarginMode = MarginMode.ISOLATED,
+        cfd_mode: str = "ecn",
         is_live: bool = False,
     ) -> BaseExchangeClient:
         """Create a high-level exchange client.
@@ -121,6 +122,7 @@ class ExchangeFactory:
             rest_client: REST transport used by the client.
             market_type: Target market type (spot or futures).
             margin_mode: Futures margin mode (isolated or crossed).
+            cfd_mode: CFD instrument mode ('ecn', 'zero_fee', or 'pro').
             is_live: Whether trading in live mode requiring authoritative metadata.
 
         Returns:
@@ -174,6 +176,7 @@ class ExchangeFactory:
                     return BitgetCfdExchangeClient(
                         rest=rest_client,
                         mapper=BitgetCfdMapper(),
+                        mode=cfd_mode,
                         is_live=is_live,
                     )
 
@@ -229,6 +232,7 @@ class ExchangeFactory:
         passphrase: str = "",
         market_type: MarketType = MarketType.SPOT,
         margin_mode: MarginMode = MarginMode.ISOLATED,
+        cfd_mode: str = "ecn",
         is_live: bool = False,
     ) -> tuple[BaseExchangeClient, BaseStreamClient]:
         """Create matching REST-backed and streaming exchange clients.
@@ -242,6 +246,7 @@ class ExchangeFactory:
             passphrase: Exchange API passphrase (used by Bitget).
             market_type: Target market type (spot or futures).
             margin_mode: Futures margin mode (isolated or crossed).
+            cfd_mode: CFD instrument mode ('ecn', 'zero_fee', or 'pro').
             is_live: Whether trading in live mode requiring authoritative metadata.
 
         Returns:
@@ -259,6 +264,7 @@ class ExchangeFactory:
             rest_client=rest_client,
             market_type=market_type,
             margin_mode=margin_mode,
+            cfd_mode=cfd_mode,
             is_live=is_live,
         )
         stream_client = ExchangeFactory.create_stream_client(

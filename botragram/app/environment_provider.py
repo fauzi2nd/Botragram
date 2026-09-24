@@ -41,6 +41,7 @@ from botragram.constants.env import (
     ENV_BINANCE_TESTNET,
     ENV_BITGET_API_KEY,
     ENV_BITGET_API_SECRET,
+    ENV_BITGET_CFD_MODE,
     ENV_BITGET_MARGIN_MODE,
     ENV_BITGET_MARKET_TYPE,
     ENV_BITGET_PASSPHRASE,
@@ -1419,6 +1420,17 @@ class EnvironmentProvider:
             ENV_MARGIN_MODE,
             default="ISOLATED",
         ).upper()
+
+    def get_bitget_cfd_mode(self) -> str:
+        """Return the Bitget CFD account mode (ecn, zero_fee, or pro)."""
+        return (
+            self._get_var(
+                ENV_BITGET_CFD_MODE,
+                default="ecn",
+            )
+            .strip()
+            .lower()
+        )
 
     def get_margin_mode(self) -> str:
         """Return the general margin mode (ISOLATED or CROSSED)."""
