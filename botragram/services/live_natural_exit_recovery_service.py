@@ -549,47 +549,232 @@ class LiveNaturalExitRecoveryService:
                 if quantity == position.quantity
             )
         )
-        if len(candidate_ids) != 1:
+        if len(candidate_ids) > 1:
             raise RuntimeError(
                 "Natural exit requires exactly one authoritative full manual-close "
                 "order"
             )
-        order_id = candidate_ids[0]
-        recovered = await self.exchange_client.get_order(
-            symbol=position.symbol,
-            order_id=order_id,
-        )
-        if recovered.client_order_id is None or not recovered.client_order_id.strip():
-            recovered = replace(
-                recovered,
-                client_order_id=f"manual-{recovered.order_id}",
+        if len(candidate_ids) == 1:
+            order_id = candidate_ids[0]
+            recovered = await self.exchange_client.get_order(
+                symbol=position.symbol,
+                order_id=order_id,
             )
-        self._validate_manual_close_order(
-            order=recovered,
-            order_id=order_id,
+            if (
+                recovered.client_order_id is None
+                or not recovered.client_order_id.strip()
+            ):
+                recovered = replace(
+                    recovered,
+                    client_order_id=f"manual-{recovered.order_id}",
+                )
+            self._validate_manual_close_order(
+                order=recovered,
+                order_id=order_id,
+                position=position,
+                threshold_time=effective_threshold,
+            )
+            is_liquidation = any(
+                trade.is_liquidation for trade in trades if trade.order_id == order_id
+            )
+            if is_liquidation:
+                _LOGGER.error(
+                    "Natural LIVE exit detected a LIQUIDATION execution from exchange "
+                    "account history: symbol=%s exit_client_id=%s order_id=%s",
+                    position.symbol,
+                    recovered.client_order_id,
+                    recovered.order_id,
+                )
+            else:
+                _LOGGER.warning(
+                    "Natural LIVE exit recovered a manual close from authoritative "
+                    "account history: symbol=%s exit_client_id=%s order_id=%s",
+                    position.symbol,
+                    recovered.client_order_id,
+                    recovered.order_id,
+                )
+            return recovered, is_liquidation
+
+        # Candidate IDs is empty: ordinary exact manual-close matching did not
+        # find an order matching stored_position.quantity.
+        # In one-way position mode, an operator manual reversal executes an
+        # opposite-side order strictly larger than the stored position (e.g.,
+        # SELL 2Q to close LONG Q and open SHORT Q). Fall back to proving
+        # the complete reversal sequence (Order A + subsequent Order B).
+        return await self._recover_filled_manual_reversal_from_history(
             position=position,
-            threshold_time=effective_threshold,
+            trades=trades,
+            effective_threshold=effective_threshold,
         )
-        is_liquidation = any(
-            trade.is_liquidation for trade in trades if trade.order_id == order_id
+
+    async def _recover_filled_manual_reversal_from_history(
+        self,
+        *,
+        position: Position,
+        trades: Sequence[Trade],
+        effective_threshold: datetime,
+    ) -> tuple[Order, bool]:
+        """Recover exit from a manual reversal and subsequent manual close sequence.
+
+        In one-way position mode on derivatives/CFD exchanges, an operator
+        reversing exposure (e.g. LONG -> SHORT) submits an opposite-side order
+        with quantity strictly greater than the stored position quantity (e.g.
+        SELL 2Q to close LONG Q and open SHORT Q).
+
+        Ordinary exact manual-close matching fails in this scenario because
+        the executed quantity of the reversal order exceeds
+        stored_position.quantity. This fallback verifies the complete lifecycle:
+        1. Order A on closing side with executed_quantity > position.quantity
+           (excess quantity represents the new opposite exposure).
+        2. Subsequent Order B on opposite side with executed_quantity == excess
+           (closing the opposite exposure and returning the exchange to FLAT).
+        3. Valid chronological ordering.
+        4. Strict uniqueness (fail-closed if zero or multiple candidate
+           sequences exist).
+        """
+        closing_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
-        if is_liquidation:
+        opposite_side = (
+            OrderSide.BUY if closing_side is OrderSide.SELL else OrderSide.SELL
+        )
+        old_quantity = position.quantity
+
+        trades_by_order: dict[str, list[Trade]] = {}
+        for trade in trades:
+            if (
+                trade.symbol.upper() != position.symbol.upper()
+                or trade.executed_at < effective_threshold
+            ):
+                continue
+            trades_by_order.setdefault(trade.order_id, []).append(trade)
+
+        reversal_candidates: list[tuple[Order, Decimal, datetime, datetime]] = []
+        for order_id, order_trades in trades_by_order.items():
+            if not order_trades:
+                continue
+            if any(t.side is not closing_side for t in order_trades):
+                continue
+            trade_qty = sum((t.quantity for t in order_trades), start=Decimal("0"))
+            if trade_qty <= old_quantity:
+                continue
+
+            try:
+                order = await self.exchange_client.get_order(
+                    symbol=position.symbol,
+                    order_id=order_id,
+                )
+            except ExchangeOrderNotFoundError:
+                continue
+
+            if (
+                order.order_id != order_id
+                or order.symbol.upper() != position.symbol.upper()
+                or order.side is not closing_side
+                or order.status is not OrderStatus.FILLED
+                or order.order_type not in {OrderType.MARKET, OrderType.LIMIT}
+                or order.created_at < effective_threshold
+                or order.quantity != order.executed_quantity
+                or order.executed_quantity != trade_qty
+                or order.executed_quantity <= old_quantity
+            ):
+                continue
+
+            excess_qty = order.executed_quantity - old_quantity
+            earliest_trade = min(t.executed_at for t in order_trades)
+            latest_trade = max(t.executed_at for t in order_trades)
+            reversal_candidates.append(
+                (order, excess_qty, earliest_trade, latest_trade)
+            )
+
+        entry_order_id: str | None = None
+        if position.entry_client_order_id is not None:
+            attempt = await self.submission_attempt_repository.get_by_client_order_id(
+                client_order_id=position.entry_client_order_id,
+            )
+            if attempt is not None:
+                entry_order_id = attempt.exchange_order_id
+
+        valid_sequences: list[tuple[Order, Order, Decimal]] = []
+        for order_a, excess_qty, a_earliest, _a_latest in reversal_candidates:
+            for order_b_id, b_trades in trades_by_order.items():
+                if order_b_id == order_a.order_id:
+                    continue
+                if entry_order_id is not None and order_b_id == entry_order_id:
+                    continue
+                if any(t.side is not opposite_side for t in b_trades):
+                    continue
+                b_trade_qty = sum((t.quantity for t in b_trades), start=Decimal("0"))
+                if b_trade_qty != excess_qty:
+                    continue
+
+                try:
+                    order_b = await self.exchange_client.get_order(
+                        symbol=position.symbol,
+                        order_id=order_b_id,
+                    )
+                except ExchangeOrderNotFoundError:
+                    continue
+
+                if (
+                    order_b.order_id != order_b_id
+                    or order_b.symbol.upper() != position.symbol.upper()
+                    or order_b.side is not opposite_side
+                    or order_b.status is not OrderStatus.FILLED
+                    or order_b.order_type not in {OrderType.MARKET, OrderType.LIMIT}
+                    or order_b.quantity != order_b.executed_quantity
+                    or order_b.executed_quantity != excess_qty
+                ):
+                    continue
+
+                b_earliest = min(t.executed_at for t in b_trades)
+                if order_b.created_at < order_a.created_at or b_earliest < a_earliest:
+                    continue
+
+                valid_sequences.append((order_a, order_b, excess_qty))
+
+        if len(valid_sequences) > 1:
             _LOGGER.error(
-                "Natural LIVE exit detected a LIQUIDATION execution from exchange "
-                "account history: symbol=%s exit_client_id=%s order_id=%s",
+                "Ambiguous manual reversal sequence: symbol=%s candidate_count=%d",
                 position.symbol,
-                recovered.client_order_id,
-                recovered.order_id,
+                len(valid_sequences),
             )
-        else:
-            _LOGGER.warning(
-                "Natural LIVE exit recovered a manual close from authoritative "
-                "account history: symbol=%s exit_client_id=%s order_id=%s",
-                position.symbol,
-                recovered.client_order_id,
-                recovered.order_id,
+            raise RuntimeError(
+                "Ambiguous manual reversal sequence detected during natural "
+                "exit recovery"
             )
-        return recovered, is_liquidation
+
+        if len(valid_sequences) == 0:
+            raise RuntimeError(
+                "Natural exit requires exactly one authoritative full manual-close "
+                "order or proven reversal sequence"
+            )
+
+        order_a, order_b, excess_quantity = valid_sequences[0]
+        _LOGGER.warning(
+            "Natural LIVE exit recovered manual reversal sequence: symbol=%s "
+            "stored_side=%s stored_qty=%s reverse_order_id=%s "
+            "reverse_executed_qty=%s inferred_opposite_qty=%s "
+            "subsequent_close_order_id=%s result=RECOVERED",
+            position.symbol,
+            position.side.value,
+            position.quantity,
+            order_a.order_id,
+            order_a.executed_quantity,
+            excess_quantity,
+            order_b.order_id,
+        )
+
+        if order_a.client_order_id is None or not order_a.client_order_id.strip():
+            order_a = replace(
+                order_a,
+                client_order_id=f"manual-{order_a.order_id}",
+            )
+
+        is_liquidation = any(
+            t.is_liquidation for t in trades if t.order_id == order_a.order_id
+        )
+        return order_a, is_liquidation
 
     @staticmethod
     def _validate_manual_close_order(

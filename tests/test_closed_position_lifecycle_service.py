@@ -707,3 +707,72 @@ async def test_closed_position_lifecycle_aggregates_partial_tp_and_final_exit() 
     notification = publisher.notifications[0]
     assert "Trade Completed (WIN)" in notification.message
     assert "Net Realized PnL:</b> <b>+7.96 USDT" in notification.message
+
+
+@pytest.mark.asyncio
+async def test_reversal_exit_fills_allocated_up_to_entry_quantity() -> None:
+    """Ensure reversal order exit fills are allocated only up to entry quantity."""
+    repository = MemoryClosedPositionLifecycleRepository()
+    history = ExactTradeHistory(
+        fills_by_order_id={
+            "entry-1": (
+                _fill(
+                    trade_id="entry-1",
+                    order_id="entry-1",
+                    side=OrderSide.BUY,
+                    fee="0.1",
+                    realized_pnl="0",
+                    seconds=1,
+                    price="100",
+                    quantity="1",
+                ),
+            ),
+            "rev-exit": (
+                _fill(
+                    trade_id="rev-1",
+                    order_id="rev-exit",
+                    side=OrderSide.SELL,
+                    fee="0.4",
+                    realized_pnl="20",
+                    seconds=2,
+                    price="110",
+                    quantity="2",
+                ),
+            ),
+        }
+    )
+    lifecycle_service = ClosedPositionLifecycleService(
+        repository=repository,
+        trade_history=history,
+    )
+    pos = _position()
+    attempt = _attempt()
+    exit_order = Order(
+        order_id="rev-exit",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("2"),
+        executed_quantity=Decimal("2"),
+        price=Decimal("110"),
+        client_order_id="manual-rev",
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    await lifecycle_service.stage(
+        position=pos,
+        attempt=attempt,
+        exit_order=exit_order,
+        close_reason=ClosedPositionReason.MANUAL_CLOSE,
+        provenance=ClosedPositionProvenance.MANUAL_ORDER,
+    )
+
+    await lifecycle_service.complete(entry_client_order_id=_ENTRY_CLIENT_ID)
+    completed = await repository.get_by_entry_client_order_id(
+        entry_client_order_id=_ENTRY_CLIENT_ID,
+    )
+    assert isinstance(completed, ClosedPositionLifecycle)
+    assert completed.gross_realized_pnl == Decimal("10")
+    assert completed.fee == Decimal("0.3")
+    assert completed.net_pnl == Decimal("9.7")

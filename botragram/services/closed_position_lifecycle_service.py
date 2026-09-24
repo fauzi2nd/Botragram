@@ -179,13 +179,22 @@ class ClosedPositionLifecycleService:
             )
             exit_fills_list.extend(order_fills)
         exit_fills = tuple(exit_fills_list)
-        if any(fill.realized_pnl is None for fill in exit_fills):
-            total_entry_qty = sum(
-                (fill.quantity for fill in entry_fills), start=_DECIMAL_ZERO
+        total_entry_qty = sum(
+            (fill.quantity for fill in entry_fills), start=_DECIMAL_ZERO
+        )
+        total_exit_qty = sum(
+            (fill.quantity for fill in exit_fills), start=_DECIMAL_ZERO
+        )
+        if total_entry_qty > _DECIMAL_ZERO and total_exit_qty > total_entry_qty:
+            exit_fills = self._allocate_exit_fills(
+                fills=exit_fills,
+                target_qty=total_entry_qty,
             )
             total_exit_qty = sum(
                 (fill.quantity for fill in exit_fills), start=_DECIMAL_ZERO
             )
+
+        if any(fill.realized_pnl is None for fill in exit_fills):
             if total_entry_qty > _DECIMAL_ZERO and total_entry_qty == total_exit_qty:
                 entry_notional = sum(
                     (fill.price * fill.quantity for fill in entry_fills),
@@ -307,3 +316,45 @@ class ClosedPositionLifecycleService:
             raise RuntimeError(
                 f"Closed lifecycle {label} fills do not match the exact order"
             )
+
+    @staticmethod
+    def _allocate_exit_fills(
+        *,
+        fills: tuple[Trade, ...],
+        target_qty: Decimal,
+    ) -> tuple[Trade, ...]:
+        """Allocate chronological exit fills up to target_qty.
+
+        When a position is closed via a reversal order, the order's total
+        executed quantity exceeds the stored position entry quantity because
+        the excess quantity opened a new opposite-side position.
+        This method retains only the portion of fills closing the original
+        position, pro-rating fees and realized PnL proportionally.
+        """
+        allocated: list[Trade] = []
+        remaining = target_qty
+        for fill in sorted(fills, key=lambda t: (t.executed_at, t.trade_id)):
+            if remaining <= _DECIMAL_ZERO:
+                break
+            if fill.quantity <= remaining:
+                allocated.append(fill)
+                remaining -= fill.quantity
+            else:
+                fraction = remaining / fill.quantity
+                allocated_fee = fill.fee * fraction
+                allocated_pnl = (
+                    fill.realized_pnl * fraction
+                    if fill.realized_pnl is not None
+                    else None
+                )
+                allocated.append(
+                    replace(
+                        fill,
+                        quantity=remaining,
+                        quote_quantity=fill.price * remaining,
+                        fee=allocated_fee,
+                        realized_pnl=allocated_pnl,
+                    )
+                )
+                remaining = _DECIMAL_ZERO
+        return tuple(allocated)

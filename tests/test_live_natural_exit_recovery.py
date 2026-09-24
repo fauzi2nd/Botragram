@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -1884,3 +1884,1159 @@ async def test_reconcile_serializes_with_lifecycle_coordinator() -> None:
 
     await asyncio.gather(reconcile_task, entry_task)
     assert concurrent_acquired, "hold acquires after reconcile finishes"
+
+
+def _reversal_fill(
+    *,
+    trade_id: str,
+    order_id: str,
+    side: OrderSide,
+    realized_pnl: str,
+    quantity: str,
+    fee: str = "0.1",
+    price: str = "0.011",
+    executed_at: datetime = _NOW,
+) -> Trade:
+    fill_price = Decimal(price)
+    fill_quantity = Decimal(quantity)
+    return Trade(
+        trade_id=trade_id,
+        order_id=order_id,
+        symbol=_SYMBOL,
+        side=side,
+        price=fill_price,
+        quantity=fill_quantity,
+        quote_quantity=fill_price * fill_quantity,
+        fee=Decimal(fee),
+        fee_asset="USDT",
+        realized_pnl=Decimal(realized_pnl),
+        executed_at=executed_at,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_1_manual_full_close_existing_passes() -> None:
+    """Scenario 1: Existing exact manual full close continues to pass."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    manual_order = Order(
+        order_id="manual-full-close",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        price=None,
+        stop_price=None,
+        created_at=_NOW + timedelta(minutes=5),
+        updated_at=_NOW + timedelta(minutes=5),
+        client_order_id="manual-exit",
+    )
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+            ),
+            _fill(
+                trade_id="close-fill",
+                order_id=manual_order.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="2",
+                quantity=str(position.quantity),
+                executed_at=_NOW + timedelta(minutes=5),
+            ),
+        ),
+        standard_orders=(manual_order,),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
+    assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+    assert completed[0].gross_realized_pnl == Decimal("2")
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_2_long_to_short_then_flat_recovers() -> None:
+    """Scenario 2: Manual reverse LONG -> SHORT then close -> FLAT recovers safely."""
+    position = replace(
+        _position(),
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("115"),
+    )
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempt = replace(
+        _completed_attempt(position=position),
+        side=OrderSide.BUY,
+        quantity=Decimal("1"),
+    )
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_entry = _NOW
+    t_rev = _NOW + timedelta(minutes=10)
+    t_close = _NOW + timedelta(minutes=20)
+
+    # Order A: SELL 2 (closes LONG 1, opens SHORT 1)
+    order_a = Order(
+        order_id="rev-order-sell-2",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("2"),
+        executed_quantity=Decimal("2"),
+        created_at=t_rev,
+        updated_at=t_rev,
+        client_order_id="web-reverse",
+    )
+    # Order B: BUY 1 (closes SHORT 1 -> exchange flat)
+    order_b = Order(
+        order_id="close-order-buy-1",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("1"),
+        executed_quantity=Decimal("1"),
+        created_at=t_close,
+        updated_at=t_close,
+        client_order_id="web-close",
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _reversal_fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.BUY,
+                realized_pnl="0",
+                quantity="1",
+                fee="0.1",
+                price="100",
+                executed_at=t_entry,
+            ),
+            _reversal_fill(
+                trade_id="rev-fill-a",
+                order_id=order_a.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="2",
+                quantity="2",
+                fee="0.2",
+                price="110",
+                executed_at=t_rev,
+            ),
+            _reversal_fill(
+                trade_id="close-fill-b",
+                order_id=order_b.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity="1",
+                fee="0.1",
+                price="105",
+                executed_at=t_close,
+            ),
+        ),
+        standard_orders=(order_a, order_b),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
+    assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+    # Gross realized PnL was 2 on trade of qty 2, allocated for 1 unit = 1
+    assert completed[0].gross_realized_pnl == Decimal("1")
+    # Fee: entry 0.1 + allocated exit 0.1 (half of 0.2) = 0.2
+    assert completed[0].fee == Decimal("0.2")
+    assert completed[0].net_pnl == Decimal("0.8")
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_3_short_to_long_then_flat_recovers() -> None:
+    """Scenario 3: Manual reverse SHORT -> LONG then close -> FLAT recovers safely."""
+    position = replace(
+        _position(),
+        side=PositionSide.SHORT,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+    )
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempt = replace(
+        _completed_attempt(position=position),
+        side=OrderSide.SELL,
+        quantity=Decimal("1"),
+    )
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_entry = _NOW
+    t_rev = _NOW + timedelta(minutes=10)
+    t_close = _NOW + timedelta(minutes=20)
+
+    # Order A: BUY 2 (closes SHORT 1, opens LONG 1)
+    order_a = Order(
+        order_id="rev-order-buy-2",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("2"),
+        executed_quantity=Decimal("2"),
+        created_at=t_rev,
+        updated_at=t_rev,
+        client_order_id="web-reverse",
+    )
+    # Order B: SELL 1 (closes LONG 1 -> exchange flat)
+    order_b = Order(
+        order_id="close-order-sell-1",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("1"),
+        executed_quantity=Decimal("1"),
+        created_at=t_close,
+        updated_at=t_close,
+        client_order_id="web-close",
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _reversal_fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+                quantity="1",
+                fee="0.1",
+                price="100",
+                executed_at=t_entry,
+            ),
+            _reversal_fill(
+                trade_id="rev-fill-a",
+                order_id=order_a.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="4",
+                quantity="2",
+                fee="0.2",
+                price="90",
+                executed_at=t_rev,
+            ),
+            _reversal_fill(
+                trade_id="close-fill-b",
+                order_id=order_b.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="1",
+                quantity="1",
+                fee="0.1",
+                price="95",
+                executed_at=t_close,
+            ),
+        ),
+        standard_orders=(order_a, order_b),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
+    assert completed[0].gross_realized_pnl == Decimal("2")
+    assert completed[0].fee == Decimal("0.2")
+    assert completed[0].net_pnl == Decimal("1.8")
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_4_quantity_2q_and_final_close_q() -> None:
+    """Scenario 4: Reversal order has size 2Q and final close has size Q."""
+    q = Decimal("500")
+    two_q = Decimal("1000")
+    position = replace(_position(), quantity=q)
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempt = replace(_completed_attempt(position=position), quantity=q)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_rev = _NOW + timedelta(minutes=5)
+    t_close = _NOW + timedelta(minutes=10)
+
+    order_a = Order(
+        order_id="rev-order-2q",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=two_q,
+        executed_quantity=two_q,
+        created_at=t_rev,
+        updated_at=t_rev,
+        client_order_id="web-rev-2q",
+    )
+    order_b = Order(
+        order_id="close-order-q",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=q,
+        executed_quantity=q,
+        created_at=t_close,
+        updated_at=t_close,
+        client_order_id="web-close-q",
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _reversal_fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+                quantity=str(q),
+                fee="0.5",
+                executed_at=_NOW,
+            ),
+            _reversal_fill(
+                trade_id="rev-fill-2q",
+                order_id=order_a.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="10",
+                quantity=str(two_q),
+                fee="1.0",
+                executed_at=t_rev,
+            ),
+            _reversal_fill(
+                trade_id="close-fill-q",
+                order_id=order_b.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="2",
+                quantity=str(q),
+                fee="0.5",
+                executed_at=t_close,
+            ),
+        ),
+        standard_orders=(order_a, order_b),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    assert completed[0].gross_realized_pnl == Decimal("5")
+    assert completed[0].fee == Decimal("1.0")
+    assert completed[0].net_pnl == Decimal("4.0")
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_5_multi_fill_reversal() -> None:
+    """Scenario 5: Multi-fill reversal allocates only the closed portion."""
+    q = Decimal("10")
+    position = replace(
+        _position(),
+        quantity=q,
+        side=PositionSide.LONG,
+        entry_price=Decimal("100"),
+    )
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempt = replace(
+        _completed_attempt(position=position),
+        side=OrderSide.BUY,
+        quantity=q,
+    )
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_rev = _NOW + timedelta(minutes=5)
+    t_rev2 = _NOW + timedelta(minutes=6)
+    t_close = _NOW + timedelta(minutes=15)
+
+    order_a = Order(
+        order_id="rev-multi",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("20"),
+        executed_quantity=Decimal("20"),
+        created_at=t_rev,
+        updated_at=t_rev2,
+        client_order_id="web-rev-multi",
+    )
+    order_b = Order(
+        order_id="close-multi",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("10"),
+        executed_quantity=Decimal("10"),
+        created_at=t_close,
+        updated_at=t_close,
+        client_order_id="web-close-multi",
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _reversal_fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.BUY,
+                realized_pnl="0",
+                quantity="10",
+                fee="0.1",
+                price="100",
+                executed_at=_NOW,
+            ),
+            # Fill 1: 6 units (out of 10 needed)
+            _reversal_fill(
+                trade_id="rev-fill-1",
+                order_id=order_a.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="6",
+                quantity="6",
+                fee="0.06",
+                price="110",
+                executed_at=t_rev,
+            ),
+            # Fill 2: 14 units (only 4 needed to reach 10)
+            _reversal_fill(
+                trade_id="rev-fill-2",
+                order_id=order_a.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="14",
+                quantity="14",
+                fee="0.14",
+                price="110",
+                executed_at=t_rev2,
+            ),
+            # Order B fills: 10 units
+            _reversal_fill(
+                trade_id="close-fill-1",
+                order_id=order_b.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="0",
+                quantity="10",
+                fee="0.1",
+                price="105",
+                executed_at=t_close,
+            ),
+        ),
+        standard_orders=(order_a, order_b),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    # Fill 1 gives 6 pnl. Fill 2 gives 14 * (4/14) = 4 pnl. Total gross = 10.
+    assert completed[0].gross_realized_pnl == Decimal("10")
+    # Fee: entry 0.1 + Fill 1 (0.06) + Fill 2 (0.14 * 4/14 = 0.04) = 0.20
+    assert completed[0].fee == Decimal("0.20")
+    assert completed[0].net_pnl == Decimal("9.80")
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_6_reversal_without_final_close() -> None:
+    """Scenario 6: Reversal without final close leaves exposure active."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempt = _completed_attempt(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+
+    # Active opposite position exists on exchange
+    active_opposite = Position(
+        symbol=_SYMBOL,
+        side=PositionSide.LONG,
+        quantity=Decimal("100"),
+        entry_price=Decimal("0.011"),
+        current_price=Decimal("0.011"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=_NOW + timedelta(minutes=5),
+        updated_at=_NOW + timedelta(minutes=5),
+        stop_loss=None,
+        take_profit=None,
+    )
+    exchange = FakeNaturalExitExchange(
+        positions=(active_opposite,),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+    )
+
+    await service.reconcile()
+
+    # Stored position must NOT be deleted because symbol has active exposure
+    assert await positions.get_by_symbol(symbol=_SYMBOL) == position
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_7_ambiguous_reversal_sequence_fails_closed() -> None:
+    """Scenario 7: Multiple distinct reversal sequences fail closed."""
+    position = replace(_position(), quantity=Decimal("10"))
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempt = replace(_completed_attempt(position=position), quantity=Decimal("10"))
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+
+    t_rev = _NOW + timedelta(minutes=5)
+    t_close = _NOW + timedelta(minutes=10)
+
+    order_a1 = Order(
+        order_id="rev-a1",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("20"),
+        executed_quantity=Decimal("20"),
+        created_at=t_rev,
+        updated_at=t_rev,
+    )
+    order_b1 = Order(
+        order_id="close-b1",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("10"),
+        executed_quantity=Decimal("10"),
+        created_at=t_close,
+        updated_at=t_close,
+    )
+    order_a2 = Order(
+        order_id="rev-a2",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("25"),
+        executed_quantity=Decimal("25"),
+        created_at=t_rev,
+        updated_at=t_rev,
+    )
+    order_b2 = Order(
+        order_id="close-b2",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("15"),
+        executed_quantity=Decimal("15"),
+        created_at=t_close,
+        updated_at=t_close,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _reversal_fill(
+                trade_id="fill-a1",
+                order_id=order_a1.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity="20",
+                executed_at=t_rev,
+            ),
+            _reversal_fill(
+                trade_id="fill-b1",
+                order_id=order_b1.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="1",
+                quantity="10",
+                executed_at=t_close,
+            ),
+            _reversal_fill(
+                trade_id="fill-a2",
+                order_id=order_a2.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity="25",
+                executed_at=t_rev,
+            ),
+            _reversal_fill(
+                trade_id="fill-b2",
+                order_id=order_b2.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="1",
+                quantity="15",
+                executed_at=t_close,
+            ),
+        ),
+        standard_orders=(order_a1, order_b1, order_a2, order_b2),
+    )
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Ambiguous manual reversal sequence"):
+        await service.reconcile()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is not None
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_8_duplicate_candidate_fails_closed() -> None:
+    """Scenario 8: Duplicate candidate reverse orders matching one close fail closed."""
+    position = replace(_position(), quantity=Decimal("10"))
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempt = replace(_completed_attempt(position=position), quantity=Decimal("10"))
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+
+    t_rev = _NOW + timedelta(minutes=5)
+    t_close = _NOW + timedelta(minutes=10)
+
+    order_a1 = Order(
+        order_id="rev-dup-1",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("20"),
+        executed_quantity=Decimal("20"),
+        created_at=t_rev,
+        updated_at=t_rev,
+    )
+    order_a2 = Order(
+        order_id="rev-dup-2",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("20"),
+        executed_quantity=Decimal("20"),
+        created_at=t_rev,
+        updated_at=t_rev,
+    )
+    order_b = Order(
+        order_id="close-dup",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("10"),
+        executed_quantity=Decimal("10"),
+        created_at=t_close,
+        updated_at=t_close,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _reversal_fill(
+                trade_id="fill-a1",
+                order_id=order_a1.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity="20",
+                executed_at=t_rev,
+            ),
+            _reversal_fill(
+                trade_id="fill-a2",
+                order_id=order_a2.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="1",
+                quantity="20",
+                executed_at=t_rev,
+            ),
+            _reversal_fill(
+                trade_id="fill-b",
+                order_id=order_b.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="1",
+                quantity="10",
+                executed_at=t_close,
+            ),
+        ),
+        standard_orders=(order_a1, order_a2, order_b),
+    )
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Ambiguous manual reversal sequence"):
+        await service.reconcile()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is not None
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_9_unrelated_manual_orders_ignored() -> None:
+    """Scenario 9: Unrelated manual orders on same symbol do not corrupt attribution."""
+    position = replace(_position(), quantity=Decimal("10"))
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempt = replace(_completed_attempt(position=position), quantity=Decimal("10"))
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=attempt)
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_rev = _NOW + timedelta(minutes=5)
+    t_close = _NOW + timedelta(minutes=10)
+
+    order_a = Order(
+        order_id="rev-order",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("20"),
+        executed_quantity=Decimal("20"),
+        created_at=t_rev,
+        updated_at=t_rev,
+    )
+    order_b = Order(
+        order_id="close-order",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("10"),
+        executed_quantity=Decimal("10"),
+        created_at=t_close,
+        updated_at=t_close,
+    )
+    unrelated_c = Order(
+        order_id="unrelated-c",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("50"),
+        executed_quantity=Decimal("50"),
+        created_at=t_close + timedelta(minutes=1),
+        updated_at=t_close + timedelta(minutes=1),
+    )
+    unrelated_d = Order(
+        order_id="unrelated-d",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("70"),
+        executed_quantity=Decimal("70"),
+        created_at=t_close + timedelta(minutes=2),
+        updated_at=t_close + timedelta(minutes=2),
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _reversal_fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+                quantity="10",
+                executed_at=_NOW,
+            ),
+            _reversal_fill(
+                trade_id="rev-fill",
+                order_id=order_a.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="2",
+                quantity="20",
+                executed_at=t_rev,
+            ),
+            _reversal_fill(
+                trade_id="close-fill",
+                order_id=order_b.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="1",
+                quantity="10",
+                executed_at=t_close,
+            ),
+            _reversal_fill(
+                trade_id="unrelated-c-fill",
+                order_id=unrelated_c.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="0",
+                quantity="50",
+                executed_at=t_close + timedelta(minutes=1),
+            ),
+            _reversal_fill(
+                trade_id="unrelated-d-fill",
+                order_id=unrelated_d.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="0",
+                quantity="70",
+                executed_at=t_close + timedelta(minutes=2),
+            ),
+        ),
+        standard_orders=(order_a, order_b, unrelated_c, unrelated_d),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    assert completed[0].ownership.exit_order_id == order_a.order_id
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_10_protection_recovery_prioritized() -> None:
+    """Scenario 10: Filled protection (SL/TP) remains prioritized over manual orders."""
+    position = _position()
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    filled_sl = replace(
+        _protection(
+            order_type=OrderType.STOP_MARKET,
+            client_id=_STOP_ID,
+            trigger="0.01151",
+        ),
+        order_id="filled-sl",
+        status=OrderStatus.FILLED,
+        executed_quantity=position.quantity,
+    )
+    rev_order = Order(
+        order_id="rev-sell-order",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("1770"),
+        executed_quantity=Decimal("1770"),
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        exact_only_protections=(filled_sl,),
+        trades=(
+            _fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+            ),
+            _fill(
+                trade_id="sl-fill",
+                order_id=filled_sl.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="-2",
+            ),
+        ),
+        standard_orders=(rev_order,),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is ClosedPositionReason.STOP_LOSS
+    assert (
+        completed[0].ownership.provenance is ClosedPositionProvenance.PROTECTION_ORDER
+    )
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_11_exact_manual_close_prioritized() -> None:
+    """Scenario 11: Exact manual close is prioritized over reversal sequence."""
+    position = replace(_position(), quantity=Decimal("10"))
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(
+        attempt=replace(_completed_attempt(position=position), quantity=Decimal("10"))
+    )
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_entry = _NOW
+    t_exact = _NOW + timedelta(minutes=5)
+    t_rev = _NOW + timedelta(minutes=10)
+    t_close = _NOW + timedelta(minutes=15)
+
+    exact_close = Order(
+        order_id="exact-close-10",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("10"),
+        executed_quantity=Decimal("10"),
+        created_at=t_exact,
+        updated_at=t_exact,
+        client_order_id="manual-exact",
+    )
+    rev_order = Order(
+        order_id="rev-25",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("25"),
+        executed_quantity=Decimal("25"),
+        created_at=t_rev,
+        updated_at=t_rev,
+    )
+    rev_close = Order(
+        order_id="close-15",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("15"),
+        executed_quantity=Decimal("15"),
+        created_at=t_close,
+        updated_at=t_close,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _reversal_fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+                quantity="10",
+                executed_at=t_entry,
+            ),
+            _reversal_fill(
+                trade_id="exact-fill",
+                order_id=exact_close.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="5",
+                quantity="10",
+                executed_at=t_exact,
+            ),
+            _reversal_fill(
+                trade_id="rev-fill",
+                order_id=rev_order.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="0",
+                quantity="25",
+                executed_at=t_rev,
+            ),
+            _reversal_fill(
+                trade_id="close-fill",
+                order_id=rev_close.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="0",
+                quantity="15",
+                executed_at=t_close,
+            ),
+        ),
+        standard_orders=(exact_close, rev_order, rev_close),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_by_symbol(symbol=_SYMBOL) is None
+    assert len(completed) == 1
+    assert completed[0].ownership.exit_order_id == exact_close.order_id
+    assert completed[0].gross_realized_pnl == Decimal("5")
+
+
+@pytest.mark.asyncio
+async def test_reversal_scenario_12_recovery_is_idempotent() -> None:
+    """Scenario 12: Running reconciliation twice does not duplicate lifecycles."""
+    position = replace(_position(), quantity=Decimal("10"))
+    positions = MemoryPositionRepository()
+    await positions.save(position=position)
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(
+        attempt=replace(_completed_attempt(position=position), quantity=Decimal("10"))
+    )
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+
+    t_rev = _NOW + timedelta(minutes=5)
+    t_close = _NOW + timedelta(minutes=10)
+
+    order_a = Order(
+        order_id="rev-idemp",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("20"),
+        executed_quantity=Decimal("20"),
+        created_at=t_rev,
+        updated_at=t_rev,
+    )
+    order_b = Order(
+        order_id="close-idemp",
+        symbol=_SYMBOL,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=Decimal("10"),
+        executed_quantity=Decimal("10"),
+        created_at=t_close,
+        updated_at=t_close,
+    )
+
+    exchange = FakeNaturalExitExchange(
+        trades=(
+            _reversal_fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+                quantity="10",
+                executed_at=_NOW,
+            ),
+            _reversal_fill(
+                trade_id="rev-fill",
+                order_id=order_a.order_id,
+                side=OrderSide.BUY,
+                realized_pnl="4",
+                quantity="20",
+                executed_at=t_rev,
+            ),
+            _reversal_fill(
+                trade_id="close-fill",
+                order_id=order_b.order_id,
+                side=OrderSide.SELL,
+                realized_pnl="1",
+                quantity="10",
+                executed_at=t_close,
+            ),
+        ),
+        standard_orders=(order_a, order_b),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles,
+            trade_history=exchange,
+        ),
+    )
+
+    # First reconciliation: stages and completes
+    await service.reconcile()
+    completed_pass_1 = await lifecycles.get_completed()
+    assert len(completed_pass_1) == 1
+
+    # Second reconciliation: idempotent replay
+    await service.reconcile()
+    completed_pass_2 = await lifecycles.get_completed()
+    assert len(completed_pass_2) == 1
+    assert completed_pass_1[0] == completed_pass_2[0]
