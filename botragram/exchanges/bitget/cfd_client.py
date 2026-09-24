@@ -1502,11 +1502,16 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
 
         target_position_id = position_id
         target_quantity = quantity
+        target_side = side
 
         if target_position_id is None or target_quantity is None:
             open_positions = await self.get_positions(symbol=symbol)
             if side is not None:
                 matched_positions = [p for p in open_positions if p.side is side]
+            elif target_position_id is not None:
+                matched_positions = [
+                    p for p in open_positions if p.position_id == target_position_id
+                ]
             else:
                 matched_positions = list(open_positions)
 
@@ -1525,12 +1530,14 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                 target_position_id = matched_pos.position_id
             if target_quantity is None:
                 target_quantity = matched_pos.quantity
+            if target_side is None:
+                target_side = matched_pos.side
 
         if not target_position_id:
             raise ExchangeError(
                 f"Missing authoritative positionId for CFD position {symbol!r}"
             )
-        if target_quantity <= Decimal("0"):
+        if target_quantity <= _DECIMAL_ZERO:
             raise ExchangeError(
                 f"Invalid quantity {target_quantity} for CFD position {symbol!r}"
             )
@@ -1539,15 +1546,32 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
             "positionId": target_position_id,
             "qty": str(target_quantity),
         }
-        if client_order_id is not None:
-            body["clientOid"] = client_order_id
 
-        payload = await self._rest.post(
-            _CFD_CLOSE_POSITION_ENDPOINT,
-            data=body,
-            authenticated=True,
-        )
+        try:
+            payload = await self._rest.post(
+                _CFD_CLOSE_POSITION_ENDPOINT,
+                data=body,
+                authenticated=True,
+            )
+        except BitgetRestResponseError as error:
+            raise ExchangeOrderRejectedError(
+                f"Bitget CFD close position was rejected: {error}"
+            ) from error
+        except (TimeoutError, ConnectionError, RuntimeError) as error:
+            raise ExchangeOrderOutcomeUnknownError(
+                f"Bitget CFD close position outcome is unknown: {error}"
+            ) from error
+
         if isinstance(payload, dict):
+            raw_code = payload.get("code")
+            code = str(raw_code) if raw_code is not None else ""
+            if code not in ("00000", ""):
+                raw_msg = payload.get("msg")
+                msg = str(raw_msg) if raw_msg is not None else ""
+                raise ExchangeOrderRejectedError(
+                    f"Bitget CFD close position was rejected with code {code}: {msg}"
+                )
+
             raw_data = payload.get("data")
             if isinstance(raw_data, dict):
                 data_dict = dict(cast(ExchangePayload, raw_data))
@@ -1557,6 +1581,26 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                 if client_order_id and not mapped.client_order_id:
                     return replace(mapped, client_order_id=client_order_id)
                 return mapped
+
+            if raw_data is None:
+                now = datetime.now(timezone.utc)
+                close_side = (
+                    OrderSide.BUY
+                    if target_side is PositionSide.SHORT
+                    else OrderSide.SELL
+                )
+                return Order(
+                    order_id="",
+                    symbol=self._mapper.normalize_symbol(symbol),
+                    side=close_side,
+                    order_type=OrderType.MARKET,
+                    status=OrderStatus.FILLED,
+                    quantity=target_quantity,
+                    executed_quantity=target_quantity,
+                    client_order_id=client_order_id,
+                    created_at=now,
+                    updated_at=now,
+                )
 
         raise ExchangeError(f"Failed to close CFD position for {symbol}: {payload}")
 

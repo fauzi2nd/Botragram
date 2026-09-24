@@ -599,16 +599,7 @@ async def test_cfd_client_close_position_resolves_position_id() -> None:
         {
             "code": "00000",
             "msg": "success",
-            "data": {
-                "orderId": "close_order_999",
-                "clientOid": "close_client_999",
-                "symbol": "XAUUSD",
-                "side": "sell",
-                "orderType": "market",
-                "status": "closed",
-                "qty": "0.25",
-                "cTime": "1700000000000",
-            },
+            "data": None,
         },
     ]
 
@@ -618,12 +609,18 @@ async def test_cfd_client_close_position_resolves_position_id() -> None:
         bypass_calendar_guard=True,
     )
 
-    assert closed.order_id == "close_order_999"
+    assert closed.order_id == ""
+    assert closed.client_order_id == "close_client_999"
+    assert closed.status is OrderStatus.FILLED
+    assert closed.side is OrderSide.SELL
+    assert closed.quantity == Decimal("0.25")
     assert rest.last_path == "/api/v3/cfd/trade/close-positions"
     assert rest.last_data is not None
-    assert rest.last_data["positionId"] == "pos-cfd-resolved-789"
-    assert rest.last_data["qty"] == "0.25"
-    assert rest.last_data["clientOid"] == "close_client_999"
+    assert rest.last_data == {
+        "positionId": "pos-cfd-resolved-789",
+        "qty": "0.25",
+    }
+    assert "clientOid" not in rest.last_data
 
 
 # =============================================================================
@@ -1003,16 +1000,7 @@ async def test_cfd_enable_semantics_and_live_entry_guard() -> None:
     rest.canned_response = {
         "code": "00000",
         "msg": "success",
-        "data": {
-            "orderId": "close_order_close_only_1",
-            "clientOid": "close_cl_1",
-            "symbol": "EURUSD",
-            "side": "sell",
-            "orderType": "market",
-            "status": "closed",
-            "size": "0.5",
-            "cTime": "1700000000000",
-        },
+        "data": None,
     }
     pos = Position(
         symbol="EURUSD",
@@ -1030,7 +1018,15 @@ async def test_cfd_enable_semantics_and_live_entry_guard() -> None:
         position=pos,
         client_order_id="close_cl_1",
     )
-    assert close_order.order_id == "close_order_close_only_1"
+    assert close_order.order_id == ""
+    assert close_order.client_order_id == "close_cl_1"
+    assert close_order.status is OrderStatus.FILLED
+    assert rest.last_data is not None
+    assert rest.last_data == {
+        "positionId": "pos_close_only_99",
+        "qty": "0.5",
+    }
+    assert "clientOid" not in rest.last_data
 
     # When spec is DISABLED (enable=0), LIVE entry is rejected fail-closed
     setattr(client_live, "_instruments_cache", {"EURUSD": spec_disabled})
@@ -2148,16 +2144,7 @@ async def test_cfd_client_close_position_exact() -> None:
     rest.canned_response = {
         "code": "00000",
         "msg": "success",
-        "data": {
-            "orderId": "cfd_close_001",
-            "clientOid": "bop_cfd_exact_1",
-            "symbol": "EURUSD_ecn",
-            "side": "sell",
-            "orderType": "market",
-            "status": "closed",
-            "size": "1.0",
-            "cTime": "1700000000000",
-        },
+        "data": None,
     }
 
     now = datetime.now(UTC)
@@ -2178,13 +2165,18 @@ async def test_cfd_client_close_position_exact() -> None:
         position=pos,
         client_order_id="bop_cfd_exact_1",
     )
-    assert closed.order_id == "cfd_close_001"
+    assert closed.order_id == ""
     assert closed.client_order_id == "bop_cfd_exact_1"
+    assert closed.status is OrderStatus.FILLED
+    assert closed.side is OrderSide.SELL
+    assert closed.quantity == Decimal("1.0")
     assert rest.last_path == "/api/v3/cfd/trade/close-positions"
     assert rest.last_data is not None
-    assert rest.last_data["positionId"] == "cfd_pos_001"
-    assert rest.last_data["qty"] == "1.0"
-    assert rest.last_data["clientOid"] == "bop_cfd_exact_1"
+    assert rest.last_data == {
+        "positionId": "cfd_pos_001",
+        "qty": "1.0",
+    }
+    assert "clientOid" not in rest.last_data
 
 
 def test_cfd_mapper_map_candle_five_elements() -> None:
@@ -2858,3 +2850,217 @@ async def test_live_entry_risk_evaluation_service_fails_closed_when_refresh_fail
     assert "Authoritative instrument metadata refresh failed" in (
         evaluation.decision.reason or ""
     )
+
+
+# =============================================================================
+# Close Positions Contract Regression Tests
+# =============================================================================
+@pytest.mark.asyncio
+async def test_cfd_close_position_sends_only_supported_fields() -> None:
+    """Verify close_position sends only positionId and qty, and handles data: null."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": None,
+    }
+
+    closed = await client.close_position(
+        symbol="EURUSD",
+        client_order_id="close_client_req_test",
+        position_id="pos_cfd_123",
+        quantity=Decimal("1.5"),
+        side=PositionSide.LONG,
+        bypass_calendar_guard=True,
+    )
+
+    # 1. Request body contains only positionId and qty
+    assert rest.last_path == "/api/v3/cfd/trade/close-positions"
+    assert rest.last_data == {
+        "positionId": "pos_cfd_123",
+        "qty": "1.5",
+    }
+    # 2. clientOid is NOT in request body
+    assert "clientOid" not in (rest.last_data or {})
+
+    # 3. data: null produces valid domain Order
+    assert closed.symbol == "EURUSD"
+    assert closed.side is OrderSide.SELL
+    assert closed.order_type is OrderType.MARKET
+    assert closed.status is OrderStatus.FILLED
+    assert closed.quantity == Decimal("1.5")
+    assert closed.executed_quantity == Decimal("1.5")
+    assert closed.client_order_id == "close_client_req_test"
+
+    # 9. No fake or synthetic orderId created
+    assert closed.order_id == ""
+
+
+@pytest.mark.asyncio
+async def test_cfd_close_position_api_rejection_fails() -> None:
+    """Verify API rejection raises ExchangeOrderRejectedError."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.canned_response = {
+        "code": "40017",
+        "msg": "position not exist",
+        "data": None,
+    }
+
+    with pytest.raises(ExchangeOrderRejectedError, match="rejected"):
+        await client.close_position(
+            symbol="EURUSD",
+            position_id="pos_cfd_nonexistent",
+            quantity=Decimal("1.0"),
+            bypass_calendar_guard=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_cfd_close_position_transport_failure_is_outcome_unknown() -> None:
+    """Verify timeout and connection failures raise ExchangeOrderOutcomeUnknownError."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    async def _failing_post(*args: object, **kwargs: object) -> JsonResponse:
+        del args, kwargs
+        raise TimeoutError("Connection to Bitget CFD timed out")
+
+    setattr(rest, "post", _failing_post)
+
+    with pytest.raises(ExchangeOrderOutcomeUnknownError, match="outcome is unknown"):
+        await client.close_position(
+            symbol="EURUSD",
+            position_id="pos_timeout_1",
+            quantity=Decimal("1.0"),
+            bypass_calendar_guard=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_cfd_close_position_exact_and_close_only_semantics() -> None:
+    """Verify close_position_exact works with data: null and close-only instrument."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    spec_close_only = mapper.map_instrument_spec(
+        {
+            "symbol": "EURUSD",
+            "contractSize": "100000",
+            "tickSize": "0.00001",
+            "pipSize": "0.0001",
+            "minVolume": "0.01",
+            "maxVolume": "100.0",
+            "stepVolume": "0.01",
+            "enable": "1",
+        }
+    )
+    assert spec_close_only.is_close_only
+    setattr(client, "_instruments_cache", {"EURUSD": spec_close_only})
+    setattr(client, "_instruments_cache_time", datetime.now(timezone.utc))
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": None,
+    }
+
+    now = datetime.now(timezone.utc)
+    pos = Position(
+        symbol="EURUSD",
+        side=PositionSide.SHORT,
+        quantity=Decimal("2.0"),
+        entry_price=Decimal("1.0850"),
+        current_price=Decimal("1.0820"),
+        leverage=50,
+        unrealized_pnl=Decimal("60.0"),
+        opened_at=now,
+        updated_at=now,
+        position_id="pos_cfd_close_only_exact",
+    )
+
+    closed = await client.close_position_exact(
+        position=pos,
+        client_order_id="close_only_cl_id_99",
+    )
+
+    assert closed.order_id == ""
+    assert closed.client_order_id == "close_only_cl_id_99"
+    assert closed.side is OrderSide.BUY  # Closing SHORT is BUY
+    assert closed.status is OrderStatus.FILLED
+    assert rest.last_data == {
+        "positionId": "pos_cfd_close_only_exact",
+        "qty": "2.0",
+    }
+    assert "clientOid" not in (rest.last_data or {})
+
+
+@pytest.mark.asyncio
+async def test_cfd_close_all_positions_with_data_null() -> None:
+    """Verify close_all_positions succeeds for all positions with data: null."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    # First call: get_positions
+    # Second & Third calls: close-positions for pos1 and pos2
+    rest.canned_responses = [
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": [
+                {
+                    "symbol": "EURUSD",
+                    "posSide": "long",
+                    "positionId": "pos-all-1",
+                    "total": "1.0",
+                    "openPriceAvg": "1.0850",
+                    "markPrice": "1.0890",
+                    "unrealizedPl": "40.0",
+                    "leverage": "50",
+                    "uTime": "1700000000000",
+                },
+                {
+                    "symbol": "GBPUSD",
+                    "posSide": "short",
+                    "positionId": "pos-all-2",
+                    "total": "2.0",
+                    "openPriceAvg": "1.2600",
+                    "markPrice": "1.2580",
+                    "unrealizedPl": "50.0",
+                    "leverage": "50",
+                    "uTime": "1700000000000",
+                },
+            ],
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": None,
+        },
+        {
+            "code": "00000",
+            "msg": "success",
+            "data": None,
+        },
+    ]
+
+    closed_orders = await client.close_all_positions()
+
+    assert len(closed_orders) == 2
+    assert closed_orders[0].symbol == "EURUSD"
+    assert closed_orders[0].side is OrderSide.SELL
+    assert closed_orders[0].status is OrderStatus.FILLED
+    assert closed_orders[0].order_id == ""
+
+    assert closed_orders[1].symbol == "GBPUSD"
+    assert closed_orders[1].side is OrderSide.BUY
+    assert closed_orders[1].status is OrderStatus.FILLED
+    assert closed_orders[1].order_id == ""
