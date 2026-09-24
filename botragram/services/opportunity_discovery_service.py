@@ -877,18 +877,19 @@ class OpportunityDiscoveryService:
             return evaluate_mtf_trend(
                 closed_btc_candles,
                 ema_period=self.btc_trend_ema_period,
+                fail_closed=True,
             )
         except Exception as error:
             _LOGGER.warning(
-                "Failed to evaluate BTC benchmark trend: %s. Defaulting to neutral.",
+                "Failed to evaluate BTC benchmark trend: %s. Failing closed.",
                 error,
             )
             return MtfTrendResult(
                 direction=TrendDirection.NEUTRAL,
                 current_close=Decimal("0"),
                 ema_value=None,
-                is_aligned_with_buy=True,
-                is_aligned_with_sell=True,
+                is_aligned_with_buy=False,
+                is_aligned_with_sell=False,
             )
 
     @staticmethod

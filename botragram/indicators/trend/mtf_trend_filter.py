@@ -60,12 +60,14 @@ def evaluate_mtf_trend(
     candles: Sequence[Candle],
     *,
     ema_period: int = 50,
+    fail_closed: bool = False,
 ) -> MtfTrendResult:
     """Evaluate market trend on a higher timeframe using closed candle prices.
 
     Args:
         candles: Sequence of closed candles from higher timeframe.
         ema_period: Lookback period for trend EMA (default 50).
+        fail_closed: If True and data is insufficient, deny both buy and sell.
 
     Returns:
         MtfTrendResult detailing direction and directional alignment.
@@ -76,8 +78,8 @@ def evaluate_mtf_trend(
             direction=TrendDirection.NEUTRAL,
             current_close=last_close,
             ema_value=None,
-            is_aligned_with_buy=True,
-            is_aligned_with_sell=True,
+            is_aligned_with_buy=not fail_closed,
+            is_aligned_with_sell=not fail_closed,
         )
 
     close_prices = [c.close_price for c in candles]
