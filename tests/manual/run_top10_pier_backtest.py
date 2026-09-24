@@ -5,6 +5,14 @@ Description:
     Manual top 10 coins comparative backtest runner for the new
     Pinbar + Engulfing EMA-RSI Pullback strategy on 15m timeframe.
 
+    Timeframe Drift Documentation:
+    - This historical manual study evaluated PIER on 15m (Interval.M15).
+    - In live/paper runtime, operators can configure the PIER timeframe
+      dynamically via the `PIER_INTERVAL` environment setting (e.g. `PIER_INTERVAL=5m`).
+    - The code default in `get_strategy_default_interval(
+      StrategyType.PINBAR_ENGULFING_EMA_RSI)` remains M15.
+    - For 5m microstructure alignment study, see `run_pier_5m_microstructure_study.py`.
+
 Python:
     3.14+
 """

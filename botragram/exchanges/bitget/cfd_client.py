@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library
 # =============================================================================
+import asyncio
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -97,6 +98,8 @@ _CFD_PLAN_HISTORY_ENDPOINT: Final[str] = "/api/v3/cfd/trade/history-strategy-ord
 
 _INSTRUMENTS_CACHE_TTL_SECONDS: Final[int] = 300
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
+_CFD_CLOSE_RECONCILIATION_ATTEMPTS: Final[int] = 3
+_CFD_CLOSE_RECONCILIATION_DELAY_SECONDS: Final[float] = 0.05
 
 BITGET_CFD_INTERVAL_MAP: Final[dict[Interval, str]] = {
     Interval.M1: "1m",
@@ -118,6 +121,8 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
 
     __slots__ = (
         "_calendar",
+        "_close_reconciliation_attempts",
+        "_close_reconciliation_delay_seconds",
         "_financing",
         "_instruments_cache",
         "_instruments_cache_time",
@@ -138,6 +143,10 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         sizing: CfdSizingEngine | None = None,
         financing: CfdFinancingEngine | None = None,
         is_live: bool = False,
+        close_reconciliation_attempts: int = _CFD_CLOSE_RECONCILIATION_ATTEMPTS,
+        close_reconciliation_delay_seconds: float = (
+            _CFD_CLOSE_RECONCILIATION_DELAY_SECONDS
+        ),
     ) -> None:
         """Initialize the Bitget CFD client.
 
@@ -149,6 +158,8 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
             sizing: Optional CFD sizing engine for pip/lot calculations.
             financing: Optional CFD financing engine for rollover swap calculations.
             is_live: Whether trading in live mode requiring authoritative metadata.
+            close_reconciliation_attempts: Bounded retry attempts for position close.
+            close_reconciliation_delay_seconds: Delay between reconciliation checks.
         """
         normalized_mode = mode.strip().lower()
         if normalized_mode in ("zero_fee", "zerofee", "zero"):
@@ -166,6 +177,10 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         self._mapper = mapper
         self._mode = normalized_mode
         self._is_live = is_live
+        self._close_reconciliation_attempts = max(1, close_reconciliation_attempts)
+        self._close_reconciliation_delay_seconds = max(
+            0.0, close_reconciliation_delay_seconds
+        )
         self._calendar = calendar if calendar is not None else MarketCalendarEngine()
         self._instruments_cache: dict[str, CfdContractSpec] = {}
         self._instruments_cache_time: datetime | None = None
@@ -1490,6 +1505,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         side: PositionSide | None = None,
         position_id: str | None = None,
         quantity: Decimal | None = None,
+        initial_quantity: Decimal | None = None,
     ) -> Order:
         """Close an open CFD position."""
         if not bypass_calendar_guard:
@@ -1503,15 +1519,20 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         target_position_id = position_id
         target_quantity = quantity
         target_side = side
+        target_initial_quantity = initial_quantity
 
-        if target_position_id is None or target_quantity is None:
+        if (
+            target_position_id is None
+            or target_quantity is None
+            or target_initial_quantity is None
+        ):
             open_positions = await self.get_positions(symbol=symbol)
-            if side is not None:
-                matched_positions = [p for p in open_positions if p.side is side]
-            elif target_position_id is not None:
+            if target_position_id is not None:
                 matched_positions = [
                     p for p in open_positions if p.position_id == target_position_id
                 ]
+            elif side is not None:
+                matched_positions = [p for p in open_positions if p.side is side]
             else:
                 matched_positions = list(open_positions)
 
@@ -1532,6 +1553,8 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                 target_quantity = matched_pos.quantity
             if target_side is None:
                 target_side = matched_pos.side
+            if target_initial_quantity is None:
+                target_initial_quantity = matched_pos.quantity
 
         if not target_position_id:
             raise ExchangeError(
@@ -1540,6 +1563,11 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         if target_quantity <= _DECIMAL_ZERO:
             raise ExchangeError(
                 f"Invalid quantity {target_quantity} for CFD position {symbol!r}"
+            )
+        if target_quantity > target_initial_quantity:
+            raise ExchangeError(
+                f"Requested close quantity {target_quantity} exceeds position "
+                f"quantity {target_initial_quantity} for CFD position {symbol!r}"
             )
 
         body: dict[str, object] = {
@@ -1583,6 +1611,62 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                 return mapped
 
             if raw_data is None:
+                expected_remaining_qty = target_initial_quantity - target_quantity
+                is_full_close = expected_remaining_qty <= _DECIMAL_ZERO
+
+                confirmed = False
+                for attempt in range(self._close_reconciliation_attempts):
+                    try:
+                        reconciled_positions = await self.get_positions(symbol=symbol)
+                    except Exception as error:
+                        _LOGGER.warning(
+                            "Bitget CFD close position reconciliation read "
+                            "failed on attempt %s: %s",
+                            attempt + 1,
+                            error,
+                        )
+                        reconciled_positions = None
+
+                    if reconciled_positions is not None:
+                        active_pos = next(
+                            (
+                                p
+                                for p in reconciled_positions
+                                if p.position_id == target_position_id
+                            ),
+                            None,
+                        )
+                        if is_full_close:
+                            if (
+                                active_pos is None
+                                or active_pos.quantity <= _DECIMAL_ZERO
+                            ):
+                                confirmed = True
+                                break
+                        else:
+                            if (
+                                active_pos is not None
+                                and active_pos.quantity == expected_remaining_qty
+                            ):
+                                confirmed = True
+                                break
+
+                    if attempt + 1 < self._close_reconciliation_attempts:
+                        if self._close_reconciliation_delay_seconds > 0:
+                            await asyncio.sleep(
+                                self._close_reconciliation_delay_seconds
+                            )
+
+                if not confirmed:
+                    rem_target = (
+                        expected_remaining_qty if not is_full_close else _DECIMAL_ZERO
+                    )
+                    raise ExchangeOrderOutcomeUnknownError(
+                        f"Bitget CFD close position outcome could not be confirmed "
+                        f"for position {target_position_id!r} ({symbol}): expected "
+                        f"remaining quantity {rem_target}"
+                    )
+
                 now = datetime.now(timezone.utc)
                 close_side = (
                     OrderSide.BUY
@@ -1617,6 +1701,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
             side=position.side,
             position_id=position.position_id,
             quantity=position.quantity,
+            initial_quantity=position.quantity,
         )
 
     async def close_all_positions(self) -> Sequence[Order]:
@@ -1631,6 +1716,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                         side=position.side,
                         position_id=position.position_id,
                         quantity=position.quantity,
+                        initial_quantity=position.quantity,
                     )
                 )
             except Exception as error:

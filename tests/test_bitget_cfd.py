@@ -100,6 +100,7 @@ class MockBitgetRestClient(BitgetRestClient):
         self.post_bodies: list[dict[str, object]] = []
         self.last_method = ""
         self.last_path = ""
+        self.last_post_path = ""
         self.last_params: QueryParams | None = None
         self.last_data: dict[str, object] | None = None
         self.canned_response: JsonResponse = {
@@ -108,6 +109,8 @@ class MockBitgetRestClient(BitgetRestClient):
             "data": {},
         }
         self.canned_responses: list[JsonResponse] = []
+        self.positions_store: list[dict[str, object]] | None = None
+        self.auto_reconcile_positions: bool = False
 
     async def connect(self) -> None:
         pass
@@ -128,6 +131,17 @@ class MockBitgetRestClient(BitgetRestClient):
         self.last_method = "GET"
         self.last_path = path
         self.last_params = params
+        if (
+            self.positions_store is not None
+            and path == "/api/v3/cfd/trade/current-positions"
+        ):
+            return self._validate_response_envelope(
+                {
+                    "code": "00000",
+                    "msg": "success",
+                    "data": list(self.positions_store),
+                }
+            )
         if self.canned_responses:
             return self._validate_response_envelope(self.canned_responses.pop(0))
         return self._validate_response_envelope(self.canned_response)
@@ -147,8 +161,29 @@ class MockBitgetRestClient(BitgetRestClient):
             self.post_bodies.append(dict(data))
         self.last_method = "POST"
         self.last_path = path
+        self.last_post_path = path
         self.last_params = params
         self.last_data = data
+        if (
+            self.auto_reconcile_positions
+            and self.positions_store is not None
+            and path == "/api/v3/cfd/trade/close-positions"
+            and data is not None
+        ):
+            target_pid = str(data.get("positionId", ""))
+            close_qty = Decimal(str(data.get("qty", "0")))
+            remaining: list[dict[str, object]] = []
+            for pos in self.positions_store:
+                if str(pos.get("positionId", "")) == target_pid:
+                    curr_qty = Decimal(str(pos.get("total", "0")))
+                    rem_qty = curr_qty - close_qty
+                    if rem_qty > Decimal("0"):
+                        updated_pos = dict(pos)
+                        updated_pos["total"] = str(rem_qty)
+                        remaining.append(updated_pos)
+                else:
+                    remaining.append(pos)
+            self.positions_store = remaining
         if self.canned_responses:
             return self._validate_response_envelope(self.canned_responses.pop(0))
         return self._validate_response_envelope(self.canned_response)
@@ -614,7 +649,8 @@ async def test_cfd_client_close_position_resolves_position_id() -> None:
     assert closed.status is OrderStatus.FILLED
     assert closed.side is OrderSide.SELL
     assert closed.quantity == Decimal("0.25")
-    assert rest.last_path == "/api/v3/cfd/trade/close-positions"
+    assert rest.last_post_path == "/api/v3/cfd/trade/close-positions"
+    assert ("GET", "/api/v3/cfd/trade/current-positions") in rest.history
     assert rest.last_data is not None
     assert rest.last_data == {
         "positionId": "pos-cfd-resolved-789",
@@ -2170,7 +2206,8 @@ async def test_cfd_client_close_position_exact() -> None:
     assert closed.status is OrderStatus.FILLED
     assert closed.side is OrderSide.SELL
     assert closed.quantity == Decimal("1.0")
-    assert rest.last_path == "/api/v3/cfd/trade/close-positions"
+    assert rest.last_post_path == "/api/v3/cfd/trade/close-positions"
+    assert ("GET", "/api/v3/cfd/trade/current-positions") in rest.history
     assert rest.last_data is not None
     assert rest.last_data == {
         "positionId": "cfd_pos_001",
@@ -2862,6 +2899,20 @@ async def test_cfd_close_position_sends_only_supported_fields() -> None:
     mapper = BitgetCfdMapper()
     client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
 
+    rest.positions_store = [
+        {
+            "symbol": "EURUSD",
+            "posSide": "long",
+            "positionId": "pos_cfd_123",
+            "total": "1.5",
+            "openPriceAvg": "1.0850",
+            "markPrice": "1.0890",
+            "unrealizedPl": "10.0",
+            "leverage": "50",
+            "uTime": "1700000000000",
+        }
+    ]
+    rest.auto_reconcile_positions = True
     rest.canned_response = {
         "code": "00000",
         "msg": "success",
@@ -2873,12 +2924,14 @@ async def test_cfd_close_position_sends_only_supported_fields() -> None:
         client_order_id="close_client_req_test",
         position_id="pos_cfd_123",
         quantity=Decimal("1.5"),
+        initial_quantity=Decimal("1.5"),
         side=PositionSide.LONG,
         bypass_calendar_guard=True,
     )
 
     # 1. Request body contains only positionId and qty
-    assert rest.last_path == "/api/v3/cfd/trade/close-positions"
+    assert rest.last_post_path == "/api/v3/cfd/trade/close-positions"
+    assert ("GET", "/api/v3/cfd/trade/current-positions") in rest.history
     assert rest.last_data == {
         "positionId": "pos_cfd_123",
         "qty": "1.5",
@@ -2900,6 +2953,227 @@ async def test_cfd_close_position_sends_only_supported_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cfd_close_position_reconciliation_full_close_confirmed() -> None:
+    """Verify data: null with position disappearing confirms full close."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.positions_store = [
+        {
+            "symbol": "EURUSD",
+            "posSide": "long",
+            "positionId": "pos_full_1",
+            "total": "2.5",
+            "openPriceAvg": "1.0800",
+            "markPrice": "1.0850",
+            "unrealizedPl": "50.0",
+            "leverage": "50",
+            "uTime": "1700000000000",
+        }
+    ]
+    rest.auto_reconcile_positions = True
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": None,
+    }
+
+    closed = await client.close_position(
+        symbol="EURUSD",
+        position_id="pos_full_1",
+        quantity=Decimal("2.5"),
+        side=PositionSide.LONG,
+        bypass_calendar_guard=True,
+    )
+
+    assert closed.status is OrderStatus.FILLED
+    assert closed.quantity == Decimal("2.5")
+    assert closed.executed_quantity == Decimal("2.5")
+    assert closed.order_id == ""
+    assert rest.positions_store == []
+
+
+@pytest.mark.asyncio
+async def test_cfd_close_position_reconciliation_partial_close_confirmed() -> None:
+    """Verify data: null with matching remaining quantity confirms partial close."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
+
+    rest.positions_store = [
+        {
+            "symbol": "EURUSD",
+            "posSide": "long",
+            "positionId": "pos_part_1",
+            "total": "2.0",
+            "openPriceAvg": "1.0800",
+            "markPrice": "1.0850",
+            "unrealizedPl": "50.0",
+            "leverage": "50",
+            "uTime": "1700000000000",
+        }
+    ]
+    rest.auto_reconcile_positions = True
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": None,
+    }
+
+    # Close 0.5 of 2.0 -> expected remaining 1.5
+    closed = await client.close_position(
+        symbol="EURUSD",
+        position_id="pos_part_1",
+        quantity=Decimal("0.5"),
+        initial_quantity=Decimal("2.0"),
+        side=PositionSide.LONG,
+        bypass_calendar_guard=True,
+    )
+
+    assert closed.status is OrderStatus.FILLED
+    assert closed.quantity == Decimal("0.5")
+    assert closed.executed_quantity == Decimal("0.5")
+    assert closed.order_id == ""
+    assert len(rest.positions_store) == 1
+    assert rest.positions_store[0]["total"] == "1.5"
+
+
+@pytest.mark.asyncio
+async def test_cfd_close_position_reconciliation_unchanged_raises_unknown() -> None:
+    """Verify data: null with unchanged position raises outcome unknown error."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(
+        rest=rest,
+        mapper=mapper,
+        mode="ecn",
+        close_reconciliation_attempts=2,
+        close_reconciliation_delay_seconds=0.0,
+    )
+
+    # Position remains unchanged on server despite close call
+    rest.positions_store = [
+        {
+            "symbol": "EURUSD",
+            "posSide": "long",
+            "positionId": "pos_unchanged_1",
+            "total": "1.0",
+            "openPriceAvg": "1.0800",
+            "markPrice": "1.0850",
+            "unrealizedPl": "10.0",
+            "leverage": "50",
+            "uTime": "1700000000000",
+        }
+    ]
+    rest.auto_reconcile_positions = False
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": None,
+    }
+
+    with pytest.raises(
+        ExchangeOrderOutcomeUnknownError, match="outcome could not be confirmed"
+    ):
+        await client.close_position(
+            symbol="EURUSD",
+            position_id="pos_unchanged_1",
+            quantity=Decimal("1.0"),
+            initial_quantity=Decimal("1.0"),
+            side=PositionSide.LONG,
+            bypass_calendar_guard=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_cfd_close_position_partial_unexpected_raises_unknown() -> None:
+    """Verify data: null with unexpected partial qty raises outcome unknown error."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(
+        rest=rest,
+        mapper=mapper,
+        mode="ecn",
+        close_reconciliation_attempts=2,
+        close_reconciliation_delay_seconds=0.0,
+    )
+
+    # Initial 2.0, close 0.5 requested, but server reports remaining 1.8 (mismatch)
+    rest.positions_store = [
+        {
+            "symbol": "EURUSD",
+            "posSide": "long",
+            "positionId": "pos_unexpected_1",
+            "total": "1.8",
+            "openPriceAvg": "1.0800",
+            "markPrice": "1.0850",
+            "unrealizedPl": "10.0",
+            "leverage": "50",
+            "uTime": "1700000000000",
+        }
+    ]
+    rest.auto_reconcile_positions = False
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": None,
+    }
+
+    with pytest.raises(
+        ExchangeOrderOutcomeUnknownError, match="outcome could not be confirmed"
+    ):
+        await client.close_position(
+            symbol="EURUSD",
+            position_id="pos_unexpected_1",
+            quantity=Decimal("0.5"),
+            initial_quantity=Decimal("2.0"),
+            side=PositionSide.LONG,
+            bypass_calendar_guard=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_cfd_close_position_reconciliation_timeout_raises_unknown() -> None:
+    """Verify reconciliation read failures raise ExchangeOrderOutcomeUnknownError."""
+    rest = MockBitgetRestClient()
+    mapper = BitgetCfdMapper()
+    client = BitgetCfdExchangeClient(
+        rest=rest,
+        mapper=mapper,
+        mode="ecn",
+        close_reconciliation_attempts=2,
+        close_reconciliation_delay_seconds=0.0,
+    )
+
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": None,
+    }
+
+    async def _failing_get(path: str, *args: object, **kwargs: object) -> JsonResponse:
+        del args, kwargs
+        if path == "/api/v3/cfd/trade/current-positions":
+            raise TimeoutError("Reconciliation read timed out")
+        return {"code": "00000", "msg": "success", "data": None}
+
+    setattr(rest, "get", _failing_get)
+
+    with pytest.raises(
+        ExchangeOrderOutcomeUnknownError, match="outcome could not be confirmed"
+    ):
+        await client.close_position(
+            symbol="EURUSD",
+            position_id="pos_read_timeout_1",
+            quantity=Decimal("1.0"),
+            initial_quantity=Decimal("1.0"),
+            side=PositionSide.LONG,
+            bypass_calendar_guard=True,
+        )
+
+
+@pytest.mark.asyncio
 async def test_cfd_close_position_api_rejection_fails() -> None:
     """Verify API rejection raises ExchangeOrderRejectedError."""
     rest = MockBitgetRestClient()
@@ -2917,6 +3191,7 @@ async def test_cfd_close_position_api_rejection_fails() -> None:
             symbol="EURUSD",
             position_id="pos_cfd_nonexistent",
             quantity=Decimal("1.0"),
+            initial_quantity=Decimal("1.0"),
             bypass_calendar_guard=True,
         )
 
@@ -2939,6 +3214,7 @@ async def test_cfd_close_position_transport_failure_is_outcome_unknown() -> None
             symbol="EURUSD",
             position_id="pos_timeout_1",
             quantity=Decimal("1.0"),
+            initial_quantity=Decimal("1.0"),
             bypass_calendar_guard=True,
         )
 
@@ -2966,6 +3242,20 @@ async def test_cfd_close_position_exact_and_close_only_semantics() -> None:
     setattr(client, "_instruments_cache", {"EURUSD": spec_close_only})
     setattr(client, "_instruments_cache_time", datetime.now(timezone.utc))
 
+    rest.positions_store = [
+        {
+            "symbol": "EURUSD",
+            "posSide": "short",
+            "positionId": "pos_cfd_close_only_exact",
+            "total": "2.0",
+            "openPriceAvg": "1.0850",
+            "markPrice": "1.0820",
+            "unrealizedPl": "60.0",
+            "leverage": "50",
+            "uTime": "1700000000000",
+        }
+    ]
+    rest.auto_reconcile_positions = True
     rest.canned_response = {
         "code": "00000",
         "msg": "success",
@@ -3000,6 +3290,7 @@ async def test_cfd_close_position_exact_and_close_only_semantics() -> None:
         "qty": "2.0",
     }
     assert "clientOid" not in (rest.last_data or {})
+    assert rest.positions_store == []
 
 
 @pytest.mark.asyncio
@@ -3009,48 +3300,36 @@ async def test_cfd_close_all_positions_with_data_null() -> None:
     mapper = BitgetCfdMapper()
     client = BitgetCfdExchangeClient(rest=rest, mapper=mapper, mode="ecn")
 
-    # First call: get_positions
-    # Second & Third calls: close-positions for pos1 and pos2
-    rest.canned_responses = [
+    rest.positions_store = [
         {
-            "code": "00000",
-            "msg": "success",
-            "data": [
-                {
-                    "symbol": "EURUSD",
-                    "posSide": "long",
-                    "positionId": "pos-all-1",
-                    "total": "1.0",
-                    "openPriceAvg": "1.0850",
-                    "markPrice": "1.0890",
-                    "unrealizedPl": "40.0",
-                    "leverage": "50",
-                    "uTime": "1700000000000",
-                },
-                {
-                    "symbol": "GBPUSD",
-                    "posSide": "short",
-                    "positionId": "pos-all-2",
-                    "total": "2.0",
-                    "openPriceAvg": "1.2600",
-                    "markPrice": "1.2580",
-                    "unrealizedPl": "50.0",
-                    "leverage": "50",
-                    "uTime": "1700000000000",
-                },
-            ],
+            "symbol": "EURUSD",
+            "posSide": "long",
+            "positionId": "pos-all-1",
+            "total": "1.0",
+            "openPriceAvg": "1.0850",
+            "markPrice": "1.0890",
+            "unrealizedPl": "40.0",
+            "leverage": "50",
+            "uTime": "1700000000000",
         },
         {
-            "code": "00000",
-            "msg": "success",
-            "data": None,
-        },
-        {
-            "code": "00000",
-            "msg": "success",
-            "data": None,
+            "symbol": "GBPUSD",
+            "posSide": "short",
+            "positionId": "pos-all-2",
+            "total": "2.0",
+            "openPriceAvg": "1.2600",
+            "markPrice": "1.2580",
+            "unrealizedPl": "50.0",
+            "leverage": "50",
+            "uTime": "1700000000000",
         },
     ]
+    rest.auto_reconcile_positions = True
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": None,
+    }
 
     closed_orders = await client.close_all_positions()
 
@@ -3064,3 +3343,4 @@ async def test_cfd_close_all_positions_with_data_null() -> None:
     assert closed_orders[1].side is OrderSide.BUY
     assert closed_orders[1].status is OrderStatus.FILLED
     assert closed_orders[1].order_id == ""
+    assert rest.positions_store == []

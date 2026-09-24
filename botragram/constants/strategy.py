@@ -47,7 +47,13 @@ DEFAULT_MAX_SIGNAL_AGE: int = 3
 
 
 def get_strategy_default_interval(strategy_type: StrategyType) -> Interval:
-    """Return the natural, optimal candlestick interval for one strategy."""
+    """Return the natural, optimal candlestick interval for one strategy.
+
+    Note:
+        For StrategyType.PINBAR_ENGULFING_EMA_RSI, the default return value is M15.
+        Operators can override this at runtime via the `PIER_INTERVAL` environment
+        setting (e.g. `PIER_INTERVAL=5m`).
+    """
     match strategy_type:
         case (
             StrategyType.BOTRAGRAM_ORIGIN
