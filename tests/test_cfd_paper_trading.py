@@ -50,6 +50,8 @@ def _create_cfd_paper_fixture(
     *,
     initial_balance: Decimal = Decimal("10000"),
     requested_leverage: int = 125,
+    max_position_size_usdt: Decimal = Decimal("500000"),
+    risk_per_trade_pct: Decimal = Decimal("0.02"),
 ) -> tuple[PaperTradingService, MemoryPositionRepository]:
     """Create an isolated paper portfolio configured for CFD."""
     orders = MemoryOrderRepository()
@@ -61,7 +63,8 @@ def _create_cfd_paper_fixture(
         risk_engine=RiskEngine(
             settings=RiskSettings(
                 leverage=requested_leverage,
-                risk_per_trade_pct=Decimal("0.02"),
+                risk_per_trade_pct=risk_per_trade_pct,
+                max_position_size_usdt=max_position_size_usdt,
             ),
         ),
         cfd_sizing_engine=cfd_sizing,
@@ -338,6 +341,7 @@ def test_cfd_paper_trading_gold_min_lot_800x_margin_on_small_balance() -> None:
     """Verify Gold 0.01 min lot executes on a 100 USDT balance using 800x leverage."""
     service, positions = _create_cfd_paper_fixture(
         initial_balance=Decimal("100"),
+        risk_per_trade_pct=Decimal("0.10"),
     )
 
     gold_signal = Signal(

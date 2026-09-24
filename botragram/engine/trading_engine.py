@@ -133,6 +133,7 @@ class TradingEngine:
                 signal=signal,
                 account_balance=account_balance,
                 current_drawdown_pct=current_drawdown_pct,
+                max_position_size_usdt=max_position_size_usdt,
                 leverage=leverage,
             )
 
@@ -167,6 +168,7 @@ class TradingEngine:
         signal: Signal,
         account_balance: Decimal,
         current_drawdown_pct: Decimal,
+        max_position_size_usdt: Decimal | None = None,
         leverage: int | None,
     ) -> TradingDecision:
         """Evaluate a CFD signal calculating lots, margin, and leverage."""
@@ -180,6 +182,10 @@ class TradingEngine:
                 risk_result=None,
                 reason="Maximum account drawdown reached",
             )
+
+        effective_max_position_size = self._resolve_max_position_size(
+            runtime_limit=max_position_size_usdt,
+        )
 
         spec = self.cfd_sizing_engine.get_contract_spec(signal.symbol)
         requested_lev = (
@@ -244,6 +250,34 @@ class TradingEngine:
                 reason="Calculated CFD lot size is zero",
             )
 
+        # Validate that actual executable loss does not exceed configured risk budget
+        actual_risk = (
+            sizing.distance_in_pips * sizing.pip_value_per_lot * normalized_lots
+        )
+        if actual_risk > risk_amount:
+            return TradingDecision(
+                should_execute=False,
+                signal=signal,
+                risk_result=None,
+                reason=(
+                    f"Normalized CFD risk {actual_risk} exceeds configured "
+                    f"risk budget {risk_amount}"
+                ),
+            )
+
+        # Enforce maximum position size ceiling
+        notional_usdt = sizing.notional_value
+        if notional_usdt > effective_max_position_size:
+            return TradingDecision(
+                should_execute=False,
+                signal=signal,
+                risk_result=None,
+                reason=(
+                    f"CFD position notional {notional_usdt} exceeds maximum "
+                    f"position size limit {effective_max_position_size}"
+                ),
+            )
+
         if self.cfd_financing_engine is not None:
             margin_req = self.cfd_financing_engine.calculate_margin_requirement(
                 symbol=signal.symbol,
@@ -277,14 +311,14 @@ class TradingEngine:
             approved=True,
             position=PositionSize(
                 quantity=normalized_lots,
-                notional=sizing.notional_value,
+                notional=notional_usdt,
                 leverage=effective_leverage,
             ),
             metrics=RiskMetrics(
                 entry_price=signal.price,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
-                risk_amount=risk_amount,
+                risk_amount=actual_risk,
                 reward_amount=reward_amount,
                 risk_reward_ratio=rrr,
             ),
@@ -294,6 +328,23 @@ class TradingEngine:
             signal=signal,
             risk_result=risk_result,
         )
+
+    def _resolve_max_position_size(
+        self,
+        *,
+        runtime_limit: Decimal | None,
+    ) -> Decimal:
+        """Resolve maximum position size ceiling through risk engine settings."""
+        hard_limit = self.risk_engine.settings.max_position_size_usdt
+        if runtime_limit is None:
+            return hard_limit
+        if not runtime_limit.is_finite() or runtime_limit <= _DECIMAL_ZERO:
+            raise ValueError(
+                "Runtime maximum position size must be finite and positive"
+            )
+        if runtime_limit > hard_limit:
+            raise ValueError("Runtime maximum position size exceeds configured ceiling")
+        return runtime_limit
 
     def _resolve_max_open_positions(self, *, runtime_limit: int | None) -> int:
         """Return a runtime capacity without allowing it above the env ceiling."""

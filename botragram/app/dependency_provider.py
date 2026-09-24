@@ -1244,7 +1244,11 @@ class DependencyProvider:
         self._risk_engine = RiskEngine(settings=self._settings.risk)
         self._pnl_engine = PnLEngine()
         self._portfolio_engine = PortfolioEngine()
-        cfd_sizing = CfdSizingEngine()
+        is_live = (
+            self._settings.app.trade_mode is TradeMode.LIVE
+            and self._settings.exchange.is_live
+        )
+        cfd_sizing = CfdSizingEngine(is_live=is_live)
         cfd_financing = CfdFinancingEngine(sizing=cfd_sizing)
         self._trading_engine = TradingEngine(
             risk_engine=self.risk_engine,
