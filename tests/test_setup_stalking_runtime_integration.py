@@ -44,6 +44,7 @@ from botragram.services.opportunity_discovery_service import (
 from botragram.services.setup_stalking_service import SetupStalkingService
 from botragram.services.strategy_service import StrategyService
 from botragram.storage.memory.signal_repository import MemorySignalRepository
+from botragram.strategies import StrategyResolver
 from botragram.strategies.base.strategy import BaseStrategy
 
 _START_TIME = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
@@ -103,16 +104,6 @@ class _FakeStrategy(BaseStrategy):
         )
 
 
-class _FakeStrategyResolver:
-    """Stub resolver mapping strategy types to fake strategy."""
-
-    def __init__(self, strategy: BaseStrategy) -> None:
-        self._strategy = strategy
-
-    def resolve(self, *, strategy_type: StrategyType) -> BaseStrategy:
-        return self._strategy
-
-
 class _FakeMarketService:
     """Stub market data provider for discovery testing."""
 
@@ -160,7 +151,9 @@ def test_strategy_service_registers_stalking_candidate_and_holds_entry() -> None
 
     fake_strategy = _FakeStrategy(anchor_signal)
     signal_engine = SignalEngine(
-        strategy_resolver=_FakeStrategyResolver(fake_strategy),  # pyright: ignore[reportArgumentType]
+        strategy_resolver=StrategyResolver(
+            strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: fake_strategy}
+        ),
         default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
     )
     stalking_service = SetupStalkingService(
@@ -220,7 +213,9 @@ def test_strategy_service_evaluates_retest_trigger_into_actionable_signal() -> N
 
     fake_strategy = _FakeStrategy(anchor_signal)
     signal_engine = SignalEngine(
-        strategy_resolver=_FakeStrategyResolver(fake_strategy),  # pyright: ignore[reportArgumentType]
+        strategy_resolver=StrategyResolver(
+            strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: fake_strategy}
+        ),
         default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
     )
     stalking_service = SetupStalkingService()
@@ -289,7 +284,9 @@ def test_strategy_service_invalidated_when_anchor_breached() -> None:
 
     fake_strategy = _FakeStrategy(anchor_signal)
     signal_engine = SignalEngine(
-        strategy_resolver=_FakeStrategyResolver(fake_strategy),  # pyright: ignore[reportArgumentType]
+        strategy_resolver=StrategyResolver(
+            strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: fake_strategy}
+        ),
         default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
     )
     stalking_service = SetupStalkingService()
@@ -363,7 +360,9 @@ async def test_opportunity_discovery_evaluates_active_stalking_symbol() -> None:
 
     fake_strategy = _FakeStrategy(anchor_signal)
     signal_engine = SignalEngine(
-        strategy_resolver=_FakeStrategyResolver(fake_strategy),  # pyright: ignore[reportArgumentType]
+        strategy_resolver=StrategyResolver(
+            strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: fake_strategy}
+        ),
         default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
     )
     stalking_service = SetupStalkingService()
