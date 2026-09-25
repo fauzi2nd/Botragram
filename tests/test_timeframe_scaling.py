@@ -184,7 +184,7 @@ def test_risk_engine_pier_overrides() -> None:
     )
 
     balance = Decimal("10000")
-    # For PIER: risk is 5% of 10000 = 500 USDT. Risk per unit = 5 -> raw qty = 100.
+    # For PIER: risk is 5% of 10000 = 500 USDT. Risk per unit = 5 -> qty = 100.
     # But pier_max_position_size_usdt = 2000 -> capped at 2000 / 100 = 20.
     # Leverage is 10.
     pier_result = engine.evaluate(signal=pier_signal, account_balance=balance)
@@ -192,7 +192,7 @@ def test_risk_engine_pier_overrides() -> None:
     assert pier_result.position.leverage == 10
     assert pier_result.position.quantity == Decimal("20")
 
-    # For other strategy: risk is 1% of 10000 = 100 USDT. Risk per unit = 5 -> raw qty = 20.
+    # For other strategy: risk is 1% of 10000 = 100 USDT. Risk per unit = 5.
     # But max_position_size_usdt = 500 -> capped at 500 / 100 = 5.
     # Leverage is 2.
     other_result = engine.evaluate(signal=other_signal, account_balance=balance)
