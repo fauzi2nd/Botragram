@@ -185,11 +185,18 @@ from botragram.constants.env import (
     ENV_PIER_BB_PERIOD,
     ENV_PIER_BB_STD_DEV,
     ENV_PIER_CONFIRM_HTF_ACCOUNT_RATIO,
+    ENV_PIER_EARLY_EXIT_CHECK_CANDLESTICK_REVERSAL,
+    ENV_PIER_EARLY_EXIT_CHECK_EXHAUSTION,
+    ENV_PIER_EARLY_EXIT_CHECK_OPPOSITE_SIGNAL,
+    ENV_PIER_EARLY_EXIT_MIN_CONFIDENCE,
+    ENV_PIER_ENABLE_EARLY_POSITION_EXIT,
     ENV_PIER_ENGULFING_MIN_BODY_ATR,
     ENV_PIER_FILTER_ACCOUNT_RATIO,
     ENV_PIER_HTF_BB_PERIOD,
     ENV_PIER_HTF_BB_STD_DEV,
+    ENV_PIER_HTF_INTERVAL,
     ENV_PIER_INCLUDE_STAR_PATTERNS,
+    ENV_PIER_LEVERAGE,
     ENV_PIER_LOCATION_ATR_MULTIPLIER,
     ENV_PIER_LOCATION_TOLERANCE_PCT,
     ENV_PIER_MACD_FAST_PERIOD,
@@ -197,6 +204,7 @@ from botragram.constants.env import (
     ENV_PIER_MACD_SLOW_PERIOD,
     ENV_PIER_MAX_LONG_ACCOUNT_RATIO,
     ENV_PIER_MAX_OPPOSITE_WICK_RATIO,
+    ENV_PIER_MAX_POSITION_SIZE_USDT,
     ENV_PIER_MIN_CONFIDENCE,
     ENV_PIER_MIN_ENGULFING_BODY_RATIO,
     ENV_PIER_MIN_NATR_THRESHOLD,
@@ -206,6 +214,9 @@ from botragram.constants.env import (
     ENV_PIER_MIN_STRUCTURAL_RR,
     ENV_PIER_MIN_WICK_RATIO,
     ENV_PIER_OI_CONFIDENCE_BONUS,
+    ENV_PIER_PARTIAL_TP_ENABLED,
+    ENV_PIER_PARTIAL_TP_RATIO,
+    ENV_PIER_PARTIAL_TP_TRIGGER_PROGRESS,
     ENV_PIER_PINBAR_MIN_RANGE_ATR,
     ENV_PIER_PULLBACK_ATR_MULTIPLIER,
     ENV_PIER_PULLBACK_PERIOD,
@@ -215,6 +226,7 @@ from botragram.constants.env import (
     ENV_PIER_REQUIRE_KEY_LEVEL_LOCATION,
     ENV_PIER_REQUIRE_OI_CONFLUENCE,
     ENV_PIER_REQUIRE_TREND_FILTER,
+    ENV_PIER_RISK_PER_TRADE_PCT,
     ENV_PIER_RISK_REWARD_RATIO,
     ENV_PIER_RSI_LONG_MAX,
     ENV_PIER_RSI_LONG_MIN,
@@ -230,6 +242,10 @@ from botragram.constants.env import (
     ENV_PIER_STRUCTURAL_TP_BUFFER_PCT,
     ENV_PIER_SWING_LOOKBACK,
     ENV_PIER_TAKE_PROFIT_PCT,
+    ENV_PIER_TRAILING_BUFFER_PCT,
+    ENV_PIER_TRAILING_MODE,
+    ENV_PIER_TRAILING_SWING_TIMEFRAME,
+    ENV_PIER_TRAILING_SWING_WINDOW,
     ENV_PIER_TREND_PERIOD,
     ENV_PIER_USE_HTF_STRUCTURAL_TP,
     ENV_PIER_USE_MACD,
@@ -1219,6 +1235,85 @@ class EnvironmentProvider:
     def get_pier_htf_bb_std_dev(self) -> str:
         """Return the HTF Bollinger Bands std dev for structural target calculation."""
         return self._get_var(ENV_PIER_HTF_BB_STD_DEV, default="")
+
+    def get_pier_htf_interval(self) -> str:
+        """Return the configured PIER HTF interval or empty string."""
+        return self._get_var(ENV_PIER_HTF_INTERVAL, default="")
+
+    def get_pier_leverage(self) -> str:
+        """Return the PIER-specific leverage override or empty string."""
+        return self._get_var(ENV_PIER_LEVERAGE, default="")
+
+    def get_pier_max_position_size_usdt(self) -> str:
+        """Return the PIER-specific max position size in USDT or empty string."""
+        return self._get_var(ENV_PIER_MAX_POSITION_SIZE_USDT, default="")
+
+    def get_pier_risk_per_trade_pct(self) -> str:
+        """Return the PIER-specific risk per trade percentage or empty string."""
+        return self._get_var(ENV_PIER_RISK_PER_TRADE_PCT, default="")
+
+    def get_pier_trailing_mode(self) -> str:
+        """Return the PIER-specific trailing mode override or empty string."""
+        return self._get_var(ENV_PIER_TRAILING_MODE, default="")
+
+    def get_pier_trailing_swing_timeframe(self) -> str:
+        """Return the PIER-specific trailing swing timeframe or empty string."""
+        return self._get_var(ENV_PIER_TRAILING_SWING_TIMEFRAME, default="")
+
+    def get_pier_trailing_swing_window(self) -> str:
+        """Return the PIER-specific trailing swing window or empty string."""
+        return self._get_var(ENV_PIER_TRAILING_SWING_WINDOW, default="")
+
+    def get_pier_trailing_buffer_pct(self) -> str:
+        """Return the PIER-specific trailing buffer percentage or empty string."""
+        return self._get_var(ENV_PIER_TRAILING_BUFFER_PCT, default="")
+
+    def get_pier_partial_tp_enabled(self) -> bool | None:
+        """Return the PIER-specific partial TP enabled override or None if unset."""
+        raw = self._get_var(ENV_PIER_PARTIAL_TP_ENABLED, default="")
+        if not raw:
+            return None
+        return raw.lower().strip() in ("true", "1", "yes", "on")
+
+    def get_pier_partial_tp_ratio(self) -> str:
+        """Return the PIER-specific partial TP ratio or empty string."""
+        return self._get_var(ENV_PIER_PARTIAL_TP_RATIO, default="")
+
+    def get_pier_partial_tp_trigger_progress(self) -> str:
+        """Return the PIER-specific partial TP trigger progress or empty string."""
+        return self._get_var(ENV_PIER_PARTIAL_TP_TRIGGER_PROGRESS, default="")
+
+    def get_pier_enable_early_position_exit(self) -> bool | None:
+        """Return PIER-specific early position exit override or None if unset."""
+        raw = self._get_var(ENV_PIER_ENABLE_EARLY_POSITION_EXIT, default="")
+        if not raw:
+            return None
+        return raw.lower().strip() in ("true", "1", "yes", "on")
+
+    def get_pier_early_exit_min_confidence(self) -> str:
+        """Return the PIER-specific early exit min confidence or empty string."""
+        return self._get_var(ENV_PIER_EARLY_EXIT_MIN_CONFIDENCE, default="")
+
+    def get_pier_early_exit_check_candlestick_reversal(self) -> bool | None:
+        """Return PIER early exit candlestick reversal check override or None."""
+        raw = self._get_var(ENV_PIER_EARLY_EXIT_CHECK_CANDLESTICK_REVERSAL, default="")
+        if not raw:
+            return None
+        return raw.lower().strip() in ("true", "1", "yes", "on")
+
+    def get_pier_early_exit_check_opposite_signal(self) -> bool | None:
+        """Return PIER early exit opposite signal check override or None."""
+        raw = self._get_var(ENV_PIER_EARLY_EXIT_CHECK_OPPOSITE_SIGNAL, default="")
+        if not raw:
+            return None
+        return raw.lower().strip() in ("true", "1", "yes", "on")
+
+    def get_pier_early_exit_check_exhaustion(self) -> bool | None:
+        """Return PIER early exit exhaustion check override or None."""
+        raw = self._get_var(ENV_PIER_EARLY_EXIT_CHECK_EXHAUSTION, default="")
+        if not raw:
+            return None
+        return raw.lower().strip() in ("true", "1", "yes", "on")
 
     def get_ny_range_risk_reward_ratio(self) -> str:
         """Return the configured Risk-Reward Ratio for NY 4H range scalping."""

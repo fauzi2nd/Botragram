@@ -48,12 +48,14 @@ from botragram.strategies.base import (
     BaseStrategy,
     resolve_effective_distance_pct,
     resolve_effective_natr_bounds,
+    resolve_timeframe_scale_factor,
 )
 from botragram.utils.candle_resampler import resample_candles
 
 __all__ = [
     "PinbarEngulfingEmaRsiStrategy",
     "check_candle_intersects_zone",
+    "resolve_adaptive_htf_interval",
 ]
 
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
@@ -73,6 +75,21 @@ _CONFIDENCE_STEP_BONUS: Final[Decimal] = Decimal("0.05")
 # =============================================================================
 # Helpers
 # =============================================================================
+def resolve_adaptive_htf_interval(interval: Interval | None) -> Interval:
+    """Resolve higher-timeframe interval adaptively for structural analysis."""
+    if interval is None:
+        return Interval.H1
+    if interval.seconds >= 14400:
+        return Interval.D1
+    if interval.seconds >= 3600:
+        return Interval.H4
+    if interval.seconds >= 900:
+        return Interval.H1
+    if interval.seconds >= 300:
+        return Interval.M15
+    return Interval.M5
+
+
 def check_candle_intersects_zone(
     *,
     low: Decimal,
@@ -191,6 +208,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     use_htf_structural_tp: bool = False
     htf_bb_period: int = 20
     htf_bb_std_dev: Decimal = Decimal("2.0")
+    htf_interval: Interval | None = None
 
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
@@ -413,11 +431,17 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         htf_swing_high: Decimal | None = None
         htf_swing_low: Decimal | None = None
 
+        htf_target_interval = (
+            self.htf_interval
+            if self.htf_interval is not None
+            else resolve_adaptive_htf_interval(candles[-1].interval)
+        )
+
         if self.use_structural_tp and self.use_htf_structural_tp and len(candles) >= 8:
             try:
                 htf_candles = resample_candles(
                     candles=candles,
-                    target_interval=Interval.H1,
+                    target_interval=htf_target_interval,
                     closed_only=True,
                 )
                 if len(htf_candles) >= self.htf_bb_period:
@@ -466,11 +490,18 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         current_atr = atr_series[-1]
 
         eff_min_natr, _ = resolve_effective_natr_bounds(
-            curr_candle.symbol, self.min_natr_threshold
+            curr_candle.symbol,
+            self.min_natr_threshold,
+            interval=curr_candle.interval,
         )
         eff_min_sl_pct, eff_min_trend_pct = resolve_effective_distance_pct(
-            curr_candle.symbol, self.min_sl_distance_pct, self.min_trend_distance_pct
+            curr_candle.symbol,
+            self.min_sl_distance_pct,
+            self.min_trend_distance_pct,
+            interval=curr_candle.interval,
         )
+        scale_factor = resolve_timeframe_scale_factor(curr_candle.interval)
+        eff_structural_tp_buffer_pct = self.structural_tp_buffer_pct * scale_factor
 
         # HARD GATE: Volatility Gate (reject dead market)
         if (
@@ -708,21 +739,27 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     if bb_result is not None:
                         curr_upper_bb = bb_result.upper[-1]
                         if curr_upper_bb > current_close:
+                            int_label = curr_candle.interval.value
                             walls.append(
-                                (curr_upper_bb, f"15m Upper BB={curr_upper_bb:.4f}")
+                                (
+                                    curr_upper_bb,
+                                    f"{int_label} Upper BB={curr_upper_bb:.4f}",
+                                )
                             )
                     if htf_upper_bb is not None and htf_upper_bb > current_close:
-                        walls.append((htf_upper_bb, f"1h Upper BB={htf_upper_bb:.4f}"))
+                        htf_lbl = f"{htf_target_interval.value} Upper BB"
+                        walls.append((htf_upper_bb, f"{htf_lbl}={htf_upper_bb:.4f}"))
                     if htf_swing_high is not None and htf_swing_high > current_close:
+                        htf_lbl = f"{htf_target_interval.value} Swing High"
                         walls.append(
-                            (htf_swing_high, f"1h Swing High={htf_swing_high:.4f}")
+                            (htf_swing_high, f"{htf_lbl}={htf_swing_high:.4f}")
                         )
 
                     if walls:
                         nearest_wall, wall_name = min(walls, key=lambda w: w[0])
                         if take_profit > nearest_wall:
                             trimmed_tp = nearest_wall * (
-                                _DECIMAL_ONE - self.structural_tp_buffer_pct
+                                _DECIMAL_ONE - eff_structural_tp_buffer_pct
                             )
                             eff_rr = (trimmed_tp - current_close) / risk_dist
                             if eff_rr < self.min_structural_rr:
@@ -929,21 +966,25 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     if bb_result is not None:
                         curr_lower_bb = bb_result.lower[-1]
                         if curr_lower_bb < current_close:
+                            int_label = curr_candle.interval.value
                             floors.append(
-                                (curr_lower_bb, f"15m Lower BB={curr_lower_bb:.4f}")
+                                (
+                                    curr_lower_bb,
+                                    f"{int_label} Lower BB={curr_lower_bb:.4f}",
+                                )
                             )
                     if htf_lower_bb is not None and htf_lower_bb < current_close:
-                        floors.append((htf_lower_bb, f"1h Lower BB={htf_lower_bb:.4f}"))
+                        htf_lbl = f"{htf_target_interval.value} Lower BB"
+                        floors.append((htf_lower_bb, f"{htf_lbl}={htf_lower_bb:.4f}"))
                     if htf_swing_low is not None and htf_swing_low < current_close:
-                        floors.append(
-                            (htf_swing_low, f"1h Swing Low={htf_swing_low:.4f}")
-                        )
+                        htf_lbl = f"{htf_target_interval.value} Swing Low"
+                        floors.append((htf_swing_low, f"{htf_lbl}={htf_swing_low:.4f}"))
 
                     if floors:
                         nearest_floor, floor_name = max(floors, key=lambda f: f[0])
                         if take_profit < nearest_floor:
                             trimmed_tp = nearest_floor * (
-                                _DECIMAL_ONE + self.structural_tp_buffer_pct
+                                _DECIMAL_ONE + eff_structural_tp_buffer_pct
                             )
                             eff_rr = (current_close - trimmed_tp) / risk_dist
                             if eff_rr < self.min_structural_rr:

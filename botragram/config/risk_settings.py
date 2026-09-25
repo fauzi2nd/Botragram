@@ -69,9 +69,24 @@ class RiskSettings:
     ema_cross_stop_loss_pct: Decimal = Decimal("0.02")
     ema_cross_take_profit_pct: Decimal = Decimal("0.04")
 
-    # PIER (Price Action) Exits
+    # PIER (Price Action) Exits & Sizing Overrides
     pier_stop_loss_pct: Decimal = Decimal("0.012")
     pier_take_profit_pct: Decimal = Decimal("0.024")
+    pier_leverage: int | None = None
+    pier_max_position_size_usdt: Decimal | None = None
+    pier_risk_per_trade_pct: Decimal | None = None
+    pier_trailing_mode: TrailingMode | None = None
+    pier_trailing_swing_timeframe: Interval | None = None
+    pier_trailing_swing_window: int | None = None
+    pier_trailing_buffer_pct: Decimal | None = None
+    pier_partial_tp_enabled: bool | None = None
+    pier_partial_tp_ratio: Decimal | None = None
+    pier_partial_tp_trigger_progress: Decimal | None = None
+    pier_enable_early_position_exit: bool | None = None
+    pier_early_exit_min_confidence: float | None = None
+    pier_early_exit_check_candlestick_reversal: bool | None = None
+    pier_early_exit_check_opposite_signal: bool | None = None
+    pier_early_exit_check_exhaustion: bool | None = None
 
     # Botragram Origin Exits
     origin_stop_loss_pct: Decimal = Decimal("0.030")
@@ -158,6 +173,58 @@ class RiskSettings:
 
         if self.leverage <= 0:
             raise ValueError("Risk leverage must be greater than zero")
+
+        if self.pier_leverage is not None and self.pier_leverage <= 0:
+            raise ValueError("PIER risk leverage must be greater than zero")
+
+        if self.pier_max_position_size_usdt is not None and (
+            not self.pier_max_position_size_usdt.is_finite()
+            or self.pier_max_position_size_usdt <= Decimal("0")
+        ):
+            raise ValueError("PIER max position size must be greater than zero")
+
+        if self.pier_risk_per_trade_pct is not None and (
+            not self.pier_risk_per_trade_pct.is_finite()
+            or not Decimal("0") < self.pier_risk_per_trade_pct < Decimal("1")
+        ):
+            raise ValueError(
+                "PIER risk per trade must be between zero and one exclusive"
+            )
+
+        if (
+            self.pier_trailing_swing_window is not None
+            and self.pier_trailing_swing_window < 3
+        ):
+            raise ValueError("PIER trailing swing window must be at least 3")
+
+        if self.pier_trailing_buffer_pct is not None and (
+            not self.pier_trailing_buffer_pct.is_finite()
+            or self.pier_trailing_buffer_pct < Decimal("0")
+        ):
+            raise ValueError("PIER trailing buffer must be non-negative")
+
+        if self.pier_partial_tp_ratio is not None and (
+            not self.pier_partial_tp_ratio.is_finite()
+            or not Decimal("0") < self.pier_partial_tp_ratio < Decimal("1")
+        ):
+            raise ValueError(
+                "PIER partial TP ratio must be between zero and one exclusive"
+            )
+
+        if self.pier_partial_tp_trigger_progress is not None and (
+            not self.pier_partial_tp_trigger_progress.is_finite()
+            or not Decimal("0") < self.pier_partial_tp_trigger_progress < Decimal("1")
+        ):
+            raise ValueError(
+                "PIER partial TP trigger progress must be between 0 and 1 exclusive"
+            )
+
+        if self.pier_early_exit_min_confidence is not None and not (
+            0.0 <= self.pier_early_exit_min_confidence <= 1.0
+        ):
+            raise ValueError(
+                "PIER early exit min confidence must be between 0 and 1 inclusive"
+            )
 
         if self.max_executable_quote_age_ms <= 0:
             raise ValueError("Maximum executable quote age must be greater than zero")

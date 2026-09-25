@@ -370,15 +370,24 @@ class RiskEngine:
         ):
             raise ValueError("Remaining slots must be positive")
 
+        strategy_type = self._resolve_strategy_type(signal.strategy_name)
+        is_pier = strategy_type is StrategyType.PINBAR_ENGULFING_EMA_RSI
+
         effective_max_position_size = self._resolve_max_position_size(
             runtime_limit=max_position_size_usdt,
+            strategy_type=strategy_type,
+        )
+        base_leverage = (
+            self.settings.pier_leverage
+            if (is_pier and self.settings.pier_leverage is not None)
+            else self.settings.leverage
         )
         effective_leverage = (
             leverage
             if (
                 leverage is not None and not isinstance(leverage, bool) and leverage > 0
             )
-            else self.settings.leverage
+            else base_leverage
         )
 
         if signal.signal_type is SignalType.HOLD:
@@ -393,7 +402,6 @@ class RiskEngine:
                 reason="Maximum account drawdown reached",
             )
 
-        strategy_type = self._resolve_strategy_type(signal.strategy_name)
         stop_loss_pct, take_profit_pct = self._resolve_exit_rates(
             strategy_type=strategy_type,
         )
@@ -628,7 +636,12 @@ class RiskEngine:
 
             quantity = notional / signal.price
         else:
-            allowed_risk = account_balance * self.settings.risk_per_trade_pct
+            effective_risk_pct = (
+                self.settings.pier_risk_per_trade_pct
+                if (is_pier and self.settings.pier_risk_per_trade_pct is not None)
+                else self.settings.risk_per_trade_pct
+            )
+            allowed_risk = account_balance * effective_risk_pct
             quantity = allowed_risk / risk_per_unit
             notional = quantity * signal.price
 
@@ -695,9 +708,17 @@ class RiskEngine:
         self,
         *,
         runtime_limit: Decimal | None,
+        strategy_type: StrategyType | None = None,
     ) -> Decimal:
-        """Return a runtime limit without allowing it above the env ceiling."""
-        hard_limit = self.settings.max_position_size_usdt
+        """Return a runtime limit without allowing it above the configured ceiling."""
+        hard_limit = (
+            self.settings.pier_max_position_size_usdt
+            if (
+                strategy_type is StrategyType.PINBAR_ENGULFING_EMA_RSI
+                and self.settings.pier_max_position_size_usdt is not None
+            )
+            else self.settings.max_position_size_usdt
+        )
         if runtime_limit is None:
             return hard_limit
         if not runtime_limit.is_finite() or runtime_limit <= _DECIMAL_ZERO:

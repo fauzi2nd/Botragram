@@ -436,6 +436,99 @@ class SettingsManager:
                 raw_value=environment.get_pier_take_profit_pct(),
                 setting_name="PIER_TAKE_PROFIT_PCT",
             ),
+            pier_leverage=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_leverage(),
+                    setting_name="PIER_LEVERAGE",
+                )
+                if environment.get_pier_leverage()
+                else None
+            ),
+            pier_max_position_size_usdt=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_max_position_size_usdt(),
+                    setting_name="PIER_MAX_POSITION_SIZE_USDT",
+                )
+                if environment.get_pier_max_position_size_usdt()
+                else None
+            ),
+            pier_risk_per_trade_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_risk_per_trade_pct(),
+                    setting_name="PIER_RISK_PER_TRADE_PCT",
+                )
+                if environment.get_pier_risk_per_trade_pct()
+                else None
+            ),
+            pier_trailing_mode=(
+                self._parse_trailing_mode(
+                    raw_value=environment.get_pier_trailing_mode(),
+                    setting_name="PIER_TRAILING_MODE",
+                )
+                if environment.get_pier_trailing_mode()
+                else None
+            ),
+            pier_trailing_swing_timeframe=(
+                self._parse_market_interval(
+                    raw_value=environment.get_pier_trailing_swing_timeframe(),
+                    setting_name="PIER_TRAILING_SWING_TIMEFRAME",
+                )
+                if environment.get_pier_trailing_swing_timeframe()
+                else None
+            ),
+            pier_trailing_swing_window=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_trailing_swing_window(),
+                    setting_name="PIER_TRAILING_SWING_WINDOW",
+                )
+                if environment.get_pier_trailing_swing_window()
+                else None
+            ),
+            pier_trailing_buffer_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_trailing_buffer_pct(),
+                    setting_name="PIER_TRAILING_BUFFER_PCT",
+                )
+                if environment.get_pier_trailing_buffer_pct()
+                else None
+            ),
+            pier_partial_tp_enabled=environment.get_pier_partial_tp_enabled(),
+            pier_partial_tp_ratio=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_partial_tp_ratio(),
+                    setting_name="PIER_PARTIAL_TP_RATIO",
+                )
+                if environment.get_pier_partial_tp_ratio()
+                else None
+            ),
+            pier_partial_tp_trigger_progress=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_partial_tp_trigger_progress(),
+                    setting_name="PIER_PARTIAL_TP_TRIGGER_PROGRESS",
+                )
+                if environment.get_pier_partial_tp_trigger_progress()
+                else None
+            ),
+            pier_enable_early_position_exit=(
+                environment.get_pier_enable_early_position_exit()
+            ),
+            pier_early_exit_min_confidence=(
+                self._parse_non_negative_float(
+                    raw_value=environment.get_pier_early_exit_min_confidence(),
+                    setting_name="PIER_EARLY_EXIT_MIN_CONFIDENCE",
+                )
+                if environment.get_pier_early_exit_min_confidence()
+                else None
+            ),
+            pier_early_exit_check_candlestick_reversal=(
+                environment.get_pier_early_exit_check_candlestick_reversal()
+            ),
+            pier_early_exit_check_opposite_signal=(
+                environment.get_pier_early_exit_check_opposite_signal()
+            ),
+            pier_early_exit_check_exhaustion=(
+                environment.get_pier_early_exit_check_exhaustion()
+            ),
             origin_stop_loss_pct=self._resolve_origin_stop_loss_pct(),
             origin_take_profit_pct=self._resolve_origin_take_profit_pct(),
             max_open_positions=self._parse_positive_int(
@@ -1216,6 +1309,14 @@ class SettingsManager:
                 )
                 if environment.get_pier_htf_bb_std_dev()
                 else Decimal("2.0")
+            ),
+            pier_htf_interval=(
+                self._parse_market_interval(
+                    raw_value=environment.get_pier_htf_interval(),
+                    setting_name="PIER_HTF_INTERVAL",
+                )
+                if environment.get_pier_htf_interval()
+                else None
             ),
             ny_range_risk_reward_ratio=(
                 self._parse_decimal(

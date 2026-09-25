@@ -28,6 +28,7 @@ from botragram.enums import (
     PositionExitAction,
     PositionSide,
     SignalType,
+    StrategyType,
 )
 from botragram.indicators import (
     calculate_bollinger_bands,
@@ -70,6 +71,13 @@ class PositionExitEngine:
     check_opposite_signal: bool = True
     check_exhaustion: bool = True
 
+    # Strategy-specific PIER overrides:
+    pier_enabled: bool | None = None
+    pier_min_confidence: float | None = None
+    pier_check_candlestick_reversal: bool | None = None
+    pier_check_opposite_signal: bool | None = None
+    pier_check_exhaustion: bool | None = None
+
     def evaluate(
         self,
         *,
@@ -90,7 +98,14 @@ class PositionExitEngine:
         current_price = position.current_price
         unrealized_pnl = position.unrealized_pnl
 
-        if not self.enabled:
+        is_pier = position.strategy_type is StrategyType.PINBAR_ENGULFING_EMA_RSI
+        eff_enabled = (
+            self.pier_enabled
+            if (is_pier and self.pier_enabled is not None)
+            else self.enabled
+        )
+
+        if not eff_enabled:
             return PositionExitDecision(
                 action=PositionExitAction.HOLD,
                 symbol=position.symbol,
@@ -108,9 +123,30 @@ class PositionExitEngine:
                 unrealized_pnl=unrealized_pnl,
             )
 
+        eff_min_confidence = (
+            self.pier_min_confidence
+            if (is_pier and self.pier_min_confidence is not None)
+            else self.min_confidence
+        )
+        eff_check_reversal = (
+            self.pier_check_candlestick_reversal
+            if (is_pier and self.pier_check_candlestick_reversal is not None)
+            else self.check_candlestick_reversal
+        )
+        eff_check_opposite = (
+            self.pier_check_opposite_signal
+            if (is_pier and self.pier_check_opposite_signal is not None)
+            else self.check_opposite_signal
+        )
+        eff_check_exhaustion = (
+            self.pier_check_exhaustion
+            if (is_pier and self.pier_check_exhaustion is not None)
+            else self.check_exhaustion
+        )
+
         # Check Exhaustion Confluence first (can secure profit via EARLY_TAKE_PROFIT
         # or cut loss via EARLY_CUT_LOSS when multi-indicator exhaustion is detected)
-        if self.check_exhaustion and len(candles) >= 30:
+        if eff_check_exhaustion and len(candles) >= 30:
             exhaustion_decision = self._check_exhaustion_confluence(
                 position=position,
                 candles=candles,
@@ -130,16 +166,17 @@ class PositionExitEngine:
             )
 
         # Check 1: Confirmed opposite strategy signal
-        if self.check_opposite_signal and strategy_signal is not None:
+        if eff_check_opposite and strategy_signal is not None:
             opposite_decision = self._check_opposite_signal(
                 position=position,
                 signal=strategy_signal,
+                min_confidence=eff_min_confidence,
             )
             if opposite_decision is not None:
                 return opposite_decision
 
         # Check 2: Counter-trend candlestick reversal pattern on closed candle
-        if self.check_candlestick_reversal and len(candles) >= 2:
+        if eff_check_reversal and len(candles) >= 2:
             reversal_decision = self._check_candlestick_reversal(
                 position=position,
                 prev_candle=candles[-2],
@@ -177,9 +214,11 @@ class PositionExitEngine:
         *,
         position: Position,
         signal: Signal,
+        min_confidence: float | None = None,
     ) -> PositionExitDecision | None:
         """Evaluate whether a strategy signal invalidates the current position."""
-        if signal.confidence < Decimal(str(self.min_confidence)):
+        eff_min = min_confidence if min_confidence is not None else self.min_confidence
+        if signal.confidence < Decimal(str(eff_min)):
             return None
 
         confidence_val = float(signal.confidence)

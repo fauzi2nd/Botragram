@@ -1283,6 +1283,17 @@ class DependencyProvider:
                 self._settings.risk.early_exit_check_opposite_signal
             ),
             check_exhaustion=self._settings.risk.early_exit_check_exhaustion,
+            pier_enabled=self._settings.risk.pier_enable_early_position_exit,
+            pier_min_confidence=self._settings.risk.pier_early_exit_min_confidence,
+            pier_check_candlestick_reversal=(
+                self._settings.risk.pier_early_exit_check_candlestick_reversal
+            ),
+            pier_check_opposite_signal=(
+                self._settings.risk.pier_early_exit_check_opposite_signal
+            ),
+            pier_check_exhaustion=(
+                self._settings.risk.pier_early_exit_check_exhaustion
+            ),
         )
 
     def _select_runtime_strategy(self, strategy_type: StrategyType) -> None:
@@ -1773,6 +1784,17 @@ class DependencyProvider:
             trailing_swing_timeframe=self._settings.risk.trailing_swing_timeframe,
             trailing_swing_window=self._settings.risk.trailing_swing_window,
             trailing_buffer_pct=self._settings.risk.trailing_buffer_pct,
+            pier_partial_tp_enabled=self._settings.risk.pier_partial_tp_enabled,
+            pier_partial_tp_ratio=self._settings.risk.pier_partial_tp_ratio,
+            pier_partial_tp_trigger_progress=(
+                self._settings.risk.pier_partial_tp_trigger_progress
+            ),
+            pier_trailing_mode=self._settings.risk.pier_trailing_mode,
+            pier_trailing_swing_timeframe=(
+                self._settings.risk.pier_trailing_swing_timeframe
+            ),
+            pier_trailing_swing_window=(self._settings.risk.pier_trailing_swing_window),
+            pier_trailing_buffer_pct=self._settings.risk.pier_trailing_buffer_pct,
             candle_repository=self.candle_repository,
         )
 

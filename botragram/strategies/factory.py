@@ -443,6 +443,7 @@ class StrategyFactory:
                     bb_std_dev=settings.pier_bb_std_dev,
                     htf_bb_period=settings.pier_htf_bb_period,
                     htf_bb_std_dev=settings.pier_htf_bb_std_dev,
+                    htf_interval=settings.pier_htf_interval,
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

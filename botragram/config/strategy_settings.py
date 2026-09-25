@@ -327,6 +327,7 @@ class StrategySettings:
     pier_use_htf_structural_tp: bool = True
     pier_htf_bb_period: int = 20
     pier_htf_bb_std_dev: Decimal = Decimal("2.0")
+    pier_htf_interval: Interval | None = None
 
     # =========================================================================
     # Market Orderflow Regime & Price-Hunt (MORPH)

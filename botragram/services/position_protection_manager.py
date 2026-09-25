@@ -24,6 +24,7 @@ from botragram.enums import (
     OrderStatus,
     OrderType,
     PositionSide,
+    StrategyType,
     TradeMode,
     TrailingMode,
 )
@@ -44,6 +45,7 @@ from botragram.telegram.messages import get_partial_tp_message
 __all__ = [
     "PartialTpNotificationPublisher",
     "PositionProtectionManager",
+    "resolve_adaptive_trailing_timeframe",
 ]
 
 
@@ -51,6 +53,19 @@ class PartialTpNotificationPublisher(Protocol):
     """Publish arbitrary notifications to notification channels."""
 
     async def publish(self, *, notification: Notification) -> None: ...
+
+
+def resolve_adaptive_trailing_timeframe(interval: Interval | None) -> Interval:
+    """Resolve lower-timeframe swing interval adaptively from position interval."""
+    if interval is None:
+        return Interval.M5
+    if interval.seconds >= 3600:
+        return Interval.M15
+    if interval.seconds >= 900:
+        return Interval.M5
+    if interval.seconds >= 300:
+        return Interval.M3
+    return Interval.M1
 
 
 _POSITION_REFRESH_SECONDS: Final[float] = 1.0
@@ -96,6 +111,13 @@ class PositionProtectionManager:
     trailing_swing_timeframe: Interval = Interval.M5
     trailing_swing_window: int = 5
     trailing_buffer_pct: Decimal = Decimal("0.0015")
+    pier_partial_tp_enabled: bool | None = None
+    pier_partial_tp_ratio: Decimal | None = None
+    pier_partial_tp_trigger_progress: Decimal | None = None
+    pier_trailing_mode: TrailingMode | None = None
+    pier_trailing_swing_timeframe: Interval | None = None
+    pier_trailing_swing_window: int | None = None
+    pier_trailing_buffer_pct: Decimal | None = None
     candle_repository: CandleRepository | None = None
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
         default_factory=LivePositionLifecycleCoordinator,
@@ -141,6 +163,24 @@ class PositionProtectionManager:
         if not (_DECIMAL_ZERO < self.partial_tp_trigger_progress < Decimal("1")):
             raise ValueError(
                 "Partial TP trigger progress must be between 0 and 1 exclusive"
+            )
+
+        if (
+            self.pier_trailing_swing_window is not None
+            and self.pier_trailing_swing_window < 3
+        ):
+            raise ValueError("PIER trailing swing window must be at least 3")
+
+        if self.pier_partial_tp_ratio is not None and not (
+            _DECIMAL_ZERO < self.pier_partial_tp_ratio < Decimal("1")
+        ):
+            raise ValueError("PIER partial TP ratio must be between 0 and 1 exclusive")
+
+        if self.pier_partial_tp_trigger_progress is not None and not (
+            _DECIMAL_ZERO < self.pier_partial_tp_trigger_progress < Decimal("1")
+        ):
+            raise ValueError(
+                "PIER partial TP trigger progress must be between 0 and 1 exclusive"
             )
 
         if self.trailing_swing_window < 3:
@@ -195,16 +235,58 @@ class PositionProtectionManager:
                 self.min_order_notional_usdt * Decimal("2")
             )
 
+            is_pier = position.strategy_type is StrategyType.PINBAR_ENGULFING_EMA_RSI
+            eff_partial_tp_enabled = (
+                self.pier_partial_tp_enabled
+                if (is_pier and self.pier_partial_tp_enabled is not None)
+                else self.partial_tp_enabled
+            )
+            eff_partial_tp_ratio = (
+                self.pier_partial_tp_ratio
+                if (is_pier and self.pier_partial_tp_ratio is not None)
+                else self.partial_tp_ratio
+            )
+            eff_partial_tp_progress = (
+                self.pier_partial_tp_trigger_progress
+                if (is_pier and self.pier_partial_tp_trigger_progress is not None)
+                else self.partial_tp_trigger_progress
+            )
+            eff_trailing_mode = (
+                self.pier_trailing_mode
+                if (is_pier and self.pier_trailing_mode is not None)
+                else self.trailing_mode
+            )
+            eff_swing_window = (
+                self.pier_trailing_swing_window
+                if (is_pier and self.pier_trailing_swing_window is not None)
+                else self.trailing_swing_window
+            )
+            eff_buffer_pct = (
+                self.pier_trailing_buffer_pct
+                if (is_pier and self.pier_trailing_buffer_pct is not None)
+                else self.trailing_buffer_pct
+            )
+
+            if is_pier and self.pier_trailing_swing_timeframe is not None:
+                eff_swing_timeframe = self.pier_trailing_swing_timeframe
+            elif position.interval is not None:
+                eff_swing_timeframe = resolve_adaptive_trailing_timeframe(
+                    position.interval
+                )
+            else:
+                eff_swing_timeframe = self.trailing_swing_timeframe
+
             if (
-                self.partial_tp_enabled
+                eff_partial_tp_enabled
                 and can_split_partial
                 and not position.partial_tp_executed
-                and progress >= self.partial_tp_trigger_progress
+                and progress >= eff_partial_tp_progress
             ):
                 position = await self._execute_partial_take_profit(
                     position=position,
                     ticker=ticker,
                     progress=progress,
+                    ratio=eff_partial_tp_ratio,
                 )
                 if (
                     position.pending_partial_tp_client_order_id is not None
@@ -215,19 +297,19 @@ class PositionProtectionManager:
             if not self.stepped_stop_enabled:
                 return
 
-            if self.trailing_mode is TrailingMode.SWING_PIVOT:
+            if eff_trailing_mode is TrailingMode.SWING_PIVOT:
                 if self.candle_repository is None:
                     return
                 candles = await self.candle_repository.get_latest(
                     symbol=position.symbol,
-                    interval=self.trailing_swing_timeframe,
-                    limit=max(50, self.trailing_swing_window * 4),
+                    interval=eff_swing_timeframe,
+                    limit=max(50, eff_swing_window * 4),
                 )
                 replacement_stop = RiskEngine.calculate_swing_pivot_stop_loss(
                     position=position,
                     candles=candles,
-                    window=self.trailing_swing_window,
-                    buffer_pct=self.trailing_buffer_pct,
+                    window=eff_swing_window,
+                    buffer_pct=eff_buffer_pct,
                 )
                 if replacement_stop is None:
                     return
@@ -382,10 +464,12 @@ class PositionProtectionManager:
         position: Position,
         ticker: Ticker,
         progress: Decimal,
+        ratio: Decimal | None = None,
     ) -> Position:
         """Execute a partial take-profit exit and advance stop-loss to breakeven."""
         del progress
-        raw_close_qty = position.quantity * self.partial_tp_ratio
+        eff_ratio = ratio if ratio is not None else self.partial_tp_ratio
+        raw_close_qty = position.quantity * eff_ratio
         closing_side = self._closing_side(position.side)
 
         if self.trade_mode is TradeMode.LIVE:
@@ -411,7 +495,7 @@ class PositionProtectionManager:
                     "(min_qty=%s, step=%s). Marking partial TP completed for "
                     "position %s.",
                     position.quantity,
-                    self.partial_tp_ratio,
+                    eff_ratio,
                     rules.market_min_quantity,
                     rules.market_quantity_step,
                     position.symbol,
@@ -460,7 +544,7 @@ class PositionProtectionManager:
                 ticker=ticker,
             )
 
-        close_qty = (position.quantity * self.partial_tp_ratio).normalize()
+        close_qty = (position.quantity * eff_ratio).normalize()
         remaining_qty = position.quantity - close_qty
         be_stop = self._calculate_stop_loss(
             position=position,
