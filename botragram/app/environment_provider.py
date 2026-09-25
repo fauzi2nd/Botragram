@@ -419,6 +419,9 @@ class EnvironmentProvider:
         if primary_value is not None:
             normalized_primary = primary_value.strip()
 
+            if normalized_primary.startswith("#"):
+                normalized_primary = ""
+
             if normalized_primary:
                 return normalized_primary
 
@@ -427,6 +430,9 @@ class EnvironmentProvider:
 
             if fallback_value is not None:
                 normalized_fallback = fallback_value.strip()
+
+                if normalized_fallback.startswith("#"):
+                    normalized_fallback = ""
 
                 if normalized_fallback:
                     return normalized_fallback

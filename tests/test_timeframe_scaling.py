@@ -25,10 +25,14 @@ from unittest.mock import AsyncMock, create_autospec
 # =============================================================================
 import pytest
 
+from botragram.app.environment_provider import EnvironmentProvider
+from botragram.app.settings_manager import SettingsManager
+
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
+from botragram.constants.env import ENV_PIER_TRAILING_SWING_TIMEFRAME
 from botragram.engine import PositionExitEngine, RiskEngine
 from botragram.enums import (
     Interval,
@@ -332,3 +336,20 @@ def test_position_exit_engine_pier_overrides() -> None:
         strategy_signal=opp_signal,
     )
     assert pier_decision.action is PositionExitAction.EARLY_CUT_LOSS
+
+
+def test_environment_provider_defensive_comment_ignoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify EnvironmentProvider treats values starting with # as empty."""
+    monkeypatch.setenv(
+        ENV_PIER_TRAILING_SWING_TIMEFRAME,
+        "# Override swing timeframe (kosong = auto-adaptive)",
+    )
+    provider = EnvironmentProvider()
+    assert provider.get_pier_trailing_swing_timeframe() == ""
+
+    # SettingsManager parses empty string as None
+    sm = SettingsManager(environment_provider=provider)
+    risk_settings = sm.load_risk_settings()
+    assert risk_settings.pier_trailing_swing_timeframe is None
