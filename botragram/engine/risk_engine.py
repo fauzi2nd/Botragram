@@ -160,13 +160,18 @@ class RiskEngine:
         cls,
         *,
         roi: Decimal,
+        progress: Decimal | None = None,
         breakeven_roi_threshold: Decimal = DEFAULT_BREAKEVEN_ROI_THRESHOLD,
+        breakeven_progress_threshold: Decimal | None = None,
     ) -> int:
-        """Return Step 1 if position ROI reaches the breakeven threshold.
+        """Return Step 1 if position reaches the breakeven threshold.
 
-        Note: This is an independent breakeven policy, NOT stepped profit
-        protection progress.
+        Note: Evaluates either progress (R-multiple / TP target progress,
+        leverage-agnostic) or ROI threshold.
         """
+        if breakeven_progress_threshold is not None and progress is not None:
+            if progress >= breakeven_progress_threshold:
+                return 1
         if roi >= breakeven_roi_threshold:
             return 1
         return 0
@@ -178,6 +183,7 @@ class RiskEngine:
         progress: Decimal,
         roi: Decimal,
         breakeven_roi_threshold: Decimal = DEFAULT_BREAKEVEN_ROI_THRESHOLD,
+        breakeven_progress_threshold: Decimal | None = None,
         thresholds: tuple[Decimal, ...] = PROGRESS_THRESHOLDS,
     ) -> int:
         """Resolve highest crossed protection step combining BE and profit steps.
@@ -186,7 +192,9 @@ class RiskEngine:
         """
         breakeven_step = cls.resolve_breakeven_step(
             roi=roi,
+            progress=progress,
             breakeven_roi_threshold=breakeven_roi_threshold,
+            breakeven_progress_threshold=breakeven_progress_threshold,
         )
         profit_step = cls.resolve_protection_step(
             progress=progress,

@@ -485,3 +485,118 @@ async def test_position_exit_service_paper_execution() -> None:
     assert decisions[0].action is PositionExitAction.EARLY_CUT_LOSS
     assert "BTCUSDT" in paper_service.closed_symbols
     assert len(notifier.notifications) == 1
+
+
+def test_position_exit_engine_exhaustion_early_take_profit() -> None:
+    """Trigger EARLY_TAKE_PROFIT when position exhibits exhaustion."""
+    engine = PositionExitEngine(
+        enabled=True, min_confidence=0.70, check_exhaustion=True
+    )
+    # Long position in floating profit
+    pos = _make_position(
+        side=PositionSide.LONG,
+        entry_price=Decimal("110"),
+        current_price=Decimal("150"),
+        unrealized_pnl=Decimal("40"),
+    )
+
+    # 35 candles: rising sharply to trigger RSI > 70, then blow-off upper wick rejection
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(34):
+        p = base + Decimal(str(i * 1.5))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=p,
+                high_price=p + Decimal("1.0"),
+                low_price=p - Decimal("0.5"),
+                close_price=p + Decimal("0.8"),
+            )
+        )
+
+    # Candle 34: massive upper spike through Upper BB with rejection close
+    p34 = candles[-1].close_price
+    candles.append(
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M15,
+            open_time=_NOW + timedelta(minutes=15 * 34),
+            close_time=_NOW + timedelta(minutes=15 * 35),
+            open_price=p34,
+            high_price=p34 + Decimal("25.0"),  # Pierce way beyond Upper BB
+            low_price=p34 - Decimal("2.0"),
+            close_price=p34 - Decimal("1.0"),  # Close back inside band / rejection
+            volume=Decimal("500.0"),  # 5x regular volume
+        )
+    )
+
+    dec = engine.evaluate(position=pos, candles=candles)
+    assert dec.action is PositionExitAction.EARLY_TAKE_PROFIT
+    assert dec.should_exit is True
+    assert "Early Take Profit: Multi-indicator exhaustion confluence" in dec.reason
+    assert dec.confidence >= 0.70
+
+
+@pytest.mark.asyncio
+async def test_position_exit_service_early_take_profit_execution() -> None:
+    """Execute paper close and send INFO notification on EARLY_TAKE_PROFIT decision."""
+    engine = PositionExitEngine(
+        enabled=True, min_confidence=0.70, check_exhaustion=True
+    )
+    paper_service = _MockPaperTradingService()
+    notifier = _MockNotificationPublisher()
+    pos = _make_position(
+        side=PositionSide.LONG,
+        entry_price=Decimal("110"),
+        current_price=Decimal("150"),
+        unrealized_pnl=Decimal("40"),
+    )
+
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(34):
+        p = base + Decimal(str(i * 1.5))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=p,
+                high_price=p + Decimal("1.0"),
+                low_price=p - Decimal("0.5"),
+                close_price=p + Decimal("0.8"),
+            )
+        )
+    p34 = candles[-1].close_price
+    candles.append(
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M15,
+            open_time=_NOW + timedelta(minutes=15 * 34),
+            close_time=_NOW + timedelta(minutes=15 * 35),
+            open_price=p34,
+            high_price=p34 + Decimal("25.0"),
+            low_price=p34 - Decimal("2.0"),
+            close_price=p34 - Decimal("1.0"),
+            volume=Decimal("500.0"),
+        )
+    )
+
+    service = PositionExitService(
+        engine=engine,
+        market_service=_MockMarketService(candles),
+        paper_trading_service=paper_service,
+        notification_publisher=notifier,
+        trade_mode=TradeMode.PAPER,
+    )
+
+    decisions = await service.evaluate_open_positions(
+        positions=[pos],
+        interval=Interval.M15,
+    )
+
+    assert len(decisions) == 1
+    assert decisions[0].action is PositionExitAction.EARLY_TAKE_PROFIT
+    assert "BTCUSDT" in paper_service.closed_symbols
+    assert len(notifier.notifications) == 1
+    assert "Early Take Profit: BTCUSDT" in notifier.notifications[0].title
+    assert "EARLY TAKE PROFIT EXECUTED" in notifier.notifications[0].message

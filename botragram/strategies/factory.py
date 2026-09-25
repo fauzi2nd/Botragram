@@ -435,6 +435,11 @@ class StrategyFactory:
                     stoch_rsi_d_period=settings.pier_stoch_rsi_d_period,
                     stoch_rsi_overbought=settings.pier_stoch_rsi_overbought,
                     stoch_rsi_oversold=settings.pier_stoch_rsi_oversold,
+                    use_structural_tp=settings.pier_use_structural_tp,
+                    structural_tp_buffer_pct=settings.pier_structural_tp_buffer_pct,
+                    min_structural_rr=settings.pier_min_structural_rr,
+                    bb_period=settings.pier_bb_period,
+                    bb_std_dev=settings.pier_bb_std_dev,
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

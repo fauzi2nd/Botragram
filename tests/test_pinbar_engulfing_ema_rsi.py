@@ -1187,3 +1187,108 @@ def test_disable_star_patterns() -> None:
         include_star_patterns=False,
     )
     assert strategy.include_star_patterns is False
+
+
+def test_pier_structural_tp_trimming_and_rejection() -> None:
+    """Verify dynamic structural target trims TP and enforces min_structural_rr."""
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(45):
+        price = base + Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    for i in range(45, 53):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("0.2"),
+                low_price=prev_close - Decimal("1.5"),
+                close_price=prev_close - Decimal("1.2"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    c52_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=53,
+            open_price=c52_close,
+            high_price=c52_close + Decimal("0.2"),
+            low_price=c52_close - Decimal("4.2"),
+            close_price=c52_close - Decimal("4.0"),
+            volume=Decimal("120.0"),
+        )
+    )
+    c53_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=54,
+            open_price=c53_close - Decimal("0.2"),
+            high_price=c53_close + Decimal("0.3"),
+            low_price=c53_close - Decimal("1.5"),
+            close_price=c53_close + Decimal("0.2"),
+            volume=Decimal("130.0"),
+        )
+    )
+    c54_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=c54_close,
+            high_price=c54_close + Decimal("3.8"),
+            low_price=c54_close - Decimal("0.2"),
+            close_price=c54_close + Decimal("3.5"),
+            volume=Decimal("250.0"),
+        )
+    )
+
+    # 1. Without structural TP: full TP is emitted
+    strat_untrimmed = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        use_structural_tp=False,
+    )
+    sig_untrimmed = strat_untrimmed.generate_signal(candles=candles)
+    assert sig_untrimmed.signal_type is SignalType.BUY
+    assert sig_untrimmed.take_profit is not None
+    untrimmed_tp = sig_untrimmed.take_profit
+
+    # 2. With structural TP enabled and reasonable min_structural_rr: TP is trimmed
+    strat_trimmed = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        use_structural_tp=True,
+        min_structural_rr=Decimal("0.5"),
+    )
+    sig_trimmed = strat_trimmed.generate_signal(candles=candles)
+    assert sig_trimmed.signal_type is SignalType.BUY
+    assert sig_trimmed.take_profit is not None
+    assert sig_trimmed.take_profit <= untrimmed_tp
+
+    # 3. With high min_structural_rr: rejected because Upper BB leaves insufficient RR
+    strat_rejected = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        use_structural_tp=True,
+        min_structural_rr=Decimal("10.0"),
+    )
+    sig_rejected = strat_rejected.generate_signal(candles=candles)
+    assert sig_rejected.signal_type is SignalType.HOLD
+    assert "Structural resistance" in (sig_rejected.reason or "")

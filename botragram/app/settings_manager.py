@@ -478,6 +478,10 @@ class SettingsManager:
                 raw_value=environment.get_breakeven_roi_threshold(),
                 setting_name="BREAKEVEN_ROI_THRESHOLD",
             ),
+            breakeven_progress_threshold=self._parse_decimal(
+                raw_value=environment.get_breakeven_progress_threshold(),
+                setting_name="BREAKEVEN_PROGRESS_THRESHOLD",
+            ),
             breakeven_fee_buffer=self._parse_decimal(
                 raw_value=environment.get_breakeven_fee_buffer(),
                 setting_name="BREAKEVEN_FEE_BUFFER",
@@ -502,6 +506,7 @@ class SettingsManager:
             early_exit_check_opposite_signal=(
                 environment.get_early_exit_check_opposite_signal()
             ),
+            early_exit_check_exhaustion=environment.get_early_exit_check_exhaustion(),
             volatility_sizing_enabled=environment.get_volatility_sizing_enabled(),
             baseline_volatility_pct=self._parse_decimal(
                 raw_value=environment.get_baseline_volatility_pct(),
@@ -714,6 +719,22 @@ class SettingsManager:
             raw_value=self._environment_provider.get_mtf_ema_period(),
             setting_name="MTF_EMA_PERIOD",
         )
+        ltf_enabled = self._environment_provider.get_ltf_confirmation_enabled()
+        raw_ltf_interval = self._environment_provider.get_ltf_interval()
+        ltf_interval = (
+            self._parse_enum(
+                enum_type=Interval,
+                raw_value=raw_ltf_interval,
+                setting_name="LTF_TIMEFRAME",
+            )
+            if raw_ltf_interval
+            else Interval.M3
+        )
+        ltf_confirmation_mode = self._environment_provider.get_ltf_confirmation_mode()
+        ltf_ema_period = self._parse_positive_int(
+            raw_value=self._environment_provider.get_ltf_ema_period(),
+            setting_name="LTF_EMA_PERIOD",
+        )
         btc_trend_filter_enabled = (
             self._environment_provider.get_btc_trend_filter_enabled()
         )
@@ -813,6 +834,10 @@ class SettingsManager:
             mtf_confirmation_enabled=mtf_enabled,
             mtf_interval=mtf_interval,
             mtf_ema_period=mtf_ema_period,
+            ltf_confirmation_enabled=ltf_enabled,
+            ltf_interval=ltf_interval,
+            ltf_confirmation_mode=ltf_confirmation_mode,
+            ltf_ema_period=ltf_ema_period,
             btc_trend_filter_enabled=btc_trend_filter_enabled,
             btc_trend_interval=btc_trend_interval,
             btc_trend_ema_period=btc_trend_ema_period,
@@ -836,7 +861,30 @@ class SettingsManager:
             require_account_ratio_confluence=require_account_ratio_confluence,
             confirm_htf_account_ratio=confirm_htf_account_ratio,
             account_ratio_htf_period=account_ratio_htf_period,
-            pier_confirm_htf_account_ratio=confirm_htf_account_ratio,
+            pier_trend_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_trend_period(),
+                    setting_name="PIER_TREND_PERIOD",
+                )
+                if environment.get_pier_trend_period()
+                else 200
+            ),
+            pier_pullback_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_pullback_period(),
+                    setting_name="PIER_PULLBACK_PERIOD",
+                )
+                if environment.get_pier_pullback_period()
+                else 21
+            ),
+            pier_rsi_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_rsi_period(),
+                    setting_name="PIER_RSI_PERIOD",
+                )
+                if environment.get_pier_rsi_period()
+                else 14
+            ),
             pier_rsi_long_min=self._parse_decimal(
                 raw_value=environment.get_pier_rsi_long_min(),
                 setting_name="PIER_RSI_LONG_MIN",
@@ -853,8 +901,289 @@ class SettingsManager:
                 raw_value=environment.get_pier_rsi_short_max(),
                 setting_name="PIER_RSI_SHORT_MAX",
             ),
+            pier_volume_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_volume_period(),
+                    setting_name="PIER_VOLUME_PERIOD",
+                )
+                if environment.get_pier_volume_period()
+                else 20
+            ),
+            pier_volume_multiplier=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_volume_multiplier(),
+                    setting_name="PIER_VOLUME_MULTIPLIER",
+                )
+                if environment.get_pier_volume_multiplier()
+                else Decimal("1.10")
+            ),
+            pier_min_wick_ratio=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_min_wick_ratio(),
+                    setting_name="PIER_MIN_WICK_RATIO",
+                )
+                if environment.get_pier_min_wick_ratio()
+                else Decimal("0.60")
+            ),
+            pier_max_opposite_wick_ratio=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_max_opposite_wick_ratio(),
+                    setting_name="PIER_MAX_OPPOSITE_WICK_RATIO",
+                )
+                if environment.get_pier_max_opposite_wick_ratio()
+                else Decimal("0.20")
+            ),
+            pier_min_engulfing_body_ratio=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_min_engulfing_body_ratio(),
+                    setting_name="PIER_MIN_ENGULFING_BODY_RATIO",
+                )
+                if environment.get_pier_min_engulfing_body_ratio()
+                else Decimal("1.05")
+            ),
+            pier_atr_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_atr_period(),
+                    setting_name="PIER_ATR_PERIOD",
+                )
+                if environment.get_pier_atr_period()
+                else 14
+            ),
+            pier_atr_sl_multiplier=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_atr_sl_multiplier(),
+                    setting_name="PIER_ATR_SL_MULTIPLIER",
+                )
+                if environment.get_pier_atr_sl_multiplier()
+                else Decimal("0.5")
+            ),
+            pier_risk_reward_ratio=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_risk_reward_ratio(),
+                    setting_name="PIER_RISK_REWARD_RATIO",
+                )
+                if environment.get_pier_risk_reward_ratio()
+                else Decimal("2.0")
+            ),
+            pier_min_confidence=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_min_confidence(),
+                    setting_name="PIER_MIN_CONFIDENCE",
+                )
+                if environment.get_pier_min_confidence()
+                else Decimal("0.65")
+            ),
+            pier_use_open_interest=environment.get_pier_use_open_interest(),
+            pier_min_oi_change_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_min_oi_change_pct(),
+                    setting_name="PIER_MIN_OI_CHANGE_PCT",
+                )
+                if environment.get_pier_min_oi_change_pct()
+                else Decimal("0.0")
+            ),
+            pier_oi_confidence_bonus=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_oi_confidence_bonus(),
+                    setting_name="PIER_OI_CONFIDENCE_BONUS",
+                )
+                if environment.get_pier_oi_confidence_bonus()
+                else Decimal("0.05")
+            ),
+            pier_require_oi_confluence=(environment.get_pier_require_oi_confluence()),
+            pier_require_key_level_location=(
+                environment.get_pier_require_key_level_location()
+            ),
+            pier_swing_lookback=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_swing_lookback(),
+                    setting_name="PIER_SWING_LOOKBACK",
+                )
+                if environment.get_pier_swing_lookback()
+                else 15
+            ),
+            pier_require_trend_filter=(environment.get_pier_require_trend_filter()),
+            pier_min_natr_threshold=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_min_natr_threshold(),
+                    setting_name="PIER_MIN_NATR_THRESHOLD",
+                )
+                if environment.get_pier_min_natr_threshold()
+                else Decimal("0.0020")
+            ),
+            pier_min_sl_distance_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_min_sl_distance_pct(),
+                    setting_name="PIER_MIN_SL_DISTANCE_PCT",
+                )
+                if environment.get_pier_min_sl_distance_pct()
+                else Decimal("0.0080")
+            ),
+            pier_location_tolerance_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_location_tolerance_pct(),
+                    setting_name="PIER_LOCATION_TOLERANCE_PCT",
+                )
+                if environment.get_pier_location_tolerance_pct()
+                else Decimal("0.030")
+            ),
+            pier_location_atr_multiplier=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_location_atr_multiplier(),
+                    setting_name="PIER_LOCATION_ATR_MULTIPLIER",
+                )
+                if environment.get_pier_location_atr_multiplier()
+                else None
+            ),
+            pier_pullback_proximity_pct=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_pullback_proximity_pct(),
+                    setting_name="PIER_PULLBACK_PROXIMITY_PCT",
+                )
+                if environment.get_pier_pullback_proximity_pct()
+                else Decimal("0.006")
+            ),
+            pier_pullback_atr_multiplier=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_pullback_atr_multiplier(),
+                    setting_name="PIER_PULLBACK_ATR_MULTIPLIER",
+                )
+                if environment.get_pier_pullback_atr_multiplier()
+                else None
+            ),
+            pier_pinbar_min_range_atr=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_pinbar_min_range_atr(),
+                    setting_name="PIER_PINBAR_MIN_RANGE_ATR",
+                )
+                if environment.get_pier_pinbar_min_range_atr()
+                else None
+            ),
+            pier_engulfing_min_body_atr=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_engulfing_min_body_atr(),
+                    setting_name="PIER_ENGULFING_MIN_BODY_ATR",
+                )
+                if environment.get_pier_engulfing_min_body_atr()
+                else None
+            ),
+            pier_require_confirmation=(environment.get_pier_require_confirmation()),
+            pier_filter_account_ratio=(environment.get_pier_filter_account_ratio()),
+            pier_max_long_account_ratio=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_max_long_account_ratio(),
+                    setting_name="PIER_MAX_LONG_ACCOUNT_RATIO",
+                )
+                if environment.get_pier_max_long_account_ratio()
+                else Decimal("0.70")
+            ),
+            pier_min_short_account_ratio=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_min_short_account_ratio(),
+                    setting_name="PIER_MIN_SHORT_ACCOUNT_RATIO",
+                )
+                if environment.get_pier_min_short_account_ratio()
+                else Decimal("0.30")
+            ),
+            pier_require_account_ratio_confluence=(
+                environment.get_pier_require_account_ratio_confluence()
+            ),
+            pier_confirm_htf_account_ratio=(
+                environment.get_pier_confirm_htf_account_ratio()
+            ),
+            pier_include_star_patterns=(environment.get_pier_include_star_patterns()),
+            pier_use_parabolic_sar=(environment.get_pier_use_parabolic_sar()),
             pier_use_macd=environment.get_pier_use_macd(),
+            pier_macd_fast_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_macd_fast_period(),
+                    setting_name="PIER_MACD_FAST_PERIOD",
+                )
+                if environment.get_pier_macd_fast_period()
+                else 12
+            ),
+            pier_macd_slow_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_macd_slow_period(),
+                    setting_name="PIER_MACD_SLOW_PERIOD",
+                )
+                if environment.get_pier_macd_slow_period()
+                else 26
+            ),
+            pier_macd_signal_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_macd_signal_period(),
+                    setting_name="PIER_MACD_SIGNAL_PERIOD",
+                )
+                if environment.get_pier_macd_signal_period()
+                else 9
+            ),
             pier_use_stoch_rsi=environment.get_pier_use_stoch_rsi(),
+            pier_stoch_rsi_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_stoch_rsi_period(),
+                    setting_name="PIER_STOCH_RSI_PERIOD",
+                )
+                if environment.get_pier_stoch_rsi_period()
+                else 14
+            ),
+            pier_stoch_rsi_k_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_stoch_rsi_k_period(),
+                    setting_name="PIER_STOCH_RSI_K_PERIOD",
+                )
+                if environment.get_pier_stoch_rsi_k_period()
+                else 3
+            ),
+            pier_stoch_rsi_d_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_stoch_rsi_d_period(),
+                    setting_name="PIER_STOCH_RSI_D_PERIOD",
+                )
+                if environment.get_pier_stoch_rsi_d_period()
+                else 3
+            ),
+            pier_stoch_rsi_overbought=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_stoch_rsi_overbought(),
+                    setting_name="PIER_STOCH_RSI_OVERBOUGHT",
+                )
+                if environment.get_pier_stoch_rsi_overbought()
+                else Decimal("80.0")
+            ),
+            pier_stoch_rsi_oversold=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_stoch_rsi_oversold(),
+                    setting_name="PIER_STOCH_RSI_OVERSOLD",
+                )
+                if environment.get_pier_stoch_rsi_oversold()
+                else Decimal("20.0")
+            ),
+            pier_use_structural_tp=environment.get_pier_use_structural_tp(),
+            pier_structural_tp_buffer_pct=self._parse_decimal(
+                raw_value=environment.get_pier_structural_tp_buffer_pct(),
+                setting_name="PIER_STRUCTURAL_TP_BUFFER_PCT",
+            ),
+            pier_min_structural_rr=self._parse_decimal(
+                raw_value=environment.get_pier_min_structural_rr(),
+                setting_name="PIER_MIN_STRUCTURAL_RR",
+            ),
+            pier_bb_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_bb_period(),
+                    setting_name="PIER_BB_PERIOD",
+                )
+                if environment.get_pier_bb_period()
+                else 20
+            ),
+            pier_bb_std_dev=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_bb_std_dev(),
+                    setting_name="PIER_BB_STD_DEV",
+                )
+                if environment.get_pier_bb_std_dev()
+                else Decimal("2.0")
+            ),
             ny_range_risk_reward_ratio=(
                 self._parse_decimal(
                     raw_value=environment.get_ny_range_risk_reward_ratio(),

@@ -1376,6 +1376,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         stop_loss: Decimal,
         client_algo_id: str | None = None,
         previous_client_algo_id: str | None = None,
+        bypass_calendar_guard: bool = False,
     ) -> Order:
         """Replace or ensure a stop-loss plan order using new-stop-first sequence."""
         if quantity <= Decimal("0"):
@@ -1405,6 +1406,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                 quantity=quantity,
                 stop_loss=stop_loss,
                 stop_loss_client_algo_id=client_algo_id,
+                bypass_calendar_guard=bypass_calendar_guard,
             )
             if not orders:
                 raise ExchangeOrderRejectedError(

@@ -17,7 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Final
 
@@ -26,10 +26,12 @@ from typing import Final
 # =============================================================================
 from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.indicators import (
+    BollingerBandsResult,
     CandlestickMatch,
     MACDResult,
     StochRSIResult,
     calculate_atr,
+    calculate_bollinger_bands,
     calculate_ema,
     calculate_macd,
     calculate_psar,
@@ -56,6 +58,7 @@ __all__ = [
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DECIMAL_ONE: Final[Decimal] = Decimal("1")
 _DEFAULT_MIN_CONFIDENCE: Final[Decimal] = Decimal("0.65")
+_BASE_CONFLUENCE_SCORE: Final[Decimal] = Decimal("0.65")
 _MAX_CONFIDENCE: Final[Decimal] = Decimal("0.95")
 _PULLBACK_PROXIMITY_PCT: Final[Decimal] = Decimal("0.006")  # 0.6% proximity to EMA21
 _HIGH_VOLUME_BONUS_MULTIPLIER: Final[Decimal] = Decimal("1.30")
@@ -178,6 +181,13 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     stoch_rsi_overbought: Decimal = Decimal("80.0")
     stoch_rsi_oversold: Decimal = Decimal("20.0")
 
+    # Dynamic Structural Target (Bollinger Bands & Resistance/Support Clearance)
+    use_structural_tp: bool = True
+    structural_tp_buffer_pct: Decimal = Decimal("0.002")
+    min_structural_rr: Decimal = Decimal("1.0")
+    bb_period: int = 20
+    bb_std_dev: Decimal = Decimal("2.0")
+
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
         if self.trend_period <= 0 or self.pullback_period <= 0:
@@ -265,6 +275,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             <= Decimal("100.0")
         ):
             raise ValueError("Stoch RSI thresholds must be bounded within [0, 100]")
+        if self.structural_tp_buffer_pct < _DECIMAL_ZERO:
+            raise ValueError("Structural TP buffer percentage must not be negative")
+        if self.min_structural_rr <= _DECIMAL_ZERO:
+            raise ValueError("Minimum structural RR must be positive")
+        if self.bb_period <= 0 or self.bb_std_dev <= _DECIMAL_ZERO:
+            raise ValueError("Bollinger Bands parameters must be positive")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -294,6 +310,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 + self.stoch_rsi_k_period
                 + self.stoch_rsi_d_period,
             )
+        if self.use_structural_tp:
+            min_candles = max(min_candles, self.bb_period + 2)
         if self.require_confirmation:
             min_candles += 1
         return min_candles
@@ -374,6 +392,14 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             )
             prev_stoch_d = (
                 stoch_rsi_result.d[-2] if len(stoch_rsi_result.d) >= 2 else curr_stoch_d
+            )
+
+        bb_result: BollingerBandsResult | None = None
+        if self.use_structural_tp and len(close_prices) >= self.bb_period:
+            bb_result = calculate_bollinger_bands(
+                close_prices,
+                period=self.bb_period,
+                standard_deviation=self.bb_std_dev,
             )
 
         if self.require_key_level_location:
@@ -641,23 +667,56 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     stop_loss = current_close - risk_dist
 
                 take_profit = current_close + (risk_dist * self.risk_reward_ratio)
+                reason_extra = ""
 
-                stoch_str = (
-                    f", StochK={curr_stoch_k:.1f}" if curr_stoch_k is not None else ""
-                )
-                macd_str = (
-                    f", MACD_h={curr_macd_hist:.4f}"
-                    if curr_macd_hist is not None
-                    else ""
-                )
-                mode_str = " (Confirmed)" if self.require_confirmation else ""
-                reason = (
-                    f"{pattern_label}{mode_str} bounce at key location "
-                    f"(EMA{self.pullback_period} or Swing Low) "
-                    f"in EMA{self.trend_period} uptrend "
-                    f"(RSI={current_rsi:.1f}{stoch_str}{macd_str}) | "
-                    f"SL: {stop_loss:.5f} | TP: {take_profit:.5f}"
-                )
+                if self.use_structural_tp and bb_result is not None:
+                    upper_bb = bb_result.upper[-1]
+                    if take_profit > upper_bb:
+                        trimmed_tp = upper_bb * (
+                            _DECIMAL_ONE - self.structural_tp_buffer_pct
+                        )
+                        eff_rr = (trimmed_tp - current_close) / risk_dist
+                        if eff_rr < self.min_structural_rr:
+                            signal_type = SignalType.HOLD
+                            confidence = _DECIMAL_ZERO
+                            stop_loss = None
+                            take_profit = None
+                            reason = (
+                                f"BUY setup rejected: Structural resistance "
+                                f"(Upper BB={upper_bb:.4f}) restricts TP "
+                                f"(trimmed RR={eff_rr:.2f} < "
+                                f"{self.min_structural_rr:.2f})"
+                            )
+                        else:
+                            take_profit = trimmed_tp
+                            reason_extra = (
+                                f" | Structural TP trimmed to {take_profit:.5f} "
+                                f"(RR: {eff_rr:.2f})"
+                            )
+                    else:
+                        reason_extra = ""
+                else:
+                    reason_extra = ""
+
+                if signal_type is not SignalType.HOLD:
+                    stoch_str = (
+                        f", StochK={curr_stoch_k:.1f}"
+                        if curr_stoch_k is not None
+                        else ""
+                    )
+                    macd_str = (
+                        f", MACD_h={curr_macd_hist:.4f}"
+                        if curr_macd_hist is not None
+                        else ""
+                    )
+                    mode_str = " (Confirmed)" if self.require_confirmation else ""
+                    reason = (
+                        f"{pattern_label}{mode_str} bounce at key location "
+                        f"(EMA{self.pullback_period} or Swing Low) "
+                        f"in EMA{self.trend_period} uptrend "
+                        f"(RSI={current_rsi:.1f}{stoch_str}{macd_str}) | "
+                        f"SL: {stop_loss:.5f} | TP: {take_profit:.5f}{reason_extra}"
+                    )
 
         # Check SELL (Short) Setup with Dual EMA Alignment
         trend_dist_short = (
@@ -805,7 +864,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 stop_loss = pattern_high + (self.atr_multiplier_sl * current_atr)
                 risk_dist = stop_loss - current_close
                 if risk_dist <= _DECIMAL_ZERO:
-                    stop_loss = current_close - (self.atr_multiplier_sl * current_atr)
+                    stop_loss = current_close + (self.atr_multiplier_sl * current_atr)
                     risk_dist = self.atr_multiplier_sl * current_atr
 
                 min_risk_dist = current_close * eff_min_sl_pct
@@ -814,23 +873,56 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     stop_loss = current_close + risk_dist
 
                 take_profit = current_close - (risk_dist * self.risk_reward_ratio)
+                reason_extra = ""
 
-                stoch_str = (
-                    f", StochK={curr_stoch_k:.1f}" if curr_stoch_k is not None else ""
-                )
-                macd_str = (
-                    f", MACD_h={curr_macd_hist:.4f}"
-                    if curr_macd_hist is not None
-                    else ""
-                )
-                mode_str = " (Confirmed)" if self.require_confirmation else ""
-                reason = (
-                    f"{pattern_label}{mode_str} rejection at key location "
-                    f"(EMA{self.pullback_period} or Swing High) "
-                    f"in EMA{self.trend_period} downtrend "
-                    f"(RSI={current_rsi:.1f}{stoch_str}{macd_str}) | "
-                    f"SL: {stop_loss:.5f} | TP: {take_profit:.5f}"
-                )
+                if self.use_structural_tp and bb_result is not None:
+                    lower_bb = bb_result.lower[-1]
+                    if take_profit < lower_bb:
+                        trimmed_tp = lower_bb * (
+                            _DECIMAL_ONE + self.structural_tp_buffer_pct
+                        )
+                        eff_rr = (current_close - trimmed_tp) / risk_dist
+                        if eff_rr < self.min_structural_rr:
+                            signal_type = SignalType.HOLD
+                            confidence = _DECIMAL_ZERO
+                            stop_loss = None
+                            take_profit = None
+                            reason = (
+                                f"SELL setup rejected: Structural support "
+                                f"(Lower BB={lower_bb:.4f}) restricts TP "
+                                f"(trimmed RR={eff_rr:.2f} < "
+                                f"{self.min_structural_rr:.2f})"
+                            )
+                        else:
+                            take_profit = trimmed_tp
+                            reason_extra = (
+                                f" | Structural TP trimmed to {take_profit:.5f} "
+                                f"(RR: {eff_rr:.2f})"
+                            )
+                    else:
+                        reason_extra = ""
+                else:
+                    reason_extra = ""
+
+                if signal_type is not SignalType.HOLD:
+                    stoch_str = (
+                        f", StochK={curr_stoch_k:.1f}"
+                        if curr_stoch_k is not None
+                        else ""
+                    )
+                    macd_str = (
+                        f", MACD_h={curr_macd_hist:.4f}"
+                        if curr_macd_hist is not None
+                        else ""
+                    )
+                    mode_str = " (Confirmed)" if self.require_confirmation else ""
+                    reason = (
+                        f"{pattern_label}{mode_str} rejection at key location "
+                        f"(EMA{self.pullback_period} or Swing High) "
+                        f"in EMA{self.trend_period} downtrend "
+                        f"(RSI={current_rsi:.1f}{stoch_str}{macd_str}) | "
+                        f"SL: {stop_loss:.5f} | TP: {take_profit:.5f}{reason_extra}"
+                    )
 
         signal = Signal(
             symbol=curr_candle.symbol,
@@ -840,8 +932,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             strategy_name=self.strategy_type.value,
             generated_at=curr_candle.close_time,
             reason=reason,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
+            stop_loss=stop_loss if signal_type is not SignalType.HOLD else None,
+            take_profit=take_profit if signal_type is not SignalType.HOLD else None,
         )
 
         if self.use_open_interest and signal_type is not SignalType.HOLD:
@@ -861,6 +953,21 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 min_short_ratio=self.min_short_account_ratio,
                 strict=self.require_account_ratio_confluence,
                 confirm_htf=self.confirm_htf_account_ratio,
+            )
+
+        if (
+            signal.signal_type is not SignalType.HOLD
+            and signal.confidence < self.min_confidence
+        ):
+            return replace(
+                signal,
+                signal_type=SignalType.HOLD,
+                confidence=signal.confidence,
+                reason=(
+                    f"[REJECTED_CONFIDENCE] Confidence {signal.confidence:.2f} below "
+                    f"minimum threshold {self.min_confidence:.2f} "
+                    f"(originally {signal.signal_type.value})"
+                ),
             )
 
         return signal
@@ -887,7 +994,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             combining candlestick geometry, momentum, and volume confirmations.
             It is NOT an empirical win rate probability.
         """
-        score = self.min_confidence
+        score = _BASE_CONFLUENCE_SCORE
 
         if pinbar_matched and pinbar_ratio >= _STRONG_WICK_BONUS_RATIO:
             score += _CONFIDENCE_STEP_BONUS

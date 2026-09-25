@@ -363,13 +363,16 @@ async def main() -> None:
         _LOGGER.info(
             "Configuration timeframe: global_market_interval=%s strategy=%s "
             "effective_strategy_interval=%s strategy_interval_source=%s "
-            "mtf_confirmation_enabled=%s mtf_timeframe=%s",
+            "mtf_confirmation_enabled=%s mtf_timeframe=%s "
+            "ltf_confirmation_enabled=%s ltf_timeframe=%s",
             settings.market.interval.value,
             settings.strategy.strategy_type.value,
             settings.effective_strategy_interval.value,
             settings.strategy_interval_source,
             settings.strategy.mtf_confirmation_enabled,
             settings.strategy.mtf_interval.value,
+            settings.strategy.ltf_confirmation_enabled,
+            settings.strategy.ltf_interval.value,
         )
         if settings.app.database_path.exists():
             boot_db = SQLiteDatabase(database_path=settings.app.database_path)

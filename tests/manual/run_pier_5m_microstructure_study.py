@@ -211,6 +211,17 @@ def simulate_trade_and_excursion(
 ) -> tuple[int, int, Decimal, Decimal, str]:
     """Forward-simulate trade to calculate alignment bars, MAE, MFE, and outcome.
 
+    Ambiguity Model:
+        Uses an explicit CONSERVATIVE ambiguity model: if a single 1m candle
+        simultaneously reaches both the stop_loss and take_profit levels, the outcome
+        is deterministically classified as a LOSS (pessimistic capital-preservation
+        assumption, not an exact intrabar tick replay).
+
+    Micro Alignment Definition:
+        Alignment metrics (bars_3m, bars_1m) evaluate single-candle directional
+        polarity (close >= open for BUY, close < open for SELL), not a full
+        multi-bar market-structure confirmation.
+
     Args:
         signal: Generated PIER signal.
         candles_1m_forward: 1m candles strictly occurring after signal_time.

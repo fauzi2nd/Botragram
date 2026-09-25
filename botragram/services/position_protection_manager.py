@@ -84,7 +84,9 @@ class PositionProtectionManager:
     stepped_stop_thresholds: tuple[Decimal, ...] = _PROGRESS_THRESHOLDS
     stepped_stop_locked_lag: Decimal = _LOCKED_PROGRESS_LAG
     breakeven_roi_threshold: Decimal = _BREAKEVEN_ROI_THRESHOLD
+    breakeven_progress_threshold: Decimal = Decimal("0.35")
     breakeven_fee_buffer: Decimal = _BREAKEVEN_FEE_BUFFER
+    min_order_notional_usdt: Decimal = Decimal("5.0")
     partial_tp_enabled: bool = False
     partial_tp_ratio: Decimal = Decimal("0.50")
     partial_tp_trigger_progress: Decimal = Decimal("0.50")
@@ -109,8 +111,16 @@ class PositionProtectionManager:
         if self.breakeven_roi_threshold <= 0:
             raise ValueError("Breakeven ROI threshold must be greater than zero")
 
+        if not (_DECIMAL_ZERO < self.breakeven_progress_threshold < Decimal("1")):
+            raise ValueError(
+                "Breakeven progress threshold must be between 0 and 1 exclusive"
+            )
+
         if self.breakeven_fee_buffer < 0:
             raise ValueError("Breakeven fee buffer must be non-negative")
+
+        if self.min_order_notional_usdt <= _DECIMAL_ZERO:
+            raise ValueError("min_order_notional_usdt must be positive")
 
         if not self.stepped_stop_thresholds:
             raise ValueError("Stepped stop thresholds cannot be empty")
@@ -167,8 +177,14 @@ class PositionProtectionManager:
                 current_price=ticker.last_price,
             )
 
+            current_notional = position.quantity * ticker.last_price
+            can_split_partial = current_notional >= (
+                self.min_order_notional_usdt * Decimal("2")
+            )
+
             if (
                 self.partial_tp_enabled
+                and can_split_partial
                 and not position.partial_tp_executed
                 and progress >= self.partial_tp_trigger_progress
             ):
@@ -194,6 +210,7 @@ class PositionProtectionManager:
                 progress=progress,
                 roi=roi,
                 breakeven_roi_threshold=self.breakeven_roi_threshold,
+                breakeven_progress_threshold=self.breakeven_progress_threshold,
                 thresholds=self.stepped_stop_thresholds,
             )
 
@@ -1324,6 +1341,7 @@ class PositionProtectionManager:
         progress: Decimal,
         roi: Decimal,
         breakeven_roi_threshold: Decimal = _BREAKEVEN_ROI_THRESHOLD,
+        breakeven_progress_threshold: Decimal | None = None,
         thresholds: tuple[Decimal, ...] = _PROGRESS_THRESHOLDS,
     ) -> int:
         """Return the highest crossed protection step number."""
@@ -1331,6 +1349,7 @@ class PositionProtectionManager:
             progress=progress,
             roi=roi,
             breakeven_roi_threshold=breakeven_roi_threshold,
+            breakeven_progress_threshold=breakeven_progress_threshold,
             thresholds=thresholds,
         )
 

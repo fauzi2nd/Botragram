@@ -2502,3 +2502,86 @@ async def test_long_partial_tp_at_step_2_or_higher_preserves_stepped_stop() -> N
     assert stored.pending_stop_loss_client_algo_id is None
     assert stored.pending_protection_step == 0
     assert exchange.stop_replacements == []
+
+
+@pytest.mark.asyncio
+async def test_position_protection_progress_based_breakeven() -> None:
+    """Trigger breakeven Step 1 via progress threshold independently of ROI."""
+    # Entry=100, TP=110, Price=102.50 -> Progress = 0.25 (< 0.30 profit step 2)
+    # With leverage=1, ROI is only 2.5% (below 30% breakeven_roi_threshold)
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("10"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        take_profit=Decimal("110"),
+        protection_step=0,
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = SteppedPriceFilterExchange(mark_price=Decimal("102.50"))
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.PAPER,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        breakeven_roi_threshold=Decimal("0.30"),
+        breakeven_progress_threshold=Decimal("0.25"),
+    )
+
+    await manager.on_market_tick(ticker=_ticker(price="102.50", seconds=1))
+
+    stored = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    assert stored.protection_step == 1
+    # Stop loss moved to breakeven + fee buffer (100 + 100 * 0.0016 = 100.16)
+    assert stored.stop_loss == Decimal("100.1600")
+
+
+@pytest.mark.asyncio
+async def test_position_protection_micro_notional_skips_partial_tp() -> None:
+    """Skip partial TP order splitting when notional < 2 * min_notional."""
+    # Entry=100, TP=110, Qty=0.08 -> Notional = 0.08 * 105 = 8.4 USDT
+    # With min_order_notional_usdt = 5.0, 2 * 5.0 = 10.0 USDT > 8.4 USDT
+    position = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("0.08"),
+        entry_price=Decimal("100"),
+        current_price=Decimal("100"),
+        unrealized_pnl=Decimal("0"),
+        leverage=5,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        take_profit=Decimal("110"),
+        protection_step=0,
+    )
+    repository = MemoryPositionRepository()
+    await repository.save(position=position)
+    exchange = SteppedPriceFilterExchange(mark_price=Decimal("106.00"))
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.PAPER,
+        position_repository=repository,
+        exchange_client=exchange,
+        position_refresh_seconds=0.001,
+        partial_tp_enabled=True,
+        partial_tp_ratio=Decimal("0.50"),
+        partial_tp_trigger_progress=Decimal("0.50"),
+        min_order_notional_usdt=Decimal("5.0"),
+    )
+
+    # Price=106 -> Progress = 0.60 >= 0.50 trigger, but notional < 10.0 USDT
+    await manager.on_market_tick(ticker=_ticker(price="106.00", seconds=1))
+
+    stored = await repository.get_by_symbol(symbol="BTCUSDT")
+    assert stored is not None
+    # Partial TP was skipped to protect micro-margin from fee bleeding/lot rejection
+    assert stored.partial_tp_executed is False
+    assert stored.quantity == Decimal("0.08")
+    # Stepped stop loss advances normally
+    assert stored.protection_step >= 1

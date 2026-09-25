@@ -414,6 +414,7 @@ class BacktestEngine:
                 progress=progress,
                 roi=roi,
                 breakeven_roi_threshold=self.risk_settings.breakeven_roi_threshold,
+                breakeven_progress_threshold=self.risk_settings.breakeven_progress_threshold,
                 thresholds=self.risk_settings.stepped_stop_thresholds,
             )
             if resolved_step > position.protection_step:

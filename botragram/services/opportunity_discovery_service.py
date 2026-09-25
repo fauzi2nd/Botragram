@@ -32,6 +32,7 @@ from botragram.enums import AssetClass, Interval, SignalType, StrategyType
 from botragram.indicators.trend import (
     MtfTrendResult,
     TrendDirection,
+    evaluate_ltf_micro_confirmation,
     evaluate_mtf_trend,
 )
 from botragram.models import Candle, DiscoveryScanReport, Signal
@@ -168,6 +169,10 @@ class OpportunityDiscoveryService:
     mtf_confirmation_enabled: bool = False
     mtf_interval: Interval = Interval.H1
     mtf_ema_period: int = 50
+    ltf_confirmation_enabled: bool = False
+    ltf_interval: Interval = Interval.M3
+    ltf_confirmation_mode: str = "direction"
+    ltf_ema_period: int = 9
     btc_trend_filter_enabled: bool = False
     btc_trend_interval: Interval = Interval.M15
     btc_trend_ema_period: int = 50
@@ -535,6 +540,58 @@ class OpportunityDiscoveryService:
                         trend_result.direction.value,
                         trend_result.current_close,
                         trend_result.ema_value,
+                    )
+                    continue
+
+            if self.ltf_confirmation_enabled:
+                ltf_limit = max(self.ltf_ema_period + 5, 10)
+                ltf_candles = await self.market_service.get_candles(
+                    symbol=symbol,
+                    interval=self.ltf_interval,
+                    limit=ltf_limit,
+                    persist=False,
+                    prefer_stored=True,
+                    as_of=as_of,
+                )
+                closed_ltf_candles = self._select_closed_candles(
+                    candles=ltf_candles,
+                    as_of=as_of,
+                    candle_limit=max(self.ltf_ema_period + 1, 5),
+                    require_strict_sequence=False,
+                )
+                ltf_result = evaluate_ltf_micro_confirmation(
+                    closed_ltf_candles,
+                    mode=self.ltf_confirmation_mode,
+                    ema_period=self.ltf_ema_period,
+                )
+                if (
+                    signal.signal_type is SignalType.BUY
+                    and not ltf_result.is_aligned_with_buy
+                ):
+                    _LOGGER.info(
+                        "LTF micro confirmation filter rejected BUY signal for %s: "
+                        "ltf=%s mode=%s close=%s open=%s ema=%s",
+                        symbol,
+                        self.ltf_interval.value,
+                        ltf_result.mode.value,
+                        ltf_result.latest_close,
+                        ltf_result.latest_open,
+                        ltf_result.ema_value,
+                    )
+                    continue
+                if (
+                    signal.signal_type is SignalType.SELL
+                    and not ltf_result.is_aligned_with_sell
+                ):
+                    _LOGGER.info(
+                        "LTF micro confirmation filter rejected SELL signal for %s: "
+                        "ltf=%s mode=%s close=%s open=%s ema=%s",
+                        symbol,
+                        self.ltf_interval.value,
+                        ltf_result.mode.value,
+                        ltf_result.latest_close,
+                        ltf_result.latest_open,
+                        ltf_result.ema_value,
                     )
                     continue
 

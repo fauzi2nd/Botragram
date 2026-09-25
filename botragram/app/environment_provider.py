@@ -49,6 +49,7 @@ from botragram.constants.env import (
     ENV_BOTRAGRAM_ENV_FILE,
     ENV_BOTRAGRAM_PROFILE,
     ENV_BREAKEVEN_FEE_BUFFER,
+    ENV_BREAKEVEN_PROGRESS_THRESHOLD,
     ENV_BREAKEVEN_ROI_THRESHOLD,
     ENV_BTC_TREND_EMA_PERIOD,
     ENV_BTC_TREND_FILTER_ENABLED,
@@ -79,6 +80,7 @@ from botragram.constants.env import (
     ENV_DYNAMIC_LEVERAGE_ENABLED,
     ENV_DYNAMIC_SIZING_ENABLED,
     ENV_EARLY_EXIT_CHECK_CANDLESTICK_REVERSAL,
+    ENV_EARLY_EXIT_CHECK_EXHAUSTION,
     ENV_EARLY_EXIT_CHECK_OPPOSITE_SIGNAL,
     ENV_EARLY_EXIT_MIN_CONFIDENCE,
     ENV_EMA_CROSS_STOP_LOSS_PCT,
@@ -100,6 +102,10 @@ from botragram.constants.env import (
     ENV_LOG_FILENAME,
     ENV_LOG_LEVEL,
     ENV_LOG_LEVEL_LEGACY,
+    ENV_LTF_CONFIRMATION_ENABLED,
+    ENV_LTF_CONFIRMATION_MODE,
+    ENV_LTF_EMA_PERIOD,
+    ENV_LTF_TIMEFRAME,
     ENV_MARGIN_MODE,
     ENV_MARKET_INTERVAL,
     ENV_MARKET_SYMBOL,
@@ -174,14 +180,62 @@ from botragram.constants.env import (
     ENV_PARTIAL_TP_ENABLED,
     ENV_PARTIAL_TP_RATIO,
     ENV_PARTIAL_TP_TRIGGER_PROGRESS,
+    ENV_PIER_ATR_PERIOD,
+    ENV_PIER_ATR_SL_MULTIPLIER,
+    ENV_PIER_BB_PERIOD,
+    ENV_PIER_BB_STD_DEV,
+    ENV_PIER_CONFIRM_HTF_ACCOUNT_RATIO,
+    ENV_PIER_ENGULFING_MIN_BODY_ATR,
+    ENV_PIER_FILTER_ACCOUNT_RATIO,
+    ENV_PIER_INCLUDE_STAR_PATTERNS,
+    ENV_PIER_LOCATION_ATR_MULTIPLIER,
+    ENV_PIER_LOCATION_TOLERANCE_PCT,
+    ENV_PIER_MACD_FAST_PERIOD,
+    ENV_PIER_MACD_SIGNAL_PERIOD,
+    ENV_PIER_MACD_SLOW_PERIOD,
+    ENV_PIER_MAX_LONG_ACCOUNT_RATIO,
+    ENV_PIER_MAX_OPPOSITE_WICK_RATIO,
+    ENV_PIER_MIN_CONFIDENCE,
+    ENV_PIER_MIN_ENGULFING_BODY_RATIO,
+    ENV_PIER_MIN_NATR_THRESHOLD,
+    ENV_PIER_MIN_OI_CHANGE_PCT,
+    ENV_PIER_MIN_SHORT_ACCOUNT_RATIO,
+    ENV_PIER_MIN_SL_DISTANCE_PCT,
+    ENV_PIER_MIN_STRUCTURAL_RR,
+    ENV_PIER_MIN_WICK_RATIO,
+    ENV_PIER_OI_CONFIDENCE_BONUS,
+    ENV_PIER_PINBAR_MIN_RANGE_ATR,
+    ENV_PIER_PULLBACK_ATR_MULTIPLIER,
+    ENV_PIER_PULLBACK_PERIOD,
+    ENV_PIER_PULLBACK_PROXIMITY_PCT,
+    ENV_PIER_REQUIRE_ACCOUNT_RATIO_CONFLUENCE,
+    ENV_PIER_REQUIRE_CONFIRMATION,
+    ENV_PIER_REQUIRE_KEY_LEVEL_LOCATION,
+    ENV_PIER_REQUIRE_OI_CONFLUENCE,
+    ENV_PIER_REQUIRE_TREND_FILTER,
+    ENV_PIER_RISK_REWARD_RATIO,
     ENV_PIER_RSI_LONG_MAX,
     ENV_PIER_RSI_LONG_MIN,
+    ENV_PIER_RSI_PERIOD,
     ENV_PIER_RSI_SHORT_MAX,
     ENV_PIER_RSI_SHORT_MIN,
+    ENV_PIER_STOCH_RSI_D_PERIOD,
+    ENV_PIER_STOCH_RSI_K_PERIOD,
+    ENV_PIER_STOCH_RSI_OVERBOUGHT,
+    ENV_PIER_STOCH_RSI_OVERSOLD,
+    ENV_PIER_STOCH_RSI_PERIOD,
     ENV_PIER_STOP_LOSS_PCT,
+    ENV_PIER_STRUCTURAL_TP_BUFFER_PCT,
+    ENV_PIER_SWING_LOOKBACK,
     ENV_PIER_TAKE_PROFIT_PCT,
+    ENV_PIER_TREND_PERIOD,
     ENV_PIER_USE_MACD,
+    ENV_PIER_USE_OPEN_INTEREST,
+    ENV_PIER_USE_PARABOLIC_SAR,
     ENV_PIER_USE_STOCH_RSI,
+    ENV_PIER_USE_STRUCTURAL_TP,
+    ENV_PIER_VOLUME_MULTIPLIER,
+    ENV_PIER_VOLUME_PERIOD,
     ENV_QUOTE_ASSET,
     ENV_REQUIRE_ACCOUNT_RATIO_CONFLUENCE,
     ENV_REQUIRE_FUNDING_SENTIMENT,
@@ -608,6 +662,22 @@ class EnvironmentProvider:
         """Return the lookback period for MTF trend EMA."""
         return self._get_var(ENV_MTF_EMA_PERIOD, default="50")
 
+    def get_ltf_confirmation_enabled(self) -> bool:
+        """Return whether low-timeframe micro-confirmation is enabled."""
+        return self._get_bool(ENV_LTF_CONFIRMATION_ENABLED, default=False)
+
+    def get_ltf_interval(self) -> str:
+        """Return the micro timeframe for LTF confirmation."""
+        return self._get_var(ENV_LTF_TIMEFRAME, default="3m")
+
+    def get_ltf_confirmation_mode(self) -> str:
+        """Return the evaluation mode for LTF micro-confirmation."""
+        return self._get_var(ENV_LTF_CONFIRMATION_MODE, default="direction")
+
+    def get_ltf_ema_period(self) -> str:
+        """Return the lookback period for LTF trend EMA."""
+        return self._get_var(ENV_LTF_EMA_PERIOD, default="9")
+
     def get_btc_trend_filter_enabled(self) -> bool:
         """Return whether BTC benchmark trend filter is enabled."""
         return self._get_bool(ENV_BTC_TREND_FILTER_ENABLED, default=True)
@@ -704,6 +774,10 @@ class EnvironmentProvider:
         """Return the minimum ROI threshold to arm breakeven protection."""
         return self._get_var(ENV_BREAKEVEN_ROI_THRESHOLD, default="0.30")
 
+    def get_breakeven_progress_threshold(self) -> str:
+        """Return the minimum TP progress threshold to arm breakeven protection."""
+        return self._get_var(ENV_BREAKEVEN_PROGRESS_THRESHOLD, default="0.35")
+
     def get_breakeven_fee_buffer(self) -> str:
         """Return the fee buffer fraction added to entry price at breakeven."""
         return self._get_var(ENV_BREAKEVEN_FEE_BUFFER, default="0.0016")
@@ -749,6 +823,10 @@ class EnvironmentProvider:
     def get_early_exit_check_opposite_signal(self) -> bool:
         """Return whether confirmed opposite signals trigger early exit."""
         return self._get_bool(ENV_EARLY_EXIT_CHECK_OPPOSITE_SIGNAL, default=True)
+
+    def get_early_exit_check_exhaustion(self) -> bool:
+        """Return whether multi-indicator exhaustion confluence triggers early exit."""
+        return self._get_bool(ENV_EARLY_EXIT_CHECK_EXHAUSTION, default=True)
 
     def get_volatility_sizing_enabled(self) -> bool:
         """Return whether volatility-adjusted sizing is enabled."""
@@ -888,6 +966,18 @@ class EnvironmentProvider:
         """Return the PIER price action take-profit ratio."""
         return self._get_var(ENV_PIER_TAKE_PROFIT_PCT, default="0.024")
 
+    def get_pier_trend_period(self) -> str:
+        """Return the PIER macro trend EMA period."""
+        return self._get_var(ENV_PIER_TREND_PERIOD, default="")
+
+    def get_pier_pullback_period(self) -> str:
+        """Return the PIER dynamic pullback EMA period."""
+        return self._get_var(ENV_PIER_PULLBACK_PERIOD, default="")
+
+    def get_pier_rsi_period(self) -> str:
+        """Return the PIER RSI period."""
+        return self._get_var(ENV_PIER_RSI_PERIOD, default="")
+
     def get_pier_rsi_long_min(self) -> str:
         """Return the lower bound of PIER long RSI pullback zone."""
         return self._get_var(ENV_PIER_RSI_LONG_MIN, default="38.0")
@@ -904,13 +994,196 @@ class EnvironmentProvider:
         """Return the upper bound of PIER short RSI pullback zone."""
         return self._get_var(ENV_PIER_RSI_SHORT_MAX, default="62.0")
 
+    def get_pier_volume_period(self) -> str:
+        """Return the PIER volume SMA period."""
+        return self._get_var(ENV_PIER_VOLUME_PERIOD, default="")
+
+    def get_pier_volume_multiplier(self) -> str:
+        """Return the PIER volume confirmation threshold multiplier."""
+        return self._get_var(ENV_PIER_VOLUME_MULTIPLIER, default="")
+
+    def get_pier_min_wick_ratio(self) -> str:
+        """Return the PIER minimum pinbar rejection wick ratio."""
+        return self._get_var(ENV_PIER_MIN_WICK_RATIO, default="")
+
+    def get_pier_max_opposite_wick_ratio(self) -> str:
+        """Return the PIER maximum opposite wick ratio."""
+        return self._get_var(ENV_PIER_MAX_OPPOSITE_WICK_RATIO, default="")
+
+    def get_pier_min_engulfing_body_ratio(self) -> str:
+        """Return the PIER minimum engulfing body ratio."""
+        return self._get_var(ENV_PIER_MIN_ENGULFING_BODY_RATIO, default="")
+
+    def get_pier_atr_period(self) -> str:
+        """Return the PIER ATR calculation period."""
+        return self._get_var(ENV_PIER_ATR_PERIOD, default="")
+
+    def get_pier_atr_sl_multiplier(self) -> str:
+        """Return the PIER ATR multiplier for structural stop-loss."""
+        return self._get_var(ENV_PIER_ATR_SL_MULTIPLIER, default="")
+
+    def get_pier_risk_reward_ratio(self) -> str:
+        """Return the configured Risk-Reward Ratio for PIER strategy."""
+        return self._get_var(ENV_PIER_RISK_REWARD_RATIO, default="")
+
+    def get_pier_min_confidence(self) -> str:
+        """Return the PIER minimum acceptance confidence threshold."""
+        return self._get_var(ENV_PIER_MIN_CONFIDENCE, default="")
+
+    def get_pier_use_open_interest(self) -> bool:
+        """Return whether PIER uses open interest confluence filter."""
+        return self._get_bool(ENV_PIER_USE_OPEN_INTEREST, default=True)
+
+    def get_pier_min_oi_change_pct(self) -> str:
+        """Return the PIER minimum open interest change percentage."""
+        return self._get_var(ENV_PIER_MIN_OI_CHANGE_PCT, default="")
+
+    def get_pier_oi_confidence_bonus(self) -> str:
+        """Return the PIER open interest confidence bonus."""
+        return self._get_var(ENV_PIER_OI_CONFIDENCE_BONUS, default="")
+
+    def get_pier_require_oi_confluence(self) -> bool:
+        """Return whether PIER strictly requires open interest confluence."""
+        return self._get_bool(ENV_PIER_REQUIRE_OI_CONFLUENCE, default=False)
+
+    def get_pier_require_key_level_location(self) -> bool:
+        """Return whether PIER requires key level location confirmation."""
+        return self._get_bool(ENV_PIER_REQUIRE_KEY_LEVEL_LOCATION, default=True)
+
+    def get_pier_swing_lookback(self) -> str:
+        """Return the PIER swing high/low lookback period."""
+        return self._get_var(ENV_PIER_SWING_LOOKBACK, default="")
+
+    def get_pier_require_trend_filter(self) -> bool:
+        """Return whether PIER requires dual EMA trend alignment."""
+        return self._get_bool(ENV_PIER_REQUIRE_TREND_FILTER, default=True)
+
+    def get_pier_min_natr_threshold(self) -> str:
+        """Return the PIER minimum NATR threshold for dead market filtering."""
+        return self._get_var(ENV_PIER_MIN_NATR_THRESHOLD, default="")
+
+    def get_pier_min_sl_distance_pct(self) -> str:
+        """Return the PIER minimum stop loss distance ratio."""
+        return self._get_var(ENV_PIER_MIN_SL_DISTANCE_PCT, default="")
+
+    def get_pier_location_tolerance_pct(self) -> str:
+        """Return the PIER location tolerance percentage."""
+        return self._get_var(ENV_PIER_LOCATION_TOLERANCE_PCT, default="")
+
+    def get_pier_location_atr_multiplier(self) -> str:
+        """Return the optional PIER location ATR multiplier."""
+        return self._get_var(ENV_PIER_LOCATION_ATR_MULTIPLIER, default="")
+
+    def get_pier_pullback_proximity_pct(self) -> str:
+        """Return the PIER pullback proximity percentage."""
+        return self._get_var(ENV_PIER_PULLBACK_PROXIMITY_PCT, default="")
+
+    def get_pier_pullback_atr_multiplier(self) -> str:
+        """Return the optional PIER pullback ATR multiplier."""
+        return self._get_var(ENV_PIER_PULLBACK_ATR_MULTIPLIER, default="")
+
+    def get_pier_pinbar_min_range_atr(self) -> str:
+        """Return the optional PIER pinbar minimum range in ATR."""
+        return self._get_var(ENV_PIER_PINBAR_MIN_RANGE_ATR, default="")
+
+    def get_pier_engulfing_min_body_atr(self) -> str:
+        """Return the optional PIER engulfing minimum body in ATR."""
+        return self._get_var(ENV_PIER_ENGULFING_MIN_BODY_ATR, default="")
+
+    def get_pier_require_confirmation(self) -> bool:
+        """Return whether PIER requires breakout candle confirmation."""
+        return self._get_bool(ENV_PIER_REQUIRE_CONFIRMATION, default=False)
+
+    def get_pier_filter_account_ratio(self) -> bool:
+        """Return whether PIER filters by account long-short ratio."""
+        return self._get_bool(ENV_PIER_FILTER_ACCOUNT_RATIO, default=True)
+
+    def get_pier_max_long_account_ratio(self) -> str:
+        """Return the PIER maximum long account ratio."""
+        return self._get_var(ENV_PIER_MAX_LONG_ACCOUNT_RATIO, default="")
+
+    def get_pier_min_short_account_ratio(self) -> str:
+        """Return the PIER minimum short account ratio."""
+        return self._get_var(ENV_PIER_MIN_SHORT_ACCOUNT_RATIO, default="")
+
+    def get_pier_require_account_ratio_confluence(self) -> bool:
+        """Return whether PIER strictly requires account ratio confluence."""
+        return self._get_bool(
+            ENV_PIER_REQUIRE_ACCOUNT_RATIO_CONFLUENCE,
+            default=False,
+        )
+
+    def get_pier_confirm_htf_account_ratio(self) -> bool:
+        """Return whether PIER confirms with HTF account ratio."""
+        return self._get_bool(ENV_PIER_CONFIRM_HTF_ACCOUNT_RATIO, default=False)
+
+    def get_pier_include_star_patterns(self) -> bool:
+        """Return whether PIER detects Morning/Evening Star patterns."""
+        return self._get_bool(ENV_PIER_INCLUDE_STAR_PATTERNS, default=True)
+
+    def get_pier_use_parabolic_sar(self) -> bool:
+        """Return whether PIER uses Parabolic SAR directional filter."""
+        return self._get_bool(ENV_PIER_USE_PARABOLIC_SAR, default=True)
+
     def get_pier_use_macd(self) -> bool:
         """Return whether PIER uses MACD momentum direction guard."""
         return self._get_bool(ENV_PIER_USE_MACD, default=True)
 
+    def get_pier_macd_fast_period(self) -> str:
+        """Return the PIER MACD fast period."""
+        return self._get_var(ENV_PIER_MACD_FAST_PERIOD, default="")
+
+    def get_pier_macd_slow_period(self) -> str:
+        """Return the PIER MACD slow period."""
+        return self._get_var(ENV_PIER_MACD_SLOW_PERIOD, default="")
+
+    def get_pier_macd_signal_period(self) -> str:
+        """Return the PIER MACD signal period."""
+        return self._get_var(ENV_PIER_MACD_SIGNAL_PERIOD, default="")
+
     def get_pier_use_stoch_rsi(self) -> bool:
         """Return whether PIER uses Stochastic RSI timing guard."""
         return self._get_bool(ENV_PIER_USE_STOCH_RSI, default=True)
+
+    def get_pier_stoch_rsi_period(self) -> str:
+        """Return the PIER Stochastic RSI period."""
+        return self._get_var(ENV_PIER_STOCH_RSI_PERIOD, default="")
+
+    def get_pier_stoch_rsi_k_period(self) -> str:
+        """Return the PIER Stochastic RSI %K smoothing period."""
+        return self._get_var(ENV_PIER_STOCH_RSI_K_PERIOD, default="")
+
+    def get_pier_stoch_rsi_d_period(self) -> str:
+        """Return the PIER Stochastic RSI %D smoothing period."""
+        return self._get_var(ENV_PIER_STOCH_RSI_D_PERIOD, default="")
+
+    def get_pier_stoch_rsi_overbought(self) -> str:
+        """Return the PIER Stochastic RSI overbought threshold."""
+        return self._get_var(ENV_PIER_STOCH_RSI_OVERBOUGHT, default="")
+
+    def get_pier_stoch_rsi_oversold(self) -> str:
+        """Return the PIER Stochastic RSI oversold threshold."""
+        return self._get_var(ENV_PIER_STOCH_RSI_OVERSOLD, default="")
+
+    def get_pier_use_structural_tp(self) -> bool:
+        """Return whether PIER uses dynamic structural target trimming."""
+        return self._get_bool(ENV_PIER_USE_STRUCTURAL_TP, default=True)
+
+    def get_pier_structural_tp_buffer_pct(self) -> str:
+        """Return the buffer fraction subtracted from structural barrier."""
+        return self._get_var(ENV_PIER_STRUCTURAL_TP_BUFFER_PCT, default="0.002")
+
+    def get_pier_min_structural_rr(self) -> str:
+        """Return the minimum acceptable reward-to-risk ratio after trimming."""
+        return self._get_var(ENV_PIER_MIN_STRUCTURAL_RR, default="1.0")
+
+    def get_pier_bb_period(self) -> str:
+        """Return the Bollinger Bands period for structural target calculation."""
+        return self._get_var(ENV_PIER_BB_PERIOD, default="")
+
+    def get_pier_bb_std_dev(self) -> str:
+        """Return the Bollinger Bands std dev for structural target calculation."""
+        return self._get_var(ENV_PIER_BB_STD_DEV, default="")
 
     def get_ny_range_risk_reward_ratio(self) -> str:
         """Return the configured Risk-Reward Ratio for NY 4H range scalping."""

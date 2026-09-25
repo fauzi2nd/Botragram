@@ -366,6 +366,7 @@ async def test_bitget_cfd_ensure_stop_new_stop_first_and_cancel_failure() -> Non
             stop_loss=Decimal("2600"),
             client_algo_id="cfd_stop_new",
             previous_client_algo_id="cfd_stop_old",
+            bypass_calendar_guard=True,
         )
 
     place_calls = [

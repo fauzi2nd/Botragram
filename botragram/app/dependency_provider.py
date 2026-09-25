@@ -1282,6 +1282,7 @@ class DependencyProvider:
             check_opposite_signal=(
                 self._settings.risk.early_exit_check_opposite_signal
             ),
+            check_exhaustion=self._settings.risk.early_exit_check_exhaustion,
         )
 
     def _select_runtime_strategy(self, strategy_type: StrategyType) -> None:
@@ -1379,6 +1380,10 @@ class DependencyProvider:
             mtf_confirmation_enabled=self._settings.strategy.mtf_confirmation_enabled,
             mtf_interval=self._settings.strategy.mtf_interval,
             mtf_ema_period=self._settings.strategy.mtf_ema_period,
+            ltf_confirmation_enabled=self._settings.strategy.ltf_confirmation_enabled,
+            ltf_interval=self._settings.strategy.ltf_interval,
+            ltf_confirmation_mode=self._settings.strategy.ltf_confirmation_mode,
+            ltf_ema_period=self._settings.strategy.ltf_ema_period,
             btc_trend_filter_enabled=(self._settings.strategy.btc_trend_filter_enabled),
             btc_trend_interval=self._settings.strategy.btc_trend_interval,
             btc_trend_ema_period=self._settings.strategy.btc_trend_ema_period,
@@ -1758,7 +1763,9 @@ class DependencyProvider:
             stepped_stop_thresholds=self._settings.risk.stepped_stop_thresholds,
             stepped_stop_locked_lag=self._settings.risk.stepped_stop_locked_lag,
             breakeven_roi_threshold=self._settings.risk.breakeven_roi_threshold,
+            breakeven_progress_threshold=self._settings.risk.breakeven_progress_threshold,
             breakeven_fee_buffer=self._settings.risk.breakeven_fee_buffer,
+            min_order_notional_usdt=self._settings.risk.min_order_notional_usdt,
             partial_tp_enabled=self._settings.risk.partial_tp_enabled,
             partial_tp_ratio=self._settings.risk.partial_tp_ratio,
             partial_tp_trigger_progress=self._settings.risk.partial_tp_trigger_progress,

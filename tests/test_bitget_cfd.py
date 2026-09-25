@@ -1173,6 +1173,7 @@ async def test_cfd_client_create_combined_protection_orders() -> None:
         take_profit=Decimal("2710.00"),
         stop_loss_client_algo_id="bsl-123",
         take_profit_client_algo_id="btp-456",
+        bypass_calendar_guard=True,
     )
     assert len(orders) == 2
     assert rest.last_path == "/api/v3/cfd/trade/place-strategy-order"

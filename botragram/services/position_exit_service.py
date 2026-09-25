@@ -224,9 +224,18 @@ class PositionExitService:
 
             decisions.append(decision)
 
-            if decision.action is PositionExitAction.EARLY_CUT_LOSS:
+            if decision.action in (
+                PositionExitAction.EARLY_CUT_LOSS,
+                PositionExitAction.EARLY_TAKE_PROFIT,
+            ):
+                action_name = (
+                    "Early Take Profit"
+                    if decision.action is PositionExitAction.EARLY_TAKE_PROFIT
+                    else "Early Cut Loss"
+                )
                 _LOGGER.warning(
-                    "Early Cut Loss triggered for %s %s: reason=%s (confidence=%.2f)",
+                    "%s triggered for %s %s: reason=%s (confidence=%.2f)",
+                    action_name,
                     position.symbol,
                     position.side.value,
                     decision.reason,
@@ -359,23 +368,38 @@ class PositionExitService:
             return
 
         exit_price = decision.trigger_price or position.current_price
+        is_take_profit = decision.action is PositionExitAction.EARLY_TAKE_PROFIT
+        header = (
+            "💰 EARLY TAKE PROFIT EXECUTED"
+            if is_take_profit
+            else "🚨 EARLY CUT LOSS EXECUTED"
+        )
+        footer = (
+            "<i>Position closed early on multi-indicator exhaustion to lock in "
+            "profit before reversal.</i>"
+            if is_take_profit
+            else "<i>Position closed early on candle close to prevent full Stop "
+            "Loss hit.</i>"
+        )
+        level = NotificationType.INFO if is_take_profit else NotificationType.WARNING
+        title_prefix = "Early Take Profit" if is_take_profit else "Early Cut Loss"
+
         message = (
-            f"<b>🚨 EARLY CUT LOSS EXECUTED</b>\n\n"
+            f"<b>{header}</b>\n\n"
             f"<b>Symbol:</b> <code>{position.symbol}</code>\n"
             f"<b>Side:</b> {position.side.value.upper()}\n"
             f"<b>Entry Price:</b> {position.entry_price}\n"
             f"<b>Exit Price:</b> {exit_price}\n"
             f"<b>Floating PnL:</b> {position.unrealized_pnl} USDT\n"
             f"<b>Reason:</b> {decision.reason}\n\n"
-            f"<i>Position closed early on candle close to prevent "
-            f"full Stop Loss hit.</i>"
+            f"{footer}"
         )
         try:
             await self.notification_publisher.publish(
                 notification=Notification(
-                    title=f"Early Cut Loss: {position.symbol}",
+                    title=f"{title_prefix}: {position.symbol}",
                     message=message,
-                    level=NotificationType.WARNING,
+                    level=level,
                     created_at=datetime.now(timezone.utc),
                 )
             )

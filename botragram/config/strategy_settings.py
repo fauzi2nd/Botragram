@@ -47,6 +47,10 @@ class StrategySettings:
     mtf_confirmation_enabled: bool = False
     mtf_interval: Interval = Interval.H1
     mtf_ema_period: int = 50
+    ltf_confirmation_enabled: bool = False
+    ltf_interval: Interval = Interval.M3
+    ltf_confirmation_mode: str = "direction"
+    ltf_ema_period: int = 9
     btc_trend_filter_enabled: bool = True
     btc_trend_interval: Interval = Interval.M15
     btc_trend_ema_period: int = 50
@@ -315,6 +319,11 @@ class StrategySettings:
     pier_stoch_rsi_d_period: int = 3
     pier_stoch_rsi_overbought: Decimal = Decimal("80.0")
     pier_stoch_rsi_oversold: Decimal = Decimal("20.0")
+    pier_use_structural_tp: bool = True
+    pier_structural_tp_buffer_pct: Decimal = Decimal("0.002")
+    pier_min_structural_rr: Decimal = Decimal("1.0")
+    pier_bb_period: int = 20
+    pier_bb_std_dev: Decimal = Decimal("2.0")
 
     # =========================================================================
     # Market Orderflow Regime & Price-Hunt (MORPH)
@@ -672,6 +681,12 @@ class StrategySettings:
             <= Decimal("100")
         ):
             raise ValueError("PIER Stoch RSI thresholds must be in [0, 100]")
+        if self.pier_structural_tp_buffer_pct < Decimal("0"):
+            raise ValueError("pier_structural_tp_buffer_pct must not be negative")
+        if self.pier_min_structural_rr <= Decimal("0"):
+            raise ValueError("pier_min_structural_rr must be positive")
+        if self.pier_bb_period <= 0 or self.pier_bb_std_dev <= Decimal("0"):
+            raise ValueError("PIER Bollinger Bands parameters must be positive")
         if self.morph_swing_lookback <= 2 or self.morph_fvg_lookback <= 2:
             raise ValueError("MORPH swing and FVG lookback must be greater than 2")
         if self.morph_volume_period <= 2 or self.morph_volume_multiplier <= Decimal(

@@ -83,6 +83,7 @@ class RiskSettings:
     )
     stepped_stop_locked_lag: Decimal = Decimal("0.20")
     breakeven_roi_threshold: Decimal = Decimal("0.30")
+    breakeven_progress_threshold: Decimal = Decimal("0.35")
     breakeven_fee_buffer: Decimal = Decimal("0.0016")
 
     # Partial Take Profit
@@ -95,6 +96,7 @@ class RiskSettings:
     early_exit_min_confidence: float = 0.75
     early_exit_check_candlestick_reversal: bool = True
     early_exit_check_opposite_signal: bool = True
+    early_exit_check_exhaustion: bool = True
 
     # Volatility Sizing
     volatility_sizing_enabled: bool = False
@@ -188,6 +190,13 @@ class RiskSettings:
             or self.breakeven_roi_threshold <= Decimal("0")
         ):
             raise ValueError("breakeven_roi_threshold must be positive and finite")
+
+        if not self.breakeven_progress_threshold.is_finite() or not (
+            Decimal("0") < self.breakeven_progress_threshold < Decimal("1")
+        ):
+            raise ValueError(
+                "breakeven_progress_threshold must be strictly between 0 and 1"
+            )
 
         if (
             not self.breakeven_fee_buffer.is_finite()
