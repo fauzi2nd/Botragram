@@ -286,13 +286,16 @@ class StrategySettings:
     pier_atr_sl_multiplier: Decimal = Decimal("0.5")
     pier_risk_reward_ratio: Decimal = Decimal("2.0")
     pier_min_confidence: Decimal = Decimal("0.65")
-    pier_use_open_interest: bool = True
-    pier_min_oi_change_pct: Decimal = Decimal("0.0")
-    pier_oi_confidence_bonus: Decimal = Decimal("0.05")
-    pier_require_oi_confluence: bool = False
     pier_require_key_level_location: bool = True
     pier_swing_lookback: int = 15
     pier_require_trend_filter: bool = True
+    pier_require_htf_extreme_zone: bool = True
+    pier_htf_extreme_buffer_atr: Decimal = Decimal("0.20")
+    pier_strict_ema_side_rejection: bool = True
+    pier_stalking_enabled: bool = True
+    pier_stalking_max_bars: int = 7
+    pier_stalking_max_candidates: int = 5
+    pier_stalking_retest_ratio: Decimal = Decimal("0.50")
     pier_min_natr_threshold: Decimal = Decimal("0.0020")
     pier_min_sl_distance_pct: Decimal = Decimal("0.0080")
     pier_location_tolerance_pct: Decimal = Decimal("0.030")
@@ -302,11 +305,6 @@ class StrategySettings:
     pier_pinbar_min_range_atr: Decimal | None = None
     pier_engulfing_min_body_atr: Decimal | None = None
     pier_require_confirmation: bool = False
-    pier_filter_account_ratio: bool = True
-    pier_max_long_account_ratio: Decimal = Decimal("0.70")
-    pier_min_short_account_ratio: Decimal = Decimal("0.30")
-    pier_require_account_ratio_confluence: bool = False
-    pier_confirm_htf_account_ratio: bool = False
     pier_include_star_patterns: bool = True
     pier_use_parabolic_sar: bool = True
     pier_use_macd: bool = True
@@ -327,7 +325,6 @@ class StrategySettings:
     pier_use_htf_structural_tp: bool = True
     pier_htf_bb_period: int = 20
     pier_htf_bb_std_dev: Decimal = Decimal("2.0")
-    pier_htf_interval: Interval | None = None
 
     # =========================================================================
     # Market Orderflow Regime & Price-Hunt (MORPH)
@@ -634,10 +631,14 @@ class StrategySettings:
             raise ValueError("PIER minimum confidence must be between 0.0 and 1.0")
         if self.min_oi_change_pct < Decimal("0.0"):
             raise ValueError("Minimum OI change percentage must be non-negative")
-        if self.pier_min_oi_change_pct < Decimal("0.0"):
-            raise ValueError("PIER minimum OI change percentage must be non-negative")
-        if self.pier_oi_confidence_bonus < Decimal("0.0"):
-            raise ValueError("PIER OI confidence bonus must be non-negative")
+        if self.pier_htf_extreme_buffer_atr < Decimal("0.0"):
+            raise ValueError("PIER HTF extreme buffer ATR must be non-negative")
+        if self.pier_stalking_max_bars <= 0:
+            raise ValueError("PIER stalking max bars must be positive")
+        if self.pier_stalking_max_candidates <= 0:
+            raise ValueError("PIER stalking max candidates must be positive")
+        if not (Decimal("0.0") <= self.pier_stalking_retest_ratio <= Decimal("1.0")):
+            raise ValueError("PIER stalking retest ratio must be between 0.0 and 1.0")
         if self.pier_min_natr_threshold < Decimal("0"):
             raise ValueError("pier_min_natr_threshold must not be negative")
         if self.pier_min_sl_distance_pct < Decimal("0"):
@@ -720,10 +721,6 @@ class StrategySettings:
         if self.min_short_account_ratio > self.max_long_account_ratio:
             raise ValueError(
                 "min_short_account_ratio cannot exceed max_long_account_ratio"
-            )
-        if self.pier_min_short_account_ratio > self.pier_max_long_account_ratio:
-            raise ValueError(
-                "pier_min_short_account_ratio cannot exceed pier_max_long_account_ratio"
             )
         if self.discovery_volume_sma_period <= 0:
             raise ValueError("discovery_volume_sma_period must be positive")

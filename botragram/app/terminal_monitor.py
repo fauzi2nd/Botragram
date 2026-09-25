@@ -51,6 +51,7 @@ from botragram.enums import (
     LiveMarketStreamLifecycleStatus,
     LiveRuntimeHealthStatus,
     PositionSide,
+    StalkingStatus,
     StrategyType,
     TradeMode,
 )
@@ -61,6 +62,7 @@ from botragram.models import (
     LiveRuntimePositionContext,
     Position,
     RuntimeRiskLimits,
+    StalkingSetup,
 )
 from botragram.services.live_futures_user_data_cache import (
     LiveFuturesUserDataSnapshot,
@@ -73,6 +75,7 @@ from botragram.services.paper_trading_service import PaperPortfolioSnapshot
 __all__ = [
     "DashboardLogEntry",
     "DashboardLogHandler",
+    "StalkingSetupProvider",
     "TerminalMonitor",
     "TerminalStatus",
 ]
@@ -166,6 +169,14 @@ class RuntimeRiskLimitSnapshotProvider(Protocol):
         ...
 
 
+class StalkingSetupProvider(Protocol):
+    """Protocol for reading active and candidate stalking setups."""
+
+    def get_active_stalking_setups(self) -> tuple[StalkingSetup, ...]:
+        """Return active or recently completed stalking setups."""
+        ...
+
+
 type TerminalOutput = Callable[[str], None]
 
 
@@ -191,6 +202,7 @@ class TerminalStatus:
     autonomous_live_recovery: AutonomousLiveRecoverySnapshot | None = None
     global_discovery: GlobalDiscoverySnapshot | None = None
     live_futures_user_data: LiveFuturesUserDataSnapshot | None = None
+    stalking_setups: tuple[StalkingSetup, ...] = ()
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -269,6 +281,7 @@ class TerminalMonitor:
     global_discovery_telemetry_provider: GlobalDiscoveryTelemetryProvider | None = None
     live_futures_user_data_service: LiveFuturesUserDataSnapshotProvider | None = None
     runtime_risk_limit_provider: RuntimeRiskLimitSnapshotProvider | None = None
+    stalking_setup_provider: StalkingSetupProvider | None = None
     max_open_positions: int | None = None
     console: Console = field(default_factory=Console)
     log_handler: DashboardLogHandler = field(default_factory=DashboardLogHandler)
@@ -410,6 +423,15 @@ class TerminalMonitor:
             sample_time=sample_time,
         )
 
+        stalking_setups: tuple[StalkingSetup, ...] = ()
+        if self.stalking_setup_provider is not None:
+            try:
+                stalking_setups = (
+                    self.stalking_setup_provider.get_active_stalking_setups()
+                )
+            except Exception:
+                _LOGGER.debug("Failed to collect stalking setups", exc_info=True)
+
         return TerminalStatus(
             observed_at=datetime.now(UTC),
             balance=balance,
@@ -435,6 +457,7 @@ class TerminalMonitor:
             autonomous_live_recovery=autonomous_live_recovery,
             global_discovery=global_discovery,
             live_futures_user_data=live_futures_user_data,
+            stalking_setups=stalking_setups,
         )
 
     @staticmethod
@@ -473,11 +496,17 @@ class TerminalMonitor:
 
     def render_dashboard(self, status: TerminalStatus) -> Layout:
         """Build a full-width managed-position dashboard for one snapshot."""
+        stalking_height = self._stalking_panel_height(status)
         managed_height = self._managed_positions_height(status)
         summary_height = 17 if status.global_discovery is not None else 15
         layout = Layout(name="root")
         layout.split_column(
             Layout(name="summary", size=summary_height),
+            Layout(
+                self._build_stalking_panel(status),
+                name="active_stalking",
+                size=stalking_height,
+            ),
             Layout(
                 self._build_stream_panel(status),
                 name="managed_positions",
@@ -1175,6 +1204,66 @@ class TerminalMonitor:
             f"{performance.realized_pnl:+,.2f} {self.quote_asset}",
         )
         table.add_row("Source", "BOTRAGRAM LIVE EXIT LEDGER")
+
+    def _build_stalking_panel(self, status: TerminalStatus) -> Panel:
+        """Build dedicated panel displaying candidate setups being stalked."""
+        table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False, pad_edge=False)
+        table.add_column("Symbol", style="bright_cyan", no_wrap=True)
+        table.add_column("Side", no_wrap=True)
+        table.add_column("Pattern", no_wrap=True)
+        table.add_column("Anchor", justify="right", no_wrap=True)
+        table.add_column("Retest Target", justify="right", no_wrap=True)
+        table.add_column("Invalidation", justify="right", no_wrap=True)
+        table.add_column("Window", justify="center", no_wrap=True)
+        table.add_column("Status", no_wrap=True)
+        table.add_column("HTF Zone", no_wrap=True)
+
+        if not status.stalking_setups:
+            table.add_row(
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "IDLE / WAITING CANDIDATES",
+                "-",
+            )
+        else:
+            for setup in status.stalking_setups[:5]:
+                side_style = "green" if setup.side is PositionSide.LONG else "red"
+                status_style = {
+                    StalkingStatus.STALKING: "cyan",
+                    StalkingStatus.TRIGGERED: "bold green",
+                    StalkingStatus.INVALIDATED: "bold red",
+                    StalkingStatus.EXPIRED: "yellow",
+                }.get(setup.status, "white")
+
+                table.add_row(
+                    setup.symbol,
+                    Text(setup.side.value.upper(), style=side_style),
+                    setup.pattern_name,
+                    self._format_compact_price(setup.anchor_price),
+                    self._format_compact_price(setup.target_retest_price),
+                    self._format_compact_price(setup.invalidation_price),
+                    f"Bar {setup.current_bar}/{setup.max_bars}",
+                    Text(setup.status.value.upper(), style=status_style),
+                    setup.htf_zone_label,
+                )
+
+        return Panel(
+            table,
+            title="[bold]Active Setup Stalking (Pre-Entry Radar)[/bold]",
+            border_style="cyan",
+        )
+
+    def _stalking_panel_height(self, status: TerminalStatus) -> int:
+        """Reserve rows for active stalking candidates table."""
+        count = len(status.stalking_setups)
+        if count == 0:
+            return 5
+        return min(10, min(count, 5) + 4)
 
     def _build_stream_panel(self, status: TerminalStatus) -> Panel:
         """Build one compact, canonical row for every managed position."""

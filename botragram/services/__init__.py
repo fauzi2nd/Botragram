@@ -86,6 +86,10 @@ from botragram.services.position_service import PositionService
 from botragram.services.runtime_recovery_service import RuntimeRecoveryService
 from botragram.services.runtime_reporter import RuntimeReporter
 from botragram.services.runtime_risk_limit_service import RuntimeRiskLimitService
+from botragram.services.setup_stalking_service import (
+    SetupStalkingService,
+    StalkingSetupProvider,
+)
 from botragram.services.stored_resampled_candle_provider import (
     StoredResampledCandleProvider,
 )
@@ -141,6 +145,8 @@ __all__ = [
     "RuntimeReporter",
     "RuntimeRecoveryService",
     "RuntimeRiskLimitService",
+    "SetupStalkingService",
+    "StalkingSetupProvider",
     "StoredResampledCandleProvider",
     "StrategyService",
     "TradingService",

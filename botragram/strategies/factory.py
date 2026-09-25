@@ -386,16 +386,6 @@ class StrategyFactory:
                     max_opposite_wick_ratio=settings.pier_max_opposite_wick_ratio,
                     min_engulfing_body_ratio=settings.pier_min_engulfing_body_ratio,
                     min_confidence=settings.pier_min_confidence,
-                    use_open_interest=settings.pier_use_open_interest
-                    or settings.use_open_interest,
-                    min_oi_change_pct=(
-                        settings.pier_min_oi_change_pct
-                        if settings.pier_min_oi_change_pct > Decimal("0")
-                        else settings.min_oi_change_pct
-                    ),
-                    oi_confidence_bonus=settings.pier_oi_confidence_bonus,
-                    require_oi_confluence=settings.pier_require_oi_confluence
-                    or settings.require_oi_confluence,
                     require_key_level_location=settings.pier_require_key_level_location,
                     swing_lookback=settings.pier_swing_lookback,
                     location_tolerance_pct=settings.pier_location_tolerance_pct,
@@ -409,20 +399,11 @@ class StrategyFactory:
                     atr_multiplier_sl=settings.pier_atr_sl_multiplier,
                     risk_reward_ratio=settings.pier_risk_reward_ratio,
                     require_trend_filter=settings.pier_require_trend_filter,
+                    require_htf_extreme_zone=settings.pier_require_htf_extreme_zone,
+                    htf_extreme_buffer_atr=settings.pier_htf_extreme_buffer_atr,
+                    strict_ema_side_rejection=settings.pier_strict_ema_side_rejection,
                     min_natr_threshold=settings.pier_min_natr_threshold,
                     min_sl_distance_pct=settings.pier_min_sl_distance_pct,
-                    filter_account_ratio=settings.pier_filter_account_ratio
-                    or settings.filter_account_ratio,
-                    max_long_account_ratio=settings.pier_max_long_account_ratio,
-                    min_short_account_ratio=settings.pier_min_short_account_ratio,
-                    require_account_ratio_confluence=(
-                        settings.pier_require_account_ratio_confluence
-                        or settings.require_account_ratio_confluence
-                    ),
-                    confirm_htf_account_ratio=(
-                        settings.pier_confirm_htf_account_ratio
-                        or settings.confirm_htf_account_ratio
-                    ),
                     include_star_patterns=settings.pier_include_star_patterns,
                     use_parabolic_sar=settings.pier_use_parabolic_sar,
                     use_macd=settings.pier_use_macd,
@@ -443,7 +424,6 @@ class StrategyFactory:
                     bb_std_dev=settings.pier_bb_std_dev,
                     htf_bb_period=settings.pier_htf_bb_period,
                     htf_bb_std_dev=settings.pier_htf_bb_std_dev,
-                    htf_interval=settings.pier_htf_interval,
                 )
 
             case StrategyType.QUAD_CONFLUENCE:

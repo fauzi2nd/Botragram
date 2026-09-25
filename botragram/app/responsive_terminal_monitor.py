@@ -141,6 +141,7 @@ class TerminalMonitor(BaseTerminalMonitor):
 
     def _render_medium_dashboard(self, status: TerminalStatus) -> Layout:
         """Use two summary columns and a full-width discovery panel."""
+        stalking_height = self._stalking_panel_height(status)
         managed_height = self._managed_positions_height(status)
         discovery_height = 15 if status.global_discovery is not None else 5
         layout = Layout(name="root")
@@ -150,6 +151,11 @@ class TerminalMonitor(BaseTerminalMonitor):
                 self._build_discovery_panel(status),
                 name="discovery",
                 size=discovery_height,
+            ),
+            Layout(
+                self._build_stalking_panel(status),
+                name="active_stalking",
+                size=stalking_height,
             ),
             Layout(
                 self._build_stream_panel(status),
@@ -183,6 +189,11 @@ class TerminalMonitor(BaseTerminalMonitor):
                 self._build_compact_performance_panel(status),
                 name="performance",
                 size=4,
+            ),
+            Layout(
+                self._build_stalking_panel(status),
+                name="active_stalking",
+                size=self._stalking_panel_height(status),
             ),
             Layout(
                 self._build_compact_positions_panel(status),

@@ -40,34 +40,28 @@ from botragram.constants.env import (
     ENV_PIER_ATR_SL_MULTIPLIER,
     ENV_PIER_BB_PERIOD,
     ENV_PIER_BB_STD_DEV,
-    ENV_PIER_CONFIRM_HTF_ACCOUNT_RATIO,
     ENV_PIER_ENGULFING_MIN_BODY_ATR,
-    ENV_PIER_FILTER_ACCOUNT_RATIO,
+    ENV_PIER_HTF_EXTREME_BUFFER_ATR,
     ENV_PIER_INCLUDE_STAR_PATTERNS,
     ENV_PIER_LOCATION_ATR_MULTIPLIER,
     ENV_PIER_LOCATION_TOLERANCE_PCT,
     ENV_PIER_MACD_FAST_PERIOD,
     ENV_PIER_MACD_SIGNAL_PERIOD,
     ENV_PIER_MACD_SLOW_PERIOD,
-    ENV_PIER_MAX_LONG_ACCOUNT_RATIO,
     ENV_PIER_MAX_OPPOSITE_WICK_RATIO,
     ENV_PIER_MIN_CONFIDENCE,
     ENV_PIER_MIN_ENGULFING_BODY_RATIO,
     ENV_PIER_MIN_NATR_THRESHOLD,
-    ENV_PIER_MIN_OI_CHANGE_PCT,
-    ENV_PIER_MIN_SHORT_ACCOUNT_RATIO,
     ENV_PIER_MIN_SL_DISTANCE_PCT,
     ENV_PIER_MIN_STRUCTURAL_RR,
     ENV_PIER_MIN_WICK_RATIO,
-    ENV_PIER_OI_CONFIDENCE_BONUS,
     ENV_PIER_PINBAR_MIN_RANGE_ATR,
     ENV_PIER_PULLBACK_ATR_MULTIPLIER,
     ENV_PIER_PULLBACK_PERIOD,
     ENV_PIER_PULLBACK_PROXIMITY_PCT,
-    ENV_PIER_REQUIRE_ACCOUNT_RATIO_CONFLUENCE,
     ENV_PIER_REQUIRE_CONFIRMATION,
+    ENV_PIER_REQUIRE_HTF_EXTREME_ZONE,
     ENV_PIER_REQUIRE_KEY_LEVEL_LOCATION,
-    ENV_PIER_REQUIRE_OI_CONFLUENCE,
     ENV_PIER_REQUIRE_TREND_FILTER,
     ENV_PIER_RISK_REWARD_RATIO,
     ENV_PIER_RSI_LONG_MAX,
@@ -75,16 +69,20 @@ from botragram.constants.env import (
     ENV_PIER_RSI_PERIOD,
     ENV_PIER_RSI_SHORT_MAX,
     ENV_PIER_RSI_SHORT_MIN,
+    ENV_PIER_STALKING_ENABLED,
+    ENV_PIER_STALKING_MAX_BARS,
+    ENV_PIER_STALKING_MAX_CANDIDATES,
+    ENV_PIER_STALKING_RETEST_RATIO,
     ENV_PIER_STOCH_RSI_D_PERIOD,
     ENV_PIER_STOCH_RSI_K_PERIOD,
     ENV_PIER_STOCH_RSI_OVERBOUGHT,
     ENV_PIER_STOCH_RSI_OVERSOLD,
     ENV_PIER_STOCH_RSI_PERIOD,
+    ENV_PIER_STRICT_EMA_SIDE_REJECTION,
     ENV_PIER_STRUCTURAL_TP_BUFFER_PCT,
     ENV_PIER_SWING_LOOKBACK,
     ENV_PIER_TREND_PERIOD,
     ENV_PIER_USE_MACD,
-    ENV_PIER_USE_OPEN_INTEREST,
     ENV_PIER_USE_PARABOLIC_SAR,
     ENV_PIER_USE_STOCH_RSI,
     ENV_PIER_USE_STRUCTURAL_TP,
@@ -163,10 +161,13 @@ class TestPierConfigurationParity:
             ENV_PIER_ATR_SL_MULTIPLIER: "1.8",
             ENV_PIER_RISK_REWARD_RATIO: "2.5",
             ENV_PIER_MIN_CONFIDENCE: "0.75",
-            ENV_PIER_USE_OPEN_INTEREST: "true",
-            ENV_PIER_MIN_OI_CHANGE_PCT: "0.02",
-            ENV_PIER_OI_CONFIDENCE_BONUS: "0.08",
-            ENV_PIER_REQUIRE_OI_CONFLUENCE: "true",
+            ENV_PIER_REQUIRE_HTF_EXTREME_ZONE: "true",
+            ENV_PIER_HTF_EXTREME_BUFFER_ATR: "0.25",
+            ENV_PIER_STRICT_EMA_SIDE_REJECTION: "true",
+            ENV_PIER_STALKING_ENABLED: "true",
+            ENV_PIER_STALKING_MAX_BARS: "7",
+            ENV_PIER_STALKING_MAX_CANDIDATES: "5",
+            ENV_PIER_STALKING_RETEST_RATIO: "0.50",
             ENV_PIER_REQUIRE_KEY_LEVEL_LOCATION: "true",
             ENV_PIER_SWING_LOOKBACK: "15",
             ENV_PIER_REQUIRE_TREND_FILTER: "false",
@@ -179,11 +180,6 @@ class TestPierConfigurationParity:
             ENV_PIER_PINBAR_MIN_RANGE_ATR: "0.6",
             ENV_PIER_ENGULFING_MIN_BODY_ATR: "0.4",
             ENV_PIER_REQUIRE_CONFIRMATION: "true",
-            ENV_PIER_FILTER_ACCOUNT_RATIO: "true",
-            ENV_PIER_MAX_LONG_ACCOUNT_RATIO: "0.65",
-            ENV_PIER_MIN_SHORT_ACCOUNT_RATIO: "0.45",
-            ENV_PIER_REQUIRE_ACCOUNT_RATIO_CONFLUENCE: "true",
-            ENV_PIER_CONFIRM_HTF_ACCOUNT_RATIO: "true",
             ENV_PIER_INCLUDE_STAR_PATTERNS: "false",
             ENV_PIER_USE_PARABOLIC_SAR: "false",
             ENV_PIER_USE_MACD: "false",
@@ -225,10 +221,13 @@ class TestPierConfigurationParity:
         assert strat_settings.pier_atr_sl_multiplier == Decimal("1.8")
         assert strat_settings.pier_risk_reward_ratio == Decimal("2.5")
         assert strat_settings.pier_min_confidence == Decimal("0.75")
-        assert strat_settings.pier_use_open_interest is True
-        assert strat_settings.pier_min_oi_change_pct == Decimal("0.02")
-        assert strat_settings.pier_oi_confidence_bonus == Decimal("0.08")
-        assert strat_settings.pier_require_oi_confluence is True
+        assert strat_settings.pier_require_htf_extreme_zone is True
+        assert strat_settings.pier_htf_extreme_buffer_atr == Decimal("0.25")
+        assert strat_settings.pier_strict_ema_side_rejection is True
+        assert strat_settings.pier_stalking_enabled is True
+        assert strat_settings.pier_stalking_max_bars == 7
+        assert strat_settings.pier_stalking_max_candidates == 5
+        assert strat_settings.pier_stalking_retest_ratio == Decimal("0.50")
         assert strat_settings.pier_require_key_level_location is True
         assert strat_settings.pier_swing_lookback == 15
         assert strat_settings.pier_require_trend_filter is False
@@ -241,11 +240,6 @@ class TestPierConfigurationParity:
         assert strat_settings.pier_pinbar_min_range_atr == Decimal("0.6")
         assert strat_settings.pier_engulfing_min_body_atr == Decimal("0.4")
         assert strat_settings.pier_require_confirmation is True
-        assert strat_settings.pier_filter_account_ratio is True
-        assert strat_settings.pier_max_long_account_ratio == Decimal("0.65")
-        assert strat_settings.pier_min_short_account_ratio == Decimal("0.45")
-        assert strat_settings.pier_require_account_ratio_confluence is True
-        assert strat_settings.pier_confirm_htf_account_ratio is True
         assert strat_settings.pier_include_star_patterns is False
         assert strat_settings.pier_use_parabolic_sar is False
         assert strat_settings.pier_use_macd is False
@@ -272,6 +266,9 @@ class TestPierConfigurationParity:
         assert strategy.pullback_atr_multiplier == Decimal("0.8")
         assert strategy.location_atr_multiplier == Decimal("0.6")
         assert strategy.min_confidence == Decimal("0.75")
+        assert strategy.require_htf_extreme_zone is True
+        assert strategy.htf_extreme_buffer_atr == Decimal("0.25")
+        assert strategy.strict_ema_side_rejection is True
         assert strategy.use_macd is False
         assert strategy.use_stoch_rsi is False
         assert strategy.include_star_patterns is False

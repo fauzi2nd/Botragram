@@ -148,6 +148,7 @@ from botragram.services import (
     RuntimeRecoveryService,
     RuntimeReporter,
     RuntimeRiskLimitService,
+    SetupStalkingService,
     StrategyService,
     VolumeRankedDiscoveryUniverseService,
 )
@@ -250,6 +251,7 @@ class DependencyProvider:
         "_runtime_risk_limit_service",
         "_runtime_settings_repository",
         "_settings",
+        "_setup_stalking_service",
         "_signal_engine",
         "_signal_repository",
         "_strategy_service",
@@ -305,6 +307,11 @@ class DependencyProvider:
             restart_coordinator
             if restart_coordinator is not None
             else RuntimeRestartCoordinator()
+        )
+        self._setup_stalking_service = SetupStalkingService(
+            max_candidates=self._settings.strategy.pier_stalking_max_candidates,
+            default_max_bars=self._settings.strategy.pier_stalking_max_bars,
+            retest_ratio=self._settings.strategy.pier_stalking_retest_ratio,
         )
 
         self._database: SQLiteDatabase | None = None
@@ -853,6 +860,10 @@ class DependencyProvider:
     @property
     def health_service(self) -> HealthService:
         return self._require(self._health_service)
+
+    @property
+    def setup_stalking_service(self) -> SetupStalkingService:
+        return self._setup_stalking_service
 
     @property
     def runtime_reporter(self) -> RuntimeReporter:
@@ -1790,9 +1801,6 @@ class DependencyProvider:
                 self._settings.risk.pier_partial_tp_trigger_progress
             ),
             pier_trailing_mode=self._settings.risk.pier_trailing_mode,
-            pier_trailing_swing_timeframe=(
-                self._settings.risk.pier_trailing_swing_timeframe
-            ),
             pier_trailing_swing_window=(self._settings.risk.pier_trailing_swing_window),
             pier_trailing_buffer_pct=self._settings.risk.pier_trailing_buffer_pct,
             candle_repository=self.candle_repository,

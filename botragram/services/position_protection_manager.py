@@ -115,7 +115,6 @@ class PositionProtectionManager:
     pier_partial_tp_ratio: Decimal | None = None
     pier_partial_tp_trigger_progress: Decimal | None = None
     pier_trailing_mode: TrailingMode | None = None
-    pier_trailing_swing_timeframe: Interval | None = None
     pier_trailing_swing_window: int | None = None
     pier_trailing_buffer_pct: Decimal | None = None
     candle_repository: CandleRepository | None = None
@@ -267,9 +266,7 @@ class PositionProtectionManager:
                 else self.trailing_buffer_pct
             )
 
-            if is_pier and self.pier_trailing_swing_timeframe is not None:
-                eff_swing_timeframe = self.pier_trailing_swing_timeframe
-            elif position.interval is not None:
+            if position.interval is not None:
                 eff_swing_timeframe = resolve_adaptive_trailing_timeframe(
                     position.interval
                 )

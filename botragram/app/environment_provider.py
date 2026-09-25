@@ -184,17 +184,15 @@ from botragram.constants.env import (
     ENV_PIER_ATR_SL_MULTIPLIER,
     ENV_PIER_BB_PERIOD,
     ENV_PIER_BB_STD_DEV,
-    ENV_PIER_CONFIRM_HTF_ACCOUNT_RATIO,
     ENV_PIER_EARLY_EXIT_CHECK_CANDLESTICK_REVERSAL,
     ENV_PIER_EARLY_EXIT_CHECK_EXHAUSTION,
     ENV_PIER_EARLY_EXIT_CHECK_OPPOSITE_SIGNAL,
     ENV_PIER_EARLY_EXIT_MIN_CONFIDENCE,
     ENV_PIER_ENABLE_EARLY_POSITION_EXIT,
     ENV_PIER_ENGULFING_MIN_BODY_ATR,
-    ENV_PIER_FILTER_ACCOUNT_RATIO,
     ENV_PIER_HTF_BB_PERIOD,
     ENV_PIER_HTF_BB_STD_DEV,
-    ENV_PIER_HTF_INTERVAL,
+    ENV_PIER_HTF_EXTREME_BUFFER_ATR,
     ENV_PIER_INCLUDE_STAR_PATTERNS,
     ENV_PIER_LEVERAGE,
     ENV_PIER_LOCATION_ATR_MULTIPLIER,
@@ -202,18 +200,14 @@ from botragram.constants.env import (
     ENV_PIER_MACD_FAST_PERIOD,
     ENV_PIER_MACD_SIGNAL_PERIOD,
     ENV_PIER_MACD_SLOW_PERIOD,
-    ENV_PIER_MAX_LONG_ACCOUNT_RATIO,
     ENV_PIER_MAX_OPPOSITE_WICK_RATIO,
     ENV_PIER_MAX_POSITION_SIZE_USDT,
     ENV_PIER_MIN_CONFIDENCE,
     ENV_PIER_MIN_ENGULFING_BODY_RATIO,
     ENV_PIER_MIN_NATR_THRESHOLD,
-    ENV_PIER_MIN_OI_CHANGE_PCT,
-    ENV_PIER_MIN_SHORT_ACCOUNT_RATIO,
     ENV_PIER_MIN_SL_DISTANCE_PCT,
     ENV_PIER_MIN_STRUCTURAL_RR,
     ENV_PIER_MIN_WICK_RATIO,
-    ENV_PIER_OI_CONFIDENCE_BONUS,
     ENV_PIER_PARTIAL_TP_ENABLED,
     ENV_PIER_PARTIAL_TP_RATIO,
     ENV_PIER_PARTIAL_TP_TRIGGER_PROGRESS,
@@ -221,10 +215,9 @@ from botragram.constants.env import (
     ENV_PIER_PULLBACK_ATR_MULTIPLIER,
     ENV_PIER_PULLBACK_PERIOD,
     ENV_PIER_PULLBACK_PROXIMITY_PCT,
-    ENV_PIER_REQUIRE_ACCOUNT_RATIO_CONFLUENCE,
     ENV_PIER_REQUIRE_CONFIRMATION,
+    ENV_PIER_REQUIRE_HTF_EXTREME_ZONE,
     ENV_PIER_REQUIRE_KEY_LEVEL_LOCATION,
-    ENV_PIER_REQUIRE_OI_CONFLUENCE,
     ENV_PIER_REQUIRE_TREND_FILTER,
     ENV_PIER_RISK_PER_TRADE_PCT,
     ENV_PIER_RISK_REWARD_RATIO,
@@ -233,23 +226,26 @@ from botragram.constants.env import (
     ENV_PIER_RSI_PERIOD,
     ENV_PIER_RSI_SHORT_MAX,
     ENV_PIER_RSI_SHORT_MIN,
+    ENV_PIER_STALKING_ENABLED,
+    ENV_PIER_STALKING_MAX_BARS,
+    ENV_PIER_STALKING_MAX_CANDIDATES,
+    ENV_PIER_STALKING_RETEST_RATIO,
     ENV_PIER_STOCH_RSI_D_PERIOD,
     ENV_PIER_STOCH_RSI_K_PERIOD,
     ENV_PIER_STOCH_RSI_OVERBOUGHT,
     ENV_PIER_STOCH_RSI_OVERSOLD,
     ENV_PIER_STOCH_RSI_PERIOD,
     ENV_PIER_STOP_LOSS_PCT,
+    ENV_PIER_STRICT_EMA_SIDE_REJECTION,
     ENV_PIER_STRUCTURAL_TP_BUFFER_PCT,
     ENV_PIER_SWING_LOOKBACK,
     ENV_PIER_TAKE_PROFIT_PCT,
     ENV_PIER_TRAILING_BUFFER_PCT,
     ENV_PIER_TRAILING_MODE,
-    ENV_PIER_TRAILING_SWING_TIMEFRAME,
     ENV_PIER_TRAILING_SWING_WINDOW,
     ENV_PIER_TREND_PERIOD,
     ENV_PIER_USE_HTF_STRUCTURAL_TP,
     ENV_PIER_USE_MACD,
-    ENV_PIER_USE_OPEN_INTEREST,
     ENV_PIER_USE_PARABOLIC_SAR,
     ENV_PIER_USE_STOCH_RSI,
     ENV_PIER_USE_STRUCTURAL_TP,
@@ -831,7 +827,7 @@ class EnvironmentProvider:
 
     def get_trailing_swing_timeframe(self) -> str:
         """Return the timeframe for trailing swing pivot tracking."""
-        return self._get_var(ENV_TRAILING_SWING_TIMEFRAME, default="5m")
+        return self._get_var(ENV_TRAILING_SWING_TIMEFRAME, default="")
 
     def get_trailing_swing_window(self) -> str:
         """Return the window size for trailing swing pivot tracking."""
@@ -1075,21 +1071,33 @@ class EnvironmentProvider:
         """Return the PIER minimum acceptance confidence threshold."""
         return self._get_var(ENV_PIER_MIN_CONFIDENCE, default="")
 
-    def get_pier_use_open_interest(self) -> bool:
-        """Return whether PIER uses open interest confluence filter."""
-        return self._get_bool(ENV_PIER_USE_OPEN_INTEREST, default=True)
+    def get_pier_require_htf_extreme_zone(self) -> bool:
+        """Return whether PIER requires price to be in HTF extreme zone."""
+        return self._get_bool(ENV_PIER_REQUIRE_HTF_EXTREME_ZONE, default=True)
 
-    def get_pier_min_oi_change_pct(self) -> str:
-        """Return the PIER minimum open interest change percentage."""
-        return self._get_var(ENV_PIER_MIN_OI_CHANGE_PCT, default="")
+    def get_pier_htf_extreme_buffer_atr(self) -> str:
+        """Return the buffer ATR fraction for HTF extreme zone evaluation."""
+        return self._get_var(ENV_PIER_HTF_EXTREME_BUFFER_ATR, default="0.20")
 
-    def get_pier_oi_confidence_bonus(self) -> str:
-        """Return the PIER open interest confidence bonus."""
-        return self._get_var(ENV_PIER_OI_CONFIDENCE_BONUS, default="")
+    def get_pier_strict_ema_side_rejection(self) -> bool:
+        """Return whether PIER strictly rejects candles on wrong side of EMA21."""
+        return self._get_bool(ENV_PIER_STRICT_EMA_SIDE_REJECTION, default=True)
 
-    def get_pier_require_oi_confluence(self) -> bool:
-        """Return whether PIER strictly requires open interest confluence."""
-        return self._get_bool(ENV_PIER_REQUIRE_OI_CONFLUENCE, default=False)
+    def get_pier_stalking_enabled(self) -> bool:
+        """Return whether PIER enables multi-bar setup stalking before entry."""
+        return self._get_bool(ENV_PIER_STALKING_ENABLED, default=True)
+
+    def get_pier_stalking_max_bars(self) -> str:
+        """Return the maximum observation bar window for candidate stalking."""
+        return self._get_var(ENV_PIER_STALKING_MAX_BARS, default="7")
+
+    def get_pier_stalking_max_candidates(self) -> str:
+        """Return the maximum parallel candidates monitored for stalking."""
+        return self._get_var(ENV_PIER_STALKING_MAX_CANDIDATES, default="5")
+
+    def get_pier_stalking_retest_ratio(self) -> str:
+        """Return the target setup body retest ratio before entry trigger."""
+        return self._get_var(ENV_PIER_STALKING_RETEST_RATIO, default="0.50")
 
     def get_pier_require_key_level_location(self) -> bool:
         """Return whether PIER requires key level location confirmation."""
@@ -1138,29 +1146,6 @@ class EnvironmentProvider:
     def get_pier_require_confirmation(self) -> bool:
         """Return whether PIER requires breakout candle confirmation."""
         return self._get_bool(ENV_PIER_REQUIRE_CONFIRMATION, default=False)
-
-    def get_pier_filter_account_ratio(self) -> bool:
-        """Return whether PIER filters by account long-short ratio."""
-        return self._get_bool(ENV_PIER_FILTER_ACCOUNT_RATIO, default=True)
-
-    def get_pier_max_long_account_ratio(self) -> str:
-        """Return the PIER maximum long account ratio."""
-        return self._get_var(ENV_PIER_MAX_LONG_ACCOUNT_RATIO, default="")
-
-    def get_pier_min_short_account_ratio(self) -> str:
-        """Return the PIER minimum short account ratio."""
-        return self._get_var(ENV_PIER_MIN_SHORT_ACCOUNT_RATIO, default="")
-
-    def get_pier_require_account_ratio_confluence(self) -> bool:
-        """Return whether PIER strictly requires account ratio confluence."""
-        return self._get_bool(
-            ENV_PIER_REQUIRE_ACCOUNT_RATIO_CONFLUENCE,
-            default=False,
-        )
-
-    def get_pier_confirm_htf_account_ratio(self) -> bool:
-        """Return whether PIER confirms with HTF account ratio."""
-        return self._get_bool(ENV_PIER_CONFIRM_HTF_ACCOUNT_RATIO, default=False)
 
     def get_pier_include_star_patterns(self) -> bool:
         """Return whether PIER detects Morning/Evening Star patterns."""
@@ -1242,10 +1227,6 @@ class EnvironmentProvider:
         """Return the HTF Bollinger Bands std dev for structural target calculation."""
         return self._get_var(ENV_PIER_HTF_BB_STD_DEV, default="")
 
-    def get_pier_htf_interval(self) -> str:
-        """Return the configured PIER HTF interval or empty string."""
-        return self._get_var(ENV_PIER_HTF_INTERVAL, default="")
-
     def get_pier_leverage(self) -> str:
         """Return the PIER-specific leverage override or empty string."""
         return self._get_var(ENV_PIER_LEVERAGE, default="")
@@ -1261,10 +1242,6 @@ class EnvironmentProvider:
     def get_pier_trailing_mode(self) -> str:
         """Return the PIER-specific trailing mode override or empty string."""
         return self._get_var(ENV_PIER_TRAILING_MODE, default="")
-
-    def get_pier_trailing_swing_timeframe(self) -> str:
-        """Return the PIER-specific trailing swing timeframe or empty string."""
-        return self._get_var(ENV_PIER_TRAILING_SWING_TIMEFRAME, default="")
 
     def get_pier_trailing_swing_window(self) -> str:
         """Return the PIER-specific trailing swing window or empty string."""

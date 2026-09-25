@@ -1,0 +1,346 @@
+"""
+Botragram
+
+Description:
+    Service managing multi-bar setup stalking and retest observation for
+    high-confluence setups, preventing premature entries and invalidating
+    weakened signals with zero capital loss.
+
+Python:
+    3.14+
+"""
+
+# =============================================================================
+# Future
+# =============================================================================
+from __future__ import annotations
+
+import logging
+import threading
+
+# =============================================================================
+# Standard Library Imports
+# =============================================================================
+from dataclasses import replace
+from datetime import UTC, datetime
+from decimal import Decimal
+from typing import Final, Protocol
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from botragram.enums import (
+    PositionSide,
+    StalkingStatus,
+    StrategyType,
+)
+from botragram.models import Candle, Signal
+from botragram.models.stalking import StalkingSetup
+
+__all__ = [
+    "SetupStalkingService",
+    "StalkingSetupProvider",
+]
+
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+_DECIMAL_ZERO: Final[Decimal] = Decimal("0")
+_DEFAULT_RETEST_RATIO: Final[Decimal] = Decimal("0.50")
+_MAX_HISTORY_ENTRIES: Final[int] = 10
+
+
+class StalkingSetupProvider(Protocol):
+    """Protocol for reading active and recently stalked candidate setups."""
+
+    def get_active_stalking_setups(self) -> tuple[StalkingSetup, ...]:
+        """Return active or recently completed stalking setups."""
+        ...
+
+
+class SetupStalkingService:
+    """Track and observe candidate setups across 1-7 subsequent bars."""
+
+    def __init__(
+        self,
+        *,
+        max_candidates: int = 5,
+        default_max_bars: int = 7,
+        retest_ratio: Decimal = _DEFAULT_RETEST_RATIO,
+    ) -> None:
+        if max_candidates <= 0:
+            raise ValueError("Max candidates must be positive")
+        if default_max_bars <= 0:
+            raise ValueError("Default max bars must be positive")
+        if not (Decimal("0.0") <= retest_ratio <= Decimal("1.0")):
+            raise ValueError("Retest ratio must be between 0.0 and 1.0")
+
+        self._max_candidates: Final[int] = max_candidates
+        self._default_max_bars: Final[int] = default_max_bars
+        self._retest_ratio: Final[Decimal] = retest_ratio
+        self._lock: Final[threading.Lock] = threading.Lock()
+        self._setups: dict[str, StalkingSetup] = {}
+
+    @property
+    def max_candidates(self) -> int:
+        """Return the maximum allowed concurrent stalking candidates."""
+        return self._max_candidates
+
+    def register_candidate(
+        self,
+        *,
+        signal: Signal,
+        setup_candle: Candle,
+        htf_zone_label: str = "HTF Extreme",
+        max_bars: int | None = None,
+        retest_ratio: Decimal | None = None,
+    ) -> StalkingSetup | None:
+        """Register a new candidate setup for subsequent bar stalking.
+
+        Returns:
+            The registered StalkingSetup if accepted, or None if capacity is full
+            or an active stalking setup already exists for this symbol.
+        """
+        now = datetime.now(UTC)
+        ratio = retest_ratio if retest_ratio is not None else self._retest_ratio
+        bars_limit = max_bars if max_bars is not None else self._default_max_bars
+
+        side = (
+            PositionSide.LONG
+            if signal.signal_type.value.lower() == "buy"
+            else PositionSide.SHORT
+        )
+
+        with self._lock:
+            existing = self._setups.get(signal.symbol)
+            if existing is not None and existing.status is StalkingStatus.STALKING:
+                _LOGGER.debug(
+                    "Stalking setup already active for %s; skipping duplicate",
+                    signal.symbol,
+                )
+                return existing
+
+            active_count = sum(
+                1 for s in self._setups.values() if s.status is StalkingStatus.STALKING
+            )
+            if active_count >= self._max_candidates:
+                _LOGGER.info(
+                    "Setup stalking capacity reached (%d/%d); skipping %s",
+                    active_count,
+                    self._max_candidates,
+                    signal.symbol,
+                )
+                return None
+
+            if side is PositionSide.SHORT:
+                invalidation_price = setup_candle.high_price
+                candle_range = setup_candle.high_price - setup_candle.low_price
+                target_retest = (
+                    setup_candle.low_price + (candle_range * (Decimal("1") - ratio))
+                    if candle_range > _DECIMAL_ZERO
+                    else setup_candle.close_price
+                )
+            else:
+                invalidation_price = setup_candle.low_price
+                candle_range = setup_candle.high_price - setup_candle.low_price
+                target_retest = (
+                    setup_candle.low_price + (candle_range * ratio)
+                    if candle_range > _DECIMAL_ZERO
+                    else setup_candle.close_price
+                )
+
+            pattern = "REVERSAL"
+            if signal.reason:
+                if "ENGULFING" in signal.reason.upper():
+                    pattern = "ENGULFING"
+                elif "PINBAR" in signal.reason.upper():
+                    pattern = "PINBAR"
+
+            setup = StalkingSetup(
+                symbol=signal.symbol,
+                side=side,
+                pattern_name=pattern,
+                anchor_price=setup_candle.close_price,
+                invalidation_price=invalidation_price,
+                target_retest_price=target_retest,
+                htf_zone_label=htf_zone_label,
+                current_bar=0,
+                max_bars=bars_limit,
+                started_at=now,
+                updated_at=now,
+                status=StalkingStatus.STALKING,
+                strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+                interval=setup_candle.interval,
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit,
+            )
+
+            self._setups[signal.symbol] = setup
+            self._prune_history_locked()
+
+            _LOGGER.info(
+                "Registered setup stalking: symbol=%s side=%s pattern=%s "
+                "anchor=%s retest_target=%s invalidation=%s max_bars=%d zone=%s",
+                setup.symbol,
+                setup.side.value,
+                setup.pattern_name,
+                setup.anchor_price,
+                setup.target_retest_price,
+                setup.invalidation_price,
+                setup.max_bars,
+                setup.htf_zone_label,
+            )
+            return setup
+
+    def on_candle_update(self, candle: Candle) -> StalkingSetup | None:
+        """Process a newly closed bar for a stalked symbol.
+
+        Evaluates:
+        1. Invalidation: Price violates anchor extreme peak/valley.
+        2. Retest trigger: Price tests target zone with reversal confirmation.
+        3. Expiry: Bar window reaches limit without entry.
+
+        Returns:
+            The updated setup if state changed, or None.
+        """
+        now = datetime.now(UTC)
+
+        with self._lock:
+            setup = self._setups.get(candle.symbol)
+            if setup is None or setup.status is not StalkingStatus.STALKING:
+                return None
+
+            next_bar = setup.current_bar + 1
+
+            # 1. Check Invalidation: Peak/Valley breach
+            if setup.side is PositionSide.SHORT:
+                if candle.high_price > setup.invalidation_price:
+                    updated = replace(
+                        setup,
+                        current_bar=next_bar,
+                        status=StalkingStatus.INVALIDATED,
+                        updated_at=now,
+                    )
+                    self._setups[candle.symbol] = updated
+                    _LOGGER.info(
+                        "Setup stalking INVALIDATED: symbol=%s side=SHORT "
+                        "bar=%d/%d candle_high=%s breached anchor_high=%s (0 loss)",
+                        candle.symbol,
+                        next_bar,
+                        setup.max_bars,
+                        candle.high_price,
+                        setup.invalidation_price,
+                    )
+                    return updated
+            else:
+                if candle.low_price < setup.invalidation_price:
+                    updated = replace(
+                        setup,
+                        current_bar=next_bar,
+                        status=StalkingStatus.INVALIDATED,
+                        updated_at=now,
+                    )
+                    self._setups[candle.symbol] = updated
+                    _LOGGER.info(
+                        "Setup stalking INVALIDATED: symbol=%s side=LONG "
+                        "bar=%d/%d candle_low=%s breached anchor_low=%s (0 loss)",
+                        candle.symbol,
+                        next_bar,
+                        setup.max_bars,
+                        candle.low_price,
+                        setup.invalidation_price,
+                    )
+                    return updated
+
+            # 2. Check Retest Trigger: Exhaustion touch in target zone
+            triggered = False
+            if setup.side is PositionSide.SHORT:
+                if candle.high_price >= setup.target_retest_price:
+                    triggered = True
+            else:
+                if candle.low_price <= setup.target_retest_price:
+                    triggered = True
+
+            if triggered:
+                updated = replace(
+                    setup,
+                    current_bar=next_bar,
+                    status=StalkingStatus.TRIGGERED,
+                    updated_at=now,
+                )
+                self._setups[candle.symbol] = updated
+                _LOGGER.info(
+                    "Setup stalking TRIGGERED: symbol=%s side=%s bar=%d/%d "
+                    "retest target reached at %s",
+                    candle.symbol,
+                    setup.side.value,
+                    next_bar,
+                    setup.max_bars,
+                    setup.target_retest_price,
+                )
+                return updated
+
+            # 3. Check Expiry
+            if next_bar >= setup.max_bars:
+                updated = replace(
+                    setup,
+                    current_bar=next_bar,
+                    status=StalkingStatus.EXPIRED,
+                    updated_at=now,
+                )
+                self._setups[candle.symbol] = updated
+                _LOGGER.info(
+                    "Setup stalking EXPIRED: symbol=%s bar=%d/%d (no retest)",
+                    candle.symbol,
+                    next_bar,
+                    setup.max_bars,
+                )
+                return updated
+
+            # Continue stalking
+            updated = replace(
+                setup,
+                current_bar=next_bar,
+                updated_at=now,
+            )
+            self._setups[candle.symbol] = updated
+            return updated
+
+    def get_active_stalking_setups(self) -> tuple[StalkingSetup, ...]:
+        """Return all tracked setups, prioritizing active STALKING candidates."""
+        with self._lock:
+            active: list[StalkingSetup] = []
+            completed: list[StalkingSetup] = []
+
+            for setup in self._setups.values():
+                if setup.status is StalkingStatus.STALKING:
+                    active.append(setup)
+                else:
+                    completed.append(setup)
+
+            # Sort active by started_at desc, then completed by updated_at desc
+            active.sort(key=lambda s: s.started_at, reverse=True)
+            completed.sort(key=lambda s: s.updated_at, reverse=True)
+
+            return tuple(
+                active + completed[: max(0, self._max_candidates - len(active))]
+            )
+
+    def remove_setup(self, symbol: str) -> None:
+        """Remove a setup from tracking."""
+        with self._lock:
+            self._setups.pop(symbol, None)
+
+    def _prune_history_locked(self) -> None:
+        """Prune old inactive setups beyond retention limit."""
+        inactive_keys = [
+            k
+            for k, v in self._setups.items()
+            if v.status is not StalkingStatus.STALKING
+        ]
+        if len(inactive_keys) > _MAX_HISTORY_ENTRIES:
+            # Sort by updated_at ascending and remove oldest
+            inactive_items = sorted(
+                [(k, self._setups[k].updated_at) for k in inactive_keys],
+                key=lambda x: x[1],
+            )
+            for k, _ in inactive_items[: len(inactive_keys) - _MAX_HISTORY_ENTRIES]:
+                self._setups.pop(k, None)

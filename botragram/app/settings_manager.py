@@ -468,14 +468,6 @@ class SettingsManager:
                 if environment.get_pier_trailing_mode()
                 else None
             ),
-            pier_trailing_swing_timeframe=(
-                self._parse_market_interval(
-                    raw_value=environment.get_pier_trailing_swing_timeframe(),
-                    setting_name="PIER_TRAILING_SWING_TIMEFRAME",
-                )
-                if environment.get_pier_trailing_swing_timeframe()
-                else None
-            ),
             pier_trailing_swing_window=(
                 self._parse_positive_int(
                     raw_value=environment.get_pier_trailing_swing_window(),
@@ -583,9 +575,13 @@ class SettingsManager:
             trailing_mode=self._parse_trailing_mode(
                 raw_value=environment.get_trailing_mode(),
             ),
-            trailing_swing_timeframe=self._parse_market_interval(
-                raw_value=environment.get_trailing_swing_timeframe(),
-                setting_name="TRAILING_SWING_TIMEFRAME",
+            trailing_swing_timeframe=(
+                self._parse_market_interval(
+                    raw_value=environment.get_trailing_swing_timeframe(),
+                    setting_name="TRAILING_SWING_TIMEFRAME",
+                )
+                if environment.get_trailing_swing_timeframe()
+                else Interval.M5
             ),
             trailing_swing_window=self._parse_positive_int(
                 raw_value=environment.get_trailing_swing_window(),
@@ -1082,24 +1078,6 @@ class SettingsManager:
                 if environment.get_pier_min_confidence()
                 else Decimal("0.65")
             ),
-            pier_use_open_interest=environment.get_pier_use_open_interest(),
-            pier_min_oi_change_pct=(
-                self._parse_decimal(
-                    raw_value=environment.get_pier_min_oi_change_pct(),
-                    setting_name="PIER_MIN_OI_CHANGE_PCT",
-                )
-                if environment.get_pier_min_oi_change_pct()
-                else Decimal("0.0")
-            ),
-            pier_oi_confidence_bonus=(
-                self._parse_decimal(
-                    raw_value=environment.get_pier_oi_confidence_bonus(),
-                    setting_name="PIER_OI_CONFIDENCE_BONUS",
-                )
-                if environment.get_pier_oi_confidence_bonus()
-                else Decimal("0.05")
-            ),
-            pier_require_oi_confluence=(environment.get_pier_require_oi_confluence()),
             pier_require_key_level_location=(
                 environment.get_pier_require_key_level_location()
             ),
@@ -1112,6 +1090,45 @@ class SettingsManager:
                 else 15
             ),
             pier_require_trend_filter=(environment.get_pier_require_trend_filter()),
+            pier_require_htf_extreme_zone=(
+                environment.get_pier_require_htf_extreme_zone()
+            ),
+            pier_htf_extreme_buffer_atr=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_htf_extreme_buffer_atr(),
+                    setting_name="PIER_HTF_EXTREME_BUFFER_ATR",
+                )
+                if environment.get_pier_htf_extreme_buffer_atr()
+                else Decimal("0.20")
+            ),
+            pier_strict_ema_side_rejection=(
+                environment.get_pier_strict_ema_side_rejection()
+            ),
+            pier_stalking_enabled=environment.get_pier_stalking_enabled(),
+            pier_stalking_max_bars=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_stalking_max_bars(),
+                    setting_name="PIER_STALKING_MAX_BARS",
+                )
+                if environment.get_pier_stalking_max_bars()
+                else 7
+            ),
+            pier_stalking_max_candidates=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_stalking_max_candidates(),
+                    setting_name="PIER_STALKING_MAX_CANDIDATES",
+                )
+                if environment.get_pier_stalking_max_candidates()
+                else 5
+            ),
+            pier_stalking_retest_ratio=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_stalking_retest_ratio(),
+                    setting_name="PIER_STALKING_RETEST_RATIO",
+                )
+                if environment.get_pier_stalking_retest_ratio()
+                else Decimal("0.50")
+            ),
             pier_min_natr_threshold=(
                 self._parse_decimal(
                     raw_value=environment.get_pier_min_natr_threshold(),
@@ -1177,29 +1194,6 @@ class SettingsManager:
                 else None
             ),
             pier_require_confirmation=(environment.get_pier_require_confirmation()),
-            pier_filter_account_ratio=(environment.get_pier_filter_account_ratio()),
-            pier_max_long_account_ratio=(
-                self._parse_decimal(
-                    raw_value=environment.get_pier_max_long_account_ratio(),
-                    setting_name="PIER_MAX_LONG_ACCOUNT_RATIO",
-                )
-                if environment.get_pier_max_long_account_ratio()
-                else Decimal("0.70")
-            ),
-            pier_min_short_account_ratio=(
-                self._parse_decimal(
-                    raw_value=environment.get_pier_min_short_account_ratio(),
-                    setting_name="PIER_MIN_SHORT_ACCOUNT_RATIO",
-                )
-                if environment.get_pier_min_short_account_ratio()
-                else Decimal("0.30")
-            ),
-            pier_require_account_ratio_confluence=(
-                environment.get_pier_require_account_ratio_confluence()
-            ),
-            pier_confirm_htf_account_ratio=(
-                environment.get_pier_confirm_htf_account_ratio()
-            ),
             pier_include_star_patterns=(environment.get_pier_include_star_patterns()),
             pier_use_parabolic_sar=(environment.get_pier_use_parabolic_sar()),
             pier_use_macd=environment.get_pier_use_macd(),
@@ -1309,14 +1303,6 @@ class SettingsManager:
                 )
                 if environment.get_pier_htf_bb_std_dev()
                 else Decimal("2.0")
-            ),
-            pier_htf_interval=(
-                self._parse_market_interval(
-                    raw_value=environment.get_pier_htf_interval(),
-                    setting_name="PIER_HTF_INTERVAL",
-                )
-                if environment.get_pier_htf_interval()
-                else None
             ),
             ny_range_risk_reward_ratio=(
                 self._parse_decimal(

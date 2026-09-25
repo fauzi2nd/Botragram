@@ -47,7 +47,7 @@ from botragram.indicators.derivatives.open_interest import (
 from botragram.models import Candle, Signal
 from botragram.services.market_service import MarketService
 from botragram.strategies.factory import StrategyFactory
-from botragram.strategies.price_action import PinbarEngulfingEmaRsiStrategy
+from botragram.strategies.price_action.morph import MorphStrategy
 
 _START_TIME = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
 
@@ -286,7 +286,7 @@ def test_evaluate_oi_confluence_buy_and_sell() -> None:
 # =============================================================================
 def test_base_strategy_apply_open_interest_confluence() -> None:
     """Verify BaseStrategy apply_open_interest_confluence adjustments."""
-    strategy = PinbarEngulfingEmaRsiStrategy()
+    strategy = MorphStrategy()
     base_signal = Signal(
         symbol="BTCUSDT",
         signal_type=SignalType.BUY,
@@ -359,17 +359,17 @@ def test_base_strategy_apply_open_interest_confluence() -> None:
     )
 
 
-def test_pinbar_strategy_with_open_interest_parameters() -> None:
-    """Verify PinbarEngulfingEmaRsiStrategy respects use_open_interest."""
+def test_morph_strategy_with_open_interest_parameters() -> None:
+    """Verify MorphStrategy respects use_open_interest."""
     settings = StrategySettings(
-        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+        strategy_type=StrategyType.MORPH,
         use_open_interest=True,
-        pier_use_open_interest=True,
-        pier_min_oi_change_pct=Decimal("0.01"),
-        pier_oi_confidence_bonus=Decimal("0.05"),
+        morph_use_open_interest=True,
+        morph_min_oi_change_pct=Decimal("0.01"),
+        morph_oi_confidence_bonus=Decimal("0.05"),
     )
     strategy = StrategyFactory.create(settings=settings)
-    assert isinstance(strategy, PinbarEngulfingEmaRsiStrategy)
+    assert isinstance(strategy, MorphStrategy)
     assert strategy.use_open_interest is True
     assert strategy.min_oi_change_pct == Decimal("0.01")
 

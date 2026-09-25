@@ -76,7 +76,6 @@ class RiskSettings:
     pier_max_position_size_usdt: Decimal | None = None
     pier_risk_per_trade_pct: Decimal | None = None
     pier_trailing_mode: TrailingMode | None = None
-    pier_trailing_swing_timeframe: Interval | None = None
     pier_trailing_swing_window: int | None = None
     pier_trailing_buffer_pct: Decimal | None = None
     pier_partial_tp_enabled: bool | None = None

@@ -153,10 +153,6 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     max_opposite_wick_ratio: Decimal = Decimal("0.20")
     min_engulfing_body_ratio: Decimal = Decimal("1.05")
     min_confidence: Decimal = _DEFAULT_MIN_CONFIDENCE
-    use_open_interest: bool = False
-    min_oi_change_pct: Decimal = _DECIMAL_ZERO
-    oi_confidence_bonus: Decimal = _CONFIDENCE_STEP_BONUS
-    require_oi_confluence: bool = False
     require_key_level_location: bool = True
     swing_lookback: int = 15
     location_tolerance_pct: Decimal = Decimal("0.030")
@@ -176,12 +172,10 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     min_sl_distance_pct: Decimal = Decimal("0.0080")
     min_trend_distance_pct: Decimal = Decimal("0.003")
 
-    # Account Long-Short Ratio Sentiment Filter
-    filter_account_ratio: bool = False
-    max_long_account_ratio: Decimal = Decimal("0.75")
-    min_short_account_ratio: Decimal = Decimal("0.25")
-    require_account_ratio_confluence: bool = False
-    confirm_htf_account_ratio: bool = False
+    # HTF Extreme Gate & Strict EMA Side Rejection
+    require_htf_extreme_zone: bool = False
+    htf_extreme_buffer_atr: Decimal = Decimal("0.20")
+    strict_ema_side_rejection: bool = False
 
     # Star Patterns & Parabolic SAR Configuration
     include_star_patterns: bool = True
@@ -208,7 +202,6 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     use_htf_structural_tp: bool = False
     htf_bb_period: int = 20
     htf_bb_std_dev: Decimal = Decimal("2.0")
-    htf_interval: Interval | None = None
 
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
@@ -236,10 +229,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             raise ValueError("Minimum engulfing body ratio must be positive")
         if not (_DECIMAL_ZERO <= self.min_confidence <= _DECIMAL_ONE):
             raise ValueError("Minimum confidence must be between 0.0 and 1.0")
-        if self.min_oi_change_pct < _DECIMAL_ZERO:
-            raise ValueError("Minimum OI change percentage must be non-negative")
-        if self.oi_confidence_bonus < _DECIMAL_ZERO:
-            raise ValueError("OI confidence bonus must be non-negative")
+        if self.htf_extreme_buffer_atr < _DECIMAL_ZERO:
+            raise ValueError("HTF extreme buffer ATR must not be negative")
         if self.swing_lookback <= 2:
             raise ValueError("Swing lookback must be greater than 2")
         if self.location_tolerance_pct < _DECIMAL_ZERO:
@@ -430,14 +421,14 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         htf_lower_bb: Decimal | None = None
         htf_swing_high: Decimal | None = None
         htf_swing_low: Decimal | None = None
+        htf_atr: Decimal | None = None
 
-        htf_target_interval = (
-            self.htf_interval
-            if self.htf_interval is not None
-            else resolve_adaptive_htf_interval(candles[-1].interval)
-        )
+        htf_target_interval = resolve_adaptive_htf_interval(candles[-1].interval)
 
-        if self.use_structural_tp and self.use_htf_structural_tp and len(candles) >= 8:
+        if (
+            self.require_htf_extreme_zone
+            or (self.use_structural_tp and self.use_htf_structural_tp)
+        ) and len(candles) >= 8:
             try:
                 htf_candles = resample_candles(
                     candles=candles,
@@ -446,6 +437,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 )
                 if len(htf_candles) >= self.htf_bb_period:
                     htf_close_prices = tuple(c.close_price for c in htf_candles)
+                    htf_high_prices = tuple(c.high_price for c in htf_candles)
+                    htf_low_prices = tuple(c.low_price for c in htf_candles)
                     htf_bb = calculate_bollinger_bands(
                         htf_close_prices,
                         period=self.htf_bb_period,
@@ -453,6 +446,13 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     )
                     htf_upper_bb = htf_bb.upper[-1]
                     htf_lower_bb = htf_bb.lower[-1]
+                    htf_atr_res = calculate_atr(
+                        htf_high_prices,
+                        htf_low_prices,
+                        htf_close_prices,
+                        period=min(self.atr_period, len(htf_close_prices) - 1),
+                    )
+                    htf_atr = htf_atr_res[-1] if htf_atr_res else None
                 if htf_candles:
                     recent_htf = htf_candles[-min(len(htf_candles), 10) :]
                     htf_swing_high = max(c.high_price for c in recent_htf)
@@ -673,12 +673,29 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     and curr_macd_hist > prev_macd_hist
                 )
 
+            # HARD GATE: Strict EMA rejection (candle close must be >= EMA21)
+            ema_side_long_ok = (
+                not self.strict_ema_side_rejection
+                or setup_candle.close_price >= current_pullback
+            )
+
+            # HARD GATE: HTF Extreme Lower Zone (candle low must reach lower BB zone)
+            htf_extreme_long_ok = True
+            if self.require_htf_extreme_zone and htf_lower_bb is not None:
+                eff_htf_atr = htf_atr if htf_atr is not None else current_atr
+                htf_lower_limit = htf_lower_bb + (
+                    self.htf_extreme_buffer_atr * eff_htf_atr
+                )
+                htf_extreme_long_ok = setup_candle.low_price <= htf_lower_limit
+
             if (
                 near_pullback
                 and rsi_in_zone
                 and volume_ok
                 and candle_trigger
                 and location_ok
+                and ema_side_long_ok
+                and htf_extreme_long_ok
                 and stoch_rsi_long_ok
                 and macd_long_ok
             ):
@@ -900,12 +917,29 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     and curr_macd_hist < prev_macd_hist
                 )
 
+            # HARD GATE: Strict EMA rejection (candle close must be <= EMA21)
+            ema_side_short_ok = (
+                not self.strict_ema_side_rejection
+                or setup_candle.close_price <= current_pullback
+            )
+
+            # HARD GATE: HTF Extreme Upper Zone (candle high must reach upper BB zone)
+            htf_extreme_short_ok = True
+            if self.require_htf_extreme_zone and htf_upper_bb is not None:
+                eff_htf_atr = htf_atr if htf_atr is not None else current_atr
+                htf_upper_limit = htf_upper_bb - (
+                    self.htf_extreme_buffer_atr * eff_htf_atr
+                )
+                htf_extreme_short_ok = setup_candle.high_price >= htf_upper_limit
+
             if (
                 near_pullback
                 and rsi_in_zone
                 and volume_ok
                 and candle_trigger
                 and location_ok
+                and ema_side_short_ok
+                and htf_extreme_short_ok
                 and stoch_rsi_short_ok
                 and macd_short_ok
             ):
@@ -1040,25 +1074,6 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             stop_loss=stop_loss if signal_type is not SignalType.HOLD else None,
             take_profit=take_profit if signal_type is not SignalType.HOLD else None,
         )
-
-        if self.use_open_interest and signal_type is not SignalType.HOLD:
-            signal = self.apply_open_interest_confluence(
-                signal=signal,
-                candles=candles,
-                min_change_pct=self.min_oi_change_pct,
-                confidence_bonus=self.oi_confidence_bonus,
-                strict=self.require_oi_confluence,
-            )
-
-        if self.filter_account_ratio and signal.signal_type is not SignalType.HOLD:
-            signal = self.apply_account_ratio_filter(
-                signal=signal,
-                candles=candles,
-                max_long_ratio=self.max_long_account_ratio,
-                min_short_ratio=self.min_short_account_ratio,
-                strict=self.require_account_ratio_confluence,
-                confirm_htf=self.confirm_htf_account_ratio,
-            )
 
         if (
             signal.signal_type is not SignalType.HOLD

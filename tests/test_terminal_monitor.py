@@ -793,12 +793,13 @@ async def _run_rich_dashboard_render_test() -> None:
     monitor.log_handler.emit(record)
     status = await monitor.collect_status()
     output = StringIO()
-    console = Console(file=output, force_terminal=False, width=140)
+    console = Console(file=output, force_terminal=False, width=140, height=60)
 
     console.print(monitor.render_dashboard(status))
     rendered = output.getvalue()
 
     assert "Runtime & Safety" in rendered
+    assert "Active Setup Stalking" in rendered
     assert "Managed LIVE Positions" in rendered
     assert "Log Messages" in rendered
     assert "PAPER" in rendered
@@ -1442,6 +1443,7 @@ def test_terminal_live_performance_and_full_width_positions_render() -> None:
     assert status.trading_performance == performance_provider.snapshot
     assert tuple(child.name for child in dashboard.children) == (
         "summary",
+        "active_stalking",
         "managed_positions",
         "logs",
     )

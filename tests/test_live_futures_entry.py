@@ -1465,4 +1465,3 @@ async def test_live_futures_entry_assigns_client_algo_ids_for_planned_protection
     assert saved.stop_loss_client_algo_id.startswith("bsl-")
     assert saved.take_profit_client_algo_id is not None
     assert saved.take_profit_client_algo_id.startswith("btp-")
-

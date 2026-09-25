@@ -157,6 +157,7 @@ async def _run_trading(
             dependency_provider.autonomous_live_recovery_observability_service
         ),
         global_discovery_telemetry_provider=global_discovery_telemetry,
+        stalking_setup_provider=dependency_provider.setup_stalking_service,
         runtime_risk_limit_provider=(
             dependency_provider.runtime_risk_limit_service
             if active_settings.app.effective_execution_policy

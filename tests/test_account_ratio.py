@@ -44,9 +44,6 @@ from botragram.indicators import (
 from botragram.models import Candle, Signal
 from botragram.services.market_service import MarketService
 from botragram.strategies.base.strategy import BaseStrategy
-from botragram.strategies.price_action.pinbar_engulfing_ema_rsi import (
-    PinbarEngulfingEmaRsiStrategy,
-)
 
 _START_TIME = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
 
@@ -344,20 +341,6 @@ def test_apply_account_ratio_filter_htf_confluence() -> None:
     )
     assert res_clean.signal_type is SignalType.BUY
     assert res_clean.confidence == Decimal("0.80")
-
-
-# =============================================================================
-# PinbarEngulfingEmaRsi Strategy Integration Test
-# =============================================================================
-def test_pinbar_strategy_account_ratio_filtering() -> None:
-    """Verify PinbarEngulfingEmaRsiStrategy honors filter_account_ratio."""
-    strategy = PinbarEngulfingEmaRsiStrategy(
-        filter_account_ratio=True,
-        require_account_ratio_confluence=True,
-        max_long_account_ratio=Decimal("0.75"),
-    )
-    assert strategy.filter_account_ratio is True
-    assert strategy.max_long_account_ratio == Decimal("0.75")
 
 
 # =============================================================================

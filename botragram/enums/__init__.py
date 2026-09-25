@@ -70,6 +70,7 @@ from botragram.enums.order_type import OrderType
 from botragram.enums.position_exit_action import PositionExitAction
 from botragram.enums.position_side import PositionSide
 from botragram.enums.signal_type import SignalType
+from botragram.enums.stalking_status import StalkingStatus
 from botragram.enums.strategy_type import StrategyType
 from botragram.enums.submission_attempt_status import SubmissionAttemptStatus
 from botragram.enums.trade_mode import TradeMode
@@ -126,6 +127,7 @@ __all__ = [
     "PositionExitAction",
     "PositionSide",
     "SignalType",
+    "StalkingStatus",
     "StrategyType",
     "SubmissionAttemptStatus",
     "TrailingMode",
