@@ -673,3 +673,31 @@ def test_normalize_protection_trigger_accepts_reference_price() -> None:
         reference_price=Decimal("2"),
     )
     assert normalized == Decimal("1.35")
+
+
+@pytest.mark.asyncio
+async def test_ensure_preserves_pre_planned_strategy_stop_and_take_profit() -> None:
+    """Ensure that a newly-created position preserves its planned SL and TP."""
+    position = replace(
+        _position(),
+        stop_loss=Decimal("0.0022700"),
+        take_profit=Decimal("0.0023400"),
+        stop_loss_client_algo_id="bsl-new-position-entry",
+        take_profit_client_algo_id="btp-new-position-entry",
+    )
+    exchange = ProtectionPlanExchange(rules=_rules(), mark_price=Decimal("0.002294"))
+    repository = RecordingPositionRepository()
+    service = LivePositionProtectionService(
+        exchange_client=exchange,
+        position_repository=repository,
+        risk_engine=RiskEngine(settings=RiskSettings()),
+    )
+
+    protected = await service.ensure(position=position)
+
+    assert protected.stop_loss == Decimal("0.0022700")
+    assert protected.take_profit == Decimal("0.0023400")
+    assert [order.stop_price for order in exchange.orders] == [
+        Decimal("0.0022700"),
+        Decimal("0.0023400"),
+    ]

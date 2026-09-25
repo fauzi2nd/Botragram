@@ -1426,3 +1426,43 @@ async def test_live_entry_serializes_with_lifecycle_coordinator() -> None:
     allow_ensure_finish.set()
     await asyncio.gather(entry_task, reconcile_task)
     assert reconcile_acquired, "hold_portfolio acquires after entry finishes"
+
+
+@pytest.mark.asyncio
+async def test_live_futures_entry_assigns_client_algo_ids_for_planned_protection() -> (
+    None
+):
+    """Entry must establish durable client algo IDs so planned SL/TP are preserved."""
+    orders = FakeOrderService()
+    positions = FakePositionService(_position())
+    protection = FakeProtectionService()
+    repository = MemorySubmissionAttemptRepository()
+    control = TradingRuntimeControl(market_type=MarketType.FUTURES)
+    service = LiveFuturesEntryService(
+        market_type=MarketType.FUTURES,
+        order_service=orders,
+        position_service=positions,
+        protection_service=protection,
+        runtime_control=control,
+        submission_attempt_repository=repository,
+        portfolio_engine=PortfolioEngine(),
+        max_open_positions=1,
+    )
+
+    await service.execute(
+        signal=_signal(),
+        risk_result=_risk_result(),
+        interval=Interval.M15,
+        order_type=OrderType.MARKET,
+        price=None,
+    )
+
+    saved = positions.saved
+    assert saved is not None
+    assert saved.stop_loss == Decimal("64000")
+    assert saved.take_profit == Decimal("66000")
+    assert saved.stop_loss_client_algo_id is not None
+    assert saved.stop_loss_client_algo_id.startswith("bsl-")
+    assert saved.take_profit_client_algo_id is not None
+    assert saved.take_profit_client_algo_id.startswith("btp-")
+

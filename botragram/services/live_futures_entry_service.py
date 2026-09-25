@@ -419,6 +419,14 @@ class LiveFuturesEntryService:
                 entry_client_order_id=client_order_id,
                 stop_loss=risk_result.metrics.stop_loss,
                 take_profit=risk_result.metrics.take_profit,
+                stop_loss_client_algo_id=(
+                    position.stop_loss_client_algo_id
+                    or Position.create_stop_loss_client_algo_id()
+                ),
+                take_profit_client_algo_id=(
+                    position.take_profit_client_algo_id
+                    or Position.create_take_profit_client_algo_id()
+                ),
             )
             await self.position_service.save(position=persisted_position)
             _LOGGER.info(
