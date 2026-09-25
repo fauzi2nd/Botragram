@@ -56,6 +56,7 @@ class StalkingSetup:
     interval: Interval = Interval.M5
     stop_loss: Decimal | None = None
     take_profit: Decimal | None = None
+    confidence: Decimal = Decimal("0.80")
 
     def __post_init__(self) -> None:
         """Validate invariant boundaries."""
@@ -71,3 +72,5 @@ class StalkingSetup:
             raise ValueError("Current bar must be non-negative")
         if self.max_bars <= 0:
             raise ValueError("Max bars must be positive")
+        if self.confidence < Decimal("0") or self.confidence > Decimal("1"):
+            raise ValueError("Stalking confidence must be between 0 and 1")

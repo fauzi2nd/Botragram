@@ -634,3 +634,155 @@ class TestPierSymmetryAndZones:
         assert strat.min_structural_rr == Decimal("1.2")
         assert strat.bb_period == 25
         assert strat.bb_std_dev == Decimal("2.5")
+
+
+# =============================================================================
+# Section I: HTF Extreme Gate Fail-Closed Regression Tests
+# =============================================================================
+class TestPierHtfExtremeGateFailClosed:
+    """Validate that require_htf_extreme_zone strictly fails closed."""
+
+    def test_bullish_pinbar_fails_closed_when_htf_bb_unavailable(self) -> None:
+        """When HTF BB cannot be computed, require_htf_extreme_zone MUST emit HOLD."""
+        candles: list[Candle] = []
+        base = Decimal("100.0")
+        for i in range(45):
+            price = base + Decimal(str(i * 1.0))
+            candles.append(
+                _make_candle(
+                    index=i,
+                    open_price=price,
+                    high_price=price + Decimal("1.5"),
+                    low_price=price - Decimal("0.5"),
+                    close_price=price + Decimal("0.8"),
+                    volume=Decimal("100.0"),
+                )
+            )
+
+        for i in range(45, 55):
+            prev_close = candles[-1].close_price
+            candles.append(
+                _make_candle(
+                    index=i,
+                    open_price=prev_close,
+                    high_price=prev_close + Decimal("0.2"),
+                    low_price=prev_close - Decimal("1.5"),
+                    close_price=prev_close - Decimal("1.2"),
+                    volume=Decimal("100.0"),
+                )
+            )
+
+        # Candle 55: Bullish Pinbar (Hammer) bouncing near EMA10 with elevated volume
+        last_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=55,
+                open_price=last_close,
+                high_price=last_close + Decimal("0.8"),
+                low_price=last_close - Decimal("8.0"),
+                close_price=last_close + Decimal("0.5"),
+                volume=Decimal("250.0"),
+            )
+        )
+
+        # 1. Strategy with require_htf_extreme_zone=False -> emits BUY
+        strat_open = PinbarEngulfingEmaRsiStrategy(
+            trend_period=50,
+            pullback_period=10,
+            rsi_period=14,
+            volume_period=10,
+            require_htf_extreme_zone=False,
+            strict_ema_side_rejection=False,
+        )
+        sig_open = strat_open.generate_signal(candles=candles)
+        assert sig_open.signal_type is SignalType.BUY
+
+        # 2. Strategy with require_htf_extreme_zone=True -> FAIL-CLOSED to HOLD
+        strat_closed = PinbarEngulfingEmaRsiStrategy(
+            trend_period=50,
+            pullback_period=10,
+            rsi_period=14,
+            volume_period=10,
+            require_htf_extreme_zone=True,
+            strict_ema_side_rejection=False,
+        )
+        sig_closed = strat_closed.generate_signal(candles=candles)
+        assert sig_closed.signal_type is SignalType.HOLD
+
+    def test_bearish_engulfing_fails_closed_when_htf_bb_unavailable(self) -> None:
+        """When HTF BB cannot be computed, setup strictly fails closed to HOLD."""
+        candles: list[Candle] = []
+        base = Decimal("200.0")
+        for i in range(45):
+            price = base - Decimal(str(i * 1.0))
+            candles.append(
+                _make_candle(
+                    index=i,
+                    open_price=price,
+                    high_price=price + Decimal("0.5"),
+                    low_price=price - Decimal("1.5"),
+                    close_price=price - Decimal("0.8"),
+                    volume=Decimal("100.0"),
+                )
+            )
+
+        for i in range(45, 54):
+            prev_close = candles[-1].close_price
+            candles.append(
+                _make_candle(
+                    index=i,
+                    open_price=prev_close,
+                    high_price=prev_close + Decimal("1.5"),
+                    low_price=prev_close - Decimal("0.2"),
+                    close_price=prev_close + Decimal("1.2"),
+                    volume=Decimal("100.0"),
+                )
+            )
+
+        c53_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=54,
+                open_price=c53_close,
+                high_price=c53_close + Decimal("1.0"),
+                low_price=c53_close - Decimal("0.2"),
+                close_price=c53_close + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+        c54 = candles[-1]
+        engulf_open = c54.close_price + Decimal("0.5")
+        candles.append(
+            _make_candle(
+                index=55,
+                open_price=engulf_open,
+                high_price=engulf_open + Decimal("0.5"),
+                low_price=c54.open_price - Decimal("2.0"),
+                close_price=c54.open_price - Decimal("1.5"),
+                volume=Decimal("250.0"),
+            )
+        )
+
+        # 1. Strategy with require_htf_extreme_zone=False -> emits SELL
+        strat_open = PinbarEngulfingEmaRsiStrategy(
+            trend_period=50,
+            pullback_period=10,
+            rsi_period=14,
+            volume_period=10,
+            require_htf_extreme_zone=False,
+            strict_ema_side_rejection=False,
+        )
+        sig_open = strat_open.generate_signal(candles=candles)
+        assert sig_open.signal_type is SignalType.SELL
+
+        # 2. Strategy with require_htf_extreme_zone=True -> FAIL-CLOSED to HOLD
+        strat_closed = PinbarEngulfingEmaRsiStrategy(
+            trend_period=50,
+            pullback_period=10,
+            rsi_period=14,
+            volume_period=10,
+            require_htf_extreme_zone=True,
+            strict_ema_side_rejection=False,
+        )
+        sig_closed = strat_closed.generate_signal(candles=candles)
+        assert sig_closed.signal_type is SignalType.HOLD

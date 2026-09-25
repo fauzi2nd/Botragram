@@ -31,6 +31,7 @@ from typing import Final, Protocol
 # =============================================================================
 from botragram.enums import (
     PositionSide,
+    SignalType,
     StalkingStatus,
     StrategyType,
 )
@@ -130,20 +131,22 @@ class SetupStalkingService:
                 )
                 return None
 
+            body_high = max(setup_candle.open_price, setup_candle.close_price)
+            body_low = min(setup_candle.open_price, setup_candle.close_price)
+            body_size = body_high - body_low
+
             if side is PositionSide.SHORT:
                 invalidation_price = setup_candle.high_price
-                candle_range = setup_candle.high_price - setup_candle.low_price
                 target_retest = (
-                    setup_candle.low_price + (candle_range * (Decimal("1") - ratio))
-                    if candle_range > _DECIMAL_ZERO
+                    body_low + (body_size * ratio)
+                    if body_size > _DECIMAL_ZERO
                     else setup_candle.close_price
                 )
             else:
                 invalidation_price = setup_candle.low_price
-                candle_range = setup_candle.high_price - setup_candle.low_price
                 target_retest = (
-                    setup_candle.low_price + (candle_range * ratio)
-                    if candle_range > _DECIMAL_ZERO
+                    body_high - (body_size * ratio)
+                    if body_size > _DECIMAL_ZERO
                     else setup_candle.close_price
                 )
 
@@ -171,6 +174,7 @@ class SetupStalkingService:
                 interval=setup_candle.interval,
                 stop_loss=signal.stop_loss,
                 take_profit=signal.take_profit,
+                confidence=signal.confidence,
             )
 
             self._setups[signal.symbol] = setup
@@ -250,13 +254,25 @@ class SetupStalkingService:
                     )
                     return updated
 
-            # 2. Check Retest Trigger: Exhaustion touch in target zone
+            # 2. Check Retest Trigger: Touch target zone AND confirm rejection
             triggered = False
             if setup.side is PositionSide.SHORT:
-                if candle.high_price >= setup.target_retest_price:
+                # Retrace touches target AND rejects back down
+                # (close <= target with upper shadow rejection).
+                if (
+                    candle.high_price >= setup.target_retest_price
+                    and candle.close_price <= setup.target_retest_price
+                    and candle.close_price < candle.high_price
+                ):
                     triggered = True
             else:
-                if candle.low_price <= setup.target_retest_price:
+                # Pullback touches target AND bounces back up
+                # (close >= target with lower shadow rejection).
+                if (
+                    candle.low_price <= setup.target_retest_price
+                    and candle.close_price >= setup.target_retest_price
+                    and candle.close_price > candle.low_price
+                ):
                     triggered = True
 
             if triggered:
@@ -323,6 +339,46 @@ class SetupStalkingService:
             return tuple(
                 active + completed[: max(0, self._max_candidates - len(active))]
             )
+
+    def get_setup(self, symbol: str) -> StalkingSetup | None:
+        """Return the current setup for a symbol, if any."""
+        with self._lock:
+            return self._setups.get(symbol)
+
+    def get_active_stalking_symbols(self) -> tuple[str, ...]:
+        """Return symbols currently in active STALKING status."""
+        with self._lock:
+            return tuple(
+                s.symbol
+                for s in self._setups.values()
+                if s.status is StalkingStatus.STALKING
+            )
+
+    def build_triggered_signal(
+        self,
+        *,
+        setup: StalkingSetup,
+        trigger_candle: Candle,
+    ) -> Signal:
+        """Build an actionable entry Signal from a TRIGGERED stalking setup."""
+        sig_type = (
+            SignalType.BUY if setup.side is PositionSide.LONG else SignalType.SELL
+        )
+        return Signal(
+            symbol=setup.symbol,
+            signal_type=sig_type,
+            price=trigger_candle.close_price,
+            confidence=setup.confidence,
+            strategy_name=setup.strategy_type.value,
+            generated_at=trigger_candle.close_time,
+            reason=(
+                f"[STALKING_TRIGGERED] {setup.pattern_name} "
+                f"retest@{setup.target_retest_price} confirmed on bar "
+                f"{setup.current_bar}/{setup.max_bars} ({setup.htf_zone_label})"
+            ),
+            stop_loss=setup.stop_loss,
+            take_profit=setup.take_profit,
+        )
 
     def remove_setup(self, symbol: str) -> None:
         """Remove a setup from tracking."""

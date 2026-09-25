@@ -1391,10 +1391,13 @@ class DependencyProvider:
         self._strategy_service = StrategyService(
             signal_engine=self.signal_engine,
             signal_repository=self.signal_repository,
+            setup_stalking_service=self.setup_stalking_service,
+            stalking_enabled=self._settings.strategy.pier_stalking_enabled,
         )
         self._opportunity_discovery_service = OpportunityDiscoveryService(
             market_service=self.market_service,
             strategy_service=self.strategy_service,
+            setup_stalking_service=self.setup_stalking_service,
             min_confidence=self._settings.strategy.min_signal_confidence,
             candle_request_delay_seconds=(
                 self._settings.market.discovery_candle_delay_seconds

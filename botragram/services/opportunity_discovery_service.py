@@ -154,6 +154,14 @@ class DiscoveryStrategyProvider(Protocol):
         ...
 
 
+class DiscoveryStalkingProvider(Protocol):
+    """Provide active stalking symbols for discovery evaluation."""
+
+    def get_active_stalking_symbols(self) -> tuple[str, ...]:
+        """Return symbols currently in active STALKING status."""
+        ...
+
+
 # =============================================================================
 # Service Classes
 # =============================================================================
@@ -163,6 +171,7 @@ class OpportunityDiscoveryService:
 
     market_service: DiscoveryMarketDataProvider
     strategy_service: DiscoveryStrategyProvider
+    setup_stalking_service: DiscoveryStalkingProvider | None = None
     min_confidence: Decimal = Decimal("0")
     candle_request_delay_seconds: float = DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
     utc_now: Callable[[], datetime] = _utc_now
@@ -329,14 +338,20 @@ class OpportunityDiscoveryService:
                 candidate_minimum = minimum_value
                 effective_candle_limit = max(candle_limit, candidate_minimum)
 
+        effective_symbols = symbols
+        if self.setup_stalking_service is not None:
+            active_stalking = self.setup_stalking_service.get_active_stalking_symbols()
+            if active_stalking:
+                effective_symbols = tuple(dict.fromkeys((*active_stalking, *symbols)))
+
         _LOGGER.info(
             "Discovery scanning %d symbols (interval=%s, candle_limit=%d, top_n=%d)",
-            len(symbols),
+            len(effective_symbols),
             interval.value,
             candle_limit,
             top_n,
         )
-        for index, symbol in enumerate(symbols):
+        for index, symbol in enumerate(effective_symbols):
             if index > 0 and self.candle_request_delay_seconds > 0:
                 await asyncio.sleep(self.candle_request_delay_seconds)
             candles = await self.market_service.get_candles(

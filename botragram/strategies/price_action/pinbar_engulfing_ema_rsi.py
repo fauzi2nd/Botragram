@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -57,6 +58,10 @@ __all__ = [
     "check_candle_intersects_zone",
     "resolve_adaptive_htf_interval",
 ]
+
+_LOGGER: Final[logging.Logger] = logging.getLogger(
+    "botragram.strategies.price_action.pinbar_engulfing_ema_rsi"
+)
 
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DECIMAL_ONE: Final[Decimal] = Decimal("1")
@@ -457,8 +462,14 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     recent_htf = htf_candles[-min(len(htf_candles), 10) :]
                     htf_swing_high = max(c.high_price for c in recent_htf)
                     htf_swing_low = min(c.low_price for c in recent_htf)
-            except Exception:
-                pass
+            except (ValueError, TypeError, IndexError) as exc:
+                _LOGGER.debug(
+                    "HTF candle resampling or indicator calculation bypassed: %s",
+                    exc,
+                )
+                htf_upper_bb = None
+                htf_lower_bb = None
+                htf_atr = None
 
         if self.require_key_level_location:
             last_swing_high, last_swing_low = find_swing_levels(
@@ -679,14 +690,18 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 or setup_candle.close_price >= current_pullback
             )
 
-            # HARD GATE: HTF Extreme Lower Zone (candle low must reach lower BB zone)
-            htf_extreme_long_ok = True
-            if self.require_htf_extreme_zone and htf_lower_bb is not None:
-                eff_htf_atr = htf_atr if htf_atr is not None else current_atr
-                htf_lower_limit = htf_lower_bb + (
-                    self.htf_extreme_buffer_atr * eff_htf_atr
-                )
-                htf_extreme_long_ok = setup_candle.low_price <= htf_lower_limit
+            # HARD GATE: HTF Extreme Lower Zone (fail-closed if HTF data unavailable)
+            if self.require_htf_extreme_zone:
+                if htf_lower_bb is None:
+                    htf_extreme_long_ok = False
+                else:
+                    eff_htf_atr = htf_atr if htf_atr is not None else current_atr
+                    htf_lower_limit = htf_lower_bb + (
+                        self.htf_extreme_buffer_atr * eff_htf_atr
+                    )
+                    htf_extreme_long_ok = setup_candle.low_price <= htf_lower_limit
+            else:
+                htf_extreme_long_ok = True
 
             if (
                 near_pullback
@@ -923,14 +938,18 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 or setup_candle.close_price <= current_pullback
             )
 
-            # HARD GATE: HTF Extreme Upper Zone (candle high must reach upper BB zone)
-            htf_extreme_short_ok = True
-            if self.require_htf_extreme_zone and htf_upper_bb is not None:
-                eff_htf_atr = htf_atr if htf_atr is not None else current_atr
-                htf_upper_limit = htf_upper_bb - (
-                    self.htf_extreme_buffer_atr * eff_htf_atr
-                )
-                htf_extreme_short_ok = setup_candle.high_price >= htf_upper_limit
+            # HARD GATE: HTF Extreme Upper Zone (fail-closed if HTF data unavailable)
+            if self.require_htf_extreme_zone:
+                if htf_upper_bb is None:
+                    htf_extreme_short_ok = False
+                else:
+                    eff_htf_atr = htf_atr if htf_atr is not None else current_atr
+                    htf_upper_limit = htf_upper_bb - (
+                        self.htf_extreme_buffer_atr * eff_htf_atr
+                    )
+                    htf_extreme_short_ok = setup_candle.high_price >= htf_upper_limit
+            else:
+                htf_extreme_short_ok = True
 
             if (
                 near_pullback

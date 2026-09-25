@@ -104,7 +104,7 @@ def test_stalking_setup_invariants() -> None:
 
 
 def test_register_bearish_candidate_and_retest_calculation() -> None:
-    """Validate registering a SELL setup calculates 50% retest target."""
+    """Validate registering a SELL setup calculates 50% body retest target."""
     service = SetupStalkingService(max_candidates=5, default_max_bars=7)
     candle = _make_candle(
         open_price=Decimal("100"),
@@ -132,8 +132,8 @@ def test_register_bearish_candidate_and_retest_calculation() -> None:
     assert setup.side is PositionSide.SHORT
     assert setup.pattern_name == "ENGULFING"
     assert setup.invalidation_price == Decimal("110")  # Peak high
-    # Range = 20, 50% retest target = 90 + (20 * 0.5) = 100
-    assert setup.target_retest_price == Decimal("100")
+    # Body: 100 -> 92 (size = 8), 50% body retest = 92 + (8 * 0.5) = 96
+    assert setup.target_retest_price == Decimal("96")
     assert setup.status is StalkingStatus.STALKING
     assert setup.current_bar == 0
     assert setup.max_bars == 7
@@ -174,8 +174,8 @@ def test_bearish_setup_invalidation_breach_peak() -> None:
     assert updated.current_bar == 1
 
 
-def test_bearish_setup_retest_trigger() -> None:
-    """Subsequent bar touching retest target without breaching peak triggers setup."""
+def test_bearish_setup_retest_trigger_with_rejection_confirmation() -> None:
+    """Subsequent bar touching retest target with rejection close triggers setup."""
     service = SetupStalkingService()
     candle0 = _make_candle(
         index=0,
@@ -195,13 +195,87 @@ def test_bearish_setup_retest_trigger() -> None:
     )
     service.register_candidate(signal=signal, setup_candle=candle0)
 
-    # Bar 1 retests up to 102 (touches target 100, but high 102 <= invalidation 110)
+    # Bar 1 touches target 96 (high 97) and closes at 95 <= 96 (rejection confirmed)
     candle1 = _make_candle(
         index=1,
         open_price=Decimal("93"),
-        high_price=Decimal("102"),
+        high_price=Decimal("97"),
         low_price=Decimal("92"),
+        close_price=Decimal("95"),
+    )
+    updated = service.on_candle_update(candle1)
+    assert updated is not None
+    assert updated.status is StalkingStatus.TRIGGERED
+    assert updated.current_bar == 1
+
+
+def test_bearish_setup_retest_without_rejection_does_not_trigger() -> None:
+    """Candle closing above target (marubozu / breakout) does NOT trigger setup."""
+    service = SetupStalkingService()
+    candle0 = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    service.register_candidate(signal=signal, setup_candle=candle0)
+
+    # Bar 1 touches target 96 (high 98) but closes at 98 > 96 (breakout against setup)
+    candle1 = _make_candle(
+        index=1,
+        open_price=Decimal("93"),
+        high_price=Decimal("98"),
+        low_price=Decimal("93"),
         close_price=Decimal("98"),
+    )
+    updated = service.on_candle_update(candle1)
+    assert updated is not None
+    assert updated.status is StalkingStatus.STALKING
+    assert updated.current_bar == 1
+
+
+def test_bullish_setup_retest_and_rejection_confirmation() -> None:
+    """Bullish setup calculates 50% body pullback and triggers on bounce."""
+    service = SetupStalkingService()
+    candle0 = _make_candle(
+        index=0,
+        open_price=Decimal("92"),
+        high_price=Decimal("105"),
+        low_price=Decimal("90"),
+        close_price=Decimal("100"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("100"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BULLISH ENGULFING",
+    )
+    setup = service.register_candidate(signal=signal, setup_candle=candle0)
+    assert setup is not None
+    # Body: 92 -> 100 (size = 8), 50% pullback = 100 - (8 * 0.5) = 96
+    assert setup.target_retest_price == Decimal("96")
+    assert setup.invalidation_price == Decimal("90")
+
+    # Bar 1 pulls back to 95 (touches target 96) and closes at 97 (bounce confirmed)
+    candle1 = _make_candle(
+        index=1,
+        open_price=Decimal("98"),
+        high_price=Decimal("99"),
+        low_price=Decimal("95"),
+        close_price=Decimal("97"),
     )
     updated = service.on_candle_update(candle1)
     assert updated is not None
@@ -243,11 +317,11 @@ def test_setup_expiry_at_max_bars() -> None:
         u1 is not None and u1.status is StalkingStatus.STALKING and u1.current_bar == 1
     )
 
-    # Bar 2: Quiet bar
+    # Bar 2: Quiet bar below retest target
     c2 = _make_candle(
         index=2,
         open_price=Decimal("93"),
-        high_price=Decimal("96"),
+        high_price=Decimal("95"),
         low_price=Decimal("92"),
         close_price=Decimal("94"),
     )
@@ -256,13 +330,13 @@ def test_setup_expiry_at_max_bars() -> None:
         u2 is not None and u2.status is StalkingStatus.STALKING and u2.current_bar == 2
     )
 
-    # Bar 3: Reaches max_bars (3) -> EXPIRED
+    # Bar 3: Reaches max_bars (3) without retest -> EXPIRED
     c3 = _make_candle(
         index=3,
         open_price=Decimal("94"),
-        high_price=Decimal("97"),
+        high_price=Decimal("95"),
         low_price=Decimal("93"),
-        close_price=Decimal("95"),
+        close_price=Decimal("94"),
     )
     u3 = service.on_candle_update(c3)
     assert (
