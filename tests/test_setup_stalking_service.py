@@ -378,3 +378,209 @@ def test_capacity_limit_max_candidates() -> None:
     )
     assert service.register_candidate(signal=sig3, setup_candle=candle) is None
     assert len(service.get_active_stalking_setups()) == 2
+
+
+def test_duplicate_closed_candle_calls_do_not_advance_bar() -> None:
+    """Duplicate calls with the same closed candle must preserve bar and state."""
+    service = SetupStalkingService(default_max_bars=7)
+    candle0 = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    service.register_candidate(signal=signal, setup_candle=candle0)
+
+    # Calling with setup candle (index 0) must be ignored and stay bar 0
+    for _ in range(5):
+        res0 = service.on_candle_update(candle0)
+        assert res0 is not None
+        assert res0.current_bar == 0
+        assert res0.status is StalkingStatus.STALKING
+
+    # First subsequent bar (index 1) advances bar to 1
+    candle1 = _make_candle(
+        index=1,
+        open_price=Decimal("93"),
+        high_price=Decimal("95"),
+        low_price=Decimal("92"),
+        close_price=Decimal("94"),
+    )
+    res1 = service.on_candle_update(candle1)
+    assert res1 is not None
+    assert res1.current_bar == 1
+    assert res1.status is StalkingStatus.STALKING
+
+    # 10 duplicate calls of candle1 must NOT advance bar or change state
+    for _ in range(10):
+        dup = service.on_candle_update(candle1)
+        assert dup is not None
+        assert dup.current_bar == 1
+        assert dup.status is StalkingStatus.STALKING
+
+
+def test_retest_trigger_called_multiple_times_only_triggers_once() -> None:
+    """Retest trigger on the same closed candle only transitions once."""
+    service = SetupStalkingService(default_max_bars=7)
+    candle0 = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    service.register_candidate(signal=signal, setup_candle=candle0)
+
+    # Candle 1 touches retest target 96 (high 97) with rejection confirmation
+    candle1 = _make_candle(
+        index=1,
+        open_price=Decimal("93"),
+        high_price=Decimal("97"),
+        low_price=Decimal("92"),
+        close_price=Decimal("95"),
+    )
+    triggered = service.on_candle_update(candle1)
+    assert triggered is not None
+    assert triggered.status is StalkingStatus.TRIGGERED
+    assert triggered.current_bar == 1
+
+    # Repeated calls on the same candle do not re-trigger (returns None)
+    for _ in range(5):
+        dup = service.on_candle_update(candle1)
+        assert dup is None
+
+    # Stalking setup in service remains TRIGGERED
+    final_setup = service.get_setup("BTCUSDT")
+    assert final_setup is not None
+    assert final_setup.status is StalkingStatus.TRIGGERED
+    assert final_setup.current_bar == 1
+
+
+def test_invalidation_called_multiple_times_only_invalidates_once() -> None:
+    """Invalidation on the same closed candle only transitions once."""
+    service = SetupStalkingService(default_max_bars=7)
+    candle0 = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    service.register_candidate(signal=signal, setup_candle=candle0)
+
+    # Candle 1 breaches peak (high 111 > invalidation 110)
+    candle1 = _make_candle(
+        index=1,
+        open_price=Decimal("93"),
+        high_price=Decimal("111"),
+        low_price=Decimal("91"),
+        close_price=Decimal("105"),
+    )
+    invalidated = service.on_candle_update(candle1)
+    assert invalidated is not None
+    assert invalidated.status is StalkingStatus.INVALIDATED
+    assert invalidated.current_bar == 1
+
+    # Repeated calls on the same candle do not re-invalidate
+    for _ in range(5):
+        assert service.on_candle_update(candle1) is None
+
+    final_setup = service.get_setup("BTCUSDT")
+    assert final_setup is not None
+    assert final_setup.status is StalkingStatus.INVALIDATED
+    assert final_setup.current_bar == 1
+
+
+def test_expiry_requires_distinct_closed_candles() -> None:
+    """Expiry occurs strictly after max_bars distinct closed candles."""
+    service = SetupStalkingService(default_max_bars=3)
+    candle0 = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    service.register_candidate(signal=signal, setup_candle=candle0)
+
+    # Bar 1 called 5 times
+    c1 = _make_candle(
+        index=1,
+        open_price=Decimal("93"),
+        high_price=Decimal("95"),
+        low_price=Decimal("92"),
+        close_price=Decimal("94"),
+    )
+    for _ in range(5):
+        u1 = service.on_candle_update(c1)
+        assert u1 is not None
+        assert u1.current_bar == 1
+        assert u1.status is StalkingStatus.STALKING
+
+    # Bar 2 called 5 times
+    c2 = _make_candle(
+        index=2,
+        open_price=Decimal("93"),
+        high_price=Decimal("95"),
+        low_price=Decimal("92"),
+        close_price=Decimal("94"),
+    )
+    for _ in range(5):
+        u2 = service.on_candle_update(c2)
+        assert u2 is not None
+        assert u2.current_bar == 2
+        assert u2.status is StalkingStatus.STALKING
+
+    # Bar 3 (3rd distinct bar) reaches max_bars (3) -> EXPIRED
+    c3 = _make_candle(
+        index=3,
+        open_price=Decimal("94"),
+        high_price=Decimal("95"),
+        low_price=Decimal("93"),
+        close_price=Decimal("94"),
+    )
+    u3 = service.on_candle_update(c3)
+    assert u3 is not None
+    assert u3.status is StalkingStatus.EXPIRED
+    assert u3.current_bar == 3
+
+    # Subsequent calls on c3 do not re-expire
+    for _ in range(5):
+        assert service.on_candle_update(c3) is None

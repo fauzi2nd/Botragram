@@ -57,6 +57,7 @@ class StalkingSetup:
     stop_loss: Decimal | None = None
     take_profit: Decimal | None = None
     confidence: Decimal = Decimal("0.80")
+    last_processed_candle_close_time: datetime | None = None
 
     def __post_init__(self) -> None:
         """Validate invariant boundaries."""
@@ -74,3 +75,10 @@ class StalkingSetup:
             raise ValueError("Max bars must be positive")
         if self.confidence < Decimal("0") or self.confidence > Decimal("1"):
             raise ValueError("Stalking confidence must be between 0 and 1")
+        if (
+            self.last_processed_candle_close_time is not None
+            and self.last_processed_candle_close_time.tzinfo is None
+        ):
+            raise ValueError(
+                "Stalking last_processed_candle_close_time must be timezone-aware"
+            )

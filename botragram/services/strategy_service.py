@@ -125,36 +125,61 @@ class StrategyService:
         # 1. Active Stalking State: Check if this symbol is currently in STALKING
         if self.stalking_enabled and stalking_svc is not None and is_pier:
             existing = stalking_svc.get_setup(symbol)
-            if existing is not None and existing.status is StalkingStatus.STALKING:
-                updated = stalking_svc.on_candle_update(latest_candle)
-                if updated is not None and updated.status is StalkingStatus.TRIGGERED:
-                    return stalking_svc.build_triggered_signal(
-                        setup=updated,
-                        trigger_candle=latest_candle,
-                    )
-                # Still stalking, invalidated, or expired -> hold immediate entry
-                if updated is not None and updated.status is StalkingStatus.STALKING:
-                    reason_status = (
-                        f"[STALKING] bar {updated.current_bar}/{existing.max_bars} "
-                        f"awaiting retest@{existing.target_retest_price}"
-                    )
-                elif updated is not None:
-                    reason_status = (
-                        f"[STALKING_{updated.status.value.upper()}] bar "
-                        f"{updated.current_bar}/{existing.max_bars}"
-                    )
-                else:
-                    reason_status = "[STALKING_INACTIVE]"
+            if existing is not None:
+                if existing.status is StalkingStatus.STALKING:
+                    updated = stalking_svc.on_candle_update(latest_candle)
+                    if (
+                        updated is not None
+                        and updated.status is StalkingStatus.TRIGGERED
+                    ):
+                        return stalking_svc.build_triggered_signal(
+                            setup=updated,
+                            trigger_candle=latest_candle,
+                        )
+                    # Still stalking, invalidated, or expired -> hold immediate entry
+                    if (
+                        updated is not None
+                        and updated.status is StalkingStatus.STALKING
+                    ):
+                        reason_status = (
+                            f"[STALKING] bar {updated.current_bar}/{existing.max_bars} "
+                            f"awaiting retest@{existing.target_retest_price}"
+                        )
+                    elif updated is not None:
+                        reason_status = (
+                            f"[STALKING_{updated.status.value.upper()}] bar "
+                            f"{updated.current_bar}/{existing.max_bars}"
+                        )
+                    else:
+                        reason_status = "[STALKING_INACTIVE]"
 
-                return Signal(
-                    symbol=symbol,
-                    signal_type=SignalType.HOLD,
-                    price=latest_candle.close_price,
-                    confidence=Decimal("0"),
-                    strategy_name=resolved_type.value,
-                    generated_at=latest_candle.close_time,
-                    reason=reason_status,
-                )
+                    return Signal(
+                        symbol=symbol,
+                        signal_type=SignalType.HOLD,
+                        price=latest_candle.close_price,
+                        confidence=Decimal("0"),
+                        strategy_name=resolved_type.value,
+                        generated_at=latest_candle.close_time,
+                        reason=reason_status,
+                    )
+                if (
+                    existing.last_processed_candle_close_time is not None
+                    and latest_candle.close_time
+                    <= existing.last_processed_candle_close_time
+                ):
+                    return Signal(
+                        symbol=symbol,
+                        signal_type=SignalType.HOLD,
+                        price=latest_candle.close_price,
+                        confidence=Decimal("0"),
+                        strategy_name=resolved_type.value,
+                        generated_at=latest_candle.close_time,
+                        reason=(
+                            f"[STALKING_{existing.status.value.upper()}_PROCESSED] "
+                            f"Candle already evaluated for "
+                            f"{existing.status.value} setup"
+                        ),
+                    )
 
         # 2. Evaluate strategy normally
         raw_signal = self.signal_engine.generate(

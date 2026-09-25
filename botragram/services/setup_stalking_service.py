@@ -119,6 +119,19 @@ class SetupStalkingService:
                 )
                 return existing
 
+            if (
+                existing is not None
+                and existing.last_processed_candle_close_time is not None
+                and setup_candle.close_time <= existing.last_processed_candle_close_time
+            ):
+                _LOGGER.debug(
+                    "Setup candle close_time %s already processed for %s; "
+                    "skipping duplicate registration",
+                    setup_candle.close_time,
+                    signal.symbol,
+                )
+                return None
+
             active_count = sum(
                 1 for s in self._setups.values() if s.status is StalkingStatus.STALKING
             )
@@ -175,6 +188,7 @@ class SetupStalkingService:
                 stop_loss=signal.stop_loss,
                 take_profit=signal.take_profit,
                 confidence=signal.confidence,
+                last_processed_candle_close_time=setup_candle.close_time,
             )
 
             self._setups[signal.symbol] = setup
@@ -212,6 +226,29 @@ class SetupStalkingService:
             if setup is None or setup.status is not StalkingStatus.STALKING:
                 return None
 
+            if candle.interval is not setup.interval:
+                _LOGGER.debug(
+                    "Skipping candle update for %s: interval mismatch (%s != %s)",
+                    candle.symbol,
+                    candle.interval.value,
+                    setup.interval.value,
+                )
+                return setup
+
+            if (
+                setup.last_processed_candle_close_time is not None
+                and candle.close_time <= setup.last_processed_candle_close_time
+            ):
+                _LOGGER.debug(
+                    "Stalking candle update skipped (duplicate/stale): "
+                    "symbol=%s candle_close=%s last_processed=%s current_bar=%d",
+                    candle.symbol,
+                    candle.close_time,
+                    setup.last_processed_candle_close_time,
+                    setup.current_bar,
+                )
+                return setup
+
             next_bar = setup.current_bar + 1
 
             # 1. Check Invalidation: Peak/Valley breach
@@ -222,6 +259,7 @@ class SetupStalkingService:
                         current_bar=next_bar,
                         status=StalkingStatus.INVALIDATED,
                         updated_at=now,
+                        last_processed_candle_close_time=candle.close_time,
                     )
                     self._setups[candle.symbol] = updated
                     _LOGGER.info(
@@ -241,6 +279,7 @@ class SetupStalkingService:
                         current_bar=next_bar,
                         status=StalkingStatus.INVALIDATED,
                         updated_at=now,
+                        last_processed_candle_close_time=candle.close_time,
                     )
                     self._setups[candle.symbol] = updated
                     _LOGGER.info(
@@ -281,6 +320,7 @@ class SetupStalkingService:
                     current_bar=next_bar,
                     status=StalkingStatus.TRIGGERED,
                     updated_at=now,
+                    last_processed_candle_close_time=candle.close_time,
                 )
                 self._setups[candle.symbol] = updated
                 _LOGGER.info(
@@ -301,6 +341,7 @@ class SetupStalkingService:
                     current_bar=next_bar,
                     status=StalkingStatus.EXPIRED,
                     updated_at=now,
+                    last_processed_candle_close_time=candle.close_time,
                 )
                 self._setups[candle.symbol] = updated
                 _LOGGER.info(
@@ -316,6 +357,7 @@ class SetupStalkingService:
                 setup,
                 current_bar=next_bar,
                 updated_at=now,
+                last_processed_candle_close_time=candle.close_time,
             )
             self._setups[candle.symbol] = updated
             return updated

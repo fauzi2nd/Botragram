@@ -419,3 +419,109 @@ async def test_opportunity_discovery_evaluates_active_stalking_symbol() -> None:
     assert actionable[0].symbol == "ETHUSDT"
     assert actionable[0].signal_type is SignalType.SELL
     assert "[STALKING_TRIGGERED]" in (actionable[0].reason or "")
+
+
+def test_cadence_smaller_than_interval_preserves_single_bar_evaluation() -> None:
+    """PIER 5m + DISCOVERY_CADENCE_SECONDS=10 evaluates 1 bar per closed candle."""
+    candle0 = _make_candle(
+        symbol="BTCUSDT",
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    anchor_signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
+        generated_at=candle0.close_time,
+        reason="BEARISH ENGULFING",
+        stop_loss=Decimal("112"),
+        take_profit=Decimal("80"),
+    )
+
+    fake_strategy = _FakeStrategy(anchor_signal)
+    signal_engine = SignalEngine(
+        strategy_resolver=StrategyResolver(
+            strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: fake_strategy}
+        ),
+        default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    stalking_service = SetupStalkingService(default_max_bars=7)
+    strategy_service = StrategyService(
+        signal_engine=signal_engine,
+        signal_repository=MemorySignalRepository(),
+        setup_stalking_service=stalking_service,
+        stalking_enabled=True,
+    )
+
+    # --- Bar 0: Called 5 times in 50 seconds before candle1 closes ---
+    for _ in range(5):
+        sig = strategy_service.generate_signal(
+            candles=[candle0],
+            strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+        )
+        assert sig.signal_type is SignalType.HOLD
+        setup = stalking_service.get_setup("BTCUSDT")
+        assert setup is not None
+        assert setup.status is StalkingStatus.STALKING
+        assert setup.current_bar == 0
+
+    # --- Bar 1: Quiet bar called 30 times (300s / 10s discovery cadence) ---
+    candle1 = _make_candle(
+        symbol="BTCUSDT",
+        index=1,
+        open_price=Decimal("93"),
+        high_price=Decimal("95"),
+        low_price=Decimal("92"),
+        close_price=Decimal("94"),
+    )
+    for _ in range(30):
+        sig = strategy_service.generate_signal(
+            candles=[candle0, candle1],
+            strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+        )
+        assert sig.signal_type is SignalType.HOLD
+        setup = stalking_service.get_setup("BTCUSDT")
+        assert setup is not None
+        assert setup.status is StalkingStatus.STALKING
+        # Must stay bar 1 across all 30 calls! Never advance to 30 or expire.
+        assert setup.current_bar == 1
+
+    # --- Bar 2: Retest trigger called 10 times in 100 seconds ---
+    candle2 = _make_candle(
+        symbol="BTCUSDT",
+        index=2,
+        open_price=Decimal("94"),
+        high_price=Decimal("97"),
+        low_price=Decimal("93"),
+        close_price=Decimal("95"),
+    )
+
+    # First call (cycle 1): triggers actionable SELL
+    sig_trig = strategy_service.generate_signal(
+        candles=[candle0, candle1, candle2],
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    assert sig_trig.signal_type is SignalType.SELL
+    assert "[STALKING_TRIGGERED]" in (sig_trig.reason or "")
+    setup = stalking_service.get_setup("BTCUSDT")
+    assert setup is not None
+    assert setup.status is StalkingStatus.TRIGGERED
+    assert setup.current_bar == 2
+
+    # Subsequent 9 calls on candle2: must NOT re-trigger or re-register!
+    for _ in range(9):
+        sig_dup = strategy_service.generate_signal(
+            candles=[candle0, candle1, candle2],
+            strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+        )
+        assert sig_dup.signal_type is SignalType.HOLD
+        assert "[STALKING_TRIGGERED_PROCESSED]" in (sig_dup.reason or "")
+        setup = stalking_service.get_setup("BTCUSDT")
+        assert setup is not None
+        assert setup.status is StalkingStatus.TRIGGERED
+        assert setup.current_bar == 2
