@@ -43,6 +43,7 @@ from botragram.enums import (
     MarketType,
     StrategyType,
     TradeMode,
+    TrailingMode,
 )
 
 __all__ = [
@@ -485,6 +486,21 @@ class SettingsManager:
             breakeven_fee_buffer=self._parse_decimal(
                 raw_value=environment.get_breakeven_fee_buffer(),
                 setting_name="BREAKEVEN_FEE_BUFFER",
+            ),
+            trailing_mode=self._parse_trailing_mode(
+                raw_value=environment.get_trailing_mode(),
+            ),
+            trailing_swing_timeframe=self._parse_market_interval(
+                raw_value=environment.get_trailing_swing_timeframe(),
+                setting_name="TRAILING_SWING_TIMEFRAME",
+            ),
+            trailing_swing_window=self._parse_positive_int(
+                raw_value=environment.get_trailing_swing_window(),
+                setting_name="TRAILING_SWING_WINDOW",
+            ),
+            trailing_buffer_pct=self._parse_decimal(
+                raw_value=environment.get_trailing_buffer_pct(),
+                setting_name="TRAILING_BUFFER_PCT",
             ),
             partial_tp_enabled=environment.get_partial_tp_enabled(),
             partial_tp_ratio=self._parse_decimal(
@@ -1184,6 +1200,23 @@ class SettingsManager:
                 if environment.get_pier_bb_std_dev()
                 else Decimal("2.0")
             ),
+            pier_use_htf_structural_tp=environment.get_pier_use_htf_structural_tp(),
+            pier_htf_bb_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_htf_bb_period(),
+                    setting_name="PIER_HTF_BB_PERIOD",
+                )
+                if environment.get_pier_htf_bb_period()
+                else 20
+            ),
+            pier_htf_bb_std_dev=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_htf_bb_std_dev(),
+                    setting_name="PIER_HTF_BB_STD_DEV",
+                )
+                if environment.get_pier_htf_bb_std_dev()
+                else Decimal("2.0")
+            ),
             ny_range_risk_reward_ratio=(
                 self._parse_decimal(
                     raw_value=environment.get_ny_range_risk_reward_ratio(),
@@ -1658,6 +1691,20 @@ class SettingsManager:
         """
         try:
             return Interval(raw_value)
+        except ValueError as error:
+            raise ValueError(
+                f"Environment variable {setting_name!r} has invalid value {raw_value!r}"
+            ) from error
+
+    @staticmethod
+    def _parse_trailing_mode(
+        *,
+        raw_value: str,
+        setting_name: str = "TRAILING_MODE",
+    ) -> TrailingMode:
+        """Parse trailing stop protection mode."""
+        try:
+            return TrailingMode(raw_value.lower().strip())
         except ValueError as error:
             raise ValueError(
                 f"Environment variable {setting_name!r} has invalid value {raw_value!r}"

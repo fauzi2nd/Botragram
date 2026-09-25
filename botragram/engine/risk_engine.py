@@ -10,6 +10,7 @@ Python:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, Decimal
 from typing import Final
@@ -18,6 +19,7 @@ from botragram.config.risk_settings import RiskSettings
 from botragram.constants.strategy import get_strategy_default_exit_rates
 from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.models import (
+    Candle,
     Position,
     PositionSize,
     RiskMetrics,
@@ -256,6 +258,90 @@ class RiskEngine:
             return position.entry_price + locked_distance
 
         return position.entry_price - locked_distance
+
+    @classmethod
+    def calculate_swing_pivot_stop_loss(
+        cls,
+        *,
+        position: Position,
+        candles: Sequence[Candle],
+        window: int = 5,
+        buffer_pct: Decimal = Decimal("0.0015"),
+    ) -> Decimal | None:
+        """Calculate dynamic trailing stop based on confirmed fractal swing pivots.
+
+        Requires a confirmed 5-bar swing pivot on completed candles (2 bars left,
+        1 center pivot, 2 bars right).
+
+        - For LONG: Looks for confirmed swing lows (valleys). Trailing SL is placed
+          below the confirmed swing low minus buffer_pct.
+          Invariant: Must be strictly higher than position.stop_loss and below
+          current close.
+        - For SHORT: Looks for confirmed swing highs (peaks). Trailing SL is placed
+          above the confirmed swing high plus buffer_pct.
+          Invariant: Must be strictly lower than position.stop_loss and above
+          current close.
+
+        Returns the new tightened Stop Loss price, or None if no valid new pivot exists.
+        """
+        if len(candles) < window:
+            return None
+
+        half_window = window // 2
+        last_valid_pivot_idx = len(candles) - 1 - half_window
+
+        current_close = candles[-1].close_price
+        best_candidate: Decimal | None = None
+
+        if position.side is PositionSide.LONG:
+            for i in range(last_valid_pivot_idx, half_window - 1, -1):
+                pivot_candle = candles[i]
+                if pivot_candle.close_time < position.opened_at:
+                    break
+
+                pivot_low = pivot_candle.low_price
+                is_swing_low = True
+                for offset in range(1, half_window + 1):
+                    if not (
+                        pivot_low < candles[i - offset].low_price
+                        and pivot_low <= candles[i + offset].low_price
+                    ):
+                        is_swing_low = False
+                        break
+
+                if is_swing_low:
+                    candidate_sl = pivot_low * (Decimal("1") - buffer_pct)
+                    current_sl = position.stop_loss or _DECIMAL_ZERO
+                    if candidate_sl > current_sl and candidate_sl < current_close:
+                        best_candidate = candidate_sl
+                        break
+
+        elif position.side is PositionSide.SHORT:
+            for i in range(last_valid_pivot_idx, half_window - 1, -1):
+                pivot_candle = candles[i]
+                if pivot_candle.close_time < position.opened_at:
+                    break
+
+                pivot_high = pivot_candle.high_price
+                is_swing_high = True
+                for offset in range(1, half_window + 1):
+                    if not (
+                        pivot_high > candles[i - offset].high_price
+                        and pivot_high >= candles[i + offset].high_price
+                    ):
+                        is_swing_high = False
+                        break
+
+                if is_swing_high:
+                    candidate_sl = pivot_high * (Decimal("1") + buffer_pct)
+                    current_short_sl = position.stop_loss
+                    if (
+                        current_short_sl is None or candidate_sl < current_short_sl
+                    ) and candidate_sl > current_close:
+                        best_candidate = candidate_sl
+                        break
+
+        return best_candidate
 
     def evaluate(
         self,

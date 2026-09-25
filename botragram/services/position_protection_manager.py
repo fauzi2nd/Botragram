@@ -18,12 +18,14 @@ from botragram.engine.risk_engine import (
     RiskEngine,
 )
 from botragram.enums import (
+    Interval,
     NotificationType,
     OrderSide,
     OrderStatus,
     OrderType,
     PositionSide,
     TradeMode,
+    TrailingMode,
 )
 from botragram.exceptions import (
     ExchangeOrderImmediateTriggerRejectedError,
@@ -33,7 +35,7 @@ from botragram.exceptions import (
 )
 from botragram.exchanges.base import BaseExchangeClient
 from botragram.models import Notification, Order, Position, Ticker
-from botragram.repositories import PositionRepository
+from botragram.repositories import CandleRepository, PositionRepository
 from botragram.services.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
 )
@@ -90,6 +92,11 @@ class PositionProtectionManager:
     partial_tp_enabled: bool = False
     partial_tp_ratio: Decimal = Decimal("0.50")
     partial_tp_trigger_progress: Decimal = Decimal("0.50")
+    trailing_mode: TrailingMode = TrailingMode.STEPPED
+    trailing_swing_timeframe: Interval = Interval.M5
+    trailing_swing_window: int = 5
+    trailing_buffer_pct: Decimal = Decimal("0.0015")
+    candle_repository: CandleRepository | None = None
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(
         default_factory=LivePositionLifecycleCoordinator,
     )
@@ -135,6 +142,12 @@ class PositionProtectionManager:
             raise ValueError(
                 "Partial TP trigger progress must be between 0 and 1 exclusive"
             )
+
+        if self.trailing_swing_window < 3:
+            raise ValueError("Trailing swing window must be at least 3")
+
+        if self.trailing_buffer_pct < _DECIMAL_ZERO:
+            raise ValueError("Trailing buffer pct must be non-negative")
 
     async def on_market_tick(self, *, ticker: Ticker) -> None:
         """Advance profit protection when a stream tick crosses a new step."""
@@ -202,41 +215,62 @@ class PositionProtectionManager:
             if not self.stepped_stop_enabled:
                 return
 
-            roi = self._calculate_roi(
-                position=position,
-                current_price=ticker.last_price,
-            )
-            step = self._resolve_step(
-                progress=progress,
-                roi=roi,
-                breakeven_roi_threshold=self.breakeven_roi_threshold,
-                breakeven_progress_threshold=self.breakeven_progress_threshold,
-                thresholds=self.stepped_stop_thresholds,
-            )
-
-            if step <= position.protection_step:
-                return
-
-            try:
-                replacement_stop = self._calculate_stop_loss(
+            if self.trailing_mode is TrailingMode.SWING_PIVOT:
+                if self.candle_repository is None:
+                    return
+                candles = await self.candle_repository.get_latest(
+                    symbol=position.symbol,
+                    interval=self.trailing_swing_timeframe,
+                    limit=max(50, self.trailing_swing_window * 4),
+                )
+                replacement_stop = RiskEngine.calculate_swing_pivot_stop_loss(
                     position=position,
-                    step=step,
+                    candles=candles,
+                    window=self.trailing_swing_window,
+                    buffer_pct=self.trailing_buffer_pct,
+                )
+                if replacement_stop is None:
+                    return
+                new_step = position.protection_step + 1
+            else:
+                roi = self._calculate_roi(
+                    position=position,
+                    current_price=ticker.last_price,
+                )
+                step = self._resolve_step(
+                    progress=progress,
+                    roi=roi,
+                    breakeven_roi_threshold=self.breakeven_roi_threshold,
+                    breakeven_progress_threshold=self.breakeven_progress_threshold,
                     thresholds=self.stepped_stop_thresholds,
-                    locked_lag=self.stepped_stop_locked_lag,
-                    breakeven_fee_buffer=self.breakeven_fee_buffer,
                 )
-            except ValueError as err:
-                _LOGGER.warning(
-                    "Invalid protection geometry for %s at step %s: %s. "
-                    "Retaining current protection.",
-                    position.symbol,
-                    step,
-                    err,
-                )
-                self._retry_after_monotonic = monotonic() + self.failure_retry_seconds
-                return
 
-            new_step = step
+                if step <= position.protection_step:
+                    return
+
+                try:
+                    replacement_stop = self._calculate_stop_loss(
+                        position=position,
+                        step=step,
+                        thresholds=self.stepped_stop_thresholds,
+                        locked_lag=self.stepped_stop_locked_lag,
+                        breakeven_fee_buffer=self.breakeven_fee_buffer,
+                    )
+                except ValueError as err:
+                    _LOGGER.warning(
+                        "Invalid protection geometry for %s at step %s: %s. "
+                        "Retaining current protection.",
+                        position.symbol,
+                        step,
+                        err,
+                    )
+                    self._retry_after_monotonic = (
+                        monotonic() + self.failure_retry_seconds
+                    )
+                    return
+
+                new_step = step
+
             final_stop = replacement_stop
 
             if self.trade_mode is TradeMode.LIVE:
@@ -327,7 +361,7 @@ class PositionProtectionManager:
             self._cached_position = protected_position
             locked_progress = (
                 _PROGRESS_THRESHOLDS[new_step - 2] - _LOCKED_PROGRESS_LAG
-                if new_step >= 2
+                if 2 <= new_step <= (len(_PROGRESS_THRESHOLDS) + 1)
                 else _DECIMAL_ZERO
             )
             _LOGGER.info(

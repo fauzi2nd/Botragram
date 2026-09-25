@@ -19,6 +19,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+# =============================================================================
+# Local Imports
+# =============================================================================
+from botragram.enums import Interval, TrailingMode
+
 __all__ = [
     "RiskSettings",
 ]
@@ -85,6 +90,10 @@ class RiskSettings:
     breakeven_roi_threshold: Decimal = Decimal("0.30")
     breakeven_progress_threshold: Decimal = Decimal("0.35")
     breakeven_fee_buffer: Decimal = Decimal("0.0016")
+    trailing_mode: TrailingMode = TrailingMode.SWING_PIVOT
+    trailing_swing_timeframe: Interval = Interval.M5
+    trailing_swing_window: int = 5
+    trailing_buffer_pct: Decimal = Decimal("0.0015")
 
     # Partial Take Profit
     partial_tp_enabled: bool = False
@@ -204,6 +213,14 @@ class RiskSettings:
             or self.breakeven_fee_buffer >= Decimal("0.05")
         ):
             raise ValueError("breakeven_fee_buffer must be in [0, 0.05)")
+
+        if self.trailing_swing_window < 3:
+            raise ValueError("trailing_swing_window must be at least 3")
+
+        if not self.trailing_buffer_pct.is_finite() or not (
+            Decimal("0") <= self.trailing_buffer_pct < Decimal("0.05")
+        ):
+            raise ValueError("trailing_buffer_pct must be in [0, 0.05)")
 
         if not self.stepped_stop_thresholds:
             raise ValueError("stepped_stop_thresholds cannot be empty")

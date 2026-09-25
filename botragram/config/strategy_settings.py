@@ -324,6 +324,9 @@ class StrategySettings:
     pier_min_structural_rr: Decimal = Decimal("1.0")
     pier_bb_period: int = 20
     pier_bb_std_dev: Decimal = Decimal("2.0")
+    pier_use_htf_structural_tp: bool = True
+    pier_htf_bb_period: int = 20
+    pier_htf_bb_std_dev: Decimal = Decimal("2.0")
 
     # =========================================================================
     # Market Orderflow Regime & Price-Hunt (MORPH)
@@ -687,6 +690,8 @@ class StrategySettings:
             raise ValueError("pier_min_structural_rr must be positive")
         if self.pier_bb_period <= 0 or self.pier_bb_std_dev <= Decimal("0"):
             raise ValueError("PIER Bollinger Bands parameters must be positive")
+        if self.pier_htf_bb_period <= 0 or self.pier_htf_bb_std_dev <= Decimal("0"):
+            raise ValueError("PIER HTF Bollinger Bands parameters must be positive")
         if self.morph_swing_lookback <= 2 or self.morph_fvg_lookback <= 2:
             raise ValueError("MORPH swing and FVG lookback must be greater than 2")
         if self.morph_volume_period <= 2 or self.morph_volume_multiplier <= Decimal(

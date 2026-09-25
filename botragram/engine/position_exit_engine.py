@@ -361,6 +361,16 @@ class PositionExitEngine:
                 score += Decimal("0.15")
                 signals_detected.append("Exhaustion volume surge")
 
+            # 6. Upper wick rejection (buyer exhaustion shadow)
+            candle_range = curr_candle.high_price - curr_candle.low_price
+            if candle_range > _DECIMAL_ZERO:
+                upper_wick = curr_candle.high_price - max(
+                    curr_candle.open_price, curr_candle.close_price
+                )
+                if (upper_wick / candle_range) >= Decimal("0.40"):
+                    score += Decimal("0.20")
+                    signals_detected.append("Upper wick rejection")
+
         elif position.side is PositionSide.SHORT:
             # 1. Bollinger Band breach and re-entry/rejection
             lower_bb = bb.lower[-1]
@@ -395,6 +405,17 @@ class PositionExitEngine:
             if curr_candle.volume >= Decimal("1.5") * vol_sma[-1]:
                 score += Decimal("0.15")
                 signals_detected.append("Exhaustion volume surge")
+
+            # 6. Lower wick rejection (seller exhaustion shadow)
+            candle_range = curr_candle.high_price - curr_candle.low_price
+            if candle_range > _DECIMAL_ZERO:
+                lower_wick = (
+                    min(curr_candle.open_price, curr_candle.close_price)
+                    - curr_candle.low_price
+                )
+                if (lower_wick / candle_range) >= Decimal("0.40"):
+                    score += Decimal("0.20")
+                    signals_detected.append("Lower wick rejection")
 
         clamped_score = min(score, Decimal("1.0"))
         if clamped_score >= Decimal(str(self.min_confidence)):

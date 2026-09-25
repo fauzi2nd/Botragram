@@ -1769,6 +1769,11 @@ class DependencyProvider:
             partial_tp_enabled=self._settings.risk.partial_tp_enabled,
             partial_tp_ratio=self._settings.risk.partial_tp_ratio,
             partial_tp_trigger_progress=self._settings.risk.partial_tp_trigger_progress,
+            trailing_mode=self._settings.risk.trailing_mode,
+            trailing_swing_timeframe=self._settings.risk.trailing_swing_timeframe,
+            trailing_swing_window=self._settings.risk.trailing_swing_window,
+            trailing_buffer_pct=self._settings.risk.trailing_buffer_pct,
+            candle_repository=self.candle_repository,
         )
 
     @staticmethod

@@ -73,6 +73,7 @@ from botragram.enums.signal_type import SignalType
 from botragram.enums.strategy_type import StrategyType
 from botragram.enums.submission_attempt_status import SubmissionAttemptStatus
 from botragram.enums.trade_mode import TradeMode
+from botragram.enums.trailing_mode import TrailingMode
 
 # =============================================================================
 # Exports
@@ -127,6 +128,7 @@ __all__ = [
     "SignalType",
     "StrategyType",
     "SubmissionAttemptStatus",
+    "TrailingMode",
     # Application
     "NotificationType",
     "LogLevel",

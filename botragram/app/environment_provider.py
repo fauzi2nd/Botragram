@@ -187,6 +187,8 @@ from botragram.constants.env import (
     ENV_PIER_CONFIRM_HTF_ACCOUNT_RATIO,
     ENV_PIER_ENGULFING_MIN_BODY_ATR,
     ENV_PIER_FILTER_ACCOUNT_RATIO,
+    ENV_PIER_HTF_BB_PERIOD,
+    ENV_PIER_HTF_BB_STD_DEV,
     ENV_PIER_INCLUDE_STAR_PATTERNS,
     ENV_PIER_LOCATION_ATR_MULTIPLIER,
     ENV_PIER_LOCATION_TOLERANCE_PCT,
@@ -229,6 +231,7 @@ from botragram.constants.env import (
     ENV_PIER_SWING_LOOKBACK,
     ENV_PIER_TAKE_PROFIT_PCT,
     ENV_PIER_TREND_PERIOD,
+    ENV_PIER_USE_HTF_STRUCTURAL_TP,
     ENV_PIER_USE_MACD,
     ENV_PIER_USE_OPEN_INTEREST,
     ENV_PIER_USE_PARABOLIC_SAR,
@@ -262,6 +265,10 @@ from botragram.constants.env import (
     ENV_TELEGRAM_TOKEN_LEGACY,
     ENV_TRADE_MODE,
     ENV_TRADE_MODE_LEGACY,
+    ENV_TRAILING_BUFFER_PCT,
+    ENV_TRAILING_MODE,
+    ENV_TRAILING_SWING_TIMEFRAME,
+    ENV_TRAILING_SWING_WINDOW,
     ENV_TREND_STOP_LOSS_PCT,
     ENV_TREND_TAKE_PROFIT_PCT,
     ENV_USE_OPEN_INTEREST,
@@ -796,6 +803,22 @@ class EnvironmentProvider:
         """Return the locked profit lag behind the current reached step."""
         return self._get_var(ENV_STEPPED_STOP_LOCKED_LAG, default="0.20")
 
+    def get_trailing_mode(self) -> str:
+        """Return the trailing stop protection mode."""
+        return self._get_var(ENV_TRAILING_MODE, default="swing_pivot")
+
+    def get_trailing_swing_timeframe(self) -> str:
+        """Return the timeframe for trailing swing pivot tracking."""
+        return self._get_var(ENV_TRAILING_SWING_TIMEFRAME, default="5m")
+
+    def get_trailing_swing_window(self) -> str:
+        """Return the window size for trailing swing pivot tracking."""
+        return self._get_var(ENV_TRAILING_SWING_WINDOW, default="5")
+
+    def get_trailing_buffer_pct(self) -> str:
+        """Return the buffer percentage below swing low or above swing high."""
+        return self._get_var(ENV_TRAILING_BUFFER_PCT, default="0.0015")
+
     def get_partial_tp_enabled(self) -> bool:
         """Return whether partial take profit is enabled."""
         return self._get_bool(ENV_PARTIAL_TP_ENABLED, default=False)
@@ -1184,6 +1207,18 @@ class EnvironmentProvider:
     def get_pier_bb_std_dev(self) -> str:
         """Return the Bollinger Bands std dev for structural target calculation."""
         return self._get_var(ENV_PIER_BB_STD_DEV, default="")
+
+    def get_pier_use_htf_structural_tp(self) -> bool:
+        """Return whether PIER uses HTF 1h structural target trimming."""
+        return self._get_bool(ENV_PIER_USE_HTF_STRUCTURAL_TP, default=True)
+
+    def get_pier_htf_bb_period(self) -> str:
+        """Return the HTF Bollinger Bands period for structural target calculation."""
+        return self._get_var(ENV_PIER_HTF_BB_PERIOD, default="")
+
+    def get_pier_htf_bb_std_dev(self) -> str:
+        """Return the HTF Bollinger Bands std dev for structural target calculation."""
+        return self._get_var(ENV_PIER_HTF_BB_STD_DEV, default="")
 
     def get_ny_range_risk_reward_ratio(self) -> str:
         """Return the configured Risk-Reward Ratio for NY 4H range scalping."""

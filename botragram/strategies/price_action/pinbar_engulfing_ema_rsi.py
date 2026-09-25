@@ -24,7 +24,7 @@ from typing import Final
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import PositionSide, SignalType, StrategyType
+from botragram.enums import Interval, PositionSide, SignalType, StrategyType
 from botragram.indicators import (
     BollingerBandsResult,
     CandlestickMatch,
@@ -49,6 +49,7 @@ from botragram.strategies.base import (
     resolve_effective_distance_pct,
     resolve_effective_natr_bounds,
 )
+from botragram.utils.candle_resampler import resample_candles
 
 __all__ = [
     "PinbarEngulfingEmaRsiStrategy",
@@ -187,6 +188,9 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
     min_structural_rr: Decimal = Decimal("1.0")
     bb_period: int = 20
     bb_std_dev: Decimal = Decimal("2.0")
+    use_htf_structural_tp: bool = False
+    htf_bb_period: int = 20
+    htf_bb_std_dev: Decimal = Decimal("2.0")
 
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
@@ -281,6 +285,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             raise ValueError("Minimum structural RR must be positive")
         if self.bb_period <= 0 or self.bb_std_dev <= _DECIMAL_ZERO:
             raise ValueError("Bollinger Bands parameters must be positive")
+        if self.htf_bb_period <= 0 or self.htf_bb_std_dev <= _DECIMAL_ZERO:
+            raise ValueError("HTF Bollinger Bands parameters must be positive")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -401,6 +407,34 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 period=self.bb_period,
                 standard_deviation=self.bb_std_dev,
             )
+
+        htf_upper_bb: Decimal | None = None
+        htf_lower_bb: Decimal | None = None
+        htf_swing_high: Decimal | None = None
+        htf_swing_low: Decimal | None = None
+
+        if self.use_structural_tp and self.use_htf_structural_tp and len(candles) >= 8:
+            try:
+                htf_candles = resample_candles(
+                    candles=candles,
+                    target_interval=Interval.H1,
+                    closed_only=True,
+                )
+                if len(htf_candles) >= self.htf_bb_period:
+                    htf_close_prices = tuple(c.close_price for c in htf_candles)
+                    htf_bb = calculate_bollinger_bands(
+                        htf_close_prices,
+                        period=self.htf_bb_period,
+                        standard_deviation=self.htf_bb_std_dev,
+                    )
+                    htf_upper_bb = htf_bb.upper[-1]
+                    htf_lower_bb = htf_bb.lower[-1]
+                if htf_candles:
+                    recent_htf = htf_candles[-min(len(htf_candles), 10) :]
+                    htf_swing_high = max(c.high_price for c in recent_htf)
+                    htf_swing_low = min(c.low_price for c in recent_htf)
+            except Exception:
+                pass
 
         if self.require_key_level_location:
             last_swing_high, last_swing_low = find_swing_levels(
@@ -669,30 +703,45 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 take_profit = current_close + (risk_dist * self.risk_reward_ratio)
                 reason_extra = ""
 
-                if self.use_structural_tp and bb_result is not None:
-                    upper_bb = bb_result.upper[-1]
-                    if take_profit > upper_bb:
-                        trimmed_tp = upper_bb * (
-                            _DECIMAL_ONE - self.structural_tp_buffer_pct
+                if self.use_structural_tp:
+                    walls: list[tuple[Decimal, str]] = []
+                    if bb_result is not None:
+                        curr_upper_bb = bb_result.upper[-1]
+                        if curr_upper_bb > current_close:
+                            walls.append(
+                                (curr_upper_bb, f"15m Upper BB={curr_upper_bb:.4f}")
+                            )
+                    if htf_upper_bb is not None and htf_upper_bb > current_close:
+                        walls.append((htf_upper_bb, f"1h Upper BB={htf_upper_bb:.4f}"))
+                    if htf_swing_high is not None and htf_swing_high > current_close:
+                        walls.append(
+                            (htf_swing_high, f"1h Swing High={htf_swing_high:.4f}")
                         )
-                        eff_rr = (trimmed_tp - current_close) / risk_dist
-                        if eff_rr < self.min_structural_rr:
-                            signal_type = SignalType.HOLD
-                            confidence = _DECIMAL_ZERO
-                            stop_loss = None
-                            take_profit = None
-                            reason = (
-                                f"BUY setup rejected: Structural resistance "
-                                f"(Upper BB={upper_bb:.4f}) restricts TP "
-                                f"(trimmed RR={eff_rr:.2f} < "
-                                f"{self.min_structural_rr:.2f})"
+
+                    if walls:
+                        nearest_wall, wall_name = min(walls, key=lambda w: w[0])
+                        if take_profit > nearest_wall:
+                            trimmed_tp = nearest_wall * (
+                                _DECIMAL_ONE - self.structural_tp_buffer_pct
                             )
-                        else:
-                            take_profit = trimmed_tp
-                            reason_extra = (
-                                f" | Structural TP trimmed to {take_profit:.5f} "
-                                f"(RR: {eff_rr:.2f})"
-                            )
+                            eff_rr = (trimmed_tp - current_close) / risk_dist
+                            if eff_rr < self.min_structural_rr:
+                                signal_type = SignalType.HOLD
+                                confidence = _DECIMAL_ZERO
+                                stop_loss = None
+                                take_profit = None
+                                reason = (
+                                    f"BUY setup rejected: Structural resistance "
+                                    f"({wall_name}) restricts TP "
+                                    f"(trimmed RR={eff_rr:.2f} < "
+                                    f"{self.min_structural_rr:.2f})"
+                                )
+                            else:
+                                take_profit = trimmed_tp
+                                reason_extra = (
+                                    f" | Structural TP trimmed to {take_profit:.5f} "
+                                    f"({wall_name}, RR: {eff_rr:.2f})"
+                                )
                     else:
                         reason_extra = ""
                 else:
@@ -875,30 +924,45 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 take_profit = current_close - (risk_dist * self.risk_reward_ratio)
                 reason_extra = ""
 
-                if self.use_structural_tp and bb_result is not None:
-                    lower_bb = bb_result.lower[-1]
-                    if take_profit < lower_bb:
-                        trimmed_tp = lower_bb * (
-                            _DECIMAL_ONE + self.structural_tp_buffer_pct
+                if self.use_structural_tp:
+                    floors: list[tuple[Decimal, str]] = []
+                    if bb_result is not None:
+                        curr_lower_bb = bb_result.lower[-1]
+                        if curr_lower_bb < current_close:
+                            floors.append(
+                                (curr_lower_bb, f"15m Lower BB={curr_lower_bb:.4f}")
+                            )
+                    if htf_lower_bb is not None and htf_lower_bb < current_close:
+                        floors.append((htf_lower_bb, f"1h Lower BB={htf_lower_bb:.4f}"))
+                    if htf_swing_low is not None and htf_swing_low < current_close:
+                        floors.append(
+                            (htf_swing_low, f"1h Swing Low={htf_swing_low:.4f}")
                         )
-                        eff_rr = (current_close - trimmed_tp) / risk_dist
-                        if eff_rr < self.min_structural_rr:
-                            signal_type = SignalType.HOLD
-                            confidence = _DECIMAL_ZERO
-                            stop_loss = None
-                            take_profit = None
-                            reason = (
-                                f"SELL setup rejected: Structural support "
-                                f"(Lower BB={lower_bb:.4f}) restricts TP "
-                                f"(trimmed RR={eff_rr:.2f} < "
-                                f"{self.min_structural_rr:.2f})"
+
+                    if floors:
+                        nearest_floor, floor_name = max(floors, key=lambda f: f[0])
+                        if take_profit < nearest_floor:
+                            trimmed_tp = nearest_floor * (
+                                _DECIMAL_ONE + self.structural_tp_buffer_pct
                             )
-                        else:
-                            take_profit = trimmed_tp
-                            reason_extra = (
-                                f" | Structural TP trimmed to {take_profit:.5f} "
-                                f"(RR: {eff_rr:.2f})"
-                            )
+                            eff_rr = (current_close - trimmed_tp) / risk_dist
+                            if eff_rr < self.min_structural_rr:
+                                signal_type = SignalType.HOLD
+                                confidence = _DECIMAL_ZERO
+                                stop_loss = None
+                                take_profit = None
+                                reason = (
+                                    f"SELL setup rejected: Structural support "
+                                    f"({floor_name}) restricts TP "
+                                    f"(trimmed RR={eff_rr:.2f} < "
+                                    f"{self.min_structural_rr:.2f})"
+                                )
+                            else:
+                                take_profit = trimmed_tp
+                                reason_extra = (
+                                    f" | Structural TP trimmed to {take_profit:.5f} "
+                                    f"({floor_name}, RR: {eff_rr:.2f})"
+                                )
                     else:
                         reason_extra = ""
                 else:
