@@ -81,7 +81,7 @@ def evaluate_ltf_micro_confirmation(
         parsed_mode = mode
     else:
         try:
-            parsed_mode = LtfConfirmationMode(str(mode).lower().strip())
+            parsed_mode = LtfConfirmationMode(mode.lower().strip())
         except ValueError:
             parsed_mode = LtfConfirmationMode.DIRECTION
 
