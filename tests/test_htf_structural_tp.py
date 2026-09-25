@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Unit tests for Fase 1 Dynamic Structural Target (Multi-TF Resistance & Support Walls).
+    Unit tests for Fase 1 Multi-TF Structural Target (Barriers & TP).
 
 Python:
     3.14+
@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-
-import pytest
 
 from botragram.enums import Interval, SignalType
 from botragram.models import Candle
@@ -88,7 +86,6 @@ def test_htf_structural_tp_trims_tp_before_wall() -> None:
             )
         )
 
-    # Pinbar setup candle with wide room to swing high so RR >= 1.0 is satisfied
     last_close = candles[-1].close_price
     candles.append(
         _make_15m_candle(
@@ -104,6 +101,7 @@ def test_htf_structural_tp_trims_tp_before_wall() -> None:
     sig = strategy.generate_signal(candles=candles)
     assert sig.signal_type is SignalType.BUY
     assert sig.take_profit is not None
+    assert sig.reason is not None
     assert "Structural TP trimmed" in sig.reason
     assert "1h Swing High" in sig.reason
 
@@ -162,7 +160,7 @@ def test_htf_structural_tp_rejects_when_rr_below_floor() -> None:
     )
 
     sig = strategy.generate_signal(candles=candles)
-    # Effective trimmed RR was ~2.81 which is < 3.0 required RR -> setup is rejected!
     assert sig.signal_type is SignalType.HOLD
+    assert sig.reason is not None
     assert "BUY setup rejected: Structural resistance" in sig.reason
     assert "restricts TP" in sig.reason

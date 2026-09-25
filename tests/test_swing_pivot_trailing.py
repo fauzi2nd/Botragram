@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Unit tests for Fase 2 Dynamic Trailing Stop based on Confirmed Swing Pivots.
+    Unit tests for Fase 2 Trailing Stop based on Confirmed Swing Pivots.
 
 Python:
     3.14+
@@ -12,11 +12,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from unittest.mock import create_autospec
 
 import pytest
 
 from botragram.engine.risk_engine import RiskEngine
 from botragram.enums import Interval, PositionSide, TradeMode, TrailingMode
+from botragram.exchanges.base import BaseExchangeClient
 from botragram.models import Candle, Position, Ticker
 from botragram.services.position_protection_manager import PositionProtectionManager
 from botragram.storage.memory.candle_repository import MemoryCandleRepository
@@ -161,9 +163,9 @@ def test_swing_pivot_confirmed_higher_low_long() -> None:
         buffer_pct=Decimal("0.0015"),
     )
     assert new_sl is not None
-    # 102.0 * (1 - 0.0015) = 101.847
     expected = Decimal("102.0") * (Decimal("1") - Decimal("0.0015"))
     assert new_sl == expected
+    assert pos.stop_loss is not None
     assert new_sl > pos.stop_loss
     assert new_sl < candles[-1].close_price
 
@@ -232,13 +234,14 @@ def test_swing_pivot_short_lowers_stop_loss() -> None:
     assert new_sl is not None
     expected = Decimal("96.0") * (Decimal("1") + Decimal("0.0015"))
     assert new_sl == expected
+    assert pos.stop_loss is not None
     assert new_sl < pos.stop_loss
     assert new_sl > candles[-1].close_price
 
 
 @pytest.mark.asyncio
 async def test_position_protection_manager_swing_pivot_mode() -> None:
-    """PositionProtectionManager advances SL on confirmed Higher Low in SWING_PIVOT mode."""
+    """PositionProtectionManager advances SL on Higher Low in SWING_PIVOT mode."""
     pos_repo = MemoryPositionRepository()
     candle_repo = MemoryCandleRepository()
 
@@ -312,10 +315,11 @@ async def test_position_protection_manager_swing_pivot_mode() -> None:
     ]
     await candle_repo.save_many(candles=candles)
 
+    mock_exchange = create_autospec(BaseExchangeClient, instance=True)
     manager = PositionProtectionManager(
         trade_mode=TradeMode.PAPER,
         position_repository=pos_repo,
-        exchange_client=None,  # Paper mode does not call exchange
+        exchange_client=mock_exchange,
         trailing_mode=TrailingMode.SWING_PIVOT,
         trailing_swing_timeframe=Interval.M5,
         trailing_swing_window=5,
