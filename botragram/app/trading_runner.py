@@ -265,6 +265,11 @@ class _AutonomousLivePositionExitProvider(Protocol):
 class _AutonomousLiveStalkingProvider(Protocol):
     """Protocol for managing stalking state during autonomous live execution."""
 
+    @property
+    def is_paused(self) -> bool:
+        """Return whether stalking is currently paused."""
+        ...
+
     def clear_all(self) -> None:
         """Clear all active stalking setups."""
         ...

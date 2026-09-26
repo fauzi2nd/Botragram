@@ -1223,6 +1223,10 @@ def test_live_executor_pauses_and_resumes_stalking_with_portfolio_capacity() -> 
             self.paused = False
             self.cleared = False
 
+        @property
+        def is_paused(self) -> bool:
+            return self.paused
+
         def clear_all(self) -> None:
             self.cleared = True
 

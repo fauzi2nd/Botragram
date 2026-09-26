@@ -428,22 +428,28 @@ class TerminalMonitor:
         is_capacity_full = max_positions is not None and len(positions) >= max_positions
         if self.stalking_setup_provider is not None:
             if is_capacity_full:
-                set_paused_fn = getattr(
-                    self.stalking_setup_provider, "set_paused", None
-                )
-                if callable(set_paused_fn):
-                    set_paused_fn(True)
-                else:
-                    clear_fn = getattr(self.stalking_setup_provider, "clear_all", None)
-                    if callable(clear_fn):
-                        clear_fn()
+                is_paused = getattr(self.stalking_setup_provider, "is_paused", None)
+                if is_paused is not True:
+                    set_paused_fn = getattr(
+                        self.stalking_setup_provider, "set_paused", None
+                    )
+                    if callable(set_paused_fn):
+                        set_paused_fn(True)
+                    else:
+                        clear_fn = getattr(
+                            self.stalking_setup_provider, "clear_all", None
+                        )
+                        if callable(clear_fn):
+                            clear_fn()
                 stalking_setups = ()
             else:
-                set_paused_fn = getattr(
-                    self.stalking_setup_provider, "set_paused", None
-                )
-                if callable(set_paused_fn):
-                    set_paused_fn(False)
+                is_paused = getattr(self.stalking_setup_provider, "is_paused", None)
+                if is_paused is True:
+                    set_paused_fn = getattr(
+                        self.stalking_setup_provider, "set_paused", None
+                    )
+                    if callable(set_paused_fn):
+                        set_paused_fn(False)
                 try:
                     stalking_setups = (
                         self.stalking_setup_provider.get_active_stalking_setups()

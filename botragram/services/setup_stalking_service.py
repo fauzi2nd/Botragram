@@ -53,6 +53,11 @@ _MAX_HISTORY_ENTRIES: Final[int] = 10
 class StalkingSetupProvider(Protocol):
     """Protocol for reading active and recently stalked candidate setups."""
 
+    @property
+    def is_paused(self) -> bool:
+        """Return whether setup stalking is currently paused."""
+        ...
+
     def get_active_stalking_setups(self) -> tuple[StalkingSetup, ...]:
         """Return active or recently completed stalking setups."""
         ...
@@ -109,6 +114,8 @@ class SetupStalkingService:
         or candle updates are skipped.
         """
         with self._lock:
+            if self._paused == paused:
+                return
             self._paused = paused
             if paused:
                 self._setups.clear()
@@ -116,11 +123,13 @@ class SetupStalkingService:
                     "Setup stalking paused (slots full): cleared all candidates"
                 )
             else:
-                _LOGGER.debug("Setup stalking resumed")
+                _LOGGER.info("Setup stalking resumed: position slots available")
 
     def clear_all(self) -> None:
         """Clear all tracked setups and history."""
         with self._lock:
+            if not self._setups:
+                return
             self._setups.clear()
             _LOGGER.info("Cleared all setup stalking candidates")
 

@@ -330,6 +330,10 @@ def test_terminal_monitor_cleans_and_suspends_stalking_when_capacity_full() -> N
             self.setups = [setup]
             self.paused = False
 
+        @property
+        def is_paused(self) -> bool:
+            return self.paused
+
         def get_active_stalking_setups(self) -> tuple[StalkingSetup, ...]:
             return () if self.paused else tuple(self.setups)
 

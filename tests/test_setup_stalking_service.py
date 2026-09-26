@@ -18,6 +18,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -586,7 +587,9 @@ def test_expiry_requires_distinct_closed_candles() -> None:
         assert service.on_candle_update(c3) is None
 
 
-def test_setup_stalking_paused_and_cleanup_when_capacity_full() -> None:
+def test_setup_stalking_paused_and_cleanup_when_capacity_full(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """When position slots are full, stalking pauses and clears all setups."""
     service = SetupStalkingService(max_candidates=5, default_max_bars=7)
     candle0 = _make_candle(
@@ -611,12 +614,22 @@ def test_setup_stalking_paused_and_cleanup_when_capacity_full() -> None:
     assert service.get_active_stalking_symbols() == ("BTCUSDT",)
     assert not service.is_paused
 
-    # Pause stalking (simulating position capacity reached)
-    service.set_paused(True)
-    assert service.is_paused
-    # Active setups must be completely cleaned up (clean radar)
-    assert service.get_active_stalking_setups() == ()
-    assert service.get_active_stalking_symbols() == ()
+    with caplog.at_level(logging.INFO):
+        # Pause stalking (simulating position capacity reached)
+        service.set_paused(True)
+        assert service.is_paused
+        # Active setups must be completely cleaned up (clean radar)
+        assert service.get_active_stalking_setups() == ()
+        assert service.get_active_stalking_symbols() == ()
+
+        # Calling set_paused(True) again must be an idempotent no-op (no log spam)
+        for _ in range(10):
+            service.set_paused(True)
+
+    pause_logs = [
+        r.message for r in caplog.records if "Setup stalking paused" in r.message
+    ]
+    assert len(pause_logs) == 1
 
     # Any new registration attempt while paused must be rejected
     signal2 = Signal(
@@ -642,16 +655,27 @@ def test_setup_stalking_paused_and_cleanup_when_capacity_full() -> None:
     )
     assert service.on_candle_update(candle1) is None
 
-    # Resume stalking (simulating position slot becoming available)
-    service.set_paused(False)
-    assert not service.is_paused
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        # Resume stalking (simulating position slot becoming available)
+        service.set_paused(False)
+        assert not service.is_paused
+        # Repeated resume calls must also be idempotent without duplicate logging
+        for _ in range(10):
+            service.set_paused(False)
+
+    resume_logs = [
+        r.message for r in caplog.records if "Setup stalking resumed" in r.message
+    ]
+    assert len(resume_logs) == 1
+
     reg3 = service.register_candidate(signal=signal2, setup_candle=candle0)
     assert reg3 is not None
     assert len(service.get_active_stalking_setups()) == 1
     assert service.get_active_stalking_symbols() == ("ETHUSDT",)
 
 
-def test_setup_stalking_clear_all() -> None:
+def test_setup_stalking_clear_all(caplog: pytest.LogCaptureFixture) -> None:
     """clear_all explicitly empties all tracked setups and history."""
     service = SetupStalkingService(max_candidates=5)
     candle0 = _make_candle(
@@ -673,7 +697,19 @@ def test_setup_stalking_clear_all() -> None:
     service.register_candidate(signal=signal, setup_candle=candle0)
     assert len(service.get_active_stalking_setups()) == 1
 
-    service.clear_all()
-    assert service.get_active_stalking_setups() == ()
-    assert service.get_active_stalking_symbols() == ()
-    assert service.get_setup("BTCUSDT") is None
+    with caplog.at_level(logging.INFO):
+        service.clear_all()
+        assert service.get_active_stalking_setups() == ()
+        assert service.get_active_stalking_symbols() == ()
+        assert service.get_setup("BTCUSDT") is None
+
+        # Redundant clear_all when already empty must not spam logs
+        for _ in range(5):
+            service.clear_all()
+
+    clear_logs = [
+        r.message
+        for r in caplog.records
+        if "Cleared all setup stalking candidates" in r.message
+    ]
+    assert len(clear_logs) == 1
