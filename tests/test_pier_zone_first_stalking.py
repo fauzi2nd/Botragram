@@ -814,7 +814,9 @@ def test_19_long_and_short_are_exact_semantic_mirrors() -> None:
 
     assert short_cand is not None
     assert long_cand is not None
-    assert short_cand.reason is not None and "[STALKING_ZONE_SHORT]" in short_cand.reason
+    assert (
+        short_cand.reason is not None and "[STALKING_ZONE_SHORT]" in short_cand.reason
+    )
     assert long_cand.reason is not None and "[STALKING_ZONE_LONG]" in long_cand.reason
     assert short_cand.stop_loss is not None and short_cand.stop_loss > short_cand.price
     assert long_cand.stop_loss is not None and long_cand.stop_loss < long_cand.price
