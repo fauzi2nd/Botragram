@@ -1275,4 +1275,4 @@ def test_live_executor_pauses_and_resumes_stalking_with_portfolio_capacity() -> 
     )
     assert report_available.skipped_capacity is False
     # Stalking must be resumed when capacity is open
-    assert stalking_service.paused is False
+    assert not stalking_service.paused
