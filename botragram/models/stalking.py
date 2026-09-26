@@ -58,6 +58,7 @@ class StalkingSetup:
     take_profit: Decimal | None = None
     confidence: Decimal = Decimal("0.80")
     last_processed_candle_close_time: datetime | None = None
+    reversal_confirmed: bool = False
 
     def __post_init__(self) -> None:
         """Validate invariant boundaries."""

@@ -55,11 +55,16 @@ class StrategyStalkingProvider(Protocol):
         htf_zone_label: str = "HTF Extreme",
         max_bars: int | None = None,
         retest_ratio: Decimal | None = None,
+        reversal_confirmed: bool | None = None,
     ) -> StalkingSetup | None:
         """Register a new candidate setup for stalking."""
         ...
 
-    def on_candle_update(self, candle: Candle) -> StalkingSetup | None:
+    def on_candle_update(
+        self,
+        candle: Candle,
+        prev_candle: Candle | None = None,
+    ) -> StalkingSetup | None:
         """Evaluate a closed candle against active setup."""
         ...
 
@@ -127,7 +132,11 @@ class StrategyService:
             existing = stalking_svc.get_setup(symbol)
             if existing is not None:
                 if existing.status is StalkingStatus.STALKING:
-                    updated = stalking_svc.on_candle_update(latest_candle)
+                    prev_c = candles[-2] if len(candles) >= 2 else None
+                    updated = stalking_svc.on_candle_update(
+                        latest_candle,
+                        prev_candle=prev_c,
+                    )
                     if (
                         updated is not None
                         and updated.status is StalkingStatus.TRIGGERED
@@ -141,10 +150,19 @@ class StrategyService:
                         updated is not None
                         and updated.status is StalkingStatus.STALKING
                     ):
-                        reason_status = (
-                            f"[STALKING] bar {updated.current_bar}/{existing.max_bars} "
-                            f"awaiting retest@{existing.target_retest_price}"
-                        )
+                        if updated.reversal_confirmed:
+                            reason_status = (
+                                f"[STALKING] bar "
+                                f"{updated.current_bar}/{existing.max_bars} "
+                                f"reversal confirmed, awaiting retest@"
+                                f"{updated.target_retest_price}"
+                            )
+                        else:
+                            reason_status = (
+                                f"[STALKING] bar "
+                                f"{updated.current_bar}/{existing.max_bars} "
+                                f"awaiting reversal in {updated.htf_zone_label}"
+                            )
                     elif updated is not None:
                         reason_status = (
                             f"[STALKING_{updated.status.value.upper()}] bar "
@@ -181,56 +199,85 @@ class StrategyService:
                         ),
                     )
 
-        # 2. Evaluate strategy normally
-        raw_signal = self.signal_engine.generate(
+            # Stage 1 — Zone Candidate / Stalking Registration
+            candidate_signal = self.signal_engine.detect_zone_candidate(
+                candles=candles,
+                strategy_type=strategy_type,
+            )
+            if candidate_signal is None:
+                raw_sig = self.signal_engine.generate(
+                    candles=candles,
+                    strategy_type=strategy_type,
+                )
+                if raw_sig.signal_type in {SignalType.BUY, SignalType.SELL}:
+                    candidate_signal = raw_sig
+
+            if candidate_signal is not None:
+                reason_text = candidate_signal.reason or ""
+                if candidate_signal.signal_type is SignalType.BUY:
+                    side_str = "LONG"
+                elif candidate_signal.signal_type is SignalType.SELL:
+                    side_str = "SHORT"
+                elif "[STALKING_ZONE_SHORT]" in reason_text:
+                    side_str = "SHORT"
+                else:
+                    side_str = "LONG"
+
+                registered = stalking_svc.register_candidate(
+                    signal=candidate_signal,
+                    setup_candle=latest_candle,
+                    htf_zone_label=f"HTF Extreme {side_str}",
+                )
+                reason_header = (
+                    f"[STALKING_REGISTERED] [STALKING_ZONE_{side_str}]"
+                    if "[STALKING_ZONE" in reason_text
+                    else "[STALKING_REGISTERED]"
+                )
+                if registered is not None:
+                    return Signal(
+                        symbol=symbol,
+                        signal_type=SignalType.HOLD,
+                        price=latest_candle.close_price,
+                        confidence=candidate_signal.confidence,
+                        strategy_name=resolved_type.value,
+                        generated_at=latest_candle.close_time,
+                        reason=(
+                            f"{reason_header} {reason_text} - "
+                            f"registered stalking: observing reversal/retest "
+                            f"(invalidation={registered.invalidation_price})"
+                        ),
+                        stop_loss=candidate_signal.stop_loss,
+                        take_profit=candidate_signal.take_profit,
+                    )
+                return Signal(
+                    symbol=symbol,
+                    signal_type=SignalType.HOLD,
+                    price=latest_candle.close_price,
+                    confidence=Decimal("0"),
+                    strategy_name=resolved_type.value,
+                    generated_at=latest_candle.close_time,
+                    reason=(
+                        f"[STALKING_CAPACITY_FULL] Setup stalking capacity reached; "
+                        f"skipping candidate for {symbol}"
+                    ),
+                )
+
+            # Stalking active for PIER: Direct immediate BUY/SELL is prohibited
+            return Signal(
+                symbol=symbol,
+                signal_type=SignalType.HOLD,
+                price=latest_candle.close_price,
+                confidence=Decimal("0"),
+                strategy_name=resolved_type.value,
+                generated_at=latest_candle.close_time,
+                reason="[STALKING_IDLE] Awaiting PIER zone candidate setup",
+            )
+
+        # 2. Evaluate strategy normally (stalking disabled or non-PIER)
+        return self.signal_engine.generate(
             candles=candles,
             strategy_type=strategy_type,
         )
-
-        # 3. New Candidate Discovery: If PIER generates actionable signal, register
-        if (
-            self.stalking_enabled
-            and stalking_svc is not None
-            and is_pier
-            and raw_signal.signal_type in {SignalType.BUY, SignalType.SELL}
-        ):
-            registered = stalking_svc.register_candidate(
-                signal=raw_signal,
-                setup_candle=latest_candle,
-            )
-            if registered is not None:
-                return Signal(
-                    symbol=raw_signal.symbol,
-                    signal_type=SignalType.HOLD,
-                    price=latest_candle.close_price,
-                    confidence=raw_signal.confidence,
-                    strategy_name=raw_signal.strategy_name,
-                    generated_at=latest_candle.close_time,
-                    reason=(
-                        f"[STALKING_REGISTERED] {raw_signal.reason} - "
-                        f"observing retest@{registered.target_retest_price} "
-                        f"invalidation={registered.invalidation_price}"
-                    ),
-                    stop_loss=raw_signal.stop_loss,
-                    take_profit=raw_signal.take_profit,
-                )
-            # If capacity full, skip entry safely rather than bypassing stalking
-            return Signal(
-                symbol=raw_signal.symbol,
-                signal_type=SignalType.HOLD,
-                price=latest_candle.close_price,
-                confidence=raw_signal.confidence,
-                strategy_name=raw_signal.strategy_name,
-                generated_at=latest_candle.close_time,
-                reason=(
-                    f"[STALKING_CAPACITY_FULL] Setup stalking capacity reached; "
-                    f"skipping entry for {raw_signal.symbol}"
-                ),
-                stop_loss=raw_signal.stop_loss,
-                take_profit=raw_signal.take_profit,
-            )
-
-        return raw_signal
 
     def get_minimum_candles(
         self,

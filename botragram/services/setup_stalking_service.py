@@ -35,6 +35,7 @@ from botragram.enums import (
     StalkingStatus,
     StrategyType,
 )
+from botragram.indicators import detect_engulfing, detect_pinbar
 from botragram.models import Candle, Signal
 from botragram.models.stalking import StalkingSetup
 
@@ -93,6 +94,7 @@ class SetupStalkingService:
         htf_zone_label: str = "HTF Extreme",
         max_bars: int | None = None,
         retest_ratio: Decimal | None = None,
+        reversal_confirmed: bool | None = None,
     ) -> StalkingSetup | None:
         """Register a new candidate setup for subsequent bar stalking.
 
@@ -104,11 +106,16 @@ class SetupStalkingService:
         ratio = retest_ratio if retest_ratio is not None else self._retest_ratio
         bars_limit = max_bars if max_bars is not None else self._default_max_bars
 
-        side = (
-            PositionSide.LONG
-            if signal.signal_type.value.lower() == "buy"
-            else PositionSide.SHORT
-        )
+        if signal.signal_type is SignalType.BUY:
+            side = PositionSide.LONG
+        elif signal.signal_type is SignalType.SELL:
+            side = PositionSide.SHORT
+        elif "[STALKING_ZONE_LONG]" in (signal.reason or "") or "LONG" in (
+            signal.reason or ""
+        ):
+            side = PositionSide.LONG
+        else:
+            side = PositionSide.SHORT
 
         with self._lock:
             existing = self._setups.get(signal.symbol)
@@ -144,31 +151,57 @@ class SetupStalkingService:
                 )
                 return None
 
+            if "[STALKING_ZONE_LONG]" in (signal.reason or ""):
+                pattern = "ZONE_LONG"
+            elif "[STALKING_ZONE_SHORT]" in (signal.reason or ""):
+                pattern = "ZONE_SHORT"
+            elif signal.reason and "ENGULF" in signal.reason.upper():
+                pattern = "ENGULFING"
+            elif signal.reason and "PINBAR" in signal.reason.upper():
+                pattern = "PINBAR"
+            elif signal.reason and "STAR" in signal.reason.upper():
+                pattern = "STAR"
+            elif signal.reason and "REVERSAL" in signal.reason.upper():
+                pattern = "REVERSAL"
+            else:
+                pattern = "ZONE"
+
+            if reversal_confirmed is not None:
+                rev_confirmed = reversal_confirmed
+            elif signal.signal_type in {SignalType.BUY, SignalType.SELL}:
+                rev_confirmed = True
+            else:
+                rev_confirmed = pattern in {
+                    "ENGULFING",
+                    "PINBAR",
+                    "STAR",
+                    "REVERSAL",
+                } and not pattern.startswith("ZONE")
+
             body_high = max(setup_candle.open_price, setup_candle.close_price)
             body_low = min(setup_candle.open_price, setup_candle.close_price)
             body_size = body_high - body_low
 
             if side is PositionSide.SHORT:
                 invalidation_price = setup_candle.high_price
-                target_retest = (
-                    body_low + (body_size * ratio)
-                    if body_size > _DECIMAL_ZERO
-                    else setup_candle.close_price
-                )
+                if rev_confirmed:
+                    target_retest = (
+                        body_low + (body_size * ratio)
+                        if body_size > _DECIMAL_ZERO
+                        else setup_candle.close_price
+                    )
+                else:
+                    target_retest = setup_candle.close_price
             else:
                 invalidation_price = setup_candle.low_price
-                target_retest = (
-                    body_high - (body_size * ratio)
-                    if body_size > _DECIMAL_ZERO
-                    else setup_candle.close_price
-                )
-
-            pattern = "REVERSAL"
-            if signal.reason:
-                if "ENGULFING" in signal.reason.upper():
-                    pattern = "ENGULFING"
-                elif "PINBAR" in signal.reason.upper():
-                    pattern = "PINBAR"
+                if rev_confirmed:
+                    target_retest = (
+                        body_high - (body_size * ratio)
+                        if body_size > _DECIMAL_ZERO
+                        else setup_candle.close_price
+                    )
+                else:
+                    target_retest = setup_candle.close_price
 
             setup = StalkingSetup(
                 symbol=signal.symbol,
@@ -189,6 +222,7 @@ class SetupStalkingService:
                 take_profit=signal.take_profit,
                 confidence=signal.confidence,
                 last_processed_candle_close_time=setup_candle.close_time,
+                reversal_confirmed=rev_confirmed,
             )
 
             self._setups[signal.symbol] = setup
@@ -196,7 +230,8 @@ class SetupStalkingService:
 
             _LOGGER.info(
                 "Registered setup stalking: symbol=%s side=%s pattern=%s "
-                "anchor=%s retest_target=%s invalidation=%s max_bars=%d zone=%s",
+                "anchor=%s retest_target=%s invalidation=%s max_bars=%d zone=%s "
+                "reversal_confirmed=%s",
                 setup.symbol,
                 setup.side.value,
                 setup.pattern_name,
@@ -205,16 +240,67 @@ class SetupStalkingService:
                 setup.invalidation_price,
                 setup.max_bars,
                 setup.htf_zone_label,
+                setup.reversal_confirmed,
             )
             return setup
 
-    def on_candle_update(self, candle: Candle) -> StalkingSetup | None:
+    @staticmethod
+    def _detect_reversal(
+        *,
+        candle: Candle,
+        prev_candle: Candle | None,
+        side: PositionSide,
+    ) -> tuple[bool, str]:
+        """Detect whether candle forms a valid reversal confirmation."""
+        pinbar = detect_pinbar(candle=candle, min_wick_ratio=Decimal("0.50"))
+        if pinbar.matched and pinbar.side is side:
+            pattern = (
+                "BEARISH_PINBAR" if side is PositionSide.SHORT else "BULLISH_PINBAR"
+            )
+            return True, pattern
+
+        if prev_candle is not None:
+            engulf = detect_engulfing(
+                prev_candle=prev_candle,
+                curr_candle=candle,
+                min_body_ratio=Decimal("1.0"),
+            )
+            if engulf.matched and engulf.side is side:
+                pattern = (
+                    "BEARISH_ENGULFING"
+                    if side is PositionSide.SHORT
+                    else "BULLISH_ENGULFING"
+                )
+                return True, pattern
+
+        body = abs(candle.close_price - candle.open_price)
+        if side is PositionSide.SHORT:
+            upper_wick = candle.high_price - max(candle.open_price, candle.close_price)
+            is_bearish = candle.close_price < candle.open_price
+            has_upper_wick = candle.high_price > candle.open_price
+            if is_bearish and has_upper_wick and upper_wick >= body * Decimal("0.3"):
+                return True, "BEARISH_REJECTION"
+        else:
+            lower_wick = min(candle.open_price, candle.close_price) - candle.low_price
+            is_bullish = candle.close_price > candle.open_price
+            has_lower_wick = candle.low_price < candle.open_price
+            if is_bullish and has_lower_wick and lower_wick >= body * Decimal("0.3"):
+                return True, "BULLISH_REJECTION"
+
+        return False, ""
+
+    def on_candle_update(
+        self,
+        candle: Candle,
+        prev_candle: Candle | None = None,
+    ) -> StalkingSetup | None:
         """Process a newly closed bar for a stalked symbol.
 
         Evaluates:
         1. Invalidation: Price violates anchor extreme peak/valley.
-        2. Retest trigger: Price tests target zone with reversal confirmation.
-        3. Expiry: Bar window reaches limit without entry.
+        2. Reversal confirmation: Confirms rejection in stalked zone if pending.
+        3. Retest trigger: Price tests target zone with reversal confirmation.
+        4. Expiry: Bar window reaches limit without entry.
 
         Returns:
             The updated setup if state changed, or None.
@@ -293,48 +379,111 @@ class SetupStalkingService:
                     )
                     return updated
 
-            # 2. Check Retest Trigger: Touch target zone AND confirm rejection
-            triggered = False
-            if setup.side is PositionSide.SHORT:
-                # Retrace touches target AND rejects back down
-                # (close <= target with upper shadow rejection).
-                if (
-                    candle.high_price >= setup.target_retest_price
-                    and candle.close_price <= setup.target_retest_price
-                    and candle.close_price < candle.high_price
-                ):
-                    triggered = True
-            else:
-                # Pullback touches target AND bounces back up
-                # (close >= target with lower shadow rejection).
-                if (
-                    candle.low_price <= setup.target_retest_price
-                    and candle.close_price >= setup.target_retest_price
-                    and candle.close_price > candle.low_price
-                ):
-                    triggered = True
-
-            if triggered:
-                updated = replace(
-                    setup,
-                    current_bar=next_bar,
-                    status=StalkingStatus.TRIGGERED,
-                    updated_at=now,
-                    last_processed_candle_close_time=candle.close_time,
+            # 2. Check Reversal Confirmation (Stage 2A) if pending
+            if not setup.reversal_confirmed:
+                reversal_matched, pattern_name = self._detect_reversal(
+                    candle=candle,
+                    prev_candle=prev_candle,
+                    side=setup.side,
                 )
-                self._setups[candle.symbol] = updated
-                _LOGGER.info(
-                    "Setup stalking TRIGGERED: symbol=%s side=%s bar=%d/%d "
-                    "retest target reached at %s",
-                    candle.symbol,
-                    setup.side.value,
-                    next_bar,
-                    setup.max_bars,
-                    setup.target_retest_price,
-                )
-                return updated
+                if reversal_matched:
+                    body_high = max(candle.open_price, candle.close_price)
+                    body_low = min(candle.open_price, candle.close_price)
+                    body_size = body_high - body_low
+                    if setup.side is PositionSide.SHORT:
+                        target_retest = (
+                            body_low + (body_size * self._retest_ratio)
+                            if body_size > _DECIMAL_ZERO
+                            else candle.close_price
+                        )
+                        invalidation_price = candle.high_price
+                        stop_loss = (
+                            max(candle.high_price, setup.stop_loss)
+                            if setup.stop_loss is not None
+                            else candle.high_price
+                        )
+                    else:
+                        target_retest = (
+                            body_high - (body_size * self._retest_ratio)
+                            if body_size > _DECIMAL_ZERO
+                            else candle.close_price
+                        )
+                        invalidation_price = candle.low_price
+                        stop_loss = (
+                            min(candle.low_price, setup.stop_loss)
+                            if setup.stop_loss is not None
+                            else candle.low_price
+                        )
 
-            # 3. Check Expiry
+                    updated = replace(
+                        setup,
+                        current_bar=next_bar,
+                        reversal_confirmed=True,
+                        anchor_price=candle.close_price,
+                        invalidation_price=invalidation_price,
+                        target_retest_price=target_retest,
+                        pattern_name=pattern_name,
+                        stop_loss=stop_loss,
+                        updated_at=now,
+                        last_processed_candle_close_time=candle.close_time,
+                    )
+                    self._setups[candle.symbol] = updated
+                    _LOGGER.info(
+                        "Setup stalking REVERSAL CONFIRMED: symbol=%s side=%s "
+                        "pattern=%s retest_target=%s invalidation=%s bar=%d/%d",
+                        candle.symbol,
+                        setup.side.value,
+                        pattern_name,
+                        target_retest,
+                        invalidation_price,
+                        next_bar,
+                        setup.max_bars,
+                    )
+                    return updated
+
+            # 3. Check Retest Trigger (Stage 2B) if reversal confirmed
+            elif setup.reversal_confirmed:
+                triggered = False
+                if setup.side is PositionSide.SHORT:
+                    # Retrace touches target AND rejects back down
+                    # (close <= target with upper shadow rejection).
+                    if (
+                        candle.high_price >= setup.target_retest_price
+                        and candle.close_price <= setup.target_retest_price
+                        and candle.close_price < candle.high_price
+                    ):
+                        triggered = True
+                else:
+                    # Pullback touches target AND bounces back up
+                    # (close >= target with lower shadow rejection).
+                    if (
+                        candle.low_price <= setup.target_retest_price
+                        and candle.close_price >= setup.target_retest_price
+                        and candle.close_price > candle.low_price
+                    ):
+                        triggered = True
+
+                if triggered:
+                    updated = replace(
+                        setup,
+                        current_bar=next_bar,
+                        status=StalkingStatus.TRIGGERED,
+                        updated_at=now,
+                        last_processed_candle_close_time=candle.close_time,
+                    )
+                    self._setups[candle.symbol] = updated
+                    _LOGGER.info(
+                        "Setup stalking TRIGGERED: symbol=%s side=%s bar=%d/%d "
+                        "retest target reached at %s",
+                        candle.symbol,
+                        setup.side.value,
+                        next_bar,
+                        setup.max_bars,
+                        setup.target_retest_price,
+                    )
+                    return updated
+
+            # 4. Check Expiry
             if next_bar >= setup.max_bars:
                 updated = replace(
                     setup,
@@ -345,7 +494,7 @@ class SetupStalkingService:
                 )
                 self._setups[candle.symbol] = updated
                 _LOGGER.info(
-                    "Setup stalking EXPIRED: symbol=%s bar=%d/%d (no retest)",
+                    "Setup stalking EXPIRED: symbol=%s bar=%d/%d (no entry)",
                     candle.symbol,
                     next_bar,
                     setup.max_bars,

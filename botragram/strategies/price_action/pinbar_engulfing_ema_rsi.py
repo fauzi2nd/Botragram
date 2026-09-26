@@ -1111,6 +1111,291 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
 
         return signal
 
+    def detect_zone_candidate(
+        self,
+        *,
+        candles: Sequence[Candle],
+    ) -> Signal | None:
+        """Detect whether market state qualifies as a Stage 1 zone candidate.
+
+        Stage 1 requirements:
+        - SHORT:
+          1. Downtrend aligned (close < trend and pullback <= trend if filtered).
+          2. Price at HTF upper extreme zone (fail-closed if HTF BB missing).
+          3. Price at local structural resistance (EMA21 and/or swing high).
+          4. Safe volatility (NATR >= min_natr_threshold).
+        - LONG (mirror):
+          1. Uptrend aligned (close > trend and pullback >= trend if filtered).
+          2. Price at HTF lower extreme zone (fail-closed if HTF BB missing).
+          3. Price at local structural support (EMA21 and/or swing low).
+          4. Safe volatility (NATR >= min_natr_threshold).
+
+        Returns:
+            Signal with signal_type=HOLD and reason [STALKING_ZONE_...] if in zone,
+            or None if not qualified.
+        """
+        self.validate_candles(candles=candles)
+
+        close_prices = tuple(c.close_price for c in candles)
+        high_prices = tuple(c.high_price for c in candles)
+        low_prices = tuple(c.low_price for c in candles)
+
+        ema_trend = calculate_ema(close_prices, period=self.trend_period)
+        ema_pullback = calculate_ema(close_prices, period=self.pullback_period)
+        atr_series = calculate_atr(
+            high_prices,
+            low_prices,
+            close_prices,
+            period=self.atr_period,
+        )
+
+        curr_candle = candles[-1]
+        current_close = curr_candle.close_price
+        current_trend = ema_trend[-1]
+        current_pullback = ema_pullback[-1]
+        current_atr = atr_series[-1]
+
+        eff_min_natr, _ = resolve_effective_natr_bounds(
+            curr_candle.symbol,
+            self.min_natr_threshold,
+            interval=curr_candle.interval,
+        )
+        eff_min_sl_pct, eff_min_trend_pct = resolve_effective_distance_pct(
+            curr_candle.symbol,
+            self.min_sl_distance_pct,
+            self.min_trend_distance_pct,
+            interval=curr_candle.interval,
+        )
+
+        # Volatility check: fail-closed if dead market
+        if (
+            current_close <= _DECIMAL_ZERO
+            or (current_atr / current_close) < eff_min_natr
+        ):
+            return None
+
+        # Resolve HTF extreme levels
+        htf_upper_bb: Decimal | None = None
+        htf_lower_bb: Decimal | None = None
+        htf_atr: Decimal | None = None
+        htf_target_interval = resolve_adaptive_htf_interval(curr_candle.interval)
+
+        if self.require_htf_extreme_zone and len(candles) >= 8:
+            try:
+                htf_candles = resample_candles(
+                    candles=candles,
+                    target_interval=htf_target_interval,
+                    closed_only=True,
+                )
+                if len(htf_candles) >= self.htf_bb_period:
+                    htf_close_prices = tuple(c.close_price for c in htf_candles)
+                    htf_high_prices = tuple(c.high_price for c in htf_candles)
+                    htf_low_prices = tuple(c.low_price for c in htf_candles)
+                    htf_bb = calculate_bollinger_bands(
+                        htf_close_prices,
+                        period=self.htf_bb_period,
+                        standard_deviation=self.htf_bb_std_dev,
+                    )
+                    htf_upper_bb = htf_bb.upper[-1]
+                    htf_lower_bb = htf_bb.lower[-1]
+                    htf_atr_res = calculate_atr(
+                        htf_high_prices,
+                        htf_low_prices,
+                        htf_close_prices,
+                        period=min(self.atr_period, len(htf_close_prices) - 1),
+                    )
+                    htf_atr = htf_atr_res[-1] if htf_atr_res else None
+            except (ValueError, TypeError, IndexError) as exc:
+                _LOGGER.debug(
+                    "HTF candle resampling or indicator calculation bypassed: %s",
+                    exc,
+                )
+                htf_upper_bb = None
+                htf_lower_bb = None
+                htf_atr = None
+
+        if self.require_key_level_location:
+            last_swing_high, last_swing_low = find_swing_levels(
+                high_prices=high_prices[:-1],
+                low_prices=low_prices[:-1],
+                swing_window=self.swing_lookback,
+            )
+        else:
+            last_swing_high, last_swing_low = None, None
+
+        pullback_tolerance = (
+            self.pullback_atr_multiplier * current_atr
+            if self.pullback_atr_multiplier is not None
+            and self.pullback_atr_multiplier > _DECIMAL_ZERO
+            else current_pullback * self.pullback_proximity_pct
+        )
+        location_tolerance = (
+            self.location_atr_multiplier * current_atr
+            if self.location_atr_multiplier is not None
+            and self.location_atr_multiplier > _DECIMAL_ZERO
+            else current_pullback * self.location_tolerance_pct
+        )
+
+        # 1. Evaluate SHORT Zone Candidate
+        trend_dist_short = (
+            (current_trend - current_close) / current_trend
+            if current_trend > _DECIMAL_ZERO
+            else _DECIMAL_ZERO
+        )
+        downtrend_aligned = (
+            current_close < current_trend
+            and trend_dist_short >= eff_min_trend_pct
+            and (not self.require_trend_filter or current_pullback <= current_trend)
+        )
+        if downtrend_aligned:
+            if self.require_htf_extreme_zone:
+                if htf_upper_bb is None:
+                    htf_extreme_short_ok = False
+                else:
+                    eff_htf_atr = htf_atr if htf_atr is not None else current_atr
+                    htf_upper_limit = htf_upper_bb - (
+                        self.htf_extreme_buffer_atr * eff_htf_atr
+                    )
+                    htf_extreme_short_ok = curr_candle.high_price >= htf_upper_limit
+            else:
+                htf_extreme_short_ok = True
+
+            short_pullback_lower = current_pullback - pullback_tolerance
+            short_pullback_upper = current_pullback + location_tolerance
+            near_pullback = check_candle_intersects_zone(
+                low=curr_candle.low_price,
+                high=curr_candle.high_price,
+                lower_bound=short_pullback_lower,
+                upper_bound=short_pullback_upper,
+            )
+            at_ema_resistance = check_candle_intersects_zone(
+                low=curr_candle.low_price,
+                high=curr_candle.high_price,
+                level=current_pullback,
+                tolerance=location_tolerance,
+            )
+            at_swing_resistance = (
+                last_swing_high is not None
+                and check_candle_intersects_zone(
+                    low=curr_candle.low_price,
+                    high=curr_candle.high_price,
+                    level=last_swing_high,
+                    tolerance=location_tolerance,
+                )
+            )
+            structural_upper_ok = (
+                near_pullback or at_ema_resistance or at_swing_resistance
+            )
+
+            if htf_extreme_short_ok and structural_upper_ok:
+                invalidation_price = max(
+                    curr_candle.high_price,
+                    current_pullback + location_tolerance,
+                )
+                stop_loss = invalidation_price + (self.atr_multiplier_sl * current_atr)
+                risk_dist = stop_loss - current_close
+                min_risk_dist = current_close * eff_min_sl_pct
+                if risk_dist < min_risk_dist:
+                    risk_dist = min_risk_dist
+                    stop_loss = current_close + risk_dist
+                take_profit = current_close - (risk_dist * self.risk_reward_ratio)
+                htf_lbl = f"{htf_target_interval.value} Upper BB"
+                return Signal(
+                    symbol=curr_candle.symbol,
+                    signal_type=SignalType.HOLD,
+                    price=current_close,
+                    confidence=self.min_confidence,
+                    strategy_name=self.strategy_type.value,
+                    generated_at=curr_candle.close_time,
+                    reason=(
+                        f"[STALKING_ZONE_SHORT] Price in {htf_lbl} & "
+                        f"local resistance (EMA{self.pullback_period}) "
+                        f"in EMA{self.trend_period} downtrend"
+                    ),
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                )
+
+        # 2. Evaluate LONG Zone Candidate (Mirror)
+        trend_dist_long = (
+            (current_close - current_trend) / current_trend
+            if current_trend > _DECIMAL_ZERO
+            else _DECIMAL_ZERO
+        )
+        uptrend_aligned = (
+            current_close > current_trend
+            and trend_dist_long >= eff_min_trend_pct
+            and (not self.require_trend_filter or current_pullback >= current_trend)
+        )
+        if uptrend_aligned:
+            if self.require_htf_extreme_zone:
+                if htf_lower_bb is None:
+                    htf_extreme_long_ok = False
+                else:
+                    eff_htf_atr = htf_atr if htf_atr is not None else current_atr
+                    htf_lower_limit = htf_lower_bb + (
+                        self.htf_extreme_buffer_atr * eff_htf_atr
+                    )
+                    htf_extreme_long_ok = curr_candle.low_price <= htf_lower_limit
+            else:
+                htf_extreme_long_ok = True
+
+            long_pullback_upper = current_pullback + pullback_tolerance
+            long_pullback_lower = current_pullback - location_tolerance
+            near_pullback = check_candle_intersects_zone(
+                low=curr_candle.low_price,
+                high=curr_candle.high_price,
+                lower_bound=long_pullback_lower,
+                upper_bound=long_pullback_upper,
+            )
+            at_ema_support = check_candle_intersects_zone(
+                low=curr_candle.low_price,
+                high=curr_candle.high_price,
+                level=current_pullback,
+                tolerance=location_tolerance,
+            )
+            at_swing_support = (
+                last_swing_low is not None
+                and check_candle_intersects_zone(
+                    low=curr_candle.low_price,
+                    high=curr_candle.high_price,
+                    level=last_swing_low,
+                    tolerance=location_tolerance,
+                )
+            )
+            structural_lower_ok = near_pullback or at_ema_support or at_swing_support
+
+            if htf_extreme_long_ok and structural_lower_ok:
+                invalidation_price = min(
+                    curr_candle.low_price,
+                    current_pullback - location_tolerance,
+                )
+                stop_loss = invalidation_price - (self.atr_multiplier_sl * current_atr)
+                risk_dist = current_close - stop_loss
+                min_risk_dist = current_close * eff_min_sl_pct
+                if risk_dist < min_risk_dist:
+                    risk_dist = min_risk_dist
+                    stop_loss = current_close - risk_dist
+                take_profit = current_close + (risk_dist * self.risk_reward_ratio)
+                htf_lbl = f"{htf_target_interval.value} Lower BB"
+                return Signal(
+                    symbol=curr_candle.symbol,
+                    signal_type=SignalType.HOLD,
+                    price=current_close,
+                    confidence=self.min_confidence,
+                    strategy_name=self.strategy_type.value,
+                    generated_at=curr_candle.close_time,
+                    reason=(
+                        f"[STALKING_ZONE_LONG] Price in {htf_lbl} & "
+                        f"local support (EMA{self.pullback_period}) "
+                        f"in EMA{self.trend_period} uptrend"
+                    ),
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                )
+
+        return None
+
     def _compute_confidence(
         self,
         *,

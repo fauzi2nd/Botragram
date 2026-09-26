@@ -265,6 +265,7 @@ class BitgetRestClient(BaseRestClient):
         headers: dict[str, str] = {
             "Content-Type": "application/json",
             "locale": "en-US",
+            "User-Agent": "Botragram/1.0",
         }
         if custom_headers:
             headers.update(custom_headers)

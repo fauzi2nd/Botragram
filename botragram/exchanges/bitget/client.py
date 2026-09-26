@@ -34,7 +34,7 @@ from botragram.enums import Interval, OrderSide, OrderType, PositionSide
 from botragram.exchanges.base.client import BaseExchangeClient
 from botragram.exchanges.base.mapper import ExchangePayload
 from botragram.exchanges.bitget.mapper import BitgetExchangeMapper
-from botragram.exchanges.bitget.rest import BitgetRestClient
+from botragram.exchanges.bitget.rest import BitgetRestClient, BitgetRestResponseError
 from botragram.models import (
     Account,
     Candle,
@@ -160,7 +160,13 @@ class BitgetClient(BaseExchangeClient):
             if isinstance(payload, dict):
                 return str(payload.get("code", "")) == "00000"
             return False
-        except aiohttp.ClientError, TimeoutError, RuntimeError, ValueError:
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            RuntimeError,
+            ValueError,
+            BitgetRestResponseError,
+        ):
             return False
 
     # =========================================================================

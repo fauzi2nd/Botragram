@@ -32,6 +32,7 @@ from botragram.config.risk_settings import RiskSettings
 from botragram.constants import (
     BINANCE_FUTURES_REST_BASE_URL,
     BINANCE_REST_BASE_URL,
+    BITGET_REST_BASE_URL,
     BYBIT_REST_BASE_URL,
     BYBIT_TESTNET_REST_BASE_URL,
 )
@@ -239,6 +240,8 @@ async def run_backtest_command(
             if settings.exchange.testnet
             else BYBIT_REST_BASE_URL
         )
+    elif exchange_type is ExchangeType.BITGET:
+        rest_base_url = BITGET_REST_BASE_URL
     else:
         rest_base_url = (
             BINANCE_FUTURES_REST_BASE_URL

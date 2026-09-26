@@ -189,3 +189,23 @@ class SignalEngine:
         return self.strategy_resolver.resolve(
             strategy_type=strategy_type,
         ).minimum_candles
+
+    def detect_zone_candidate(
+        self,
+        *,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> Signal | None:
+        """Detect whether market state qualifies as a Stage 1 zone candidate."""
+        resolved_strategy_type = (
+            strategy_type if strategy_type is not None else self.default_strategy_type
+        )
+        strategy = self.strategy_resolver.resolve(
+            strategy_type=resolved_strategy_type,
+        )
+        detector = getattr(strategy, "detect_zone_candidate", None)
+        if callable(detector):
+            candidate = detector(candles=candles)
+            if isinstance(candidate, Signal):
+                return candidate
+        return None
