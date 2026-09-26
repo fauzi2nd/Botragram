@@ -52,9 +52,7 @@ class StalkingFunnelReport:
     triggered: int = 0
     invalidated: int = 0
     expired: int = 0
-    rejections_by_reason: dict[str, int] = field(
-        default_factory=dict[str, int]
-    )
+    rejections_by_reason: dict[str, int] = field(default_factory=dict[str, int])
     average_stalking_bars: Decimal = Decimal("0.0")
 
     @property

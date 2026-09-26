@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
-
 from typing import Protocol, runtime_checkable
 
 # =============================================================================
