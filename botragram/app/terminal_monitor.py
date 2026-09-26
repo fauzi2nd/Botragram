@@ -1231,7 +1231,7 @@ class TerminalMonitor:
                 "-",
             )
         else:
-            for setup in status.stalking_setups[:5]:
+            for setup in status.stalking_setups[:8]:
                 side_style = "green" if setup.side is PositionSide.LONG else "red"
                 status_style = {
                     StalkingStatus.STALKING: "cyan",
@@ -1263,7 +1263,7 @@ class TerminalMonitor:
         count = len(status.stalking_setups)
         if count == 0:
             return 5
-        return min(10, min(count, 5) + 4)
+        return min(12, min(count, 8) + 4)
 
     def _build_stream_panel(self, status: TerminalStatus) -> Panel:
         """Build one compact, canonical row for every managed position."""
