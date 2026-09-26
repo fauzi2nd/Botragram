@@ -74,6 +74,14 @@ class StalkingSetupProvider(Protocol):
         """Return a telemetry report of the stalking funnel."""
         ...
 
+    def invalidate_setup(
+        self,
+        symbol: str,
+        reason: str = "Execution guard rejected",
+    ) -> StalkingSetup | None:
+        """Explicitly invalidate a setup."""
+        ...
+
 
 class SetupStalkingService:
     """Track and observe candidate setups across 1-7 subsequent bars."""
@@ -609,8 +617,14 @@ class SetupStalkingService:
                         upper_wick = candle.high_price - max(
                             candle.open_price, candle.close_price
                         )
+                        lower_wick = (
+                            min(candle.open_price, candle.close_price)
+                            - candle.low_price
+                        )
                         rejection_ratio = upper_wick / candle_range
                         open_tol = candle_range * Decimal("0.10")
+                        is_red_or_flat = candle.close_price <= candle.open_price
+                        bearish_rejection = is_red_or_flat or (upper_wick >= lower_wick)
                         if (
                             candle.high_price >= setup.target_retest_price
                             and candle.close_price <= setup.target_retest_price
@@ -618,6 +632,7 @@ class SetupStalkingService:
                             <= setup.target_retest_price + open_tol
                             and rejection_ratio >= Decimal("0.15")
                             and candle.close_price < candle.high_price
+                            and bearish_rejection
                         ):
                             triggered = True
                     else:
@@ -626,8 +641,13 @@ class SetupStalkingService:
                             min(candle.open_price, candle.close_price)
                             - candle.low_price
                         )
+                        upper_wick = candle.high_price - max(
+                            candle.open_price, candle.close_price
+                        )
                         rejection_ratio = lower_wick / candle_range
                         open_tol = candle_range * Decimal("0.10")
+                        is_green_or_flat = candle.close_price >= candle.open_price
+                        bullish_bounce = is_green_or_flat or (lower_wick >= upper_wick)
                         if (
                             candle.low_price <= setup.target_retest_price
                             and candle.close_price >= setup.target_retest_price
@@ -635,6 +655,7 @@ class SetupStalkingService:
                             >= setup.target_retest_price - open_tol
                             and rejection_ratio >= Decimal("0.15")
                             and candle.close_price > candle.low_price
+                            and bullish_bounce
                         ):
                             triggered = True
 
@@ -724,6 +745,36 @@ class SetupStalkingService:
         """Return the current setup for a symbol, if any."""
         with self._lock:
             return self._setups.get(symbol)
+
+    def set_setup_for_testing(self, setup: StalkingSetup) -> None:
+        """Inject or update a setup directly for testing purposes."""
+        with self._lock:
+            self._setups[setup.symbol] = setup
+
+    def invalidate_setup(
+        self,
+        symbol: str,
+        reason: str = "Execution guard rejected",
+    ) -> StalkingSetup | None:
+        """Explicitly invalidate a setup (e.g. if execution guards reject entry)."""
+        now = datetime.now(UTC)
+        with self._lock:
+            setup = self._setups.get(symbol)
+            if setup is None:
+                return None
+            self._funnel_invalidated += 1
+            updated = replace(
+                setup,
+                status=StalkingStatus.INVALIDATED,
+                updated_at=now,
+            )
+            self._setups[symbol] = updated
+            _LOGGER.info(
+                "Setup stalking manually INVALIDATED: symbol=%s reason=%s",
+                symbol,
+                reason,
+            )
+            return updated
 
     def get_active_stalking_symbols(self) -> tuple[str, ...]:
         """Return symbols currently in active STALKING status."""

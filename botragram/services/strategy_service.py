@@ -93,6 +93,14 @@ class StrategyStalkingProvider(Protocol):
         """Return a telemetry report of the stalking funnel."""
         ...
 
+    def invalidate_setup(
+        self,
+        symbol: str,
+        reason: str = "Execution guard rejected",
+    ) -> StalkingSetup | None:
+        """Explicitly invalidate a setup."""
+        ...
+
 
 # =============================================================================
 # Service Classes
@@ -157,6 +165,30 @@ class StrategyService:
                         updated is not None
                         and updated.status is StalkingStatus.TRIGGERED
                     ):
+                        guards_valid, guards_reason = (
+                            self.signal_engine.validate_trigger_guards(
+                                side=updated.side,
+                                candles=candles,
+                                strategy_type=strategy_type,
+                            )
+                        )
+                        if not guards_valid:
+                            stalking_svc.invalidate_setup(
+                                symbol,
+                                reason=f"Trigger guards rejected: {guards_reason}",
+                            )
+                            return Signal(
+                                symbol=symbol,
+                                signal_type=SignalType.HOLD,
+                                price=latest_candle.close_price,
+                                confidence=Decimal("0"),
+                                strategy_name=resolved_type.value,
+                                generated_at=latest_candle.close_time,
+                                reason=(
+                                    "[STALKING_INVALIDATED] Trigger guards rejected "
+                                    f"entry: {guards_reason}"
+                                ),
+                            )
                         return stalking_svc.build_triggered_signal(
                             setup=updated,
                             trigger_candle=latest_candle,

@@ -969,3 +969,299 @@ def test_pier_stalking_funnel_strategy_service_integration() -> None:
     assert report.zone_candidates == 0
     assert report.rejected_before_register == 1
     assert report.rejections_by_reason.get("NATR") == 1
+
+
+def test_pier_trigger_guards_bollinger_bands() -> None:
+    """BB entry guard rejects LONG when near Upper Band and SHORT near Lower Band."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=20,
+        pullback_period=5,
+        rsi_period=14,
+        bb_period=20,
+        bb_std_dev=Decimal("2.0"),
+        use_macd=False,
+    )
+    # Candle that pushes high into Upper Band zone and closes near high
+    # Std dev of varying candles to have meaningful BB
+    candles_varying = [
+        _make_candle(
+            index=i,
+            open_price=Decimal("100") + Decimal(str(i % 5)),
+            high_price=Decimal("106") + Decimal(str(i % 5)),
+            low_price=Decimal("95") + Decimal(str(i % 5)),
+            close_price=Decimal("100") + Decimal(str(i % 5)),
+        )
+        for i in range(30)
+    ]
+    # Compute BB on candles_varying
+    from botragram.indicators import calculate_bollinger_bands
+
+    bb = calculate_bollinger_bands(
+        [c.close_price for c in candles_varying],
+        period=20,
+        standard_deviation=Decimal("2.0"),
+    )
+    assert bb is not None
+    curr_upper = bb.upper[-1]
+    curr_mid = bb.middle[-1]
+    curr_lower = bb.lower[-1]
+
+    # 1. Test LONG overbought (close in upper zone of BB)
+    ub_pucuk_price = curr_mid + ((curr_upper - curr_mid) * Decimal("0.80"))
+    pucuk_candle = _make_candle(
+        index=30,
+        open_price=curr_mid,
+        high_price=curr_upper + Decimal("1.0"),
+        low_price=curr_mid,
+        close_price=ub_pucuk_price,
+    )
+    is_valid, reason = strategy.validate_trigger_guards(
+        side=PositionSide.LONG,
+        candles=candles_varying + [pucuk_candle],
+    )
+    assert not is_valid
+    assert "BB upper zone" in reason
+
+    # 2. Test LONG rejection from Upper Band (touched upper band, closed red)
+    reject_ub_candle = _make_candle(
+        index=30,
+        open_price=curr_upper - Decimal("0.1"),
+        high_price=curr_upper + Decimal("0.5"),
+        low_price=curr_mid,
+        close_price=curr_upper - Decimal("1.0"),
+    )
+    is_valid_ub, reason_ub = strategy.validate_trigger_guards(
+        side=PositionSide.LONG,
+        candles=candles_varying + [reject_ub_candle],
+    )
+    assert not is_valid_ub
+    assert "Upper Bollinger Band" in reason_ub
+
+    # 3. Test SHORT oversold (close in lower zone of BB)
+    lb_lembah_price = curr_mid - ((curr_mid - curr_lower) * Decimal("0.80"))
+    lembah_candle = _make_candle(
+        index=30,
+        open_price=curr_mid,
+        high_price=curr_mid,
+        low_price=curr_lower - Decimal("1.0"),
+        close_price=lb_lembah_price,
+    )
+    is_valid_short, reason_short = strategy.validate_trigger_guards(
+        side=PositionSide.SHORT,
+        candles=candles_varying + [lembah_candle],
+    )
+    assert not is_valid_short
+    assert "BB lower zone" in reason_short
+
+
+def test_pier_trigger_guards_macd_momentum() -> None:
+    """MACD momentum guard rejects LONG on decaying histogram (bar kosong)."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=20,
+        pullback_period=5,
+        rsi_period=14,
+        bb_period=20,
+        use_macd=True,
+        macd_fast_period=12,
+        macd_slow_period=26,
+        macd_signal_period=9,
+    )
+    # Generate 50 trending candles
+    candles = [
+        _make_candle(
+            index=i,
+            open_price=Decimal("100") + (Decimal(str(i)) * Decimal("0.5")),
+            high_price=Decimal("101") + (Decimal(str(i)) * Decimal("0.5")),
+            low_price=Decimal("99") + (Decimal(str(i)) * Decimal("0.5")),
+            close_price=Decimal("100.4") + (Decimal(str(i)) * Decimal("0.5")),
+        )
+        for i in range(50)
+    ]
+    # Now simulate momentum decaying: add small flat candles so histogram shrinks
+    decaying_candles = list(candles)
+    last_close = decaying_candles[-1].close_price
+    for j in range(5):
+        decaying_candles.append(
+            _make_candle(
+                index=50 + j,
+                open_price=last_close,
+                high_price=last_close + Decimal("0.1"),
+                low_price=last_close - Decimal("0.1"),
+                close_price=last_close,
+            )
+        )
+
+    from botragram.indicators import calculate_macd
+
+    macd = calculate_macd(
+        [c.close_price for c in decaying_candles],
+        fast_period=12,
+        slow_period=26,
+        signal_period=9,
+    )
+    assert macd is not None
+
+    # Check that validate_trigger_guards evaluates MACD correctly
+    is_valid, reason = strategy.validate_trigger_guards(
+        side=PositionSide.LONG,
+        candles=decaying_candles,
+    )
+    if macd.histogram[-1] < Decimal("0") or (
+        len(macd.histogram) >= 2 and macd.histogram[-1] < macd.histogram[-2]
+    ):
+        assert not is_valid
+        assert "MACD histogram" in reason
+
+
+def test_pier_trigger_guards_strategy_service_invalidation() -> None:
+    """StrategyService invalidates triggered setup when trigger guards fail."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=20,
+        pullback_period=5,
+        rsi_period=14,
+        bb_period=20,
+        use_macd=False,
+        require_htf_extreme_zone=False,
+        require_key_level_location=False,
+    )
+    signal_engine = SignalEngine(
+        strategy_resolver=StrategyResolver(
+            strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: strategy}
+        ),
+        default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    stalking_svc = SetupStalkingService(max_candidates=5)
+    strategy_svc = StrategyService(
+        signal_engine=signal_engine,
+        signal_repository=MemorySignalRepository(),
+        setup_stalking_service=stalking_svc,
+        stalking_enabled=True,
+    )
+
+    # 1. Create a setup that triggers
+    # Build 30 candles where price reaches Upper BB
+    candles: list[Candle] = []
+    for i in range(34):
+        price = Decimal("100") + (Decimal(str(i)) * Decimal("0.8"))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.7"),
+            )
+        )
+
+    # Register candidate manually in stalking service
+    cand = candles[-1]
+    stalking_svc.register_candidate(
+        signal=Signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=cand.close_price,
+            confidence=Decimal("0.75"),
+            strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
+            generated_at=cand.close_time,
+            reason="Test Long Setup",
+            stop_loss=cand.low_price - Decimal("1.0"),
+            take_profit=cand.close_price + Decimal("3.0"),
+        ),
+        setup_candle=cand,
+        reversal_confirmed=True,
+    )
+    setup = stalking_svc.get_setup("BTCUSDT")
+    assert setup is not None
+    assert setup.status is StalkingStatus.STALKING
+
+    # Target retest is set to 127.0
+    stalking_svc.set_setup_for_testing(
+        replace(setup, target_retest_price=Decimal("127.0"))
+    )
+
+    # Next candle opens at 127.2, dips to 126.8 (touching 127.0),
+    # and bounces up to 128.0 (at Upper BB)
+    trigger_candle = _make_candle(
+        index=34,
+        open_price=Decimal("127.2"),
+        high_price=Decimal("128.5"),
+        low_price=Decimal("126.8"),
+        close_price=Decimal("128.0"),
+    )
+    all_candles = candles + [trigger_candle]
+
+    # Next candle touches target at Upper BB zone
+    sig = strategy_svc.generate_signal(
+        candles=all_candles,
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    # The signal should be HOLD because trigger guards reject entry at Upper BB
+    assert sig.signal_type is SignalType.HOLD
+    assert "[STALKING_INVALIDATED]" in (sig.reason or "")
+    # Check that setup status in stalking_svc is INVALIDATED
+    final_setup = stalking_svc.get_setup("BTCUSDT")
+    assert final_setup is not None
+    assert final_setup.status is StalkingStatus.INVALIDATED
+
+
+def test_stalking_retest_bounce_hardening() -> None:
+    """A red candle dumping into its low cannot trigger a LONG retest bounce."""
+    stalking_svc = SetupStalkingService(max_candidates=5)
+    setup_candle = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("102"),
+        low_price=Decimal("99"),
+        close_price=Decimal("101"),
+    )
+    stalking_svc.register_candidate(
+        signal=Signal(
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=Decimal("101"),
+            confidence=Decimal("0.75"),
+            strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
+            generated_at=setup_candle.close_time,
+            reason="Test Long Setup",
+        ),
+        setup_candle=setup_candle,
+        reversal_confirmed=True,
+    )
+    setup = stalking_svc.get_setup("BTCUSDT")
+    assert setup is not None
+
+    # Set target retest price to 100.5
+    stalking_svc.set_setup_for_testing(
+        replace(
+            setup,
+            target_retest_price=Decimal("100.5"),
+        )
+    )
+
+    # Bar 1: Red candle dumping into close with tiny lower wick (like the 2ZUSDT bar)
+    # open=101.0, high=101.2, low=100.4, close=100.5
+    # range=0.8, upper_wick=0.2, lower_wick=0.1. Lower wick is smaller than upper wick!
+    dumping_candle = _make_candle(
+        index=1,
+        open_price=Decimal("101.0"),
+        high_price=Decimal("101.2"),
+        low_price=Decimal("100.4"),
+        close_price=Decimal("100.5"),
+    )
+    updated = stalking_svc.on_candle_update(dumping_candle)
+    assert updated is not None
+    # Must NOT trigger because it is a red dump candle without a dominant lower wick
+    assert updated.status is StalkingStatus.STALKING
+
+    # Bar 2: A true bullish bounce candle (green with dominant lower wick)
+    # open=100.5, low=100.3, high=101.0, close=100.9
+    bounce_candle = _make_candle(
+        index=2,
+        open_price=Decimal("100.5"),
+        high_price=Decimal("101.0"),
+        low_price=Decimal("100.3"),
+        close_price=Decimal("100.9"),
+    )
+    updated_bounce = stalking_svc.on_candle_update(bounce_candle)
+    assert updated_bounce is not None
+    assert updated_bounce.status is StalkingStatus.TRIGGERED

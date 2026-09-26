@@ -24,12 +24,13 @@ from typing import Protocol, runtime_checkable
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums import SignalType, StrategyType
+from botragram.enums import PositionSide, SignalType, StrategyType
 from botragram.models import Candle, Signal
 from botragram.strategies.factory import StrategyResolver
 
 __all__ = [
     "SignalEngine",
+    "TriggerGuardsValidator",
     "ZoneCandidateDetailedDetector",
     "ZoneCandidateDetector",
     "has_account_ratio_evaluation",
@@ -41,6 +42,20 @@ __all__ = [
 # =============================================================================
 # Protocols
 # =============================================================================
+@runtime_checkable
+class TriggerGuardsValidator(Protocol):
+    """Protocol for strategies validating execution trigger guards."""
+
+    def validate_trigger_guards(
+        self,
+        *,
+        side: PositionSide,
+        candles: Sequence[Candle],
+    ) -> tuple[bool, str]:
+        """Validate whether trigger guards (e.g. BB, MACD) allow entry execution."""
+        ...
+
+
 @runtime_checkable
 class ZoneCandidateDetailedDetector(Protocol):
     """Protocol for strategies implementing detailed zone candidate detection."""
@@ -256,3 +271,26 @@ class SignalEngine:
                 return candidate, ""
             return None, "Candidate rejected"
         return None, "No detector available"
+
+    def validate_trigger_guards(
+        self,
+        *,
+        side: PositionSide,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> tuple[bool, str]:
+        """Validate execution trigger guards using the resolved strategy.
+
+        Returns:
+            Tuple of (is_valid, rejection_reason). If strategy does not implement
+            guards, returns (True, "").
+        """
+        resolved_strategy_type = (
+            strategy_type if strategy_type is not None else self.default_strategy_type
+        )
+        strategy = self.strategy_resolver.resolve(
+            strategy_type=resolved_strategy_type,
+        )
+        if isinstance(strategy, TriggerGuardsValidator):
+            return strategy.validate_trigger_guards(side=side, candles=candles)
+        return True, ""

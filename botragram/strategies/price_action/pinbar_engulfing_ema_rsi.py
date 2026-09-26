@@ -415,7 +415,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             )
 
         bb_result: BollingerBandsResult | None = None
-        if self.use_structural_tp and len(close_prices) >= self.bb_period:
+        if len(close_prices) >= self.bb_period:
             bb_result = calculate_bollinger_bands(
                 close_prices,
                 period=self.bb_period,
@@ -671,7 +671,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     and curr_stoch_k > curr_stoch_d
                 )
 
-            # SOFT CONFIRMATION: MACD Guard
+            # HARD GATE: MACD Momentum Guard (anti-momentum decay / anti-bar kosong)
             macd_long_ok = True
             macd_long_aligned = False
             if self.use_macd and curr_macd_hist is not None:
@@ -683,6 +683,20 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     and curr_macd_hist > _DECIMAL_ZERO
                     and curr_macd_hist > prev_macd_hist
                 )
+
+            # HARD GATE: Bollinger Bands Upper Band Guard (Anti-Pucuk)
+            bb_long_ok = True
+            if bb_result is not None:
+                curr_upper_bb = bb_result.upper[-1]
+                curr_mid_bb = bb_result.middle[-1]
+                ub_threshold = curr_mid_bb + (
+                    (curr_upper_bb - curr_mid_bb) * Decimal("0.60")
+                )
+                if current_close > ub_threshold or (
+                    curr_candle.high_price >= curr_upper_bb
+                    and curr_candle.close_price < curr_candle.open_price
+                ):
+                    bb_long_ok = False
 
             # HARD GATE: Strict EMA rejection (candle close must be >= EMA21)
             ema_side_long_ok = (
@@ -713,6 +727,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 and htf_extreme_long_ok
                 and stoch_rsi_long_ok
                 and macd_long_ok
+                and bb_long_ok
             ):
                 if star_matched_buy:
                     pattern_label = "Morning Star"
@@ -919,7 +934,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     and curr_stoch_k < curr_stoch_d
                 )
 
-            # SOFT CONFIRMATION: MACD Guard
+            # HARD GATE: MACD Momentum Guard (anti-momentum decay / anti-bar kosong)
             macd_short_ok = True
             macd_short_aligned = False
             if self.use_macd and curr_macd_hist is not None:
@@ -931,6 +946,20 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     and curr_macd_hist < _DECIMAL_ZERO
                     and curr_macd_hist < prev_macd_hist
                 )
+
+            # HARD GATE: Bollinger Bands Lower Band Guard (Anti-Dasar)
+            bb_short_ok = True
+            if bb_result is not None:
+                curr_lower_bb = bb_result.lower[-1]
+                curr_mid_bb = bb_result.middle[-1]
+                lb_threshold = curr_mid_bb - (
+                    (curr_mid_bb - curr_lower_bb) * Decimal("0.60")
+                )
+                if current_close < lb_threshold or (
+                    curr_candle.low_price <= curr_lower_bb
+                    and curr_candle.close_price > curr_candle.open_price
+                ):
+                    bb_short_ok = False
 
             # HARD GATE: Strict EMA rejection (candle close must be <= EMA21)
             ema_side_short_ok = (
@@ -961,6 +990,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 and htf_extreme_short_ok
                 and stoch_rsi_short_ok
                 and macd_short_ok
+                and bb_short_ok
             ):
                 if star_matched_sell:
                     pattern_label = "Evening Star"
@@ -1248,6 +1278,20 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             else current_pullback * self.location_tolerance_pct
         )
 
+        # Local Bollinger Bands Guard
+        local_bb: BollingerBandsResult | None = None
+        if len(close_prices) >= self.bb_period:
+            local_bb = calculate_bollinger_bands(
+                close_prices,
+                period=self.bb_period,
+                standard_deviation=self.bb_std_dev,
+            )
+
+        # Stage 1 Extreme Band Guard: Do not register LONG at/above Upper Band,
+        # and do not register SHORT at/below Lower Band.
+        bb_short_ok = local_bb is None or current_close > local_bb.lower[-1]
+        bb_long_ok = local_bb is None or current_close < local_bb.upper[-1]
+
         # 1. Evaluate SHORT Zone Candidate
         trend_dist_short = (
             (current_trend - current_close) / current_trend
@@ -1299,7 +1343,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             near_short_pullback or at_ema_resistance or at_swing_resistance
         )
 
-        if downtrend_aligned and htf_extreme_short_ok and structural_upper_ok:
+        if (
+            downtrend_aligned
+            and htf_extreme_short_ok
+            and structural_upper_ok
+            and bb_short_ok
+        ):
             invalidation_price = max(
                 curr_candle.high_price,
                 current_pullback + location_tolerance,
@@ -1395,7 +1444,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         )
         structural_lower_ok = near_long_pullback or at_ema_support or at_swing_support
 
-        if uptrend_aligned and htf_extreme_long_ok and structural_lower_ok:
+        if (
+            uptrend_aligned
+            and htf_extreme_long_ok
+            and structural_lower_ok
+            and bb_long_ok
+        ):
             invalidation_price = min(
                 curr_candle.low_price,
                 current_pullback - location_tolerance,
@@ -1451,6 +1505,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 return None, "Trend distance"
             if self.require_trend_filter and current_pullback > current_trend:
                 return None, "EMA side"
+            if not bb_short_ok:
+                return None, "BB lower zone"
             if self.require_htf_extreme_zone and not htf_extreme_short_ok:
                 return None, "HTF extreme"
             if not structural_upper_ok:
@@ -1461,6 +1517,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 return None, "Trend distance"
             if self.require_trend_filter and current_pullback < current_trend:
                 return None, "EMA side"
+            if not bb_long_ok:
+                return None, "BB upper zone"
             if self.require_htf_extreme_zone and not htf_extreme_long_ok:
                 return None, "HTF extreme"
             if not structural_lower_ok:
@@ -1468,6 +1526,97 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             return None, "Key level"
         else:
             return None, "EMA side"
+
+    def validate_trigger_guards(
+        self,
+        *,
+        side: PositionSide,
+        candles: Sequence[Candle],
+    ) -> tuple[bool, str]:
+        """Validate whether execution trigger guards permit trade entry.
+
+        Evaluates:
+        1. Bollinger Bands Overextension & Rejection Guard:
+           - For LONG: rejects if close is in upper 40% zone of Bollinger Bands
+             (close > mid + 0.40 * (upper - mid)) or if candle high touched/exceeded
+             upper band and closed red (bearish rejection from UB).
+           - For SHORT: rejects if close is in lower 40% zone of Bollinger Bands
+             (close < mid - 0.40 * (mid - lower)) or if candle low touched/fell below
+             lower band and closed green (bullish rejection from LB).
+        2. MACD Histogram Momentum Guard:
+           - For LONG: rejects if MACD histogram is negative or decaying (hollow bar).
+           - For SHORT: rejects if MACD histogram is positive or rising (hollow bar).
+
+        Returns:
+            Tuple of (is_valid, rejection_reason). Returns (True, "") if guards pass.
+        """
+        if len(candles) < self.bb_period:
+            return True, ""
+
+        curr_candle = candles[-1]
+        curr_close = curr_candle.close_price
+        close_prices = tuple(c.close_price for c in candles)
+
+        # 1. Bollinger Bands Entry Guard
+        bb_result = calculate_bollinger_bands(
+            close_prices,
+            period=self.bb_period,
+            standard_deviation=self.bb_std_dev,
+        )
+        curr_upper = bb_result.upper[-1]
+        curr_mid = bb_result.middle[-1]
+        curr_lower = bb_result.lower[-1]
+
+        if side is PositionSide.LONG:
+            ub_threshold = curr_mid + ((curr_upper - curr_mid) * Decimal("0.60"))
+            if curr_close > ub_threshold:
+                return False, "BB upper zone (anti-pucuk guard)"
+            if (
+                curr_candle.high_price >= curr_upper
+                and curr_candle.close_price < curr_candle.open_price
+            ):
+                return False, "Bearish rejection from Upper Bollinger Band"
+        else:
+            lb_threshold = curr_mid - ((curr_mid - curr_lower) * Decimal("0.60"))
+            if curr_close < lb_threshold:
+                return False, "BB lower zone (anti-lembah guard)"
+            if (
+                curr_candle.low_price <= curr_lower
+                and curr_candle.close_price > curr_candle.open_price
+            ):
+                return False, "Bullish rejection from Lower Bollinger Band"
+
+        # 2. MACD Momentum Guard
+        min_macd_vals = self.macd_slow_period + self.macd_signal_period - 1
+        if self.use_macd and len(close_prices) >= min_macd_vals:
+            macd_result = calculate_macd(
+                close_prices,
+                fast_period=self.macd_fast_period,
+                slow_period=self.macd_slow_period,
+                signal_period=self.macd_signal_period,
+            )
+            if len(macd_result.histogram) >= 1:
+                curr_hist = macd_result.histogram[-1]
+                prev_hist = (
+                    macd_result.histogram[-2]
+                    if len(macd_result.histogram) >= 2
+                    else None
+                )
+
+                if side is PositionSide.LONG:
+                    if prev_hist is not None and curr_hist < prev_hist:
+                        return (
+                            False,
+                            "MACD histogram decaying (hollow bar / momentum loss)",
+                        )
+                else:
+                    if prev_hist is not None and curr_hist > prev_hist:
+                        return (
+                            False,
+                            "MACD histogram rising (hollow bar / momentum loss)",
+                        )
+
+        return True, ""
 
     def compute_zone_confidence(
         self,
