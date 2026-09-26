@@ -1205,6 +1205,24 @@ class TerminalMonitor:
         )
         table.add_row("Source", "BOTRAGRAM LIVE EXIT LEDGER")
 
+    @staticmethod
+    def sort_stalking_setups(
+        setups: Sequence[StalkingSetup],
+    ) -> list[StalkingSetup]:
+        """Sort stalking setups: TRIGGERED first, then STALKING by current_bar desc."""
+
+        def _sort_key(s: StalkingSetup) -> tuple[int, int, float]:
+            status_rank = (
+                0
+                if s.status is StalkingStatus.TRIGGERED
+                else 1
+                if s.status is StalkingStatus.STALKING
+                else 2
+            )
+            return (status_rank, -s.current_bar, -s.updated_at.timestamp())
+
+        return sorted(setups, key=_sort_key)
+
     def _build_stalking_panel(self, status: TerminalStatus) -> Panel:
         """Build dedicated panel displaying candidate setups being stalked."""
         table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False, pad_edge=False)
@@ -1231,7 +1249,8 @@ class TerminalMonitor:
                 "-",
             )
         else:
-            for setup in status.stalking_setups[:8]:
+            sorted_setups = self.sort_stalking_setups(status.stalking_setups)
+            for setup in sorted_setups[:8]:
                 side_style = "green" if setup.side is PositionSide.LONG else "red"
                 status_style = {
                     StalkingStatus.STALKING: "cyan",

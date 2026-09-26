@@ -512,24 +512,30 @@ class SetupStalkingService:
             return updated
 
     def get_active_stalking_setups(self) -> tuple[StalkingSetup, ...]:
-        """Return all tracked setups, prioritizing active STALKING candidates."""
+        """Return tracked setups, prioritizing TRIGGERED then active STALKING."""
         with self._lock:
-            active: list[StalkingSetup] = []
+            triggered: list[StalkingSetup] = []
+            stalking: list[StalkingSetup] = []
             completed: list[StalkingSetup] = []
 
             for setup in self._setups.values():
-                if setup.status is StalkingStatus.STALKING:
-                    active.append(setup)
+                if setup.status is StalkingStatus.TRIGGERED:
+                    triggered.append(setup)
+                elif setup.status is StalkingStatus.STALKING:
+                    stalking.append(setup)
                 else:
                     completed.append(setup)
 
-            # Sort active by started_at desc, then completed by updated_at desc
-            active.sort(key=lambda s: s.started_at, reverse=True)
+            # Sort triggered by updated_at desc (most recent triggers first)
+            triggered.sort(key=lambda s: s.updated_at, reverse=True)
+            # Sort stalking by current_bar desc, then started_at desc
+            stalking.sort(key=lambda s: (s.current_bar, s.started_at), reverse=True)
+            # Sort completed by updated_at desc
             completed.sort(key=lambda s: s.updated_at, reverse=True)
 
-            return tuple(
-                active + completed[: max(0, self._max_candidates - len(active))]
-            )
+            primary = triggered + stalking
+            remaining_slots = max(0, self._max_candidates - len(primary))
+            return tuple(primary + completed[:remaining_slots])
 
     def get_setup(self, symbol: str) -> StalkingSetup | None:
         """Return the current setup for a symbol, if any."""

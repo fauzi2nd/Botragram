@@ -213,3 +213,95 @@ def test_responsive_terminal_monitor_includes_stalking_panel() -> None:
         children_comp.index("active_stalking")
         == children_comp.index("managed_positions") - 1
     )
+
+
+def test_terminal_monitor_sorts_triggered_first_then_highest_bar() -> None:
+    """Verify sorting: TRIGGERED first, then STALKING by current_bar desc."""
+    now = datetime.now(UTC)
+    s1 = StalkingSetup(
+        symbol="SOLUSDT",
+        side=PositionSide.SHORT,
+        pattern_name="ENGULFING",
+        anchor_price=Decimal("150"),
+        invalidation_price=Decimal("155"),
+        target_retest_price=Decimal("152"),
+        htf_zone_label="HTF Extreme SHORT",
+        current_bar=1,
+        max_bars=7,
+        started_at=now,
+        updated_at=now,
+        status=StalkingStatus.STALKING,
+    )
+    s2 = StalkingSetup(
+        symbol="ETHUSDT",
+        side=PositionSide.LONG,
+        pattern_name="PINBAR",
+        anchor_price=Decimal("3000"),
+        invalidation_price=Decimal("2950"),
+        target_retest_price=Decimal("2980"),
+        htf_zone_label="HTF Extreme LONG",
+        current_bar=5,
+        max_bars=7,
+        started_at=now,
+        updated_at=now,
+        status=StalkingStatus.STALKING,
+    )
+    s3 = StalkingSetup(
+        symbol="AVNTUSDT",
+        side=PositionSide.LONG,
+        pattern_name="REVERSAL",
+        anchor_price=Decimal("0.13155"),
+        invalidation_price=Decimal("0.13014"),
+        target_retest_price=Decimal("0.131055"),
+        htf_zone_label="HTF Extreme LONG",
+        current_bar=3,
+        max_bars=7,
+        started_at=now,
+        updated_at=now,
+        status=StalkingStatus.TRIGGERED,
+    )
+    s4 = StalkingSetup(
+        symbol="DOGEUSDT",
+        side=PositionSide.SHORT,
+        pattern_name="ENGULFING",
+        anchor_price=Decimal("0.20"),
+        invalidation_price=Decimal("0.22"),
+        target_retest_price=Decimal("0.21"),
+        htf_zone_label="HTF Extreme SHORT",
+        current_bar=7,
+        max_bars=7,
+        started_at=now,
+        updated_at=now,
+        status=StalkingStatus.EXPIRED,
+    )
+
+    # 1. Verify helper sorting order
+    sorted_setups = TerminalMonitor.sort_stalking_setups((s1, s2, s3, s4))
+    assert [s.symbol for s in sorted_setups] == [
+        "AVNTUSDT",
+        "ETHUSDT",
+        "SOLUSDT",
+        "DOGEUSDT",
+    ]
+
+    # 2. Verify rendered table order
+    monitor = _create_monitor(setups=(s1, s2, s3, s4))
+    status = asyncio.run(monitor.collect_status())
+    layout = monitor.render_dashboard(status)
+    panel = layout["active_stalking"].renderable
+
+    string_io = StringIO()
+    console = Console(file=string_io, force_terminal=True, width=140)
+    console.print(panel)
+    output: str = string_io.getvalue()
+
+    avnt_pos = output.find("AVNTUSDT")
+    eth_pos = output.find("ETHUSDT")
+    sol_pos = output.find("SOLUSDT")
+    doge_pos = output.find("DOGEUSDT")
+
+    assert avnt_pos != -1
+    assert eth_pos != -1
+    assert sol_pos != -1
+    assert doge_pos != -1
+    assert avnt_pos < eth_pos < sol_pos < doge_pos
