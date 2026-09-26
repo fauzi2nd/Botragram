@@ -500,6 +500,7 @@ async def test_cfd_client_create_and_cancel_order() -> None:
         order_type=OrderType.MARKET,
         quantity=Decimal("0.1"),
         client_order_id="cl_99",
+        bypass_calendar_guard=True,
     )
     assert order.order_id == "order_cfd_99"
     # create_order POSTs to place-order, then calls get_order to reconcile.
@@ -1053,6 +1054,7 @@ async def test_cfd_enable_semantics_and_live_entry_guard() -> None:
     close_order = await client_live.close_position_exact(
         position=pos,
         client_order_id="close_cl_1",
+        bypass_calendar_guard=True,
     )
     assert close_order.order_id == ""
     assert close_order.client_order_id == "close_cl_1"
@@ -1237,6 +1239,7 @@ async def test_cfd_client_ensure_stop_loss_order() -> None:
         stop_loss=Decimal("1.0780"),
         client_algo_id="bsl-new",
         previous_client_algo_id="bsl-old",
+        bypass_calendar_guard=True,
     )
     assert order.stop_price == Decimal("1.0780")
     paths = [item[1] for item in rest.history]
@@ -2201,6 +2204,7 @@ async def test_cfd_client_close_position_exact() -> None:
     closed = await client.close_position_exact(
         position=pos,
         client_order_id="bop_cfd_exact_1",
+        bypass_calendar_guard=True,
     )
     assert closed.order_id == ""
     assert closed.client_order_id == "bop_cfd_exact_1"
@@ -2415,6 +2419,7 @@ async def test_cfd_client_create_order_trx_id_only_resolved_via_unfilled() -> No
         side=OrderSide.BUY,
         order_type=OrderType.MARKET,
         quantity=Decimal("0.1"),
+        bypass_calendar_guard=True,
     )
     assert order.order_id == "actual_ord_1001"
     assert order.execution_order_id == "trx_cfd_1001"
@@ -2470,6 +2475,7 @@ async def test_cfd_client_create_order_trx_id_only_resolved_via_history() -> Non
         side=OrderSide.BUY,
         order_type=OrderType.MARKET,
         quantity=Decimal("0.1"),
+        bypass_calendar_guard=True,
     )
     assert order.order_id == "actual_ord_1002"
     assert order.execution_order_id == "trx_cfd_1002"
@@ -2512,6 +2518,7 @@ async def test_cfd_client_create_order_trx_id_not_found_fails_unknown() -> None:
             side=OrderSide.BUY,
             order_type=OrderType.MARKET,
             quantity=Decimal("0.1"),
+            bypass_calendar_guard=True,
         )
 
 
@@ -3280,6 +3287,7 @@ async def test_cfd_close_position_exact_and_close_only_semantics() -> None:
     closed = await client.close_position_exact(
         position=pos,
         client_order_id="close_only_cl_id_99",
+        bypass_calendar_guard=True,
     )
 
     assert closed.order_id == ""
@@ -3332,7 +3340,7 @@ async def test_cfd_close_all_positions_with_data_null() -> None:
         "data": None,
     }
 
-    closed_orders = await client.close_all_positions()
+    closed_orders = await client.close_all_positions(bypass_calendar_guard=True)
 
     assert len(closed_orders) == 2
     assert closed_orders[0].symbol == "EURUSD"

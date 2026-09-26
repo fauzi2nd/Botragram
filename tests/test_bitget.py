@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 # =============================================================================
 # Third-Party Imports
@@ -135,6 +136,10 @@ class MockBitgetRestClient(BitgetRestClient):
     def test_validate_envelope(payload: JsonResponse) -> JsonResponse:
         """Expose protected response envelope validation for unit tests."""
         return MockBitgetRestClient._validate_response_envelope(payload)
+
+    def test_current_timestamp_ms(self) -> int:
+        """Expose protected timestamp calculation for unit tests."""
+        return self._current_timestamp_ms()
 
 
 # =============================================================================
@@ -2237,3 +2242,60 @@ async def test_bitget_create_protection_orders_fails_closed_when_outcome_unknown
         )
 
     assert not any(method == "POST" for method, _ in rest.history)
+
+
+@pytest.mark.asyncio
+async def test_bitget_synchronize_time_calculates_clock_offset() -> None:
+    """Verify synchronize_time calculates server time offset accurately."""
+    rest = MockBitgetRestClient()
+    now_ms = 1_700_000_000_000
+    server_ms = now_ms + 2500
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "data": {"serverTime": str(server_ms)},
+    }
+
+    with patch("botragram.exchanges.bitget.rest.time", return_value=now_ms / 1000):
+        offset = await rest.synchronize_time()
+        assert rest.test_current_timestamp_ms() == server_ms
+
+    assert offset == 2500
+    assert rest.server_time_offset_ms == 2500
+
+
+@pytest.mark.asyncio
+async def test_bitget_synchronize_time_fallback_request_time() -> None:
+    """Verify synchronize_time falls back to requestTime when data is empty."""
+    rest = MockBitgetRestClient()
+    now_ms = 1_700_000_000_000
+    server_ms = now_ms - 1500
+    rest.canned_response = {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": server_ms,
+    }
+
+    with patch("botragram.exchanges.bitget.rest.time", return_value=now_ms / 1000):
+        offset = await rest.synchronize_time()
+
+    assert offset == -1500
+    assert rest.server_time_offset_ms == -1500
+
+
+@pytest.mark.asyncio
+async def test_bitget_client_connect_invokes_synchronize_time() -> None:
+    """Verify BitgetClient.connect pings and synchronizes server time."""
+    rest = MockBitgetRestClient()
+    client = BitgetClient(rest=rest, mapper=BitgetExchangeMapper())
+    sync_called = False
+
+    async def _mock_sync(*args: object, **kwargs: object) -> int:
+        del args, kwargs
+        nonlocal sync_called
+        sync_called = True
+        return 0
+
+    rest.synchronize_time = _mock_sync  # type: ignore[method-assign]
+    await client.connect()
+    assert sync_called

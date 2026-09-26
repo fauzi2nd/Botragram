@@ -1695,6 +1695,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
         *,
         position: Position,
         client_order_id: str,
+        bypass_calendar_guard: bool = False,
     ) -> Order:
         """Submit one close from an authoritative CFD position snapshot."""
         return await self.close_position(
@@ -1704,9 +1705,14 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
             position_id=position.position_id,
             quantity=position.quantity,
             initial_quantity=position.quantity,
+            bypass_calendar_guard=bypass_calendar_guard,
         )
 
-    async def close_all_positions(self) -> Sequence[Order]:
+    async def close_all_positions(
+        self,
+        *,
+        bypass_calendar_guard: bool = False,
+    ) -> Sequence[Order]:
         """Close all active CFD positions."""
         open_positions = await self.get_positions()
         closed_orders: list[Order] = []
@@ -1719,6 +1725,7 @@ class BitgetCfdExchangeClient(BaseExchangeClient):
                         position_id=position.position_id,
                         quantity=position.quantity,
                         initial_quantity=position.quantity,
+                        bypass_calendar_guard=bypass_calendar_guard,
                     )
                 )
             except Exception as error:

@@ -142,8 +142,12 @@ class BitgetClient(BaseExchangeClient):
     # =========================================================================
 
     async def connect(self) -> None:
-        """Initialize exchange resources and ping server."""
+        """Initialize exchange resources, ping server, and synchronize clock."""
         await self.ping()
+        try:
+            await self._rest.synchronize_time()
+        except Exception as error:
+            _LOGGER.warning("Bitget initial server time sync failed: %s", error)
 
     async def close(self) -> None:
         """Close exchange resources."""

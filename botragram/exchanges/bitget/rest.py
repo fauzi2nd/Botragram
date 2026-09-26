@@ -67,6 +67,8 @@ _HEADER_TIMESTAMP: Final[str] = "ACCESS-TIMESTAMP"
 _HEADER_PASSPHRASE: Final[str] = "ACCESS-PASSPHRASE"
 
 _RET_CODE_OK: Final[str] = "00000"
+_RET_CODE_TIMESTAMP_EXPIRED: Final[str] = "40008"
+_SERVER_TIME_PATH: Final[str] = "/api/v2/public/time"
 _RETRYABLE_RET_CODES: Final[frozenset[str]] = frozenset(
     {"40014", "40015", "429", "40004"}
 )
@@ -109,6 +111,7 @@ class BitgetRestClient(BaseRestClient):
         "_max_retries",
         "_passphrase",
         "_retry_delay_seconds",
+        "_server_time_offset_ms",
         "_session",
         "_timeout",
     )
@@ -131,6 +134,7 @@ class BitgetRestClient(BaseRestClient):
         self._timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         self._max_retries = max_retries
         self._retry_delay_seconds = retry_delay_seconds
+        self._server_time_offset_ms: int = 0
         self._session: aiohttp.ClientSession | None = None
 
     @property
@@ -142,6 +146,44 @@ class BitgetRestClient(BaseRestClient):
     def has_credentials(self) -> bool:
         """Return whether complete API credentials are provided."""
         return bool(self._api_key and self._api_secret and self._passphrase)
+
+    @property
+    def server_time_offset_ms(self) -> int:
+        """Return the synchronized clock offset in milliseconds."""
+        return self._server_time_offset_ms
+
+    def _current_timestamp_ms(self) -> int:
+        """Return local time adjusted by the synchronized server offset."""
+        return int(time() * 1000) + self._server_time_offset_ms
+
+    async def synchronize_time(self, *, path: str = _SERVER_TIME_PATH) -> int:
+        """Synchronize client time offset with Bitget server time."""
+        response = await self.get(path=path, authenticated=False)
+        if not isinstance(response, dict):
+            raise ValueError("Bitget server time response is not a valid JSON object")
+
+        server_time_ms: int | None = None
+        raw_data = response.get("data")
+        if isinstance(raw_data, dict):
+            data_dict = cast(JsonObject, raw_data)
+            raw_time = data_dict.get("serverTime")
+            if isinstance(raw_time, (int, float, str)):
+                server_time_ms = int(raw_time)
+        if server_time_ms is None:
+            raw_request_time = response.get("requestTime")
+            if isinstance(raw_request_time, (int, float, str)):
+                server_time_ms = int(raw_request_time)
+
+        if server_time_ms is None:
+            raise ValueError("Bitget server time could not be parsed from response")
+
+        local_time_ms = int(time() * 1000)
+        self._server_time_offset_ms = server_time_ms - local_time_ms
+        _LOGGER.debug(
+            "Bitget server time offset synchronized: %d ms",
+            self._server_time_offset_ms,
+        )
+        return self._server_time_offset_ms
 
     async def get(
         self,
@@ -234,7 +276,7 @@ class BitgetRestClient(BaseRestClient):
                     f"(api_key, api_secret, passphrase) for {path}"
                 )
 
-            timestamp = str(int(time() * 1000))
+            timestamp = str(self._current_timestamp_ms())
             effective_body = body or payload_str
             signature = self._generate_signature(
                 timestamp=timestamp,
@@ -291,19 +333,18 @@ class BitgetRestClient(BaseRestClient):
         query_string = self._encode_params(params)
         body_string = json.dumps(data, separators=(",", ":")) if data else ""
 
-        request_headers = self._prepare_headers(
-            authenticated=authenticated,
-            method=method,
-            path=endpoint_path,
-            query_string=query_string,
-            body=body_string,
-            custom_headers=headers,
-        )
-
         session = await self._get_session()
         last_error: Exception | None = None
 
         for attempt in range(self._max_retries + 1):
+            request_headers = self._prepare_headers(
+                authenticated=authenticated,
+                method=method,
+                path=endpoint_path,
+                query_string=query_string,
+                body=body_string,
+                custom_headers=headers,
+            )
             try:
                 request_url = (
                     f"{url}?{query_string}"
@@ -336,6 +377,23 @@ class BitgetRestClient(BaseRestClient):
                             http_status=response.status,
                         )
                     except BitgetRestResponseError as err:
+                        if (
+                            err.code == _RET_CODE_TIMESTAMP_EXPIRED
+                            and attempt < self._max_retries
+                        ):
+                            _LOGGER.warning(
+                                "Bitget timestamp expired (40008); "
+                                "resynchronizing server clock..."
+                            )
+                            try:
+                                await self.synchronize_time()
+                            except Exception as sync_err:
+                                _LOGGER.warning(
+                                    "Failed to resync Bitget server time: %s",
+                                    sync_err,
+                                )
+                            await asyncio.sleep(self._retry_delay_seconds)
+                            continue
                         if (
                             err.code in _RETRYABLE_RET_CODES
                             and attempt < self._max_retries
