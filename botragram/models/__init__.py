@@ -102,7 +102,7 @@ from botragram.models.risk import (
 )
 from botragram.models.runtime_risk_limits import RuntimeRiskLimits
 from botragram.models.signal import Signal
-from botragram.models.stalking import StalkingSetup
+from botragram.models.stalking import StalkingFunnelReport, StalkingSetup
 from botragram.models.submission_attempt import SubmissionAttempt
 from botragram.models.ticker import Ticker
 from botragram.models.trade import Trade
@@ -169,6 +169,7 @@ __all__ = [
     "RiskMetrics",
     "RiskResult",
     "Signal",
+    "StalkingFunnelReport",
     "StalkingSetup",
     "RuntimeRiskLimits",
     "SubmissionAttempt",

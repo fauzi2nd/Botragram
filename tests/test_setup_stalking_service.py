@@ -19,6 +19,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -794,3 +795,152 @@ def test_build_triggered_signal_risk_reward_preservation() -> None:
     reward = sig.take_profit - sig.price
     risk = sig.price - (sig.stop_loss or Decimal("0"))
     assert reward >= risk * Decimal("1.5")
+
+
+def test_stalking_funnel_tracking_end_to_end() -> None:
+    """Telemetry funnel tracks stages from scan to trigger and expiration."""
+    service = SetupStalkingService(max_candidates=2, default_max_bars=3)
+
+    # 1. Simulate Scans & Rejections before register
+    service.record_scan(count=10)
+    service.record_rejection(reason="HTF extreme", count=5)
+    service.record_rejection(reason="Trend distance", count=3)
+    service.record_rejection(reason="Key level", count=2)
+
+    # 2. Register Candidate 1 (which will be TRIGGERED)
+    service.record_scan(count=1)
+    service.record_zone_candidate(count=1)
+    candle0 = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("95"),
+        close_price=Decimal("96"),  # Bearish rejection
+    )
+    sig1 = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("96"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH_REJECTION",
+    )
+    reg1 = service.register_candidate(signal=sig1, setup_candle=candle0)
+    assert reg1 is not None
+
+    # Bar 1 for BTCUSDT: Retest touched & triggered!
+    c_trigger = _make_candle(
+        index=1,
+        open_price=Decimal("96"),
+        high_price=Decimal("104"),
+        low_price=Decimal("95"),
+        close_price=Decimal("97"),
+    )
+    up1 = service.on_candle_update(c_trigger)
+    assert up1 is not None
+    assert up1.status is StalkingStatus.TRIGGERED
+
+    # 3. Register Candidate 2 (which will be INVALIDATED)
+    service.record_scan(count=1)
+    service.record_zone_candidate(count=1)
+    sig2 = Signal(
+        symbol="ETHUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("96"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH_REJECTION",
+    )
+    reg2 = service.register_candidate(
+        signal=sig2, setup_candle=replace(candle0, symbol="ETHUSDT")
+    )
+    assert reg2 is not None
+
+    # Bar 1 for ETHUSDT: Breaches invalidation high (110.0)
+    c_inval = _make_candle(
+        index=1,
+        open_price=Decimal("96"),
+        high_price=Decimal("115"),
+        low_price=Decimal("96"),
+        close_price=Decimal("112"),
+    )
+    up2 = service.on_candle_update(replace(c_inval, symbol="ETHUSDT"))
+    assert up2 is not None
+    assert up2.status is StalkingStatus.INVALIDATED
+
+    # 4. Register Candidate 3 (which will EXPIRE)
+    service.record_scan(count=1)
+    service.record_zone_candidate(count=1)
+    sig3 = Signal(
+        symbol="SOLUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("96"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH_REJECTION",
+    )
+    reg3 = service.register_candidate(
+        signal=sig3, setup_candle=replace(candle0, symbol="SOLUSDT"), max_bars=2
+    )
+    assert reg3 is not None
+
+    # Bar 1 for SOLUSDT: neutral candle
+    c_neut1 = _make_candle(
+        index=1,
+        open_price=Decimal("96"),
+        high_price=Decimal("97"),
+        low_price=Decimal("95"),
+        close_price=Decimal("96"),
+    )
+    service.on_candle_update(replace(c_neut1, symbol="SOLUSDT"))
+
+    # Bar 2 for SOLUSDT: neutral candle, hits max_bars=2 -> EXPIRED
+    c_neut2 = _make_candle(
+        index=2,
+        open_price=Decimal("96"),
+        high_price=Decimal("97"),
+        low_price=Decimal("95"),
+        close_price=Decimal("96"),
+    )
+    up3 = service.on_candle_update(replace(c_neut2, symbol="SOLUSDT"))
+    assert up3 is not None
+    assert up3.status is StalkingStatus.EXPIRED
+
+    # Verify Funnel Report
+    report = service.get_funnel_report()
+    assert report.scanned_count == 13
+    assert report.zone_candidates == 3
+    assert report.rejected_before_register == 10
+    assert report.registered == 3
+    assert report.retest_touched == 1
+    assert report.triggered == 1
+    assert report.invalidated == 1
+    assert report.expired == 1
+    assert report.candidate_to_entry_conversion_pct == Decimal("33.3")
+    assert report.invalidated_pct == Decimal("33.3")
+    assert report.expired_pct == Decimal("33.3")
+    assert report.rejections_by_reason == {
+        "HTF extreme": 5,
+        "Trend distance": 3,
+        "Key level": 2,
+    }
+
+    summary = service.format_funnel_summary()
+    assert "PIER STALKING FUNNEL" in summary
+    assert "Scanned                  : 13" in summary
+    assert "Zone candidates          : 3" in summary
+    assert "Rejected before register : 10" in summary
+    assert "Triggered                : 1" in summary
+    assert "Invalidated              : 1" in summary
+    assert "Expired                  : 1" in summary
+    assert "HTF extreme" in summary
+
+    # Reset test
+    service.reset_funnel_telemetry()
+    reset_report = service.get_funnel_report()
+    assert reset_report.scanned_count == 0
+    assert reset_report.zone_candidates == 0
+    assert reset_report.rejections_by_reason == {}

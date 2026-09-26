@@ -40,6 +40,7 @@ from botragram.models.stalking import StalkingSetup
 from botragram.repositories import SignalRepository
 from botragram.services.setup_stalking_service import SetupStalkingService
 from botragram.services.strategy_service import StrategyService
+from botragram.storage import MemorySignalRepository
 from botragram.strategies.factory import StrategyResolver
 from botragram.strategies.price_action.pinbar_engulfing_ema_rsi import (
     PinbarEngulfingEmaRsiStrategy,
@@ -919,3 +920,52 @@ def test_22_zone_confidence_scores_higher_on_confluence() -> None:
     )
     assert score_high > Decimal("0.85")
     assert score_high <= Decimal("0.95")
+
+
+def test_pier_stalking_funnel_strategy_service_integration() -> None:
+    """StrategyService tracks scans, candidates, and rejection breakdown."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=20,
+        pullback_period=5,
+        rsi_period=14,
+        min_natr_threshold=Decimal("0.001"),
+        require_htf_extreme_zone=False,
+        require_key_level_location=False,
+    )
+    signal_engine = SignalEngine(
+        strategy_resolver=StrategyResolver(
+            strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: strategy}
+        ),
+        default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    stalking_svc = SetupStalkingService(max_candidates=5)
+    strategy_svc = StrategyService(
+        signal_engine=signal_engine,
+        signal_repository=MemorySignalRepository(),
+        setup_stalking_service=stalking_svc,
+        stalking_enabled=True,
+    )
+
+    # 1. Provide flat dead candles (fails NATR)
+    dead_candles = [
+        _make_candle(
+            index=i,
+            open_price=Decimal("100"),
+            high_price=Decimal("100.001"),
+            low_price=Decimal("99.999"),
+            close_price=Decimal("100"),
+        )
+        for i in range(40)
+    ]
+    sig_hold = strategy_svc.generate_signal(
+        candles=dead_candles,
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    assert sig_hold.signal_type is SignalType.HOLD
+
+    report = strategy_svc.get_stalking_funnel_report()
+    assert report is not None
+    assert report.scanned_count == 1
+    assert report.zone_candidates == 0
+    assert report.rejected_before_register == 1
+    assert report.rejections_by_reason.get("NATR") == 1

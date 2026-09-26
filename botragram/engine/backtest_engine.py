@@ -504,7 +504,7 @@ class BacktestEngine:
                         replacement_stop = swing_stop
                 else:
                     replacement_stop = swing_stop
-                new_step = position.protection_step + 1
+                new_step = max(position.protection_step, step)
             elif stepped_stop is not None:
                 replacement_stop = stepped_stop
                 new_step = step

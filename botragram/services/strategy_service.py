@@ -28,7 +28,7 @@ from typing import Protocol
 from botragram.engine import SignalEngine
 from botragram.enums import SignalType, StalkingStatus, StrategyType
 from botragram.models import Candle, Signal
-from botragram.models.stalking import StalkingSetup
+from botragram.models.stalking import StalkingFunnelReport, StalkingSetup
 from botragram.repositories import SignalRepository
 
 __all__ = [
@@ -75,6 +75,22 @@ class StrategyStalkingProvider(Protocol):
         trigger_candle: Candle,
     ) -> Signal:
         """Build an actionable entry Signal from a TRIGGERED stalking setup."""
+        ...
+
+    def record_scan(self, count: int = 1) -> None:
+        """Record scanned candle count for telemetry funnel."""
+        ...
+
+    def record_zone_candidate(self, count: int = 1) -> None:
+        """Record detected zone candidate count for telemetry funnel."""
+        ...
+
+    def record_rejection(self, reason: str, count: int = 1) -> None:
+        """Record candidate rejection reason for telemetry funnel."""
+        ...
+
+    def get_funnel_report(self) -> StalkingFunnelReport:
+        """Return a telemetry report of the stalking funnel."""
         ...
 
 
@@ -200,9 +216,12 @@ class StrategyService:
                     )
 
             # Stage 1 — Zone Candidate / Stalking Registration
-            candidate_signal = self.signal_engine.detect_zone_candidate(
-                candles=candles,
-                strategy_type=strategy_type,
+            stalking_svc.record_scan()
+            candidate_signal, rejection_reason = (
+                self.signal_engine.detect_zone_candidate_detailed(
+                    candles=candles,
+                    strategy_type=strategy_type,
+                )
             )
             if candidate_signal is None:
                 raw_sig = self.signal_engine.generate(
@@ -213,6 +232,7 @@ class StrategyService:
                     candidate_signal = raw_sig
 
             if candidate_signal is not None:
+                stalking_svc.record_zone_candidate()
                 reason_text = candidate_signal.reason or ""
                 if candidate_signal.signal_type is SignalType.BUY:
                     side_str = "LONG"
@@ -260,6 +280,10 @@ class StrategyService:
                         f"[STALKING_CAPACITY_FULL] Setup stalking capacity reached; "
                         f"skipping candidate for {symbol}"
                     ),
+                )
+            else:
+                stalking_svc.record_rejection(
+                    reason=rejection_reason or "Filter rejected"
                 )
 
             # Stalking active for PIER: Direct immediate BUY/SELL is prohibited
@@ -492,3 +516,9 @@ class StrategyService:
             raise ValueError("Strategy name must not be empty")
 
         return normalized_strategy_name
+
+    def get_stalking_funnel_report(self) -> StalkingFunnelReport | None:
+        """Return the stalking telemetry funnel report if stalking is enabled."""
+        if self.setup_stalking_service is not None:
+            return self.setup_stalking_service.get_funnel_report()
+        return None

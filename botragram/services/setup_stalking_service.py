@@ -37,7 +37,7 @@ from botragram.enums import (
 )
 from botragram.indicators import detect_engulfing, detect_pinbar
 from botragram.models import Candle, Signal
-from botragram.models.stalking import StalkingSetup
+from botragram.models.stalking import StalkingFunnelReport, StalkingSetup
 
 __all__ = [
     "SetupStalkingService",
@@ -70,6 +70,10 @@ class StalkingSetupProvider(Protocol):
         """Pause or resume setup stalking operations."""
         ...
 
+    def get_funnel_report(self) -> StalkingFunnelReport:
+        """Return a telemetry report of the stalking funnel."""
+        ...
+
 
 class SetupStalkingService:
     """Track and observe candidate setups across 1-7 subsequent bars."""
@@ -94,6 +98,88 @@ class SetupStalkingService:
         self._lock: Final[threading.Lock] = threading.Lock()
         self._setups: dict[str, StalkingSetup] = {}
         self._paused: bool = False
+
+        # Telemetry funnel tracking
+        self._funnel_scanned: int = 0
+        self._funnel_zone_candidates: int = 0
+        self._funnel_registered: int = 0
+        self._funnel_reversal_confirmed: int = 0
+        self._funnel_retest_touched: int = 0
+        self._funnel_triggered: int = 0
+        self._funnel_invalidated: int = 0
+        self._funnel_expired: int = 0
+        self._funnel_rejections: dict[str, int] = {}
+        self._completed_stalking_bars: list[int] = []
+
+    def record_scan(self, count: int = 1) -> None:
+        """Record scanned candle count for telemetry funnel."""
+        if count <= 0:
+            return
+        with self._lock:
+            self._funnel_scanned += count
+
+    def record_zone_candidate(self, count: int = 1) -> None:
+        """Record detected zone candidate count for telemetry funnel."""
+        if count <= 0:
+            return
+        with self._lock:
+            self._funnel_zone_candidates += count
+
+    def record_rejection(self, reason: str, count: int = 1) -> None:
+        """Record candidate rejection reason for telemetry funnel."""
+        if count <= 0:
+            return
+        clean_reason = reason.strip() or "Unspecified"
+        with self._lock:
+            self._funnel_rejections[clean_reason] = (
+                self._funnel_rejections.get(clean_reason, 0) + count
+            )
+
+    def reset_funnel_telemetry(self) -> None:
+        """Reset all funnel telemetry counters."""
+        with self._lock:
+            self._funnel_scanned = 0
+            self._funnel_zone_candidates = 0
+            self._funnel_registered = 0
+            self._funnel_reversal_confirmed = 0
+            self._funnel_retest_touched = 0
+            self._funnel_triggered = 0
+            self._funnel_invalidated = 0
+            self._funnel_expired = 0
+            self._funnel_rejections.clear()
+            self._completed_stalking_bars.clear()
+
+    def get_funnel_report(self) -> StalkingFunnelReport:
+        """Return a snapshot of the current stalking conversion funnel."""
+        with self._lock:
+            rejected_before = max(
+                0, self._funnel_scanned - self._funnel_zone_candidates
+            )
+            avg_bars = (
+                (
+                    Decimal(sum(self._completed_stalking_bars))
+                    / Decimal(len(self._completed_stalking_bars))
+                ).quantize(Decimal("0.1"))
+                if self._completed_stalking_bars
+                else Decimal("0.0")
+            )
+            return StalkingFunnelReport(
+                scanned_count=self._funnel_scanned,
+                zone_candidates=self._funnel_zone_candidates,
+                rejected_before_register=rejected_before,
+                registered=self._funnel_registered,
+                reversal_confirmed=self._funnel_reversal_confirmed,
+                retest_touched=self._funnel_retest_touched,
+                triggered=self._funnel_triggered,
+                invalidated=self._funnel_invalidated,
+                expired=self._funnel_expired,
+                rejections_by_reason=dict(self._funnel_rejections),
+                average_stalking_bars=avg_bars,
+            )
+
+    def format_funnel_summary(self) -> str:
+        """Return a formatted string of the stalking funnel radar."""
+        return self.get_funnel_report().format_funnel_summary()
 
     @property
     def max_candidates(self) -> int:
@@ -166,6 +252,9 @@ class SetupStalkingService:
 
         with self._lock:
             if self._paused:
+                self._funnel_rejections["Paused"] = (
+                    self._funnel_rejections.get("Paused", 0) + 1
+                )
                 _LOGGER.debug(
                     "Setup stalking paused (slots full); skipping candidate %s",
                     signal.symbol,
@@ -185,6 +274,9 @@ class SetupStalkingService:
                 and existing.last_processed_candle_close_time is not None
                 and setup_candle.close_time <= existing.last_processed_candle_close_time
             ):
+                self._funnel_rejections["Duplicate"] = (
+                    self._funnel_rejections.get("Duplicate", 0) + 1
+                )
                 _LOGGER.debug(
                     "Setup candle close_time %s already processed for %s; "
                     "skipping duplicate registration",
@@ -197,6 +289,9 @@ class SetupStalkingService:
                 1 for s in self._setups.values() if s.status is StalkingStatus.STALKING
             )
             if active_count >= self._max_candidates:
+                self._funnel_rejections["Capacity full"] = (
+                    self._funnel_rejections.get("Capacity full", 0) + 1
+                )
                 _LOGGER.info(
                     "Setup stalking capacity reached (%d/%d); skipping %s",
                     active_count,
@@ -280,6 +375,7 @@ class SetupStalkingService:
             )
 
             self._setups[signal.symbol] = setup
+            self._funnel_registered += 1
             self._prune_history_locked()
 
             _LOGGER.info(
@@ -397,6 +493,8 @@ class SetupStalkingService:
             # 1. Check Invalidation: Peak/Valley breach
             if setup.side is PositionSide.SHORT:
                 if candle.high_price > setup.invalidation_price:
+                    self._funnel_invalidated += 1
+                    self._completed_stalking_bars.append(next_bar)
                     updated = replace(
                         setup,
                         current_bar=next_bar,
@@ -417,6 +515,8 @@ class SetupStalkingService:
                     return updated
             else:
                 if candle.low_price < setup.invalidation_price:
+                    self._funnel_invalidated += 1
+                    self._completed_stalking_bars.append(next_bar)
                     updated = replace(
                         setup,
                         current_bar=next_bar,
@@ -472,6 +572,7 @@ class SetupStalkingService:
                             else candle.low_price
                         )
 
+                    self._funnel_reversal_confirmed += 1
                     updated = replace(
                         setup,
                         current_bar=next_bar,
@@ -538,6 +639,9 @@ class SetupStalkingService:
                             triggered = True
 
                 if triggered:
+                    self._funnel_retest_touched += 1
+                    self._funnel_triggered += 1
+                    self._completed_stalking_bars.append(next_bar)
                     updated = replace(
                         setup,
                         current_bar=next_bar,
@@ -559,6 +663,8 @@ class SetupStalkingService:
 
             # 4. Check Expiry
             if next_bar >= setup.max_bars:
+                self._funnel_expired += 1
+                self._completed_stalking_bars.append(next_bar)
                 updated = replace(
                     setup,
                     current_bar=next_bar,

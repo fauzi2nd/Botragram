@@ -338,7 +338,7 @@ async def test_position_protection_manager_swing_pivot_mode() -> None:
 
     updated = await pos_repo.get_by_symbol(symbol="BTCUSDT")
     assert updated is not None
-    assert updated.protection_step == 1
+    assert updated.protection_step == 2
     expected_sl = Decimal("102.0") * (Decimal("1") - Decimal("0.0015"))
     assert updated.stop_loss == expected_sl
 
@@ -491,3 +491,139 @@ async def test_position_protection_manager_swing_pivot_fallback_stepped() -> Non
     # Stepped stop should have advanced the stop to step 2 (102.0)
     assert updated.protection_step == 2
     assert updated.stop_loss == Decimal("102.0")
+
+
+@pytest.mark.asyncio
+async def test_swing_pivot_does_not_increment_step_per_tick() -> None:
+    """Ensure protection_step reflects actual profit milestone, not tick counts."""
+    pos_repo = MemoryPositionRepository()
+    candle_repo = MemoryCandleRepository()
+
+    pos = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1.0"),
+        entry_price=Decimal("100.0"),
+        current_price=Decimal("108.0"),
+        unrealized_pnl=Decimal("8.0"),
+        leverage=3,
+        opened_at=_NOW,
+        updated_at=_NOW,
+        stop_loss=Decimal("96.0"),
+        take_profit=Decimal("120.0"),
+        protection_step=0,
+    )
+    await pos_repo.save(position=pos)
+
+    # 5-bar confirmed higher low candles (low at 102.0)
+    candles = [
+        _make_candle(
+            index=0,
+            open_price=Decimal("100"),
+            high_price=Decimal("102"),
+            low_price=Decimal("99"),
+            close_price=Decimal("101"),
+        ),
+        _make_candle(
+            index=1,
+            open_price=Decimal("101"),
+            high_price=Decimal("103"),
+            low_price=Decimal("100"),
+            close_price=Decimal("102"),
+        ),
+        _make_candle(
+            index=2,
+            open_price=Decimal("102"),
+            high_price=Decimal("105"),
+            low_price=Decimal("104"),
+            close_price=Decimal("104.5"),
+        ),
+        _make_candle(
+            index=3,
+            open_price=Decimal("104.5"),
+            high_price=Decimal("104.8"),
+            low_price=Decimal("103.0"),
+            close_price=Decimal("103.2"),
+        ),
+        _make_candle(
+            index=4,
+            open_price=Decimal("103.2"),
+            high_price=Decimal("103.5"),
+            low_price=Decimal("102.0"),  # Valley / Swing Low
+            close_price=Decimal("102.8"),
+        ),
+        _make_candle(
+            index=5,
+            open_price=Decimal("102.8"),
+            high_price=Decimal("106.0"),
+            low_price=Decimal("102.5"),
+            close_price=Decimal("105.5"),
+        ),
+        _make_candle(
+            index=6,
+            open_price=Decimal("105.5"),
+            high_price=Decimal("108.5"),
+            low_price=Decimal("105.0"),
+            close_price=Decimal("108.0"),
+        ),
+    ]
+    await candle_repo.save_many(candles=candles)
+
+    mock_exchange = create_autospec(BaseExchangeClient, instance=True)
+    manager = PositionProtectionManager(
+        trade_mode=TradeMode.PAPER,
+        position_repository=pos_repo,
+        exchange_client=mock_exchange,
+        trailing_mode=TrailingMode.SWING_PIVOT,
+        trailing_swing_timeframe=Interval.M5,
+        trailing_swing_window=5,
+        trailing_buffer_pct=Decimal("0.0015"),
+        candle_repository=candle_repo,
+    )
+
+    # Tick 1: Progress is (108 - 100) / 20 = 40% (step 2 reached).
+    ticker1 = Ticker(
+        symbol="BTCUSDT",
+        bid_price=Decimal("107.9"),
+        ask_price=Decimal("108.1"),
+        last_price=Decimal("108.0"),
+        timestamp=_NOW + timedelta(minutes=35),
+    )
+    await manager.on_market_tick(ticker=ticker1)
+
+    updated1 = await pos_repo.get_by_symbol(symbol="BTCUSDT")
+    assert updated1 is not None
+    assert updated1.protection_step == 2
+    expected_sl = Decimal("102.0") * (Decimal("1") - Decimal("0.0015"))
+    assert updated1.stop_loss == expected_sl
+
+    # Tick 2, 3, 4: Same price ticks arrive. protection_step MUST remain 2!
+    for i in range(1, 4):
+        ticker_stream = Ticker(
+            symbol="BTCUSDT",
+            bid_price=Decimal("107.9"),
+            ask_price=Decimal("108.1"),
+            last_price=Decimal("108.0"),
+            timestamp=_NOW + timedelta(minutes=35, seconds=i),
+        )
+        await manager.on_market_tick(ticker=ticker_stream)
+        stream_pos = await pos_repo.get_by_symbol(symbol="BTCUSDT")
+        assert stream_pos is not None
+        assert stream_pos.protection_step == 2, (
+            f"protection_step incorrectly inflated to {stream_pos.protection_step} "
+            f"on tick {i + 1}"
+        )
+        assert stream_pos.stop_loss == expected_sl
+
+    # Tick 5: Price surges to 114.0 (progress = (114 - 100) / 20 = 70% >= 60% step 4)
+    ticker5 = Ticker(
+        symbol="BTCUSDT",
+        bid_price=Decimal("113.9"),
+        ask_price=Decimal("114.1"),
+        last_price=Decimal("114.0"),
+        timestamp=_NOW + timedelta(minutes=36),
+    )
+    await manager.on_market_tick(ticker=ticker5)
+    updated5 = await pos_repo.get_by_symbol(symbol="BTCUSDT")
+    assert updated5 is not None
+    assert updated5.protection_step == 4

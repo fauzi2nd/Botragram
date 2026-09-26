@@ -20,6 +20,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 
+from typing import Protocol, runtime_checkable
+
 # =============================================================================
 # Local Imports
 # =============================================================================
@@ -29,10 +31,41 @@ from botragram.strategies.factory import StrategyResolver
 
 __all__ = [
     "SignalEngine",
+    "ZoneCandidateDetailedDetector",
+    "ZoneCandidateDetector",
     "has_account_ratio_evaluation",
     "has_funding_evaluation",
     "has_oi_evaluation",
 ]
+
+
+# =============================================================================
+# Protocols
+# =============================================================================
+@runtime_checkable
+class ZoneCandidateDetailedDetector(Protocol):
+    """Protocol for strategies implementing detailed zone candidate detection."""
+
+    def detect_zone_candidate_detailed(
+        self,
+        *,
+        candles: Sequence[Candle],
+    ) -> tuple[Signal | None, str]:
+        """Detect zone candidate returning signal and diagnostic rejection reason."""
+        ...
+
+
+@runtime_checkable
+class ZoneCandidateDetector(Protocol):
+    """Protocol for strategies implementing simple zone candidate detection."""
+
+    def detect_zone_candidate(
+        self,
+        *,
+        candles: Sequence[Candle],
+    ) -> Signal | None:
+        """Detect whether market state qualifies as a zone candidate."""
+        ...
 
 
 # =============================================================================
@@ -197,15 +230,30 @@ class SignalEngine:
         strategy_type: StrategyType | None = None,
     ) -> Signal | None:
         """Detect whether market state qualifies as a Stage 1 zone candidate."""
+        candidate, _ = self.detect_zone_candidate_detailed(
+            candles=candles,
+            strategy_type=strategy_type,
+        )
+        return candidate
+
+    def detect_zone_candidate_detailed(
+        self,
+        *,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> tuple[Signal | None, str]:
+        """Detect zone candidate returning signal and diagnostic rejection reason."""
         resolved_strategy_type = (
             strategy_type if strategy_type is not None else self.default_strategy_type
         )
         strategy = self.strategy_resolver.resolve(
             strategy_type=resolved_strategy_type,
         )
-        detector = getattr(strategy, "detect_zone_candidate", None)
-        if callable(detector):
-            candidate = detector(candles=candles)
-            if isinstance(candidate, Signal):
-                return candidate
-        return None
+        if isinstance(strategy, ZoneCandidateDetailedDetector):
+            return strategy.detect_zone_candidate_detailed(candles=candles)
+        if isinstance(strategy, ZoneCandidateDetector):
+            candidate = strategy.detect_zone_candidate(candles=candles)
+            if candidate is not None:
+                return candidate, ""
+            return None, "Candidate rejected"
+        return None, "No detector available"
