@@ -294,41 +294,22 @@ class PositionProtectionManager:
             if not self.stepped_stop_enabled:
                 return
 
-            if eff_trailing_mode is TrailingMode.SWING_PIVOT:
-                if self.candle_repository is None:
-                    return
-                candles = await self.candle_repository.get_latest(
-                    symbol=position.symbol,
-                    interval=eff_swing_timeframe,
-                    limit=max(50, eff_swing_window * 4),
-                )
-                replacement_stop = RiskEngine.calculate_swing_pivot_stop_loss(
-                    position=position,
-                    candles=candles,
-                    window=eff_swing_window,
-                    buffer_pct=eff_buffer_pct,
-                )
-                if replacement_stop is None:
-                    return
-                new_step = position.protection_step + 1
-            else:
-                roi = self._calculate_roi(
-                    position=position,
-                    current_price=ticker.last_price,
-                )
-                step = self._resolve_step(
-                    progress=progress,
-                    roi=roi,
-                    breakeven_roi_threshold=self.breakeven_roi_threshold,
-                    breakeven_progress_threshold=self.breakeven_progress_threshold,
-                    thresholds=self.stepped_stop_thresholds,
-                )
+            stepped_stop: Decimal | None = None
+            roi = self._calculate_roi(
+                position=position,
+                current_price=ticker.last_price,
+            )
+            step = self._resolve_step(
+                progress=progress,
+                roi=roi,
+                breakeven_roi_threshold=self.breakeven_roi_threshold,
+                breakeven_progress_threshold=self.breakeven_progress_threshold,
+                thresholds=self.stepped_stop_thresholds,
+            )
 
-                if step <= position.protection_step:
-                    return
-
+            if step > position.protection_step:
                 try:
-                    replacement_stop = self._calculate_stop_loss(
+                    stepped_stop = self._calculate_stop_loss(
                         position=position,
                         step=step,
                         thresholds=self.stepped_stop_thresholds,
@@ -348,6 +329,67 @@ class PositionProtectionManager:
                     )
                     return
 
+            if eff_trailing_mode is TrailingMode.SWING_PIVOT:
+                swing_stop: Decimal | None = None
+                if self.candle_repository is not None:
+                    candles = await self.candle_repository.get_latest(
+                        symbol=position.symbol,
+                        interval=eff_swing_timeframe,
+                        limit=max(50, eff_swing_window * 4),
+                    )
+                    if len(candles) < eff_swing_window:
+                        fallback_interval = (
+                            position.interval
+                            or self.trailing_swing_timeframe
+                            or Interval.M5
+                        )
+                        if fallback_interval is not eff_swing_timeframe:
+                            candles = await self.candle_repository.get_latest(
+                                symbol=position.symbol,
+                                interval=fallback_interval,
+                                limit=max(50, eff_swing_window * 4),
+                            )
+
+                    swing_stop = RiskEngine.calculate_swing_pivot_stop_loss(
+                        position=position,
+                        candles=candles,
+                        window=eff_swing_window,
+                        buffer_pct=eff_buffer_pct,
+                    )
+
+                if swing_stop is not None:
+                    # Enforce Breakeven floor if position reached BE progress/ROI
+                    if step >= 1:
+                        try:
+                            be_stop = self._calculate_stop_loss(
+                                position=position,
+                                step=1,
+                                thresholds=self.stepped_stop_thresholds,
+                                locked_lag=self.stepped_stop_locked_lag,
+                                breakeven_fee_buffer=self.breakeven_fee_buffer,
+                            )
+                            if position.side is PositionSide.LONG:
+                                replacement_stop = (
+                                    be_stop if swing_stop < be_stop else swing_stop
+                                )
+                            else:
+                                replacement_stop = (
+                                    be_stop if swing_stop > be_stop else swing_stop
+                                )
+                        except ValueError:
+                            replacement_stop = swing_stop
+                    else:
+                        replacement_stop = swing_stop
+                    new_step = position.protection_step + 1
+                elif stepped_stop is not None:
+                    replacement_stop = stepped_stop
+                    new_step = step
+                else:
+                    return
+            else:
+                if stepped_stop is None:
+                    return
+                replacement_stop = stepped_stop
                 new_step = step
 
             final_stop = replacement_stop

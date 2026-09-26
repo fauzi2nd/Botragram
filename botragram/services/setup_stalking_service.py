@@ -501,24 +501,41 @@ class SetupStalkingService:
             # 3. Check Retest Trigger (Stage 2B) if reversal confirmed
             elif setup.reversal_confirmed:
                 triggered = False
-                if setup.side is PositionSide.SHORT:
-                    # Retrace touches target AND rejects back down
-                    # (close <= target with upper shadow rejection).
-                    if (
-                        candle.high_price >= setup.target_retest_price
-                        and candle.close_price <= setup.target_retest_price
-                        and candle.close_price < candle.high_price
-                    ):
-                        triggered = True
-                else:
-                    # Pullback touches target AND bounces back up
-                    # (close >= target with lower shadow rejection).
-                    if (
-                        candle.low_price <= setup.target_retest_price
-                        and candle.close_price >= setup.target_retest_price
-                        and candle.close_price > candle.low_price
-                    ):
-                        triggered = True
+                candle_range = candle.high_price - candle.low_price
+                if candle_range > _DECIMAL_ZERO:
+                    if setup.side is PositionSide.SHORT:
+                        # Retrace touches target AND rejects back down with upper wick
+                        upper_wick = candle.high_price - max(
+                            candle.open_price, candle.close_price
+                        )
+                        rejection_ratio = upper_wick / candle_range
+                        open_tol = candle_range * Decimal("0.10")
+                        if (
+                            candle.high_price >= setup.target_retest_price
+                            and candle.close_price <= setup.target_retest_price
+                            and candle.open_price
+                            <= setup.target_retest_price + open_tol
+                            and rejection_ratio >= Decimal("0.15")
+                            and candle.close_price < candle.high_price
+                        ):
+                            triggered = True
+                    else:
+                        # Pullback touches target AND bounces back up with lower wick
+                        lower_wick = (
+                            min(candle.open_price, candle.close_price)
+                            - candle.low_price
+                        )
+                        rejection_ratio = lower_wick / candle_range
+                        open_tol = candle_range * Decimal("0.10")
+                        if (
+                            candle.low_price <= setup.target_retest_price
+                            and candle.close_price >= setup.target_retest_price
+                            and candle.open_price
+                            >= setup.target_retest_price - open_tol
+                            and rejection_ratio >= Decimal("0.15")
+                            and candle.close_price > candle.low_price
+                        ):
+                            triggered = True
 
                 if triggered:
                     updated = replace(
@@ -624,11 +641,50 @@ class SetupStalkingService:
         sig_type = (
             SignalType.BUY if setup.side is PositionSide.LONG else SignalType.SELL
         )
+        entry_price = trigger_candle.close_price
+        stop_loss = setup.stop_loss
+        take_profit = setup.take_profit
+
+        # Maintain valid Risk:Reward ratio relative to actual entry price
+        if stop_loss is not None and take_profit is not None:
+            actual_risk = abs(entry_price - stop_loss)
+            orig_risk = abs(setup.anchor_price - stop_loss)
+            orig_reward = abs(take_profit - setup.anchor_price)
+            rr_ratio = (
+                orig_reward / orig_risk if orig_risk > _DECIMAL_ZERO else Decimal("2.0")
+            )
+
+            # If setup was planned with >= 1.5R, but trigger candle close compressed
+            # actual reward below 1.0R (or inverted TP), project take_profit.
+            actual_reward = abs(take_profit - entry_price)
+            is_inverted_tp = (
+                sig_type is SignalType.BUY and take_profit <= entry_price
+            ) or (sig_type is SignalType.SELL and take_profit >= entry_price)
+            is_reward_exhausted = (
+                rr_ratio >= Decimal("1.5")
+                and actual_risk > _DECIMAL_ZERO
+                and (
+                    actual_reward < actual_risk * Decimal("1.0")
+                    or actual_reward < orig_reward * Decimal("0.60")
+                )
+            )
+            if is_inverted_tp or is_reward_exhausted:
+                min_rr = max(Decimal("1.5"), min(rr_ratio, Decimal("2.5")))
+                if sig_type is SignalType.BUY:
+                    take_profit = entry_price + (actual_risk * min_rr)
+                else:
+                    take_profit = entry_price - (actual_risk * min_rr)
+
+        # Boost confidence if the reversal pattern was a decisive Pinbar or Engulfing
+        final_confidence = setup.confidence
+        if "PINBAR" in setup.pattern_name or "ENGULFING" in setup.pattern_name:
+            final_confidence = min(Decimal("0.95"), final_confidence + Decimal("0.05"))
+
         return Signal(
             symbol=setup.symbol,
             signal_type=sig_type,
-            price=trigger_candle.close_price,
-            confidence=setup.confidence,
+            price=entry_price,
+            confidence=final_confidence,
             strategy_name=setup.strategy_type.value,
             generated_at=trigger_candle.close_time,
             reason=(
@@ -636,8 +692,8 @@ class SetupStalkingService:
                 f"retest@{setup.target_retest_price} confirmed on bar "
                 f"{setup.current_bar}/{setup.max_bars} ({setup.htf_zone_label})"
             ),
-            stop_loss=setup.stop_loss,
-            take_profit=setup.take_profit,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
         )
 
     def remove_setup(self, symbol: str) -> None:

@@ -35,6 +35,7 @@ from botragram.enums import (
     PositionSide,
     SignalType,
     StalkingStatus,
+    StrategyType,
 )
 from botragram.models import Candle, Signal
 from botragram.models.stalking import StalkingSetup
@@ -241,6 +242,41 @@ def test_bearish_setup_retest_without_rejection_does_not_trigger() -> None:
     )
     updated = service.on_candle_update(candle1)
     assert updated is not None
+    assert updated.current_bar == 1
+
+
+def test_bearish_setup_retest_without_wick_rejection_does_not_trigger() -> None:
+    """Candle slicing downward from above target without upper wick does not trigger."""
+    service = SetupStalkingService()
+    candle0 = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    service.register_candidate(signal=signal, setup_candle=candle0)
+    # Target retest is 96.
+    # Bar 1 opens at 99 (above target), reaches high 100, closes at 94 with tiny wick
+    candle1 = _make_candle(
+        index=1,
+        open_price=Decimal("99"),
+        high_price=Decimal("100"),
+        low_price=Decimal("94"),
+        close_price=Decimal("94"),
+    )
+    updated = service.on_candle_update(candle1)
+    assert updated is not None
+    # Must NOT trigger because it opened above target without testing from below
     assert updated.status is StalkingStatus.STALKING
     assert updated.current_bar == 1
 
@@ -713,3 +749,48 @@ def test_setup_stalking_clear_all(caplog: pytest.LogCaptureFixture) -> None:
         if "Cleared all setup stalking candidates" in r.message
     ]
     assert len(clear_logs) == 1
+
+
+def test_build_triggered_signal_risk_reward_preservation() -> None:
+    """When entry price causes reward to compress, TP is projected for >= 1.5R."""
+    service = SetupStalkingService()
+
+    # Anchor at 100, SL at 90 (risk=10), TP at 120 (reward=20, planned 2R)
+    setup = StalkingSetup(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        pattern_name="PINBAR",
+        anchor_price=Decimal("100"),
+        invalidation_price=Decimal("89"),
+        target_retest_price=Decimal("95"),
+        htf_zone_label="15m Lower Band",
+        current_bar=1,
+        max_bars=7,
+        started_at=_START_TIME,
+        updated_at=_START_TIME,
+        status=StalkingStatus.TRIGGERED,
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+        stop_loss=Decimal("90"),
+        take_profit=Decimal("120"),
+        confidence=Decimal("0.85"),
+    )
+
+    # Trigger candle closes at 115 (close to old TP 120, actual reward 5 vs 25 risk)
+    trigger_candle = _make_candle(
+        index=1,
+        open_price=Decimal("95"),
+        high_price=Decimal("116"),
+        low_price=Decimal("94"),
+        close_price=Decimal("115"),
+    )
+
+    sig = service.build_triggered_signal(setup=setup, trigger_candle=trigger_candle)
+    assert sig.price == Decimal("115")
+    assert sig.stop_loss == Decimal("90")
+    # Actual risk = 115 - 90 = 25. With 2R projected: TP = 115 + (25 * 2.0) = 165
+    assert sig.take_profit is not None
+    assert sig.take_profit == Decimal("165")
+    # Verify reward >= 1.5R
+    reward = sig.take_profit - sig.price
+    risk = sig.price - (sig.stop_loss or Decimal("0"))
+    assert reward >= risk * Decimal("1.5")

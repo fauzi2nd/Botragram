@@ -38,20 +38,26 @@ from botragram.app.backtest_command import (
 from botragram.config import Settings
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine.backtest_engine import BacktestEngine
+from botragram.engine.signal_engine import SignalEngine
 from botragram.enums import (
     Interval,
     MarketType,
     PositionSide,
     SignalType,
     StrategyType,
+    TrailingMode,
 )
 from botragram.models import BacktestRequest, BacktestResult, Candle, Signal
 from botragram.services.backtest_service import BacktestService
+from botragram.services.setup_stalking_service import SetupStalkingService
+from botragram.services.strategy_service import StrategyService
+from botragram.storage import MemorySignalRepository
 from botragram.storage.sqlite import (
     SQLiteCandleRepository,
     SQLiteDatabase,
     SQLiteMigrationManager,
 )
+from botragram.strategies import StrategyResolver
 from botragram.strategies.base import BaseStrategy
 
 # =============================================================================
@@ -845,3 +851,193 @@ async def test_backtest_engine_respects_close_on_opposite_signal_flag() -> None:
     )
     assert res_opposite.metrics.total_trades == 1
     assert res_opposite.trades[0].reason == "Paper long position closed by signal"
+
+
+@pytest.mark.asyncio
+async def test_backtest_engine_with_stalking_strategy_service() -> None:
+    """BacktestEngine executes full zone -> stalk -> retest -> entry lifecycle."""
+    # Fake strategy that yields a zone candidate on bar 0
+    anchor_signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.HOLD,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
+        generated_at=_START_TIME,
+        reason="[STALKING_ZONE_SHORT] Price in 15m Upper BB",
+        stop_loss=Decimal("112"),
+        take_profit=Decimal("80"),
+    )
+
+    class _FakeZoneStrategy(BaseStrategy):
+        @property
+        def strategy_type(self) -> StrategyType:
+            return StrategyType.PINBAR_ENGULFING_EMA_RSI
+
+        @property
+        def minimum_candles(self) -> int:
+            return 1
+
+        def generate_signal(self, *, candles: Sequence[Candle]) -> Signal:
+            return Signal(
+                symbol="BTCUSDT",
+                signal_type=SignalType.HOLD,
+                price=candles[-1].close_price,
+                confidence=Decimal("0.85"),
+                strategy_name=self.strategy_type.value,
+                generated_at=candles[-1].close_time,
+                reason="Default hold",
+            )
+
+        def detect_zone_candidate(
+            self,
+            *,
+            candles: Sequence[Candle],
+        ) -> Signal | None:
+            if len(candles) == 1:
+                return anchor_signal
+            return None
+
+    fake_strat = _FakeZoneStrategy()
+    signal_engine = SignalEngine(
+        strategy_resolver=StrategyResolver(
+            strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: fake_strat}
+        ),
+        default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    stalking_service = SetupStalkingService(max_candidates=5)
+    strategy_service = StrategyService(
+        signal_engine=signal_engine,
+        signal_repository=MemorySignalRepository(),
+        setup_stalking_service=stalking_service,
+        stalking_enabled=True,
+    )
+
+    engine = BacktestEngine(
+        strategy=fake_strat,
+        risk_settings=RiskSettings(leverage=10),
+        strategy_service=strategy_service,
+    )
+
+    # Bar 0: Stalking zone candidate registered (awaiting reversal)
+    candle0 = _create_candle(
+        minute=0,
+        open_price="100",
+        high_price="105",
+        low_price="98",
+        close_price="99",
+    )
+    # Bar 1: Reversal confirmed via Bearish Pinbar
+    # (high 102, open 98.5, close 98, low 97.5, wick ratio = 77% > 50%)
+    candle1 = _create_candle(
+        minute=1,
+        open_price="98.5",
+        high_price="102",
+        low_price="97.5",
+        close_price="98",
+    )
+    # Target retest = body_low + (body_size * 0.5) = 98 + (0.5 * 0.5) = 98.25
+    # Bar 2: Retest touches 98.25 (high 98.5) and rejects down to close at 97 <= 98.25
+    candle2 = _create_candle(
+        minute=2,
+        open_price="97.5",
+        high_price="98.5",
+        low_price="96.5",
+        close_price="97",
+    )
+    # Bar 3: Price drops to 75, hitting TP at 80
+    candle3 = _create_candle(
+        minute=3,
+        open_price="97",
+        high_price="97.5",
+        low_price="75",
+        close_price="76",
+    )
+
+    request = BacktestRequest(
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+        market_type=MarketType.FUTURES,
+        start_time=_START_TIME,
+        end_time=_START_TIME + timedelta(minutes=4),
+        initial_balance=Decimal("1000"),
+    )
+
+    result = await engine.run(
+        request=request,
+        candles=(candle0, candle1, candle2, candle3),
+    )
+
+    # Trade was entered on bar 2 (TRIGGERED) and closed at TP on bar 3
+    assert result.metrics.total_trades == 1
+    assert result.trades[0].side is PositionSide.SHORT
+    assert result.trades[0].entry_price == Decimal("97") * (
+        Decimal("1") - Decimal("0.0005")
+    )
+    assert "take-profit" in (result.trades[0].reason or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_backtest_engine_swing_pivot_trailing_stop_with_be_floor() -> None:
+    """BacktestEngine advances trailing stop with SWING_PIVOT and BE floor."""
+    engine = BacktestEngine(
+        strategy=BuyThenHoldStrategy(),
+        risk_settings=RiskSettings(
+            leverage=10,
+            scalping_stop_loss_pct=Decimal("0.05"),  # SL at ~95.0
+            scalping_take_profit_pct=Decimal("0.20"),  # TP at ~120.0
+            stepped_stop_enabled=True,
+            trailing_mode=TrailingMode.SWING_PIVOT,
+            trailing_swing_window=3,
+            trailing_buffer_pct=Decimal("0.0015"),
+            breakeven_progress_threshold=Decimal("0.35"),
+            breakeven_fee_buffer=Decimal("0.0016"),
+        ),
+    )
+
+    # Bar 0: Long entered at close 100.0, SL=95.0, TP=120.0
+    c0 = _create_candle(
+        minute=0, open_price="99", high_price="101", low_price="99", close_price="100"
+    )
+    # Bar 1: Price fluctuates, low 98.0
+    c1 = _create_candle(
+        minute=1, open_price="100", high_price="102", low_price="98", close_price="101"
+    )
+    # Bar 2: Price reaches high 108.0 (TP distance 20, 8/20 = 40% >= 35% BE progress)
+    # Swing low of window 3 is 98.0 -> buffered is 97.853 < BE floor 100.16
+    # Protection advances stop loss to BE floor 100.16
+    c2 = _create_candle(
+        minute=2,
+        open_price="101",
+        high_price="108",
+        low_price="100.5",
+        close_price="107",
+    )
+    # Bar 3: Price drops to 100.0 <= 100.16. Stop loss triggered!
+    c3 = _create_candle(
+        minute=3,
+        open_price="107",
+        high_price="107.5",
+        low_price="99.5",
+        close_price="100",
+    )
+
+    request = BacktestRequest(
+        symbol="BTCUSDT",
+        interval=Interval.M1,
+        strategy_type=StrategyType.EMA_SCALPING,
+        market_type=MarketType.FUTURES,
+        start_time=_START_TIME,
+        end_time=_START_TIME + timedelta(minutes=4),
+        initial_balance=Decimal("1000"),
+    )
+
+    res = await engine.run(request=request, candles=(c0, c1, c2, c3))
+    assert res.metrics.total_trades == 1
+    trade = res.trades[0]
+    assert trade.side is PositionSide.LONG
+    # Exit price should be at or near BE floor (100.16), not at initial SL 95.0!
+    assert trade.exit_price is not None
+    assert trade.exit_price >= Decimal("100.0")
+    assert "stop-loss" in (trade.reason or "").lower()

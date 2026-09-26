@@ -143,9 +143,10 @@ def test_stalking_panel_renders_empty_state() -> None:
     layout = monitor.render_dashboard(status)
     panel = layout["active_stalking"].renderable
 
-    console = Console(file=StringIO(), force_terminal=True, width=120)
+    buffer = StringIO()
+    console = Console(file=buffer, force_terminal=True, width=120)
     console.print(panel)
-    output = console.file.getvalue()  # type: ignore[attr-defined]
+    output = buffer.getvalue()
 
     assert "Active Setup Stalking" in output
     assert "IDLE / WAITING CANDIDATES" in output
@@ -175,9 +176,10 @@ def test_stalking_panel_renders_active_candidate_details() -> None:
 
     layout = monitor.render_dashboard(status)
     panel = layout["active_stalking"].renderable
-    console = Console(file=StringIO(), force_terminal=True, width=140)
+    buffer = StringIO()
+    console = Console(file=buffer, force_terminal=True, width=140)
     console.print(panel)
-    output = console.file.getvalue()  # type: ignore[attr-defined]
+    output = buffer.getvalue()
 
     assert "BTCUSDT" in output
     assert "SHORT" in output

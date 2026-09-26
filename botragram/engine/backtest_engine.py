@@ -30,7 +30,14 @@ from botragram.config.risk_settings import RiskSettings
 from botragram.engine.pnl_engine import PnLEngine
 from botragram.engine.risk_engine import DEFAULT_BREAKEVEN_FEE_BUFFER, RiskEngine
 from botragram.engine.trading_engine import TradingEngine
-from botragram.enums import Interval, OrderSide, PositionSide, SignalType
+from botragram.enums import (
+    Interval,
+    OrderSide,
+    PositionSide,
+    SignalType,
+    StrategyType,
+    TrailingMode,
+)
 from botragram.models import (
     BacktestMetrics,
     BacktestRequest,
@@ -42,6 +49,7 @@ from botragram.models import (
     Trade,
 )
 from botragram.services.paper_trading_service import PaperTradingService
+from botragram.services.strategy_service import StrategyService
 from botragram.storage import (
     MemoryOrderRepository,
     MemoryPositionRepository,
@@ -78,6 +86,7 @@ class BacktestEngine:
 
     strategy: BaseStrategy
     risk_settings: RiskSettings
+    strategy_service: StrategyService | None = None
 
     async def run(
         self,
@@ -143,15 +152,22 @@ class BacktestEngine:
                 await self._advance_stepped_protection(
                     candle=candle,
                     position_repository=position_repository,
+                    candles_history=ordered_candles[: index + 1],
                 )
 
             if index + 1 < self.strategy.minimum_candles:
                 continue
 
             window_start = max(0, index + 1 - _STRATEGY_WINDOW)
-            signal = self.strategy.generate_signal(
-                candles=ordered_candles[window_start : index + 1],
-            )
+            if self.strategy_service is not None:
+                signal = self.strategy_service.generate_signal(
+                    candles=ordered_candles[window_start : index + 1],
+                    strategy_type=request.strategy_type,
+                )
+            else:
+                signal = self.strategy.generate_signal(
+                    candles=ordered_candles[window_start : index + 1],
+                )
             had_position = (
                 await position_repository.get_by_symbol(symbol=request.symbol)
                 is not None
@@ -383,6 +399,7 @@ class BacktestEngine:
         *,
         candle: Candle,
         position_repository: MemoryPositionRepository,
+        candles_history: Sequence[Candle] = (),
     ) -> None:
         """Arm stepped SL & trailing stop from this candle for next candle."""
         position = await position_repository.get_by_symbol(symbol=candle.symbol)
@@ -392,7 +409,6 @@ class BacktestEngine:
         if not self.risk_settings.stepped_stop_enabled:
             return
 
-        candidate_stops: list[Decimal] = []
         tp_distance = abs(position.take_profit - position.entry_price)
         step = position.protection_step
 
@@ -419,44 +435,103 @@ class BacktestEngine:
             )
             if resolved_step > position.protection_step:
                 step = resolved_step
-                try:
-                    stop_price = RiskEngine.calculate_stepped_stop_loss(
-                        position=position,
-                        step=step,
-                        thresholds=self.risk_settings.stepped_stop_thresholds,
-                        locked_lag=self.risk_settings.stepped_stop_locked_lag,
-                        breakeven_fee_buffer=self.risk_settings.breakeven_fee_buffer,
-                    )
-                    candidate_stops.append(stop_price)
-                except ValueError as err:
-                    _LOGGER.warning(
-                        "Backtest cannot calculate stepped stop loss for %s "
-                        "step %s: %s",
-                        position.symbol,
-                        step,
-                        err,
-                    )
-        if not candidate_stops:
-            return
+
+        stepped_stop: Decimal | None = None
+        if step > 0:
+            try:
+                stepped_stop = RiskEngine.calculate_stepped_stop_loss(
+                    position=position,
+                    step=step,
+                    thresholds=self.risk_settings.stepped_stop_thresholds,
+                    locked_lag=self.risk_settings.stepped_stop_locked_lag,
+                    breakeven_fee_buffer=self.risk_settings.breakeven_fee_buffer,
+                )
+            except ValueError as err:
+                _LOGGER.warning(
+                    "Backtest cannot calculate stepped stop loss for %s step %s: %s",
+                    position.symbol,
+                    step,
+                    err,
+                )
+
+        is_pier = position.strategy_type is StrategyType.PINBAR_ENGULFING_EMA_RSI
+        eff_trailing_mode = (
+            self.risk_settings.pier_trailing_mode
+            if (is_pier and self.risk_settings.pier_trailing_mode is not None)
+            else self.risk_settings.trailing_mode
+        )
+        eff_swing_window = (
+            self.risk_settings.pier_trailing_swing_window
+            if (is_pier and self.risk_settings.pier_trailing_swing_window is not None)
+            else self.risk_settings.trailing_swing_window
+        )
+        eff_buffer_pct = (
+            self.risk_settings.pier_trailing_buffer_pct
+            if (is_pier and self.risk_settings.pier_trailing_buffer_pct is not None)
+            else self.risk_settings.trailing_buffer_pct
+        )
+
+        replacement_stop: Decimal | None = None
+        new_step = position.protection_step
+
+        if eff_trailing_mode is TrailingMode.SWING_PIVOT and candles_history:
+            swing_stop = RiskEngine.calculate_swing_pivot_stop_loss(
+                position=position,
+                candles=candles_history,
+                window=eff_swing_window,
+                buffer_pct=eff_buffer_pct,
+            )
+            if swing_stop is not None:
+                # Enforce Breakeven floor if position reached BE threshold
+                if step >= 1:
+                    try:
+                        be_stop = RiskEngine.calculate_stepped_stop_loss(
+                            position=position,
+                            step=1,
+                            thresholds=self.risk_settings.stepped_stop_thresholds,
+                            locked_lag=self.risk_settings.stepped_stop_locked_lag,
+                            breakeven_fee_buffer=self.risk_settings.breakeven_fee_buffer,
+                        )
+                        if position.side is PositionSide.LONG:
+                            replacement_stop = (
+                                be_stop if swing_stop < be_stop else swing_stop
+                            )
+                        else:
+                            replacement_stop = (
+                                be_stop if swing_stop > be_stop else swing_stop
+                            )
+                    except ValueError:
+                        replacement_stop = swing_stop
+                else:
+                    replacement_stop = swing_stop
+                new_step = position.protection_step + 1
+            elif stepped_stop is not None:
+                replacement_stop = stepped_stop
+                new_step = step
+            else:
+                return
+        else:
+            if stepped_stop is None:
+                return
+            replacement_stop = stepped_stop
+            new_step = step
 
         if position.side is PositionSide.LONG:
-            replacement_stop = max(candidate_stops)
             if position.stop_loss is not None:
                 if replacement_stop < position.stop_loss:
                     return
                 if (
                     replacement_stop == position.stop_loss
-                    and step <= position.protection_step
+                    and new_step <= position.protection_step
                 ):
                     return
         else:
-            replacement_stop = min(candidate_stops)
             if position.stop_loss is not None:
                 if replacement_stop > position.stop_loss:
                     return
                 if (
                     replacement_stop == position.stop_loss
-                    and step <= position.protection_step
+                    and new_step <= position.protection_step
                 ):
                     return
 
@@ -464,7 +539,7 @@ class BacktestEngine:
             position=replace(
                 position,
                 stop_loss=replacement_stop,
-                protection_step=step,
+                protection_step=new_step,
                 updated_at=candle.close_time,
             )
         )

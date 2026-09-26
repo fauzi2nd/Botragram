@@ -19,6 +19,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Final
@@ -754,8 +755,17 @@ def test_16_triggered_signal_preserves_sl_tp_and_protection() -> None:
     assert sig.signal_type is SignalType.SELL
     assert sig.stop_loss == Decimal("106")
     assert sig.take_profit == Decimal("92")
-    assert sig.confidence == Decimal("0.85")
+    # Base confidence 0.85 + 0.05 bonus for decisive BEARISH_PINBAR pattern
+    assert sig.confidence == Decimal("0.90")
     assert sig.reason is not None and "[STALKING_TRIGGERED]" in sig.reason
+
+    # Generic rejection without decisive pattern does not get the bonus
+    generic_setup = replace(setup, pattern_name="BEARISH_REJECTION")
+    generic_sig = service.build_triggered_signal(
+        setup=generic_setup,
+        trigger_candle=trigger_candle,
+    )
+    assert generic_sig.confidence == Decimal("0.85")
 
 
 def test_17_pier_stalking_disabled_preserves_legacy_behavior() -> None:
@@ -862,3 +872,50 @@ def test_20_no_direct_actionable_pier_entry_when_stalking_active() -> None:
     sig2 = service.generate_signal(candles=candles)
     assert sig2.signal_type is SignalType.HOLD
     assert sig2.signal_type not in {SignalType.BUY, SignalType.SELL}
+
+
+def test_22_zone_confidence_scores_higher_on_confluence() -> None:
+    """22. Dynamic zone confidence scales with HTF depth, volume, and confluence."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=20,
+        pullback_period=5,
+        min_confidence=Decimal("0.65"),
+    )
+    candle = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("105"),
+        low_price=Decimal("99"),
+        close_price=Decimal("102"),
+        volume=Decimal("500"),
+    )
+
+    # Base minimum confidence with 0 confluence
+    score_low = strategy.compute_zone_confidence(
+        side=PositionSide.SHORT,
+        current_candle=candle,
+        trend_distance_pct=Decimal("0.01"),
+        eff_min_trend_pct=Decimal("0.02"),
+        htf_extreme_depth=Decimal("0"),
+        at_ema=False,
+        at_swing=False,
+        volume=Decimal("100"),
+        volume_sma=Decimal("200"),
+    )
+    assert score_low == Decimal("0.65")
+
+    # High confluence (deep HTF penetration + strong trend + EMA + swing + volume + RSI)
+    score_high = strategy.compute_zone_confidence(
+        side=PositionSide.SHORT,
+        current_candle=candle,
+        trend_distance_pct=Decimal("0.05"),
+        eff_min_trend_pct=Decimal("0.02"),
+        htf_extreme_depth=Decimal("0.8"),
+        at_ema=True,
+        at_swing=True,
+        volume=Decimal("500"),
+        volume_sma=Decimal("200"),
+        rsi=Decimal("70"),
+    )
+    assert score_high > Decimal("0.85")
+    assert score_high <= Decimal("0.95")

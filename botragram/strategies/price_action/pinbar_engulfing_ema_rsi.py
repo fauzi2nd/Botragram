@@ -1180,6 +1180,21 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         htf_atr: Decimal | None = None
         htf_target_interval = resolve_adaptive_htf_interval(curr_candle.interval)
 
+        volume_series = tuple(c.volume for c in candles)
+        vol_window = min(20, len(volume_series))
+        volume_sma_series = (
+            calculate_sma(volume_series, period=vol_window) if vol_window > 0 else ()
+        )
+        current_volume_sma = (
+            volume_sma_series[-1] if volume_sma_series else _DECIMAL_ZERO
+        )
+
+        rsi_window = min(self.rsi_period, len(close_prices) - 1)
+        rsi_series = (
+            calculate_rsi(close_prices, period=rsi_window) if rsi_window >= 2 else ()
+        )
+        current_rsi = rsi_series[-1] if rsi_series else None
+
         if self.require_htf_extreme_zone and len(candles) >= 8:
             try:
                 htf_candles = resample_candles(
@@ -1300,11 +1315,31 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     stop_loss = current_close + risk_dist
                 take_profit = current_close - (risk_dist * self.risk_reward_ratio)
                 htf_lbl = f"{htf_target_interval.value} Upper BB"
+                eff_htf_atr = htf_atr if htf_atr is not None else current_atr
+                htf_depth = (
+                    (curr_candle.high_price - htf_upper_bb) / eff_htf_atr
+                    if htf_upper_bb is not None
+                    and eff_htf_atr > _DECIMAL_ZERO
+                    and curr_candle.high_price >= htf_upper_bb
+                    else _DECIMAL_ZERO
+                )
+                confidence = self.compute_zone_confidence(
+                    side=PositionSide.SHORT,
+                    current_candle=curr_candle,
+                    trend_distance_pct=trend_dist_short,
+                    eff_min_trend_pct=eff_min_trend_pct,
+                    htf_extreme_depth=htf_depth,
+                    at_ema=at_ema_resistance,
+                    at_swing=at_swing_resistance,
+                    volume=curr_candle.volume,
+                    volume_sma=current_volume_sma,
+                    rsi=current_rsi,
+                )
                 return Signal(
                     symbol=curr_candle.symbol,
                     signal_type=SignalType.HOLD,
                     price=current_close,
-                    confidence=self.min_confidence,
+                    confidence=confidence,
                     strategy_name=self.strategy_type.value,
                     generated_at=curr_candle.close_time,
                     reason=(
@@ -1378,11 +1413,31 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     stop_loss = current_close - risk_dist
                 take_profit = current_close + (risk_dist * self.risk_reward_ratio)
                 htf_lbl = f"{htf_target_interval.value} Lower BB"
+                eff_htf_atr = htf_atr if htf_atr is not None else current_atr
+                htf_depth = (
+                    (htf_lower_bb - curr_candle.low_price) / eff_htf_atr
+                    if htf_lower_bb is not None
+                    and eff_htf_atr > _DECIMAL_ZERO
+                    and curr_candle.low_price <= htf_lower_bb
+                    else _DECIMAL_ZERO
+                )
+                confidence = self.compute_zone_confidence(
+                    side=PositionSide.LONG,
+                    current_candle=curr_candle,
+                    trend_distance_pct=trend_dist_long,
+                    eff_min_trend_pct=eff_min_trend_pct,
+                    htf_extreme_depth=htf_depth,
+                    at_ema=at_ema_support,
+                    at_swing=at_swing_support,
+                    volume=curr_candle.volume,
+                    volume_sma=current_volume_sma,
+                    rsi=current_rsi,
+                )
                 return Signal(
                     symbol=curr_candle.symbol,
                     signal_type=SignalType.HOLD,
                     price=current_close,
-                    confidence=self.min_confidence,
+                    confidence=confidence,
                     strategy_name=self.strategy_type.value,
                     generated_at=curr_candle.close_time,
                     reason=(
@@ -1395,6 +1450,63 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 )
 
         return None
+
+    def compute_zone_confidence(
+        self,
+        *,
+        side: PositionSide,
+        current_candle: Candle,
+        trend_distance_pct: Decimal,
+        eff_min_trend_pct: Decimal,
+        htf_extreme_depth: Decimal,
+        at_ema: bool,
+        at_swing: bool,
+        volume: Decimal,
+        volume_sma: Decimal,
+        rsi: Decimal | None = None,
+    ) -> Decimal:
+        """Compute dynamic quality-based confidence score for Stage 1 zone setup."""
+        score = self.min_confidence
+
+        # 1. HTF Extreme Zone penetration depth
+        if htf_extreme_depth >= Decimal("0.5"):
+            score += Decimal("0.08")
+        elif htf_extreme_depth > _DECIMAL_ZERO:
+            score += Decimal("0.04")
+
+        # 2. Strong trend alignment
+        if (
+            eff_min_trend_pct > _DECIMAL_ZERO
+            and trend_distance_pct >= eff_min_trend_pct * Decimal("1.5")
+        ):
+            score += Decimal("0.06")
+        elif trend_distance_pct > eff_min_trend_pct:
+            score += Decimal("0.03")
+
+        # 3. Structural confluence (both EMA and Swing level aligned)
+        if at_ema and at_swing:
+            score += Decimal("0.06")
+        elif at_ema or at_swing:
+            score += Decimal("0.03")
+
+        # 4. RSI extreme alignment in pullback
+        if rsi is not None:
+            if side is PositionSide.SHORT and rsi >= Decimal("65"):
+                score += Decimal("0.05")
+            elif side is PositionSide.LONG and rsi <= Decimal("35"):
+                score += Decimal("0.05")
+            elif side is PositionSide.SHORT and rsi >= Decimal("55"):
+                score += Decimal("0.02")
+            elif side is PositionSide.LONG and rsi <= Decimal("45"):
+                score += Decimal("0.02")
+
+        # 5. Volume expansion
+        if volume_sma > _DECIMAL_ZERO and volume >= volume_sma * Decimal("1.2"):
+            score += Decimal("0.05")
+        elif volume_sma > _DECIMAL_ZERO and volume >= volume_sma:
+            score += Decimal("0.02")
+
+        return min(_MAX_CONFIDENCE, score)
 
     def _compute_confidence(
         self,

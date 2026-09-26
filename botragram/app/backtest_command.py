@@ -37,15 +37,19 @@ from botragram.constants import (
     BYBIT_TESTNET_REST_BASE_URL,
 )
 from botragram.engine.backtest_engine import BacktestEngine
+from botragram.engine.signal_engine import SignalEngine
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.models import BacktestRequest, BacktestResult
 from botragram.services.backtest_service import BacktestService
+from botragram.services.setup_stalking_service import SetupStalkingService
 from botragram.services.stored_resampled_candle_provider import (
     StoredResampledCandleProvider,
 )
+from botragram.services.strategy_service import StrategyService
+from botragram.storage import MemorySignalRepository
 from botragram.storage.sqlite import SQLiteCandleRepository, SQLiteDatabase
-from botragram.strategies import StrategyFactory
+from botragram.strategies import StrategyFactory, StrategyResolver
 
 __all__ = [
     "format_backtest_report",
@@ -179,12 +183,38 @@ async def run_backtest_command(
         settings.strategy,
         strategy_type=request.strategy_type,
     )
+    strategy = StrategyFactory.create(settings=strategy_settings)
+
+    strategy_service: StrategyService | None = None
+    if (
+        request.strategy_type is StrategyType.PINBAR_ENGULFING_EMA_RSI
+        and settings.strategy.pier_stalking_enabled
+    ):
+        signal_engine = SignalEngine(
+            strategy_resolver=StrategyResolver(
+                strategies={request.strategy_type: strategy}
+            ),
+            default_strategy_type=request.strategy_type,
+        )
+        stalking_service = SetupStalkingService(
+            max_candidates=settings.strategy.pier_stalking_max_candidates,
+            retest_ratio=settings.strategy.pier_stalking_retest_ratio,
+            default_max_bars=settings.strategy.pier_stalking_max_bars,
+        )
+        strategy_service = StrategyService(
+            signal_engine=signal_engine,
+            signal_repository=MemorySignalRepository(),
+            setup_stalking_service=stalking_service,
+            stalking_enabled=True,
+        )
+
     engine = BacktestEngine(
-        strategy=StrategyFactory.create(settings=strategy_settings),
+        strategy=strategy,
         risk_settings=_build_backtest_risk_settings(
             settings=settings,
             request=request,
         ),
+        strategy_service=strategy_service,
     )
 
     db_path = (

@@ -247,10 +247,10 @@ def test_strategy_service_evaluates_retest_trigger_into_actionable_signal() -> N
         strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
     )
 
-    # Must be actionable SELL with STALKING_TRIGGERED reason
+    # Must be actionable SELL with STALKING_TRIGGERED reason (0.85 + 0.05 bonus)
     assert sig1.signal_type is SignalType.SELL
     assert sig1.price == Decimal("95")
-    assert sig1.confidence == Decimal("0.85")
+    assert sig1.confidence == Decimal("0.90")
     assert sig1.strategy_name == StrategyType.PINBAR_ENGULFING_EMA_RSI.value
     assert "[STALKING_TRIGGERED]" in (sig1.reason or "")
     assert sig1.stop_loss == Decimal("112")
