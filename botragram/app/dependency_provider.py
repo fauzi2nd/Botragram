@@ -1698,6 +1698,7 @@ class DependencyProvider:
                     None,
                 ),
                 position_exit_service=self.position_exit_service,
+                setup_stalking_service=self.setup_stalking_service,
                 runtime_risk_limit_provider=self.runtime_risk_limit_service,
             )
         if self._settings.app.trade_mode is not TradeMode.PAPER:

@@ -424,13 +424,32 @@ class TerminalMonitor:
         )
 
         stalking_setups: tuple[StalkingSetup, ...] = ()
+        max_positions = self._get_max_open_positions()
+        is_capacity_full = max_positions is not None and len(positions) >= max_positions
         if self.stalking_setup_provider is not None:
-            try:
-                stalking_setups = (
-                    self.stalking_setup_provider.get_active_stalking_setups()
+            if is_capacity_full:
+                set_paused_fn = getattr(
+                    self.stalking_setup_provider, "set_paused", None
                 )
-            except Exception:
-                _LOGGER.debug("Failed to collect stalking setups", exc_info=True)
+                if callable(set_paused_fn):
+                    set_paused_fn(True)
+                else:
+                    clear_fn = getattr(self.stalking_setup_provider, "clear_all", None)
+                    if callable(clear_fn):
+                        clear_fn()
+                stalking_setups = ()
+            else:
+                set_paused_fn = getattr(
+                    self.stalking_setup_provider, "set_paused", None
+                )
+                if callable(set_paused_fn):
+                    set_paused_fn(False)
+                try:
+                    stalking_setups = (
+                        self.stalking_setup_provider.get_active_stalking_setups()
+                    )
+                except Exception:
+                    _LOGGER.debug("Failed to collect stalking setups", exc_info=True)
 
         return TerminalStatus(
             observed_at=datetime.now(UTC),
@@ -1237,6 +1256,15 @@ class TerminalMonitor:
         table.add_column("HTF Zone", no_wrap=True)
 
         if not status.stalking_setups:
+            max_positions = self._get_max_open_positions()
+            is_full = (
+                max_positions is not None and status.position_count >= max_positions
+            )
+            status_text = (
+                Text("POSITIONS FULL / STALKING SUSPENDED", style="bold yellow")
+                if is_full
+                else Text("IDLE / WAITING CANDIDATES")
+            )
             table.add_row(
                 "-",
                 "-",
@@ -1245,7 +1273,7 @@ class TerminalMonitor:
                 "-",
                 "-",
                 "-",
-                "IDLE / WAITING CANDIDATES",
+                status_text,
                 "-",
             )
         else:

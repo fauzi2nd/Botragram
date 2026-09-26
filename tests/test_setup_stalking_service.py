@@ -584,3 +584,96 @@ def test_expiry_requires_distinct_closed_candles() -> None:
     # Subsequent calls on c3 do not re-expire
     for _ in range(5):
         assert service.on_candle_update(c3) is None
+
+
+def test_setup_stalking_paused_and_cleanup_when_capacity_full() -> None:
+    """When position slots are full, stalking pauses and clears all setups."""
+    service = SetupStalkingService(max_candidates=5, default_max_bars=7)
+    candle0 = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    reg = service.register_candidate(signal=signal, setup_candle=candle0)
+    assert reg is not None
+    assert len(service.get_active_stalking_setups()) == 1
+    assert service.get_active_stalking_symbols() == ("BTCUSDT",)
+    assert not service.is_paused
+
+    # Pause stalking (simulating position capacity reached)
+    service.set_paused(True)
+    assert service.is_paused
+    # Active setups must be completely cleaned up (clean radar)
+    assert service.get_active_stalking_setups() == ()
+    assert service.get_active_stalking_symbols() == ()
+
+    # Any new registration attempt while paused must be rejected
+    signal2 = Signal(
+        symbol="ETHUSDT",
+        signal_type=SignalType.BUY,
+        price=Decimal("2000"),
+        confidence=Decimal("0.80"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BULLISH PINBAR",
+    )
+    reg2 = service.register_candidate(signal=signal2, setup_candle=candle0)
+    assert reg2 is None
+    assert service.get_active_stalking_setups() == ()
+
+    # Candle updates while paused must be ignored
+    candle1 = _make_candle(
+        index=1,
+        open_price=Decimal("93"),
+        high_price=Decimal("95"),
+        low_price=Decimal("92"),
+        close_price=Decimal("94"),
+    )
+    assert service.on_candle_update(candle1) is None
+
+    # Resume stalking (simulating position slot becoming available)
+    service.set_paused(False)
+    assert not service.is_paused
+    reg3 = service.register_candidate(signal=signal2, setup_candle=candle0)
+    assert reg3 is not None
+    assert len(service.get_active_stalking_setups()) == 1
+    assert service.get_active_stalking_symbols() == ("ETHUSDT",)
+
+
+def test_setup_stalking_clear_all() -> None:
+    """clear_all explicitly empties all tracked setups and history."""
+    service = SetupStalkingService(max_candidates=5)
+    candle0 = _make_candle(
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    service.register_candidate(signal=signal, setup_candle=candle0)
+    assert len(service.get_active_stalking_setups()) == 1
+
+    service.clear_all()
+    assert service.get_active_stalking_setups() == ()
+    assert service.get_active_stalking_symbols() == ()
+    assert service.get_setup("BTCUSDT") is None

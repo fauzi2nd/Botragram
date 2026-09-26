@@ -57,6 +57,14 @@ class StalkingSetupProvider(Protocol):
         """Return active or recently completed stalking setups."""
         ...
 
+    def clear_all(self) -> None:
+        """Clear all tracked setups."""
+        ...
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause or resume setup stalking operations."""
+        ...
+
 
 class SetupStalkingService:
     """Track and observe candidate setups across 1-7 subsequent bars."""
@@ -80,11 +88,41 @@ class SetupStalkingService:
         self._retest_ratio: Final[Decimal] = retest_ratio
         self._lock: Final[threading.Lock] = threading.Lock()
         self._setups: dict[str, StalkingSetup] = {}
+        self._paused: bool = False
 
     @property
     def max_candidates(self) -> int:
         """Return the maximum allowed concurrent stalking candidates."""
         return self._max_candidates
+
+    @property
+    def is_paused(self) -> bool:
+        """Return whether setup stalking is currently paused."""
+        with self._lock:
+            return self._paused
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause or resume setup stalking operations.
+
+        When paused (e.g. position capacity reached), all active setups
+        are cleared to present a clean radar, and subsequent registrations
+        or candle updates are skipped.
+        """
+        with self._lock:
+            self._paused = paused
+            if paused:
+                self._setups.clear()
+                _LOGGER.info(
+                    "Setup stalking paused (slots full): cleared all candidates"
+                )
+            else:
+                _LOGGER.debug("Setup stalking resumed")
+
+    def clear_all(self) -> None:
+        """Clear all tracked setups and history."""
+        with self._lock:
+            self._setups.clear()
+            _LOGGER.info("Cleared all setup stalking candidates")
 
     def register_candidate(
         self,
@@ -118,6 +156,13 @@ class SetupStalkingService:
             side = PositionSide.SHORT
 
         with self._lock:
+            if self._paused:
+                _LOGGER.debug(
+                    "Setup stalking paused (slots full); skipping candidate %s",
+                    signal.symbol,
+                )
+                return None
+
             existing = self._setups.get(signal.symbol)
             if existing is not None and existing.status is StalkingStatus.STALKING:
                 _LOGGER.debug(
@@ -308,6 +353,9 @@ class SetupStalkingService:
         now = datetime.now(UTC)
 
         with self._lock:
+            if self._paused:
+                return None
+
             setup = self._setups.get(candle.symbol)
             if setup is None or setup.status is not StalkingStatus.STALKING:
                 return None
@@ -514,6 +562,9 @@ class SetupStalkingService:
     def get_active_stalking_setups(self) -> tuple[StalkingSetup, ...]:
         """Return tracked setups, prioritizing TRIGGERED then active STALKING."""
         with self._lock:
+            if self._paused:
+                return ()
+
             triggered: list[StalkingSetup] = []
             stalking: list[StalkingSetup] = []
             completed: list[StalkingSetup] = []
@@ -545,6 +596,9 @@ class SetupStalkingService:
     def get_active_stalking_symbols(self) -> tuple[str, ...]:
         """Return symbols currently in active STALKING status."""
         with self._lock:
+            if self._paused:
+                return ()
+
             return tuple(
                 s.symbol
                 for s in self._setups.values()

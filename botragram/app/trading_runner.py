@@ -262,6 +262,18 @@ class _AutonomousLivePositionExitProvider(Protocol):
         ...
 
 
+class _AutonomousLiveStalkingProvider(Protocol):
+    """Protocol for managing stalking state during autonomous live execution."""
+
+    def clear_all(self) -> None:
+        """Clear all active stalking setups."""
+        ...
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause or resume stalking operations."""
+        ...
+
+
 class SingleSymbolExecutionProvider(Protocol):
     """Execute the existing single-symbol trading workflow."""
 
@@ -704,6 +716,7 @@ class AutonomousLiveTradingCycleExecutor:
     live_runtime_portfolio_reconciler: _LiveRuntimePortfolioReconciler
     discovery_rate_limit_governor: _DiscoveryRateLimitGovernor | None = None
     position_exit_service: _AutonomousLivePositionExitProvider | None = None
+    setup_stalking_service: _AutonomousLiveStalkingProvider | None = None
 
     def __post_init__(self) -> None:
         """Validate the static network-scoped discovery composition."""
@@ -759,7 +772,13 @@ class AutonomousLiveTradingCycleExecutor:
                     portfolio = reconciled
 
         if self._portfolio_is_full(portfolio=portfolio):
+            if self.setup_stalking_service is not None:
+                self.setup_stalking_service.set_paused(True)
             return GlobalDiscoveryCycleReport(skipped_capacity=True)
+
+        if self.setup_stalking_service is not None:
+            self.setup_stalking_service.set_paused(False)
+
         if self._optional_entry_is_rate_limited():
             return GlobalDiscoveryCycleReport(skipped_rate_limit=True)
 
@@ -780,6 +799,8 @@ class AutonomousLiveTradingCycleExecutor:
 
         for signal in signals:
             if self._portfolio_is_full(portfolio=portfolio):
+                if self.setup_stalking_service is not None:
+                    self.setup_stalking_service.set_paused(True)
                 stopped_by_capacity = True
                 break
             if self._optional_entry_is_rate_limited():
@@ -840,6 +861,8 @@ class AutonomousLiveTradingCycleExecutor:
                     )
                 portfolio = reconciled_portfolio
                 if self._portfolio_is_full(portfolio=portfolio):
+                    if self.setup_stalking_service is not None:
+                        self.setup_stalking_service.set_paused(True)
                     stopped_by_capacity = True
                     break
 

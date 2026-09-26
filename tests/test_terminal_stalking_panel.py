@@ -305,3 +305,86 @@ def test_terminal_monitor_sorts_triggered_first_then_highest_bar() -> None:
     assert sol_pos != -1
     assert doge_pos != -1
     assert avnt_pos < eth_pos < sol_pos < doge_pos
+
+
+def test_terminal_monitor_cleans_and_suspends_stalking_when_capacity_full() -> None:
+    """When open positions reach capacity, stalking is paused and cleaned."""
+    now = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
+    setup = StalkingSetup(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        pattern_name="PINBAR",
+        anchor_price=Decimal("60000"),
+        invalidation_price=Decimal("59000"),
+        target_retest_price=Decimal("59500"),
+        htf_zone_label="HTF Extreme LONG",
+        current_bar=2,
+        max_bars=7,
+        started_at=now,
+        updated_at=now,
+        status=StalkingStatus.STALKING,
+    )
+
+    class StatefulStalkingProvider:
+        def __init__(self) -> None:
+            self.setups = [setup]
+            self.paused = False
+
+        def get_active_stalking_setups(self) -> tuple[StalkingSetup, ...]:
+            return () if self.paused else tuple(self.setups)
+
+        def clear_all(self) -> None:
+            self.setups.clear()
+
+        def set_paused(self, paused: bool) -> None:
+            self.paused = paused
+            if paused:
+                self.setups.clear()
+
+    provider = StatefulStalkingProvider()
+    pos = Position(
+        symbol="ETHUSDT",
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=Decimal("2000"),
+        current_price=Decimal("2000"),
+        unrealized_pnl=Decimal("0"),
+        leverage=1,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    class PositionsProvider:
+        async def get_open_positions(self) -> Sequence[Position]:
+            return (pos,)
+
+    console = Console(file=StringIO(), force_terminal=True, width=140)
+    monitor = ResponsiveTerminalMonitor(
+        runtime_control=TradingRuntimeControl(symbol="BTCUSDT"),
+        paper_balance_provider=FakePaperBalance(),
+        live_balance_provider=FakeLiveBalance(),
+        position_provider=PositionsProvider(),
+        pnl_engine=PnLEngine(),
+        trade_mode=TradeMode.PAPER,
+        quote_asset="USDT",
+        stalking_setup_provider=provider,
+        max_open_positions=1,  # Capacity is 1, and 1 position is already open!
+        console=console,
+    )
+
+    status = asyncio.run(monitor.collect_status())
+    # 1. Stalking setups in status must be cleaned up / empty
+    assert status.stalking_setups == ()
+    assert provider.paused is True
+    assert provider.setups == []
+
+    # 2. Render stalking panel and verify clean suspended notice
+    layout = monitor.render_dashboard(status)
+    panel = layout["active_stalking"].renderable
+    string_io = StringIO()
+    c = Console(file=string_io, force_terminal=True, width=140)
+    c.print(panel)
+    output = string_io.getvalue()
+
+    assert "POSITIONS FULL / STALKING SUSPENDED" in output
+    assert "BTCUSDT" not in output

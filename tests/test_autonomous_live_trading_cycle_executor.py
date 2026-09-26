@@ -1213,3 +1213,66 @@ def test_runner_pauses_after_unsafe_result_without_outer_retry() -> None:
     assert control.is_paused
     with pytest.raises(RuntimeError, match="verified position protection"):
         control.resume_global_cycle()
+
+
+def test_live_executor_pauses_and_resumes_stalking_with_portfolio_capacity() -> None:
+    """When portfolio capacity is full, stalking is paused and cleaned."""
+
+    class FakeStalkingService:
+        def __init__(self) -> None:
+            self.paused = False
+            self.cleared = False
+
+        def clear_all(self) -> None:
+            self.cleared = True
+
+        def set_paused(self, paused: bool) -> None:
+            self.paused = paused
+            if paused:
+                self.cleared = True
+
+    stalking_service = FakeStalkingService()
+    btc = _signal(symbol="BTCUSDT")
+
+    # 1. Full portfolio: reconciler returns 1 context, max_open_positions=1
+    full_reconciler = _Reconciler(results=[_portfolio_context("BTCUSDT")])
+    executor, _, _ = _executor(
+        signals=(btc,),
+        decisions={btc.symbol: _decision(signal=btc)},
+        statuses={
+            btc.symbol: AutonomousLiveEntryExecutionStatus.EXCHANGE_REJECTED,
+        },
+    )
+    full_executor = replace(
+        executor,
+        live_runtime_portfolio_reconciler=full_reconciler,
+        max_open_positions=1,
+        setup_stalking_service=stalking_service,
+    )
+
+    report_full = asyncio.run(
+        full_executor.execute_global_report(
+            interval=Interval.M15,
+            candle_limit=100,
+        )
+    )
+    assert report_full.skipped_capacity is True
+    # Stalking must be paused and cleared when slots are full
+    assert stalking_service.paused is True
+    assert stalking_service.cleared is True
+
+    # 2. Available capacity: reconciler returns empty portfolio
+    empty_reconciler = _Reconciler(results=[_portfolio_context()])
+    available_executor = replace(
+        full_executor,
+        live_runtime_portfolio_reconciler=empty_reconciler,
+    )
+    report_available = asyncio.run(
+        available_executor.execute_global_report(
+            interval=Interval.M15,
+            candle_limit=100,
+        )
+    )
+    assert report_available.skipped_capacity is False
+    # Stalking must be resumed when capacity is open
+    assert stalking_service.paused is False
