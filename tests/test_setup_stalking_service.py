@@ -142,6 +142,93 @@ def test_register_bearish_candidate_and_retest_calculation() -> None:
     assert setup.max_bars == 7
 
 
+
+
+def test_zone_first_reversal_preserves_original_zone_retest_price() -> None:
+    """Zone-first stalking keeps the initial zone anchor as the retest target."""
+    service = SetupStalkingService()
+    zone_candle = _make_candle(
+        index=0,
+        open_price=Decimal("105"),
+        high_price=Decimal("110"),
+        low_price=Decimal("100"),
+        close_price=Decimal("104"),
+    )
+    zone_signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.HOLD,
+        price=Decimal("104"),
+        confidence=Decimal("0.80"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="[STALKING_ZONE_SHORT] HTF upper zone",
+    )
+    setup = service.register_candidate(
+        signal=zone_signal,
+        setup_candle=zone_candle,
+    )
+    assert setup is not None
+    assert setup.target_retest_price == Decimal("104")
+
+    reversal_candle = _make_candle(
+        index=1,
+        open_price=Decimal("103"),
+        high_price=Decimal("105"),
+        low_price=Decimal("100"),
+        close_price=Decimal("101"),
+    )
+    updated = service.on_candle_update(reversal_candle, prev_candle=zone_candle)
+    assert updated is not None
+    assert updated.reversal_confirmed is True
+    assert updated.status is StalkingStatus.STALKING
+    assert updated.target_retest_price == Decimal("104")
+
+
+def test_retest_close_far_from_zone_does_not_trigger() -> None:
+    """A rejection that closes deep below the SHORT zone must not trigger entry."""
+    service = SetupStalkingService()
+    zone_candle = _make_candle(
+        index=0,
+        open_price=Decimal("105"),
+        high_price=Decimal("110"),
+        low_price=Decimal("100"),
+        close_price=Decimal("104"),
+    )
+    zone_signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.HOLD,
+        price=Decimal("104"),
+        confidence=Decimal("0.80"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="[STALKING_ZONE_SHORT] HTF upper zone",
+    )
+    service.register_candidate(signal=zone_signal, setup_candle=zone_candle)
+
+    reversal_candle = _make_candle(
+        index=1,
+        open_price=Decimal("103"),
+        high_price=Decimal("105"),
+        low_price=Decimal("100"),
+        close_price=Decimal("101"),
+    )
+    service.on_candle_update(reversal_candle, prev_candle=zone_candle)
+
+    middle_entry_candle = _make_candle(
+        index=2,
+        open_price=Decimal("103"),
+        high_price=Decimal("105"),
+        low_price=Decimal("95"),
+        close_price=Decimal("97"),
+    )
+    updated = service.on_candle_update(
+        middle_entry_candle,
+        prev_candle=reversal_candle,
+    )
+    assert updated is not None
+    assert updated.status is StalkingStatus.STALKING
+    assert updated.current_bar == 2
+
 def test_bearish_setup_invalidation_breach_peak() -> None:
     """When subsequent bar high breaches anchor high, setup is INVALIDATED (0 loss)."""
     service = SetupStalkingService()
