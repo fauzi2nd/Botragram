@@ -278,6 +278,14 @@ class _AutonomousLiveStalkingProvider(Protocol):
         """Pause or resume stalking operations."""
         ...
 
+    def invalidate_setup(
+        self,
+        symbol: str,
+        reason: str = "Execution guard rejected",
+    ) -> object:
+        """Explicitly invalidate a stalking setup."""
+        ...
+
 
 class SingleSymbolExecutionProvider(Protocol):
     """Execute the existing single-symbol trading workflow."""
@@ -829,6 +837,11 @@ class AutonomousLiveTradingCycleExecutor:
                 authorization=self.authorization,
             )
             if intent_result.intent is None:
+                if self.setup_stalking_service is not None:
+                    self.setup_stalking_service.invalidate_setup(
+                        signal.symbol,
+                        reason=f"Intent rejected: {intent_result.status.value}",
+                    )
                 results.append(
                     self._non_executed_result(
                         decision=decision,
@@ -838,6 +851,11 @@ class AutonomousLiveTradingCycleExecutor:
                 continue
 
             if self._optional_entry_is_rate_limited():
+                if self.setup_stalking_service is not None:
+                    self.setup_stalking_service.invalidate_setup(
+                        signal.symbol,
+                        reason=_AUTONOMOUS_LIVE_RATE_LIMIT_REASON,
+                    )
                 results.append(
                     self._non_executed_result(
                         decision=decision,
@@ -870,6 +888,12 @@ class AutonomousLiveTradingCycleExecutor:
                         self.setup_stalking_service.set_paused(True)
                     stopped_by_capacity = True
                     break
+            else:
+                if self.setup_stalking_service is not None:
+                    self.setup_stalking_service.invalidate_setup(
+                        signal.symbol,
+                        reason=f"Execution failed: {execution_result.status.value}",
+                    )
 
             if execution_result.status in {
                 AutonomousLiveEntryExecutionStatus.SUBMISSION_BLOCKED,

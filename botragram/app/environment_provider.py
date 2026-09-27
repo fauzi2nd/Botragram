@@ -1089,7 +1089,11 @@ class EnvironmentProvider:
 
     def get_pier_stalking_max_bars(self) -> str:
         """Return the maximum observation bar window for candidate stalking."""
-        return self._get_var(ENV_PIER_STALKING_MAX_BARS, default="7")
+        return self._get_var(
+            ENV_PIER_STALKING_MAX_BARS,
+            "STALKING_MAX_BARS",
+            default="7",
+        )
 
     def get_pier_stalking_max_candidates(self) -> str:
         """Return the maximum parallel candidates monitored for stalking."""

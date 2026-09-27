@@ -944,3 +944,181 @@ def test_stalking_funnel_tracking_end_to_end() -> None:
     assert reset_report.scanned_count == 0
     assert reset_report.zone_candidates == 0
     assert reset_report.rejections_by_reason == {}
+
+
+def test_setup_stalking_bar_clamping_prevents_bar_overflow() -> None:
+    """A stalking setup must never advance beyond max_bars (prevent Bar 8/7)."""
+    service = SetupStalkingService(default_max_bars=7)
+    candle0 = _make_candle(
+        symbol="ZAMAUSDT",
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    signal = Signal(
+        symbol="ZAMAUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    assert service.register_candidate(signal=signal, setup_candle=candle0) is not None
+
+    # Process bars 1 to 6 (neutral candles, no trigger, no invalidation)
+    for i in range(1, 7):
+        c = _make_candle(
+            symbol="ZAMAUSDT",
+            index=i,
+            open_price=Decimal("93"),
+            high_price=Decimal("95"),
+            low_price=Decimal("91"),
+            close_price=Decimal("93"),
+        )
+        up = service.on_candle_update(c)
+        assert up is not None
+        assert up.status is StalkingStatus.STALKING
+        assert up.current_bar == i
+
+    # Bar 7 arrives: window limit reached -> must be EXPIRED with current_bar == 7
+    candle7 = _make_candle(
+        symbol="ZAMAUSDT",
+        index=7,
+        open_price=Decimal("93"),
+        high_price=Decimal("95"),
+        low_price=Decimal("91"),
+        close_price=Decimal("93"),
+    )
+    up7 = service.on_candle_update(candle7)
+    assert up7 is not None
+    assert up7.status is StalkingStatus.EXPIRED
+    assert up7.current_bar == 7
+
+    # Bar 8 arrives: must not advance to 8/7
+    candle8 = _make_candle(
+        symbol="ZAMAUSDT",
+        index=8,
+        open_price=Decimal("93"),
+        high_price=Decimal("120"),  # breaches invalidation price 110
+        low_price=Decimal("91"),
+        close_price=Decimal("115"),
+    )
+    up8 = service.on_candle_update(candle8)
+    assert up8 is None  # Already expired, does not change or advance
+
+    setup_final = service.get_setup("ZAMAUSDT")
+    assert setup_final is not None
+    assert setup_final.current_bar <= 7
+    assert setup_final.status is StalkingStatus.EXPIRED
+
+
+def test_active_stalking_setups_excludes_invalidated_and_expired() -> None:
+    """get_active_stalking_setups must only return TRIGGERED and STALKING setups."""
+    service = SetupStalkingService(max_candidates=5, default_max_bars=7)
+    candle0_btc = _make_candle(
+        symbol="BTCUSDT",
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    candle0_eth = _make_candle(
+        symbol="ETHUSDT",
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+
+    sig1 = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    sig2 = Signal(
+        symbol="ETHUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    service.register_candidate(signal=sig1, setup_candle=candle0_btc)
+    service.register_candidate(signal=sig2, setup_candle=candle0_eth)
+
+    assert len(service.get_active_stalking_setups()) == 2
+
+    # Invalidate BTCUSDT
+    service.invalidate_setup("BTCUSDT", reason="Breached invalidation")
+    # Only ETHUSDT remains active in the radar
+    active = service.get_active_stalking_setups()
+    assert len(active) == 1
+    assert active[0].symbol == "ETHUSDT"
+
+    # Invalidate ETHUSDT as well
+    service.invalidate_setup("ETHUSDT", reason="Breached invalidation")
+    # Radar is now completely clean (0 entries, not padded with completed)
+    assert service.get_active_stalking_setups() == ()
+
+
+def test_triggered_setup_auto_expires_when_unexecuted_on_next_candle() -> None:
+    """When a triggered setup is not executed within 1 candle, it auto-expires."""
+    service = SetupStalkingService(default_max_bars=7)
+    candle0 = _make_candle(
+        symbol="DOGEUSDT",
+        index=0,
+        open_price=Decimal("100"),
+        high_price=Decimal("110"),
+        low_price=Decimal("90"),
+        close_price=Decimal("92"),
+    )
+    signal = Signal(
+        symbol="DOGEUSDT",
+        signal_type=SignalType.SELL,
+        price=Decimal("92"),
+        confidence=Decimal("0.85"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="BEARISH ENGULFING",
+    )
+    service.register_candidate(signal=signal, setup_candle=candle0)
+
+    # Bar 1 triggers retest
+    candle1 = _make_candle(
+        symbol="DOGEUSDT",
+        index=1,
+        open_price=Decimal("93"),
+        high_price=Decimal("97"),
+        low_price=Decimal("92"),
+        close_price=Decimal("95"),
+    )
+    up1 = service.on_candle_update(candle1)
+    assert up1 is not None
+    assert up1.status is StalkingStatus.TRIGGERED
+    assert len(service.get_active_stalking_setups()) == 1
+
+    # Bar 2 closes without the order having been executed (unexecuted)
+    candle2 = _make_candle(
+        symbol="DOGEUSDT",
+        index=2,
+        open_price=Decimal("95"),
+        high_price=Decimal("96"),
+        low_price=Decimal("94"),
+        close_price=Decimal("94.5"),
+    )
+    up2 = service.on_candle_update(candle2)
+    assert up2 is not None
+    assert up2.status is StalkingStatus.EXPIRED
+
+    # Setup is no longer active in the radar
+    assert service.get_active_stalking_setups() == ()

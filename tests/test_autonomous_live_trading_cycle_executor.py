@@ -1222,6 +1222,7 @@ def test_live_executor_pauses_and_resumes_stalking_with_portfolio_capacity() -> 
         def __init__(self) -> None:
             self.paused = False
             self.cleared = False
+            self.invalidated_symbols: list[tuple[str, str]] = []
 
         @property
         def is_paused(self) -> bool:
@@ -1234,6 +1235,14 @@ def test_live_executor_pauses_and_resumes_stalking_with_portfolio_capacity() -> 
             self.paused = paused
             if paused:
                 self.cleared = True
+
+        def invalidate_setup(
+            self,
+            symbol: str,
+            reason: str = "Execution guard rejected",
+        ) -> object:
+            self.invalidated_symbols.append((symbol, reason))
+            return None
 
     stalking_service = FakeStalkingService()
     btc = _signal(symbol="BTCUSDT")
@@ -1280,3 +1289,61 @@ def test_live_executor_pauses_and_resumes_stalking_with_portfolio_capacity() -> 
     assert report_available.skipped_capacity is False
     # Stalking must be resumed when capacity is open
     assert not stalking_service.paused
+
+
+def test_live_executor_invalidates_stalking_setup_on_rejection() -> None:
+    """When an entry intent is rejected, executor must invalidate the stalking setup."""
+
+    class FakeStalkingService:
+        def __init__(self) -> None:
+            self.paused = False
+            self.invalidated: list[tuple[str, str]] = []
+
+        @property
+        def is_paused(self) -> bool:
+            return self.paused
+
+        def clear_all(self) -> None:
+            pass
+
+        def set_paused(self, paused: bool) -> None:
+            self.paused = paused
+
+        def invalidate_setup(
+            self,
+            symbol: str,
+            reason: str = "Execution guard rejected",
+        ) -> object:
+            self.invalidated.append((symbol, reason))
+            return None
+
+    stalking_svc = FakeStalkingService()
+    doge = _signal(symbol="DOGEUSDT")
+
+    # Rejected decision (e.g. insufficient capital / not allowed)
+    rejected_decision = replace(
+        _decision(signal=doge),
+        should_execute=False,
+    )
+
+    executor, _, _ = _executor(
+        signals=(doge,),
+        decisions={doge.symbol: rejected_decision},
+        statuses={},
+    )
+    executor_with_stalking = replace(
+        executor,
+        setup_stalking_service=stalking_svc,
+    )
+
+    report = asyncio.run(
+        executor_with_stalking.execute_global_report(
+            interval=Interval.M15,
+            candle_limit=100,
+        )
+    )
+    assert len(report.results) == 1
+    # Setup must have been explicitly invalidated
+    assert len(stalking_svc.invalidated) == 1
+    assert stalking_svc.invalidated[0][0] == "DOGEUSDT"
+    assert "Intent rejected" in stalking_svc.invalidated[0][1]

@@ -484,7 +484,35 @@ class SetupStalkingService:
                 return None
 
             setup = self._setups.get(candle.symbol)
-            if setup is None or setup.status is not StalkingStatus.STALKING:
+            if setup is None:
+                return None
+
+            if setup.status is StalkingStatus.TRIGGERED:
+                # Auto-expire trigger if candle has closed and order was unexecuted
+                if (
+                    setup.last_processed_candle_close_time is not None
+                    and candle.close_time > setup.last_processed_candle_close_time
+                ):
+                    self._funnel_expired += 1
+                    updated = replace(
+                        setup,
+                        status=StalkingStatus.EXPIRED,
+                        current_bar=setup.max_bars,
+                        updated_at=now,
+                        last_processed_candle_close_time=candle.close_time,
+                    )
+                    self._setups[candle.symbol] = updated
+                    _LOGGER.info(
+                        "Setup stalking TRIGGER EXPIRED (unexecuted after 1 bar): "
+                        "symbol=%s bar=%d/%d",
+                        candle.symbol,
+                        setup.current_bar,
+                        setup.max_bars,
+                    )
+                    return updated
+                return None
+
+            if setup.status is not StalkingStatus.STALKING:
                 return None
 
             if candle.interval is not setup.interval:
@@ -510,7 +538,26 @@ class SetupStalkingService:
                 )
                 return setup
 
-            next_bar = setup.current_bar + 1
+            if setup.current_bar >= setup.max_bars:
+                self._funnel_expired += 1
+                self._completed_stalking_bars.append(setup.max_bars)
+                updated = replace(
+                    setup,
+                    current_bar=setup.max_bars,
+                    status=StalkingStatus.EXPIRED,
+                    updated_at=now,
+                    last_processed_candle_close_time=candle.close_time,
+                )
+                self._setups[candle.symbol] = updated
+                _LOGGER.info(
+                    "Setup stalking EXPIRED: symbol=%s bar=%d/%d (window exhausted)",
+                    candle.symbol,
+                    setup.max_bars,
+                    setup.max_bars,
+                )
+                return updated
+
+            next_bar = min(setup.current_bar + 1, setup.max_bars)
 
             # 1. Check Invalidation: Peak/Valley breach
             if setup.side is PositionSide.SHORT:
@@ -595,6 +642,35 @@ class SetupStalkingService:
                         )
 
                     self._funnel_reversal_confirmed += 1
+                    if next_bar >= setup.max_bars:
+                        self._funnel_expired += 1
+                        self._completed_stalking_bars.append(next_bar)
+                        updated = replace(
+                            setup,
+                            current_bar=next_bar,
+                            reversal_confirmed=True,
+                            anchor_price=candle.close_price,
+                            invalidation_price=invalidation_price,
+                            target_retest_price=target_retest,
+                            pattern_name=pattern_name,
+                            stop_loss=stop_loss,
+                            status=StalkingStatus.EXPIRED,
+                            updated_at=now,
+                            last_processed_candle_close_time=candle.close_time,
+                        )
+                        self._setups[candle.symbol] = updated
+                        _LOGGER.info(
+                            "Setup stalking EXPIRED: symbol=%s side=%s "
+                            "pattern=%s reversal confirmed on final bar %d/%d "
+                            "without remaining retest window",
+                            candle.symbol,
+                            setup.side.value,
+                            pattern_name,
+                            next_bar,
+                            setup.max_bars,
+                        )
+                        return updated
+
                     updated = replace(
                         setup,
                         current_bar=next_bar,
@@ -727,33 +803,26 @@ class SetupStalkingService:
             return updated
 
     def get_active_stalking_setups(self) -> tuple[StalkingSetup, ...]:
-        """Return tracked setups, prioritizing TRIGGERED then active STALKING."""
+        """Return tracked active setups, prioritizing TRIGGERED then active STALKING."""
         with self._lock:
             if self._paused:
                 return ()
 
             triggered: list[StalkingSetup] = []
             stalking: list[StalkingSetup] = []
-            completed: list[StalkingSetup] = []
 
             for setup in self._setups.values():
                 if setup.status is StalkingStatus.TRIGGERED:
                     triggered.append(setup)
                 elif setup.status is StalkingStatus.STALKING:
                     stalking.append(setup)
-                else:
-                    completed.append(setup)
 
             # Sort triggered by updated_at desc (most recent triggers first)
             triggered.sort(key=lambda s: s.updated_at, reverse=True)
             # Sort stalking by current_bar desc, then started_at desc
             stalking.sort(key=lambda s: (s.current_bar, s.started_at), reverse=True)
-            # Sort completed by updated_at desc
-            completed.sort(key=lambda s: s.updated_at, reverse=True)
 
-            primary = triggered + stalking
-            remaining_slots = max(0, self._max_candidates - len(primary))
-            return tuple(primary + completed[:remaining_slots])
+            return tuple(triggered + stalking)
 
     def get_setup(self, symbol: str) -> StalkingSetup | None:
         """Return the current setup for a symbol, if any."""
