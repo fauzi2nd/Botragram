@@ -1381,13 +1381,10 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 volume_sma=current_volume_sma,
                 rsi=current_rsi,
             )
-            short_zone_prices = [current_pullback]
+            short_zone_prices = [short_pullback_upper]
             if at_swing_resistance and last_swing_high is not None:
                 short_zone_prices.append(last_swing_high)
-            if (
-                htf_upper_bb is not None
-                and curr_candle.high_price >= htf_upper_bb
-            ):
+            if htf_upper_bb is not None and curr_candle.high_price >= htf_upper_bb:
                 short_zone_prices.append(htf_upper_bb)
             short_zone_price = max(short_zone_prices)
 
@@ -1492,13 +1489,10 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 volume_sma=current_volume_sma,
                 rsi=current_rsi,
             )
-            long_zone_prices = [current_pullback]
+            long_zone_prices = [long_pullback_lower]
             if at_swing_support and last_swing_low is not None:
                 long_zone_prices.append(last_swing_low)
-            if (
-                htf_lower_bb is not None
-                and curr_candle.low_price <= htf_lower_bb
-            ):
+            if htf_lower_bb is not None and curr_candle.low_price <= htf_lower_bb:
                 long_zone_prices.append(htf_lower_bb)
             long_zone_price = min(long_zone_prices)
 
