@@ -312,7 +312,8 @@ class StrategyService:
                         ),
                     )
 
-            # Stage 1 — Zone Candidate / Stalking Registration
+            # PIER zone-first contract: only a validated Stage 1 zone
+            # candidate may enter stalking; raw actionable signals must not bypass it.
             stalking_svc.record_scan()
             candidate_signal, rejection_reason = (
                 self.signal_engine.detect_zone_candidate_detailed(
