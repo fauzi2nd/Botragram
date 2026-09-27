@@ -47,7 +47,6 @@ __all__ = [
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 _DECIMAL_ZERO: Final[Decimal] = Decimal("0")
 _DEFAULT_RETEST_RATIO: Final[Decimal] = Decimal("0.50")
-_MAX_RETEST_CLOSE_DISTANCE_RATIO: Final[Decimal] = Decimal("0.20")
 _MAX_HISTORY_ENTRIES: Final[int] = 10
 
 
@@ -614,11 +613,25 @@ class SetupStalkingService:
                     side=setup.side,
                 )
                 if reversal_matched:
-                    # Zone-first semantics: once the reversal is confirmed,
-                    # retest the original zone anchor rather than the reversal candle body.
-                    # This prevents the entry target from drifting into the middle of the
-                    # reversal move.
-                    target_retest = setup.target_retest_price
+                    if setup.pattern_name.startswith("ZONE"):
+                        # PIER zone-first: keep the original structural zone target.
+                        target_retest = setup.target_retest_price
+                    else:
+                        body_high = max(candle.open_price, candle.close_price)
+                        body_low = min(candle.open_price, candle.close_price)
+                        body_size = body_high - body_low
+                        if setup.side is PositionSide.SHORT:
+                            target_retest = (
+                                body_low + (body_size * self._retest_ratio)
+                                if body_size > _DECIMAL_ZERO
+                                else candle.close_price
+                            )
+                        else:
+                            target_retest = (
+                                body_high - (body_size * self._retest_ratio)
+                                if body_size > _DECIMAL_ZERO
+                                else candle.close_price
+                            )
                     if setup.side is PositionSide.SHORT:
                         invalidation_price = candle.high_price
                         stop_loss = (
@@ -628,11 +641,6 @@ class SetupStalkingService:
                         )
                     else:
                         invalidation_price = candle.low_price
-                        stop_loss = (
-                            min(candle.low_price, setup.stop_loss)
-                            if setup.stop_loss is not None
-                            else candle.low_price
-                        )
                         stop_loss = (
                             min(candle.low_price, setup.stop_loss)
                             if setup.stop_loss is not None
@@ -713,19 +721,8 @@ class SetupStalkingService:
                         open_tol = candle_range * Decimal("0.10")
                         is_red_or_flat = candle.close_price <= candle.open_price
                         bearish_rejection = is_red_or_flat or (upper_wick >= lower_wick)
-                        retest_close_distance = (
-                            setup.target_retest_price - candle.close_price
-                        )
-                        retest_close_near_target = (
-                            retest_close_distance >= _DECIMAL_ZERO
-                            and retest_close_distance
-                            <= (
-                                candle_range * _MAX_RETEST_CLOSE_DISTANCE_RATIO
-                            )
-                        )
                         if (
                             candle.high_price >= setup.target_retest_price
-                            and retest_close_near_target
                             and candle.close_price <= setup.target_retest_price
                             and candle.open_price
                             <= setup.target_retest_price + open_tol
@@ -747,19 +744,8 @@ class SetupStalkingService:
                         open_tol = candle_range * Decimal("0.10")
                         is_green_or_flat = candle.close_price >= candle.open_price
                         bullish_bounce = is_green_or_flat or (lower_wick >= upper_wick)
-                        retest_close_distance = (
-                            candle.close_price - setup.target_retest_price
-                        )
-                        retest_close_near_target = (
-                            retest_close_distance >= _DECIMAL_ZERO
-                            and retest_close_distance
-                            <= (
-                                candle_range * _MAX_RETEST_CLOSE_DISTANCE_RATIO
-                            )
-                        )
                         if (
                             candle.low_price <= setup.target_retest_price
-                            and retest_close_near_target
                             and candle.close_price >= setup.target_retest_price
                             and candle.open_price
                             >= setup.target_retest_price - open_tol
