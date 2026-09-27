@@ -1536,13 +1536,11 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         """Validate whether execution trigger guards permit trade entry.
 
         Evaluates:
-        1. Bollinger Bands Overextension & Rejection Guard:
-           - For LONG: rejects if close is in upper 40% zone of Bollinger Bands
-             (close > mid + 0.40 * (upper - mid)) or if candle high touched/exceeded
-             upper band and closed red (bearish rejection from UB).
-           - For SHORT: rejects if close is in lower 40% zone of Bollinger Bands
-             (close < mid - 0.40 * (mid - lower)) or if candle low touched/fell below
-             lower band and closed green (bullish rejection from LB).
+        1. Bollinger Bands directional-location and rejection guards:
+           - LONG requires the close to be in the lower 40% of the local BB
+             and rejects bearish rejection from the Upper Band.
+           - SHORT requires the close to be in the upper 40% of the local BB
+             and rejects bullish rejection from the Lower Band.
         2. MACD Histogram Momentum Guard:
            - For LONG: rejects if MACD histogram is negative or decaying (hollow bar).
            - For SHORT: rejects if MACD histogram is positive or rising (hollow bar).
