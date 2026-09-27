@@ -561,7 +561,7 @@ class OpportunityDiscoveryService:
             if self.ltf_confirmation_enabled:
                 needed_ltf = (
                     38
-                    if str(self.ltf_confirmation_mode).lower()
+                    if self.ltf_confirmation_mode.lower()
                     in (
                         "macd",
                         "confluence",
