@@ -932,10 +932,10 @@ def test_stalking_funnel_tracking_end_to_end() -> None:
     # Bar 1 for SOLUSDT: neutral candle
     c_neut1 = _make_candle(
         index=1,
-        open_price=Decimal("96"),
-        high_price=Decimal("97"),
+        open_price=Decimal("97"),
+        high_price=Decimal("98"),
         low_price=Decimal("95"),
-        close_price=Decimal("96"),
+        close_price=Decimal("97"),
     )
     service.on_candle_update(replace(c_neut1, symbol="SOLUSDT"))
 
