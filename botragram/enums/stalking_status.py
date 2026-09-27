@@ -35,5 +35,6 @@ class StalkingStatus(BaseEnum):
 
     STALKING = "stalking"
     TRIGGERED = "triggered"
+    CONSUMED = "consumed"
     INVALIDATED = "invalidated"
     EXPIRED = "expired"

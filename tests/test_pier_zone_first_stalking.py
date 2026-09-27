@@ -1265,3 +1265,238 @@ def test_stalking_retest_bounce_hardening() -> None:
     updated_bounce = stalking_svc.on_candle_update(bounce_candle)
     assert updated_bounce is not None
     assert updated_bounce.status is StalkingStatus.TRIGGERED
+
+
+def test_pier_stalking_trigger_confluence_filters() -> None:
+    """Verify triggered stalking signals pass through OI/funding/ratio confluence."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=5,
+        pullback_period=3,
+        atr_period=3,
+        rsi_period=3,
+        bb_period=5,
+        min_confidence=Decimal("0.5"),
+        require_trend_filter=False,
+        require_htf_extreme_zone=False,
+        use_macd=False,
+        use_stoch_rsi=False,
+        use_structural_tp=False,
+    )
+    resolver = StrategyResolver(
+        strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: strategy}
+    )
+    signal_engine = SignalEngine(
+        strategy_resolver=resolver,
+        default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+        use_open_interest=True,
+        require_oi_confluence=True,
+        min_oi_change_pct=Decimal("0.05"),
+    )
+    stalking_svc = SetupStalkingService(max_candidates=5)
+    repo = MemorySignalRepository()
+    svc = StrategyService(
+        signal_engine=signal_engine,
+        signal_repository=repo,
+        setup_stalking_service=stalking_svc,
+        stalking_enabled=True,
+    )
+
+    now = datetime.now(UTC)
+    candles = [
+        Candle(
+            symbol="BTCUSDT",
+            interval=Interval.M5,
+            open_time=now - timedelta(minutes=5 * (10 - i)),
+            close_time=now - timedelta(minutes=5 * (9 - i)),
+            open_price=Decimal("100.5"),
+            high_price=Decimal("101.0"),
+            low_price=Decimal("100.3"),
+            close_price=Decimal("100.9"),
+            volume=Decimal("100.0"),
+            open_interest=Decimal("1000.0") - Decimal(str(i * 50)),
+        )
+        for i in range(10)
+    ]
+
+    setup = StalkingSetup(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        pattern_name="ZONE_LONG",
+        anchor_price=Decimal("100.0"),
+        invalidation_price=Decimal("95.0"),
+        target_retest_price=Decimal("100.5"),
+        htf_zone_label="1h Lower BB",
+        current_bar=1,
+        max_bars=7,
+        started_at=now - timedelta(minutes=10),
+        updated_at=now - timedelta(minutes=5),
+        status=StalkingStatus.STALKING,
+        reversal_confirmed=True,
+        stop_loss=Decimal("95.0"),
+        take_profit=Decimal("115.0"),
+        confidence=Decimal("0.85"),
+        last_processed_candle_close_time=candles[-2].close_time,
+    )
+    stalking_svc.set_setup_for_testing(setup)
+
+    signal = svc.generate_signal(
+        candles=candles,
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    assert signal.signal_type is SignalType.HOLD
+    assert signal.reason is not None
+    assert "[REJECTED_OI]" in signal.reason
+    final_setup = stalking_svc.get_setup("BTCUSDT")
+    assert final_setup is not None
+    assert final_setup.status is StalkingStatus.INVALIDATED
+
+
+def test_pier_stalking_trigger_structural_tp_clamp() -> None:
+    """Verify triggered take profit is clamped by structural resistance."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=5,
+        pullback_period=3,
+        atr_period=3,
+        rsi_period=3,
+        bb_period=5,
+        bb_std_dev=Decimal("2.0"),
+        min_confidence=Decimal("0.5"),
+        require_trend_filter=False,
+        require_htf_extreme_zone=False,
+        use_macd=False,
+        use_stoch_rsi=False,
+        use_structural_tp=True,
+        structural_tp_buffer_pct=Decimal("0.01"),
+        min_structural_rr=Decimal("1.5"),
+    )
+    resolver = StrategyResolver(
+        strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: strategy}
+    )
+    signal_engine = SignalEngine(
+        strategy_resolver=resolver,
+        default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    stalking_svc = SetupStalkingService(max_candidates=5)
+    repo = MemorySignalRepository()
+    svc = StrategyService(
+        signal_engine=signal_engine,
+        signal_repository=repo,
+        setup_stalking_service=stalking_svc,
+        stalking_enabled=True,
+    )
+
+    now = datetime.now(UTC)
+    candles = [
+        Candle(
+            symbol="ETHUSDT",
+            interval=Interval.M5,
+            open_time=now - timedelta(minutes=5 * (10 - i)),
+            close_time=now - timedelta(minutes=5 * (9 - i)),
+            open_price=Decimal("100.0") if i < 9 else Decimal("100.2"),
+            high_price=Decimal("104.0") if i < 9 else Decimal("100.5"),
+            low_price=Decimal("98.0") if i < 9 else Decimal("100.0"),
+            close_price=(
+                Decimal("102.0")
+                if i % 2 == 0 and i < 9
+                else (Decimal("99.0") if i < 9 else Decimal("100.4"))
+            ),
+            volume=Decimal("100.0"),
+        )
+        for i in range(10)
+    ]
+
+    setup = StalkingSetup(
+        symbol="ETHUSDT",
+        side=PositionSide.LONG,
+        pattern_name="ZONE_LONG",
+        anchor_price=Decimal("100.0"),
+        invalidation_price=Decimal("95.0"),
+        target_retest_price=Decimal("100.1"),
+        htf_zone_label="1h Lower BB",
+        current_bar=1,
+        max_bars=7,
+        started_at=now - timedelta(minutes=10),
+        updated_at=now - timedelta(minutes=5),
+        status=StalkingStatus.STALKING,
+        reversal_confirmed=True,
+        stop_loss=Decimal("99.9"),
+        take_profit=Decimal("120.0"),
+        confidence=Decimal("0.85"),
+        last_processed_candle_close_time=candles[-2].close_time,
+    )
+    stalking_svc.set_setup_for_testing(setup)
+
+    signal = svc.generate_signal(
+        candles=candles,
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    assert signal.signal_type is SignalType.BUY
+    assert signal.take_profit is not None
+    assert signal.take_profit < Decimal("120.0")
+    assert signal.reason is not None
+    assert "Structural TP trimmed to" in signal.reason
+
+
+def test_pier_stalking_consumed_state_and_lifecycle() -> None:
+    """Verify StalkingStatus.CONSUMED lifecycle and duplicate protection."""
+    stalking_svc = SetupStalkingService(max_candidates=5)
+    now = datetime.now(UTC)
+    candle = Candle(
+        symbol="SOLUSDT",
+        interval=Interval.M5,
+        open_time=now - timedelta(minutes=5),
+        close_time=now,
+        open_price=Decimal("100.0"),
+        high_price=Decimal("105.0"),
+        low_price=Decimal("95.0"),
+        close_price=Decimal("102.0"),
+        volume=Decimal("100.0"),
+    )
+    setup = StalkingSetup(
+        symbol="SOLUSDT",
+        side=PositionSide.LONG,
+        pattern_name="ZONE_LONG",
+        anchor_price=Decimal("100.0"),
+        invalidation_price=Decimal("95.0"),
+        target_retest_price=Decimal("100.0"),
+        htf_zone_label="1h Lower BB",
+        current_bar=1,
+        max_bars=7,
+        started_at=now - timedelta(minutes=10),
+        updated_at=now - timedelta(minutes=5),
+        status=StalkingStatus.TRIGGERED,
+        reversal_confirmed=True,
+        stop_loss=Decimal("95.0"),
+        take_profit=Decimal("110.0"),
+        confidence=Decimal("0.85"),
+        last_processed_candle_close_time=candle.close_time,
+    )
+    stalking_svc.set_setup_for_testing(setup)
+
+    consumed = stalking_svc.consume_setup("SOLUSDT", reason="Order submitted: 12345")
+    assert consumed is not None
+    assert consumed.status is StalkingStatus.CONSUMED
+
+    report = stalking_svc.get_funnel_report()
+    assert report.consumed == 1
+    summary = stalking_svc.format_funnel_summary()
+    assert "Consumed                 : 1" in summary
+
+    assert "SOLUSDT" not in stalking_svc.get_active_stalking_symbols()
+
+    zone_sig = Signal(
+        symbol="SOLUSDT",
+        signal_type=SignalType.HOLD,
+        price=Decimal("102.0"),
+        confidence=Decimal("0.85"),
+        strategy_name="test",
+        generated_at=candle.close_time,
+        reason="[STALKING_ZONE_LONG]",
+        stop_loss=Decimal("95.0"),
+        take_profit=Decimal("110.0"),
+    )
+    res = stalking_svc.register_candidate(
+        signal=zone_sig,
+        setup_candle=candle,
+    )
+    assert res is None

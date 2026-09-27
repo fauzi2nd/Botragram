@@ -17,7 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
@@ -101,6 +101,14 @@ class StrategyStalkingProvider(Protocol):
         """Explicitly invalidate a setup."""
         ...
 
+    def consume_setup(
+        self,
+        symbol: str,
+        reason: str = "Order submitted/executed",
+    ) -> StalkingSetup | None:
+        """Mark a triggered setup as CONSUMED (transactionally completed)."""
+        ...
+
 
 # =============================================================================
 # Service Classes
@@ -165,6 +173,7 @@ class StrategyService:
                         updated is not None
                         and updated.status is StalkingStatus.TRIGGERED
                     ):
+                        # 1. Trigger Guards (Bollinger / MACD)
                         guards_valid, guards_reason = (
                             self.signal_engine.validate_trigger_guards(
                                 side=updated.side,
@@ -189,10 +198,66 @@ class StrategyService:
                                     f"entry: {guards_reason}"
                                 ),
                             )
-                        return stalking_svc.build_triggered_signal(
+
+                        # 2. Build triggered entry signal
+                        triggered_signal = stalking_svc.build_triggered_signal(
                             setup=updated,
                             trigger_candle=latest_candle,
                         )
+
+                        # 3. Structural TP Wall Clamp and RR Validation (Priority 2)
+                        if (
+                            triggered_signal.take_profit is not None
+                            and triggered_signal.stop_loss is not None
+                        ):
+                            clamped_tp, struct_note = (
+                                self.signal_engine.clamp_structural_take_profit(
+                                    side=updated.side,
+                                    entry_price=triggered_signal.price,
+                                    stop_loss=triggered_signal.stop_loss,
+                                    take_profit=triggered_signal.take_profit,
+                                    candles=candles,
+                                    strategy_type=strategy_type,
+                                )
+                            )
+                            if clamped_tp is None:
+                                stalking_svc.invalidate_setup(
+                                    symbol,
+                                    reason=f"Structural TP rejected: {struct_note}",
+                                )
+                                return Signal(
+                                    symbol=symbol,
+                                    signal_type=SignalType.HOLD,
+                                    price=latest_candle.close_price,
+                                    confidence=Decimal("0"),
+                                    strategy_name=resolved_type.value,
+                                    generated_at=latest_candle.close_time,
+                                    reason=(f"[STALKING_INVALIDATED] {struct_note}"),
+                                )
+                            if clamped_tp != triggered_signal.take_profit:
+                                reason_addon = (
+                                    f" | {struct_note}" if struct_note else ""
+                                )
+                                triggered_signal = replace(
+                                    triggered_signal,
+                                    take_profit=clamped_tp,
+                                    reason=f"{triggered_signal.reason}{reason_addon}",
+                                )
+
+                        # 4. Confluence Filters (OI, Funding, Ratio) (Priority 1)
+                        filtered_signal = self.signal_engine.apply_confluence_filters(
+                            signal=triggered_signal,
+                            candles=candles,
+                            strategy_type=strategy_type,
+                        )
+                        if filtered_signal.signal_type is SignalType.HOLD:
+                            stalking_svc.invalidate_setup(
+                                symbol,
+                                reason=f"Confluence rejected: {filtered_signal.reason}",
+                            )
+                            return filtered_signal
+
+                        return filtered_signal
                     # Still stalking, invalidated, or expired -> hold immediate entry
                     if (
                         updated is not None
@@ -553,4 +618,14 @@ class StrategyService:
         """Return the stalking telemetry funnel report if stalking is enabled."""
         if self.setup_stalking_service is not None:
             return self.setup_stalking_service.get_funnel_report()
+        return None
+
+    def consume_stalking_setup(
+        self,
+        symbol: str,
+        reason: str = "Order submitted/executed",
+    ) -> StalkingSetup | None:
+        """Mark a triggered setup as CONSUMED in the stalking service."""
+        if self.setup_stalking_service is not None:
+            return self.setup_stalking_service.consume_setup(symbol, reason=reason)
         return None

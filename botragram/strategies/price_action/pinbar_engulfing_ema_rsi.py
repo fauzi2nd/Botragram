@@ -1618,6 +1618,148 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
 
         return True, ""
 
+    def clamp_structural_take_profit(
+        self,
+        *,
+        side: PositionSide,
+        entry_price: Decimal,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+        candles: Sequence[Candle],
+    ) -> tuple[Decimal | None, str]:
+        """Clamp take-profit to structural walls/floors and validate min_structural_rr.
+
+        Returns:
+            Tuple of (clamped_tp, note_or_rejection_reason).
+            If clamped_tp is None, setup is rejected due to insufficient RR.
+        """
+        if not self.use_structural_tp or len(candles) < self.bb_period:
+            return take_profit, ""
+
+        curr_candle = candles[-1]
+        close_prices = tuple(c.close_price for c in candles)
+        bb_result = calculate_bollinger_bands(
+            close_prices,
+            period=self.bb_period,
+            standard_deviation=self.bb_std_dev,
+        )
+
+        htf_target_interval = resolve_adaptive_htf_interval(curr_candle.interval)
+        htf_upper_bb: Decimal | None = None
+        htf_lower_bb: Decimal | None = None
+        htf_swing_high: Decimal | None = None
+        htf_swing_low: Decimal | None = None
+
+        if (
+            self.require_htf_extreme_zone
+            or (self.use_structural_tp and self.use_htf_structural_tp)
+        ) and len(candles) >= 8:
+            try:
+                htf_candles = resample_candles(
+                    candles=candles,
+                    target_interval=htf_target_interval,
+                    closed_only=True,
+                )
+                if len(htf_candles) >= self.htf_bb_period:
+                    htf_close_prices = tuple(c.close_price for c in htf_candles)
+                    htf_bb = calculate_bollinger_bands(
+                        htf_close_prices,
+                        period=self.htf_bb_period,
+                        standard_deviation=self.htf_bb_std_dev,
+                    )
+                    htf_upper_bb = htf_bb.upper[-1]
+                    htf_lower_bb = htf_bb.lower[-1]
+                if htf_candles:
+                    recent_htf = htf_candles[-min(len(htf_candles), 10) :]
+                    htf_swing_high = max(c.high_price for c in recent_htf)
+                    htf_swing_low = min(c.low_price for c in recent_htf)
+            except (ValueError, TypeError, IndexError) as exc:
+                _LOGGER.debug(
+                    "HTF candle resampling or indicator calculation bypassed: %s",
+                    exc,
+                )
+
+        scale_factor = resolve_timeframe_scale_factor(curr_candle.interval)
+        eff_structural_tp_buffer_pct = self.structural_tp_buffer_pct * scale_factor
+        risk_dist = abs(entry_price - stop_loss)
+
+        if side is PositionSide.LONG:
+            walls: list[tuple[Decimal, str]] = []
+            curr_upper_bb = bb_result.upper[-1]
+            if curr_upper_bb > entry_price:
+                int_label = curr_candle.interval.value
+                walls.append(
+                    (curr_upper_bb, f"{int_label} Upper BB={curr_upper_bb:.4f}")
+                )
+            if htf_upper_bb is not None and htf_upper_bb > entry_price:
+                htf_lbl = f"{htf_target_interval.value} Upper BB"
+                walls.append((htf_upper_bb, f"{htf_lbl}={htf_upper_bb:.4f}"))
+            if htf_swing_high is not None and htf_swing_high > entry_price:
+                htf_lbl = f"{htf_target_interval.value} Swing High"
+                walls.append((htf_swing_high, f"{htf_lbl}={htf_swing_high:.4f}"))
+
+            if walls:
+                nearest_wall, wall_name = min(walls, key=lambda w: w[0])
+                if take_profit > nearest_wall:
+                    trimmed_tp = nearest_wall * (
+                        _DECIMAL_ONE - eff_structural_tp_buffer_pct
+                    )
+                    eff_rr = (
+                        (trimmed_tp - entry_price) / risk_dist
+                        if risk_dist > _DECIMAL_ZERO
+                        else _DECIMAL_ZERO
+                    )
+                    if eff_rr < self.min_structural_rr:
+                        return (
+                            None,
+                            f"Structural resistance ({wall_name}) restricts TP "
+                            f"(trimmed RR={eff_rr:.2f} < {self.min_structural_rr:.2f})",
+                        )
+                    return (
+                        trimmed_tp,
+                        f"Structural TP trimmed to {trimmed_tp:.5f} "
+                        f"({wall_name}, RR: {eff_rr:.2f})",
+                    )
+        else:
+            floors: list[tuple[Decimal, str]] = []
+            curr_lower_bb = bb_result.lower[-1]
+            if curr_lower_bb < entry_price:
+                int_label = curr_candle.interval.value
+                floors.append(
+                    (curr_lower_bb, f"{int_label} Lower BB={curr_lower_bb:.4f}")
+                )
+            if htf_lower_bb is not None and htf_lower_bb < entry_price:
+                htf_lbl = f"{htf_target_interval.value} Lower BB"
+                floors.append((htf_lower_bb, f"{htf_lbl}={htf_lower_bb:.4f}"))
+            if htf_swing_low is not None and htf_swing_low < entry_price:
+                htf_lbl = f"{htf_target_interval.value} Swing Low"
+                floors.append((htf_swing_low, f"{htf_lbl}={htf_swing_low:.4f}"))
+
+            if floors:
+                nearest_floor, floor_name = max(floors, key=lambda f: f[0])
+                if take_profit < nearest_floor:
+                    trimmed_tp = nearest_floor * (
+                        _DECIMAL_ONE + eff_structural_tp_buffer_pct
+                    )
+                    eff_rr = (
+                        (entry_price - trimmed_tp) / risk_dist
+                        if risk_dist > _DECIMAL_ZERO
+                        else _DECIMAL_ZERO
+                    )
+                    if eff_rr < self.min_structural_rr:
+                        return (
+                            None,
+                            f"Structural support ({floor_name}) restricts TP "
+                            f"(trimmed RR={eff_rr:.2f} < {self.min_structural_rr:.2f})",
+                        )
+                    return (
+                        trimmed_tp,
+                        f"Structural TP trimmed to {trimmed_tp:.5f} "
+                        f"({floor_name}, RR: {eff_rr:.2f})",
+                    )
+
+        return take_profit, ""
+
     def compute_zone_confidence(
         self,
         *,

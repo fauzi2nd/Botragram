@@ -1768,6 +1768,7 @@ class DependencyProvider:
             market_service=self.market_service,
             live_futures_entry_service=self.live_futures_entry_service,
             environment=authorization.environment,
+            setup_stalking_consumer=self.setup_stalking_service,
             max_executable_quote_age_ms=(
                 self._settings.risk.max_executable_quote_age_ms
             ),

@@ -457,6 +457,7 @@ class TradingService:
                 order_type=order_type,
                 price=price,
             )
+            self._on_order_submitted(symbol=signal.symbol, order_id=order.order_id)
             return TradingResult(
                 executed=True,
                 decision=decision,
@@ -469,6 +470,7 @@ class TradingService:
             order_type=order_type,
             price=price,
         )
+        self._on_order_submitted(symbol=signal.symbol, order_id=order.order_id)
 
         return TradingResult(
             executed=True,
@@ -545,7 +547,14 @@ class TradingService:
             order_type=order_type,
             price=price,
         )
+        self._on_order_submitted(symbol=signal.symbol, order_id=order.order_id)
         return TradingResult(executed=True, decision=decision, order=order)
+
+    def _on_order_submitted(self, *, symbol: str, order_id: str) -> None:
+        """Notify strategy service to consume any active stalking setup."""
+        consumer = getattr(self.strategy_service, "consume_stalking_setup", None)
+        if callable(consumer):
+            consumer(symbol, reason=f"Order submitted: {order_id}")
 
     @staticmethod
     def _require_risk_result(*, decision: TradingDecision) -> RiskResult:

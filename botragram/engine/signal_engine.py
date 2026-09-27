@@ -30,6 +30,7 @@ from botragram.strategies.factory import StrategyResolver
 
 __all__ = [
     "SignalEngine",
+    "StructuralTargetValidator",
     "TriggerGuardsValidator",
     "ZoneCandidateDetailedDetector",
     "ZoneCandidateDetector",
@@ -42,6 +43,23 @@ __all__ = [
 # =============================================================================
 # Protocols
 # =============================================================================
+@runtime_checkable
+class StructuralTargetValidator(Protocol):
+    """Protocol for strategies validating and clamping structural take-profit."""
+
+    def clamp_structural_take_profit(
+        self,
+        *,
+        side: PositionSide,
+        entry_price: Decimal,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+        candles: Sequence[Candle],
+    ) -> tuple[Decimal | None, str]:
+        """Clamp take-profit to walls/floors and validate min_structural_rr."""
+        ...
+
+
 @runtime_checkable
 class TriggerGuardsValidator(Protocol):
     """Protocol for strategies validating execution trigger guards."""
@@ -198,7 +216,31 @@ class SignalEngine:
                     reason=f"[INVERTED] {signal.reason}",
                 )
 
-        if self.use_open_interest and signal.signal_type is not SignalType.HOLD:
+        return self.apply_confluence_filters(
+            signal=signal,
+            candles=candles,
+            strategy_type=resolved_strategy_type,
+        )
+
+    def apply_confluence_filters(
+        self,
+        *,
+        signal: Signal,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> Signal:
+        """Apply OI, funding sentiment, and account ratio filters to a signal."""
+        if signal.signal_type is SignalType.HOLD:
+            return signal
+
+        resolved_strategy_type = (
+            strategy_type if strategy_type is not None else self.default_strategy_type
+        )
+        strategy = self.strategy_resolver.resolve(
+            strategy_type=resolved_strategy_type,
+        )
+
+        if self.use_open_interest:
             if not has_oi_evaluation(signal.reason):
                 signal = strategy.apply_open_interest_confluence(
                     signal=signal,
@@ -294,3 +336,35 @@ class SignalEngine:
         if isinstance(strategy, TriggerGuardsValidator):
             return strategy.validate_trigger_guards(side=side, candles=candles)
         return True, ""
+
+    def clamp_structural_take_profit(
+        self,
+        *,
+        side: PositionSide,
+        entry_price: Decimal,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> tuple[Decimal | None, str]:
+        """Clamp take-profit to structural walls/floors using the resolved strategy.
+
+        Returns:
+            Tuple of (clamped_tp, note_or_rejection_reason).
+            If clamped_tp is None, setup is rejected due to insufficient RR.
+        """
+        resolved_strategy_type = (
+            strategy_type if strategy_type is not None else self.default_strategy_type
+        )
+        strategy = self.strategy_resolver.resolve(
+            strategy_type=resolved_strategy_type,
+        )
+        if isinstance(strategy, StructuralTargetValidator):
+            return strategy.clamp_structural_take_profit(
+                side=side,
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                candles=candles,
+            )
+        return take_profit, ""

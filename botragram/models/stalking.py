@@ -50,6 +50,7 @@ class StalkingFunnelReport:
     reversal_confirmed: int = 0
     retest_touched: int = 0
     triggered: int = 0
+    consumed: int = 0
     invalidated: int = 0
     expired: int = 0
     rejections_by_reason: dict[str, int] = field(default_factory=dict[str, int])
@@ -102,6 +103,7 @@ class StalkingFunnelReport:
             f"Reversal confirmed       : {self.reversal_confirmed}",
             f"Retest touched           : {self.retest_touched}",
             f"Triggered                : {self.triggered}",
+            f"Consumed                 : {self.consumed}",
             f"Invalidated              : {self.invalidated} ({self.invalidated_pct}%)",
             f"Expired                  : {self.expired} ({self.expired_pct}%)",
             (f"Conversion (cand -> entry): {self.candidate_to_entry_conversion_pct}%"),

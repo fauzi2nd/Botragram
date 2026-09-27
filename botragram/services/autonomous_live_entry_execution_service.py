@@ -82,6 +82,16 @@ class _ProtectedLiveEntryExecutor(Protocol):
         ...
 
 
+class _StalkingSetupConsumer(Protocol):
+    def consume_setup(
+        self,
+        symbol: str,
+        reason: str = "Order submitted/executed",
+    ) -> object:
+        """Consume an active stalking setup."""
+        ...
+
+
 @dataclass(slots=True, kw_only=True, frozen=True)
 class AutonomousLiveEntryExecutionService:
     """Revalidate and delegate one network-scoped autonomous protected entry."""
@@ -90,6 +100,7 @@ class AutonomousLiveEntryExecutionService:
     market_service: _LiveExecutableQuoteProvider
     live_futures_entry_service: _ProtectedLiveEntryExecutor
     environment: ExchangeEnvironment
+    setup_stalking_consumer: _StalkingSetupConsumer | None = None
     max_executable_quote_age_ms: int = 1_000
     max_spread_bps: Decimal = Decimal("20")
     utc_now: Callable[[], datetime] = _utc_now
@@ -219,6 +230,11 @@ class AutonomousLiveEntryExecutionService:
                 decision=decision,
             )
 
+        if self.setup_stalking_consumer is not None:
+            self.setup_stalking_consumer.consume_setup(
+                intent.symbol,
+                reason=f"Autonomous live order submitted: {order.order_id}",
+            )
         return AutonomousLiveEntryExecutionResult(
             status=AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED,
             decision=decision,

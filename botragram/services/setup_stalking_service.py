@@ -82,6 +82,14 @@ class StalkingSetupProvider(Protocol):
         """Explicitly invalidate a setup."""
         ...
 
+    def consume_setup(
+        self,
+        symbol: str,
+        reason: str = "Order submitted/executed",
+    ) -> StalkingSetup | None:
+        """Mark a triggered setup as CONSUMED (transactionally completed)."""
+        ...
+
 
 class SetupStalkingService:
     """Track and observe candidate setups across 1-7 subsequent bars."""
@@ -114,6 +122,7 @@ class SetupStalkingService:
         self._funnel_reversal_confirmed: int = 0
         self._funnel_retest_touched: int = 0
         self._funnel_triggered: int = 0
+        self._funnel_consumed: int = 0
         self._funnel_invalidated: int = 0
         self._funnel_expired: int = 0
         self._funnel_rejections: dict[str, int] = {}
@@ -179,6 +188,7 @@ class SetupStalkingService:
                 reversal_confirmed=self._funnel_reversal_confirmed,
                 retest_touched=self._funnel_retest_touched,
                 triggered=self._funnel_triggered,
+                consumed=self._funnel_consumed,
                 invalidated=self._funnel_invalidated,
                 expired=self._funnel_expired,
                 rejections_by_reason=dict(self._funnel_rejections),
@@ -270,9 +280,13 @@ class SetupStalkingService:
                 return None
 
             existing = self._setups.get(signal.symbol)
-            if existing is not None and existing.status is StalkingStatus.STALKING:
+            if existing is not None and existing.status in (
+                StalkingStatus.STALKING,
+                StalkingStatus.TRIGGERED,
+            ):
                 _LOGGER.debug(
-                    "Stalking setup already active for %s; skipping duplicate",
+                    "Stalking setup already %s for %s; skipping duplicate",
+                    existing.status.value,
                     signal.symbol,
                 )
                 return existing
@@ -771,6 +785,31 @@ class SetupStalkingService:
             self._setups[symbol] = updated
             _LOGGER.info(
                 "Setup stalking manually INVALIDATED: symbol=%s reason=%s",
+                symbol,
+                reason,
+            )
+            return updated
+
+    def consume_setup(
+        self,
+        symbol: str,
+        reason: str = "Order submitted/executed",
+    ) -> StalkingSetup | None:
+        """Mark a triggered setup as CONSUMED (transactionally completed)."""
+        now = datetime.now(UTC)
+        with self._lock:
+            setup = self._setups.get(symbol)
+            if setup is None:
+                return None
+            self._funnel_consumed += 1
+            updated = replace(
+                setup,
+                status=StalkingStatus.CONSUMED,
+                updated_at=now,
+            )
+            self._setups[symbol] = updated
+            _LOGGER.info(
+                "Setup stalking CONSUMED: symbol=%s reason=%s",
                 symbol,
                 reason,
             )

@@ -389,6 +389,7 @@ def _create_service(
     utc_now: Callable[[], datetime] = lambda: _NOW,
     market_service: _FakeMarketService | None = None,
     environment: ExchangeEnvironment = ExchangeEnvironment.TESTNET,
+    setup_stalking_consumer: object | None = None,
 ) -> AutonomousLiveEntryExecutionService:
     """Create the adapter around canonical fresh-risk dependencies."""
     return AutonomousLiveEntryExecutionService(
@@ -409,6 +410,7 @@ def _create_service(
         ),
         live_futures_entry_service=protected_entry_service,
         environment=environment,
+        setup_stalking_consumer=setup_stalking_consumer,  # type: ignore[arg-type]
         max_executable_quote_age_ms=max_executable_quote_age_ms,
         max_spread_bps=max_spread_bps,
         utc_now=utc_now,
@@ -1222,3 +1224,34 @@ def test_live_entry_risk_evaluation_service_skips_recovery_when_service_is_none(
     assert evaluation.decision.should_execute
     assert accounts.calls == 1
     assert positions.calls == 1
+
+
+def test_autonomous_live_entry_consumes_active_stalking_setup() -> None:
+    """Consume the active stalking setup when autonomous live order executes."""
+    consumed_events: list[tuple[str, str]] = []
+
+    class _SpyStalkingConsumer:
+        def consume_setup(self, symbol: str, reason: str = "") -> None:
+            consumed_events.append((symbol, reason))
+
+    accounts = _FakeAccountService(balances=[Decimal("500")])
+    positions = _FakePositionService(portfolios=[()])
+    protected_entry = _FakeProtectedEntryService()
+    consumer = _SpyStalkingConsumer()
+    service = _create_service(
+        account_service=accounts,
+        position_service=positions,
+        protected_entry_service=protected_entry,
+        setup_stalking_consumer=consumer,
+    )
+
+    result = asyncio.run(
+        service.execute(
+            intent=_create_intent(symbol="BTCUSDT"),
+            authorization=_create_authorization(),
+        )
+    )
+    assert result.status is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
+    assert len(consumed_events) == 1
+    assert consumed_events[0][0] == "BTCUSDT"
+    assert "Autonomous live order submitted" in consumed_events[0][1]
