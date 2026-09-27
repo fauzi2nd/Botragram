@@ -339,9 +339,11 @@ class OpportunityDiscoveryService:
                 effective_candle_limit = max(candle_limit, candidate_minimum)
 
         effective_symbols = symbols
+        active_stalking_set: frozenset[str] = frozenset()
         if self.setup_stalking_service is not None:
             active_stalking = self.setup_stalking_service.get_active_stalking_symbols()
             if active_stalking:
+                active_stalking_set = frozenset(active_stalking)
                 effective_symbols = tuple(dict.fromkeys((*active_stalking, *symbols)))
 
         _LOGGER.info(
@@ -401,7 +403,13 @@ class OpportunityDiscoveryService:
 
             latest_closed_candle = closed_candles[-1]
 
-            if self.filter_min_liquidity:
+            # Active stalking setups bypass entry filters: the setup was already
+            # accepted at registration time. Filters must not block on_candle_update
+            # from being called — otherwise bars cannot advance and the setup will
+            # never expire or invalidate naturally.
+            symbol_has_active_stalking = symbol in active_stalking_set
+
+            if self.filter_min_liquidity and not symbol_has_active_stalking:
                 is_liquid, reject_reason = self._evaluate_liquidity(
                     closed_candles=closed_candles,
                     interval=interval,
@@ -414,7 +422,7 @@ class OpportunityDiscoveryService:
                     )
                     continue
 
-            if self.filter_extreme_volatility:
+            if self.filter_extreme_volatility and not symbol_has_active_stalking:
                 candle_range = (
                     latest_closed_candle.high_price - latest_closed_candle.low_price
                 )
