@@ -354,7 +354,9 @@ class SetupStalkingService:
             body_size = body_high - body_low
 
             is_zone_candidate = pattern.startswith("ZONE")
-            zone_target = signal.price if is_zone_candidate else setup_candle.close_price
+            zone_target = (
+                signal.price if is_zone_candidate else setup_candle.close_price
+            )
 
             if side is PositionSide.SHORT:
                 invalidation_price = setup_candle.high_price

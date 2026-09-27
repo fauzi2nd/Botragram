@@ -860,7 +860,7 @@ async def test_backtest_engine_with_stalking_strategy_service() -> None:
     anchor_signal = Signal(
         symbol="BTCUSDT",
         signal_type=SignalType.HOLD,
-        price=Decimal("92"),
+        price=Decimal("99"),
         confidence=Decimal("0.85"),
         strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
         generated_at=_START_TIME,

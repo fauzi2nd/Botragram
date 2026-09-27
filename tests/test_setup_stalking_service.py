@@ -866,7 +866,7 @@ def test_stalking_funnel_tracking_end_to_end() -> None:
         confidence=Decimal("0.85"),
         strategy_name="PIER",
         generated_at=_START_TIME,
-        reason="BEARISH_REJECTION",
+        reason="[STALKING_ZONE_SHORT] Price in 15m Upper BB",
     )
     reg1 = service.register_candidate(signal=sig1, setup_candle=candle0)
     assert reg1 is not None
@@ -877,7 +877,7 @@ def test_stalking_funnel_tracking_end_to_end() -> None:
         open_price=Decimal("96"),
         high_price=Decimal("104"),
         low_price=Decimal("95"),
-        close_price=Decimal("97"),
+        close_price=Decimal("95"),
     )
     up1 = service.on_candle_update(c_trigger)
     assert up1 is not None

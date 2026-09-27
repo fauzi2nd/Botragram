@@ -148,12 +148,12 @@ def test_strategy_service_registers_stalking_candidate_and_holds_entry() -> None
     )
     anchor_signal = Signal(
         symbol="BTCUSDT",
-        signal_type=SignalType.SELL,
+        signal_type=SignalType.HOLD,
         price=Decimal("92"),
         confidence=Decimal("0.85"),
         strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
         generated_at=candle0.close_time,
-        reason="BEARISH ENGULFING at HTF Upper Band",
+        reason="[STALKING_ZONE_SHORT] Price in 15m Upper BB",
         stop_loss=Decimal("112"),
         take_profit=Decimal("80"),
     )
@@ -215,7 +215,7 @@ def test_strategy_service_evaluates_retest_trigger_into_actionable_signal() -> N
         confidence=Decimal("0.85"),
         strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
         generated_at=candle0.close_time,
-        reason="BEARISH ENGULFING",
+        reason="[STALKING_ZONE_SHORT] Price in 15m Upper BB",
         stop_loss=Decimal("112"),
         take_profit=Decimal("80"),
     )
