@@ -1500,3 +1500,53 @@ def test_pier_stalking_consumed_state_and_lifecycle() -> None:
         setup_candle=candle,
     )
     assert res is None
+
+
+def test_pier_trigger_guards_macd_negative_and_decaying_rejected() -> None:
+    """Trigger guard rejects LONG on negative or decaying MACD histogram."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=20,
+        pullback_period=5,
+        rsi_period=14,
+        bb_period=20,
+        use_macd=True,
+        macd_fast_period=12,
+        macd_slow_period=26,
+        macd_signal_period=9,
+    )
+    # Downward trending candles produce negative MACD histogram
+    downtrend_candles = [
+        _make_candle(
+            index=i,
+            open_price=Decimal("150") - (Decimal(str(i)) * Decimal("0.8")),
+            high_price=Decimal("151") - (Decimal(str(i)) * Decimal("0.8")),
+            low_price=Decimal("149") - (Decimal(str(i)) * Decimal("0.8")),
+            close_price=Decimal("149.5") - (Decimal(str(i)) * Decimal("0.8")),
+        )
+        for i in range(50)
+    ]
+    # LONG on negative MACD must be rejected
+    is_valid, reason = strategy.validate_trigger_guards(
+        side=PositionSide.LONG,
+        candles=downtrend_candles,
+    )
+    assert not is_valid
+    assert "MACD histogram" in reason
+
+    # SHORT on positive MACD must also be rejected
+    uptrend_candles = [
+        _make_candle(
+            index=i,
+            open_price=Decimal("100") + (Decimal(str(i)) * Decimal("0.8")),
+            high_price=Decimal("101") + (Decimal(str(i)) * Decimal("0.8")),
+            low_price=Decimal("99") + (Decimal(str(i)) * Decimal("0.8")),
+            close_price=Decimal("100.5") + (Decimal(str(i)) * Decimal("0.8")),
+        )
+        for i in range(50)
+    ]
+    is_valid_short, reason_short = strategy.validate_trigger_guards(
+        side=PositionSide.SHORT,
+        candles=uptrend_candles,
+    )
+    assert not is_valid_short
+    assert "MACD histogram" in reason_short

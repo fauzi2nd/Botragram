@@ -1568,23 +1568,23 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         curr_lower = bb_result.lower[-1]
 
         if side is PositionSide.LONG:
-            ub_threshold = curr_mid + ((curr_upper - curr_mid) * Decimal("0.60"))
-            if curr_close > ub_threshold:
-                return False, "BB upper zone (anti-pucuk guard)"
             if (
                 curr_candle.high_price >= curr_upper
                 and curr_candle.close_price < curr_candle.open_price
             ):
                 return False, "Bearish rejection from Upper Bollinger Band"
+            ub_threshold = curr_mid + ((curr_upper - curr_mid) * Decimal("0.60"))
+            if curr_close > ub_threshold:
+                return False, "BB upper zone (anti-pucuk guard)"
         else:
-            lb_threshold = curr_mid - ((curr_mid - curr_lower) * Decimal("0.60"))
-            if curr_close < lb_threshold:
-                return False, "BB lower zone (anti-lembah guard)"
             if (
                 curr_candle.low_price <= curr_lower
                 and curr_candle.close_price > curr_candle.open_price
             ):
                 return False, "Bullish rejection from Lower Bollinger Band"
+            lb_threshold = curr_mid - ((curr_mid - curr_lower) * Decimal("0.60"))
+            if curr_close < lb_threshold:
+                return False, "BB lower zone (anti-lembah guard)"
 
         # 2. MACD Momentum Guard
         min_macd_vals = self.macd_slow_period + self.macd_signal_period - 1
@@ -1604,12 +1604,22 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 )
 
                 if side is PositionSide.LONG:
+                    if curr_hist <= Decimal("0"):
+                        return (
+                            False,
+                            "MACD histogram not positive (momentum not bullish)",
+                        )
                     if prev_hist is not None and curr_hist < prev_hist:
                         return (
                             False,
                             "MACD histogram decaying (hollow bar / momentum loss)",
                         )
                 else:
+                    if curr_hist >= Decimal("0"):
+                        return (
+                            False,
+                            "MACD histogram not negative (momentum not bearish)",
+                        )
                     if prev_hist is not None and curr_hist > prev_hist:
                         return (
                             False,

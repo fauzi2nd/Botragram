@@ -43,6 +43,8 @@ class LtfConfirmationMode(StrEnum):
     DIRECTION = "direction"
     EMA = "ema"
     BOTH = "both"
+    MACD = "macd"
+    CONFLUENCE = "confluence"
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -55,6 +57,7 @@ class LtfMicroResult:
     is_aligned_with_buy: bool
     is_aligned_with_sell: bool
     mode: LtfConfirmationMode
+    macd_histogram: Decimal | None = None
 
 
 def evaluate_ltf_micro_confirmation(
@@ -68,8 +71,7 @@ def evaluate_ltf_micro_confirmation(
 
     Args:
         candles: Sequence of closed candles from lower timeframe (e.g. 3m or 1m).
-        mode: Confirmation mode - 'direction' (candle direction), 'ema' (close vs EMA),
-            or 'both' (both direction and EMA alignment).
+        mode: Confirmation mode - 'direction', 'ema', 'both', 'macd', or 'confluence'.
         ema_period: Lookback period for micro EMA (default 9).
         fail_closed: If True and data is insufficient, deny both buy and sell.
 
@@ -93,11 +95,13 @@ def evaluate_ltf_micro_confirmation(
             is_aligned_with_buy=not fail_closed,
             is_aligned_with_sell=not fail_closed,
             mode=parsed_mode,
+            macd_histogram=None,
         )
 
     latest_candle = candles[-1]
     latest_close = latest_candle.close_price
     latest_open = latest_candle.open_price
+    close_prices = [c.close_price for c in candles]
 
     # 1. Micro candle direction (bullish if close >= open, bearish if close <= open)
     is_dir_buy = latest_close >= latest_open
@@ -105,7 +109,11 @@ def evaluate_ltf_micro_confirmation(
 
     # 2. Micro EMA alignment (bullish if close >= EMA, bearish if close <= EMA)
     ema_value: Decimal | None = None
-    if parsed_mode in (LtfConfirmationMode.EMA, LtfConfirmationMode.BOTH):
+    if parsed_mode in (
+        LtfConfirmationMode.EMA,
+        LtfConfirmationMode.BOTH,
+        LtfConfirmationMode.CONFLUENCE,
+    ):
         if len(candles) < ema_period:
             if fail_closed:
                 is_ema_buy = False
@@ -114,7 +122,6 @@ def evaluate_ltf_micro_confirmation(
                 is_ema_buy = True
                 is_ema_sell = True
         else:
-            close_prices = [c.close_price for c in candles]
             ema_series = calculate_ema(close_prices, period=ema_period)
             ema_value = ema_series[-1]
             is_ema_buy = latest_close >= ema_value
@@ -123,16 +130,87 @@ def evaluate_ltf_micro_confirmation(
         is_ema_buy = True
         is_ema_sell = True
 
-    # 3. Combine checks based on mode
+    # 3. Micro MACD Momentum alignment (solid green for BUY, solid red for SELL)
+    macd_hist_value: Decimal | None = None
+    is_macd_buy = True
+    is_macd_sell = True
+    if parsed_mode in (LtfConfirmationMode.MACD, LtfConfirmationMode.CONFLUENCE):
+        min_macd_candles = 34
+        if len(candles) < min_macd_candles:
+            if fail_closed:
+                is_macd_buy = False
+                is_macd_sell = False
+        else:
+            from botragram.indicators.momentum.macd import calculate_macd
+
+            macd_res = calculate_macd(
+                close_prices,
+                fast_period=12,
+                slow_period=26,
+                signal_period=9,
+            )
+            if len(macd_res.histogram) >= 1:
+                curr_h = macd_res.histogram[-1]
+                macd_hist_value = curr_h
+                prev_h = (
+                    macd_res.histogram[-2] if len(macd_res.histogram) >= 2 else None
+                )
+                # BUY requires positive histogram and non-decaying (solid green)
+                is_macd_buy = curr_h > Decimal("0") and (
+                    prev_h is None or curr_h >= prev_h
+                )
+                # SELL requires negative histogram and non-rising (solid red)
+                is_macd_sell = curr_h < Decimal("0") and (
+                    prev_h is None or curr_h <= prev_h
+                )
+
+    # 4. Micro Bollinger Bands alignment (discount zone for BUY, premium for SELL)
+    is_bb_buy = True
+    is_bb_sell = True
+    if parsed_mode is LtfConfirmationMode.CONFLUENCE:
+        bb_period = 20
+        if len(candles) < bb_period:
+            if fail_closed:
+                is_bb_buy = False
+                is_bb_sell = False
+        else:
+            from botragram.indicators.volatility.bollinger_bands import (
+                calculate_bollinger_bands,
+            )
+
+            bb_res = calculate_bollinger_bands(
+                close_prices,
+                period=bb_period,
+                standard_deviation=Decimal("2.0"),
+            )
+            curr_mid = bb_res.middle[-1]
+            curr_upper = bb_res.upper[-1]
+            curr_lower = bb_res.lower[-1]
+            # BUY: close <= mid and no bearish rejection from upper band
+            is_bb_buy = (latest_close <= curr_mid) and not (
+                latest_candle.high_price >= curr_upper and latest_close < latest_open
+            )
+            # SELL: close >= mid and no bullish rejection from lower band
+            is_bb_sell = (latest_close >= curr_mid) and not (
+                latest_candle.low_price <= curr_lower and latest_close > latest_open
+            )
+
+    # 5. Combine checks based on mode
     if parsed_mode is LtfConfirmationMode.DIRECTION:
         aligned_buy = is_dir_buy
         aligned_sell = is_dir_sell
     elif parsed_mode is LtfConfirmationMode.EMA:
         aligned_buy = is_ema_buy
         aligned_sell = is_ema_sell
-    else:  # BOTH
+    elif parsed_mode is LtfConfirmationMode.BOTH:
         aligned_buy = is_dir_buy and is_ema_buy
         aligned_sell = is_dir_sell and is_ema_sell
+    elif parsed_mode is LtfConfirmationMode.MACD:
+        aligned_buy = is_macd_buy
+        aligned_sell = is_macd_sell
+    else:  # CONFLUENCE
+        aligned_buy = is_dir_buy and is_ema_buy and is_macd_buy and is_bb_buy
+        aligned_sell = is_dir_sell and is_ema_sell and is_macd_sell and is_bb_sell
 
     return LtfMicroResult(
         latest_close=latest_close,
@@ -141,4 +219,5 @@ def evaluate_ltf_micro_confirmation(
         is_aligned_with_buy=aligned_buy,
         is_aligned_with_sell=aligned_sell,
         mode=parsed_mode,
+        macd_histogram=macd_hist_value,
     )

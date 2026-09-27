@@ -559,11 +559,19 @@ class OpportunityDiscoveryService:
                     continue
 
             if self.ltf_confirmation_enabled:
-                ltf_limit = max(self.ltf_ema_period + 5, 10)
+                needed_ltf = (
+                    38
+                    if str(self.ltf_confirmation_mode).lower()
+                    in (
+                        "macd",
+                        "confluence",
+                    )
+                    else max(self.ltf_ema_period + 5, 10)
+                )
                 ltf_candles = await self.market_service.get_candles(
                     symbol=symbol,
                     interval=self.ltf_interval,
-                    limit=ltf_limit,
+                    limit=needed_ltf + 2,
                     persist=False,
                     prefer_stored=True,
                     as_of=as_of,
@@ -571,7 +579,7 @@ class OpportunityDiscoveryService:
                 closed_ltf_candles = self._select_closed_candles(
                     candles=ltf_candles,
                     as_of=as_of,
-                    candle_limit=max(self.ltf_ema_period + 1, 5),
+                    candle_limit=needed_ltf,
                     require_strict_sequence=False,
                 )
                 ltf_result = evaluate_ltf_micro_confirmation(

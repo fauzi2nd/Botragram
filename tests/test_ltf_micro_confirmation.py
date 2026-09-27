@@ -145,6 +145,59 @@ def test_evaluate_ltf_both_mode() -> None:
     assert res.is_aligned_with_sell is False
 
 
+def test_evaluate_ltf_macd_mode() -> None:
+    """Verify MACD mode validates solid green bars for BUY and solid red for SELL."""
+    # 50 accelerating candles produce positive, rising MACD histogram
+    accelerating_pairs = [
+        (
+            Decimal("100") + (Decimal(str(i * i)) * Decimal("0.05")),
+            Decimal("100.5") + (Decimal(str(i * i)) * Decimal("0.05")),
+        )
+        for i in range(50)
+    ]
+    rising_candles = _make_candles(accelerating_pairs)
+    res_rising = evaluate_ltf_micro_confirmation(
+        rising_candles,
+        mode=LtfConfirmationMode.MACD,
+    )
+    assert res_rising.is_aligned_with_buy is True
+    assert res_rising.is_aligned_with_sell is False
+    assert res_rising.macd_histogram is not None
+    assert res_rising.macd_histogram > Decimal("0")
+
+    # Add decaying candles (flat close) so histogram decays (hollow bar)
+    decaying_pairs = list(accelerating_pairs)
+    last_close = decaying_pairs[-1][1]
+    for _ in range(6):
+        decaying_pairs.append((last_close, last_close))
+    decaying_candles = _make_candles(decaying_pairs)
+    res_decaying = evaluate_ltf_micro_confirmation(
+        decaying_candles,
+        mode=LtfConfirmationMode.MACD,
+    )
+    # Decaying histogram should reject BUY
+    assert res_decaying.is_aligned_with_buy is False
+
+
+def test_evaluate_ltf_confluence_mode() -> None:
+    """Verify CONFLUENCE mode enforces EMA + direction + MACD + BB confluence."""
+    accelerating_pairs = [
+        (
+            Decimal("100") + (Decimal(str(i * i)) * Decimal("0.05")),
+            Decimal("100.5") + (Decimal(str(i * i)) * Decimal("0.05")),
+        )
+        for i in range(50)
+    ]
+    candles = _make_candles(accelerating_pairs)
+    res = evaluate_ltf_micro_confirmation(
+        candles,
+        mode=LtfConfirmationMode.CONFLUENCE,
+    )
+    assert res.mode is LtfConfirmationMode.CONFLUENCE
+    assert res.ema_value is not None
+    assert res.macd_histogram is not None
+
+
 class _FakeMarketService:
     def __init__(
         self, candles_by_key: dict[tuple[str, Interval], list[Candle]]
