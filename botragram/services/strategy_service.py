@@ -320,13 +320,6 @@ class StrategyService:
                     strategy_type=strategy_type,
                 )
             )
-            if candidate_signal is None:
-                raw_sig = self.signal_engine.generate(
-                    candles=candles,
-                    strategy_type=strategy_type,
-                )
-                if raw_sig.signal_type in {SignalType.BUY, SignalType.SELL}:
-                    candidate_signal = raw_sig
 
             if candidate_signal is not None:
                 stalking_svc.record_zone_candidate()
