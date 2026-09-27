@@ -936,14 +936,14 @@ async def test_backtest_engine_with_stalking_strategy_service() -> None:
         low_price="97.5",
         close_price="98",
     )
-    # Target retest = body_low + (body_size * 0.5) = 98 + (0.5 * 0.5) = 98.25
-    # Bar 2: Retest touches 98.25 (high 98.5) and rejects down to close at 97 <= 98.25
+    # Zone-first retest stays at the original zone anchor close (99).
+    # Bar 2: Retest touches 99 (high 99.5) and rejects down to close at 98.5.
     candle2 = _create_candle(
         minute=2,
-        open_price="97.5",
-        high_price="98.5",
+        open_price="98.5",
+        high_price="99.5",
         low_price="96.5",
-        close_price="97",
+        close_price="98.5",
     )
     # Bar 3: Price drops to 75, hitting TP at 80
     candle3 = _create_candle(
@@ -972,7 +972,7 @@ async def test_backtest_engine_with_stalking_strategy_service() -> None:
     # Trade was entered on bar 2 (TRIGGERED) and closed at TP on bar 3
     assert result.metrics.total_trades == 1
     assert result.trades[0].side is PositionSide.SHORT
-    assert result.trades[0].entry_price == Decimal("97") * (
+    assert result.trades[0].entry_price == Decimal("98.5") * (
         Decimal("1") - Decimal("0.0005")
     )
     assert "take-profit" in (result.trades[0].reason or "").lower()
