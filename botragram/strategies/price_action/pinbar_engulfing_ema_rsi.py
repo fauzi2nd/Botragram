@@ -1536,11 +1536,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         """Validate whether execution trigger guards permit trade entry.
 
         Evaluates:
-        1. Bollinger Bands directional-location and rejection guards:
-           - LONG requires the close to be in the lower 40% of the local BB
-             and rejects bearish rejection from the Upper Band.
-           - SHORT requires the close to be in the upper 40% of the local BB
-             and rejects bullish rejection from the Lower Band.
+        1. Bollinger Bands overextension and rejection guards.
         2. MACD Histogram Momentum Guard:
            - For LONG: rejects if MACD histogram is negative or decaying (hollow bar).
            - For SHORT: rejects if MACD histogram is positive or rising (hollow bar).
@@ -1572,13 +1568,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             ):
                 return False, "Bearish rejection from Upper Bollinger Band"
             ub_threshold = curr_mid + ((curr_upper - curr_mid) * Decimal("0.60"))
-            lb_entry_threshold = curr_mid - (
-                (curr_mid - curr_lower) * Decimal("0.60")
-            )
             if curr_close > ub_threshold:
                 return False, "BB upper zone (anti-pucuk guard)"
-            if curr_close > lb_entry_threshold:
-                return False, "BB middle zone (LONG entry requires lower zone)"
         else:
             if (
                 curr_candle.low_price <= curr_lower
@@ -1586,13 +1577,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             ):
                 return False, "Bullish rejection from Lower Bollinger Band"
             lb_threshold = curr_mid - ((curr_mid - curr_lower) * Decimal("0.60"))
-            ub_entry_threshold = curr_mid + (
-                (curr_upper - curr_mid) * Decimal("0.60")
-            )
             if curr_close < lb_threshold:
                 return False, "BB lower zone (anti-lembah guard)"
-            if curr_close < ub_entry_threshold:
-                return False, "BB middle zone (SHORT entry requires upper zone)"
 
         # 2. MACD Momentum Guard
         min_macd_vals = self.macd_slow_period + self.macd_signal_period - 1
