@@ -353,9 +353,14 @@ class SetupStalkingService:
             body_low = min(setup_candle.open_price, setup_candle.close_price)
             body_size = body_high - body_low
 
+            is_zone_candidate = pattern.startswith("ZONE")
+            zone_target = signal.price if is_zone_candidate else setup_candle.close_price
+
             if side is PositionSide.SHORT:
                 invalidation_price = setup_candle.high_price
-                if rev_confirmed:
+                if is_zone_candidate:
+                    target_retest = zone_target
+                elif rev_confirmed:
                     target_retest = (
                         body_low + (body_size * ratio)
                         if body_size > _DECIMAL_ZERO
@@ -365,7 +370,9 @@ class SetupStalkingService:
                     target_retest = setup_candle.close_price
             else:
                 invalidation_price = setup_candle.low_price
-                if rev_confirmed:
+                if is_zone_candidate:
+                    target_retest = zone_target
+                elif rev_confirmed:
                     target_retest = (
                         body_high - (body_size * ratio)
                         if body_size > _DECIMAL_ZERO
