@@ -89,6 +89,15 @@ class _FakeStrategy(BaseStrategy):
     def minimum_candles(self) -> int:
         return 1
 
+    def detect_zone_candidate_detailed(
+        self,
+        *,
+        candles: Sequence[Candle],
+    ) -> tuple[Signal | None, str]:
+        if candles[-1].symbol == self._signal.symbol:
+            return self._signal, ""
+        return None, "No zone setup"
+
     def generate_signal(self, *, candles: Sequence[Candle]) -> Signal:
         sym = candles[-1].symbol
         if sym == self._signal.symbol:
@@ -341,7 +350,7 @@ async def test_opportunity_discovery_evaluates_active_stalking_symbol() -> None:
         symbol="ETHUSDT",
         index=1,
         open_price=Decimal("186"),
-        # Body 185..200 (size 15). 50% retest = 192.5. High 193 touches, close 191.
+        # Structural zone target = 192.5. High 193 touches, close 191.
         high_price=Decimal("193"),
         low_price=Decimal("185"),
         close_price=Decimal("191"),
@@ -349,11 +358,11 @@ async def test_opportunity_discovery_evaluates_active_stalking_symbol() -> None:
     anchor_signal = Signal(
         symbol="ETHUSDT",
         signal_type=SignalType.SELL,
-        price=Decimal("185"),
+        price=Decimal("192.5"),
         confidence=Decimal("0.90"),
         strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
         generated_at=candle0.close_time,
-        reason="BEAR_ENGULF",
+        reason="[STALKING_ZONE_SHORT] HTF Upper Band",
         stop_loss=Decimal("212"),
         take_profit=Decimal("150"),
     )
