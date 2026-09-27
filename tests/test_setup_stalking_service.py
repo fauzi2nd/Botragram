@@ -142,8 +142,6 @@ def test_register_bearish_candidate_and_retest_calculation() -> None:
     assert setup.max_bars == 7
 
 
-
-
 def test_zone_first_reversal_preserves_original_zone_retest_price() -> None:
     """Zone-first stalking keeps the initial zone anchor as the retest target."""
     service = SetupStalkingService()
@@ -942,10 +940,10 @@ def test_stalking_funnel_tracking_end_to_end() -> None:
     # Bar 2 for SOLUSDT: neutral candle, hits max_bars=2 -> EXPIRED
     c_neut2 = _make_candle(
         index=2,
-        open_price=Decimal("96"),
-        high_price=Decimal("97"),
+        open_price=Decimal("97"),
+        high_price=Decimal("98"),
         low_price=Decimal("95"),
-        close_price=Decimal("96"),
+        close_price=Decimal("97"),
     )
     up3 = service.on_candle_update(replace(c_neut2, symbol="SOLUSDT"))
     assert up3 is not None

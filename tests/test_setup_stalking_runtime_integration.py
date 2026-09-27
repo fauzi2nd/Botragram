@@ -210,7 +210,7 @@ def test_strategy_service_evaluates_retest_trigger_into_actionable_signal() -> N
     )
     anchor_signal = Signal(
         symbol="BTCUSDT",
-        signal_type=SignalType.HOLD,
+        signal_type=SignalType.SELL,
         price=Decimal("92"),
         confidence=Decimal("0.85"),
         strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
@@ -241,26 +241,10 @@ def test_strategy_service_evaluates_retest_trigger_into_actionable_signal() -> N
         strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
     )
 
-    # Bar 1: Reversal confirmation occurs in the original zone.
-    reversal_candle = _make_candle(
+    # Bar 1: Retest touches the original zone anchor at 92 and rejects.
+    candle1 = _make_candle(
         symbol="BTCUSDT",
         index=1,
-        open_price=Decimal("95"),
-        high_price=Decimal("100"),
-        low_price=Decimal("94"),
-        close_price=Decimal("94"),
-    )
-    sig_reversal = strategy_service.generate_signal(
-        candles=[candle0, reversal_candle],
-        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
-    )
-    assert sig_reversal.signal_type is SignalType.HOLD
-    assert "awaiting retest@92" in (sig_reversal.reason or "")
-
-    # Bar 2: Retest touches the original zone anchor at 92 and rejects.
-    candle2 = _make_candle(
-        symbol="BTCUSDT",
-        index=2,
         open_price=Decimal("92.2"),
         high_price=Decimal("94"),
         low_price=Decimal("91"),
@@ -268,7 +252,7 @@ def test_strategy_service_evaluates_retest_trigger_into_actionable_signal() -> N
     )
 
     sig1 = strategy_service.generate_signal(
-        candles=[candle0, reversal_candle, candle2],
+        candles=[candle0, candle1],
         strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
     )
 

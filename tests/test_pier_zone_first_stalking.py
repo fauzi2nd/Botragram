@@ -1054,6 +1054,8 @@ def test_pier_trigger_guards_bollinger_bands() -> None:
     assert "BB lower zone" in reason_short
 
 
+
+
 def test_pier_trigger_guards_macd_momentum() -> None:
     """MACD momentum guard rejects LONG on decaying histogram (bar kosong)."""
     strategy = PinbarEngulfingEmaRsiStrategy(
