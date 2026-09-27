@@ -1054,6 +1054,57 @@ def test_pier_trigger_guards_bollinger_bands() -> None:
     assert "BB lower zone" in reason_short
 
 
+
+
+def test_pier_trigger_guards_reject_middle_bollinger_entries() -> None:
+    """SHORT requires upper BB zone and LONG requires lower BB zone."""
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=20,
+        pullback_period=5,
+        rsi_period=14,
+        bb_period=20,
+        bb_std_dev=Decimal("2.0"),
+        use_macd=False,
+    )
+    candles = [
+        _make_candle(
+            index=i,
+            open_price=Decimal("100") + Decimal(str(i % 5)),
+            high_price=Decimal("106") + Decimal(str(i % 5)),
+            low_price=Decimal("95") + Decimal(str(i % 5)),
+            close_price=Decimal("100") + Decimal(str(i % 5)),
+        )
+        for i in range(30)
+    ]
+    from botragram.indicators import calculate_bollinger_bands
+
+    bb = calculate_bollinger_bands(
+        [c.close_price for c in candles],
+        period=20,
+        standard_deviation=Decimal("2.0"),
+    )
+    middle_candle = _make_candle(
+        index=30,
+        open_price=bb.middle[-1],
+        high_price=bb.middle[-1] + Decimal("0.2"),
+        low_price=bb.middle[-1] - Decimal("0.2"),
+        close_price=bb.middle[-1],
+    )
+
+    short_valid, short_reason = strategy.validate_trigger_guards(
+        side=PositionSide.SHORT,
+        candles=candles + [middle_candle],
+    )
+    assert not short_valid
+    assert "SHORT entry requires upper zone" in short_reason
+
+    long_valid, long_reason = strategy.validate_trigger_guards(
+        side=PositionSide.LONG,
+        candles=candles + [middle_candle],
+    )
+    assert not long_valid
+    assert "LONG entry requires lower zone" in long_reason
+
 def test_pier_trigger_guards_macd_momentum() -> None:
     """MACD momentum guard rejects LONG on decaying histogram (bar kosong)."""
     strategy = PinbarEngulfingEmaRsiStrategy(
