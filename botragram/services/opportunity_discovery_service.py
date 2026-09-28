@@ -162,6 +162,18 @@ class DiscoveryStalkingProvider(Protocol):
         ...
 
 
+class DiscoveryStalkingInvalidator(Protocol):
+    """Invalidate a stalking setup from the discovery layer."""
+
+    def invalidate_setup(
+        self,
+        symbol: str,
+        reason: str = "",
+    ) -> object:
+        """Transition a stalking setup to INVALIDATED status."""
+        ...
+
+
 # =============================================================================
 # Service Classes
 # =============================================================================
@@ -172,6 +184,7 @@ class OpportunityDiscoveryService:
     market_service: DiscoveryMarketDataProvider
     strategy_service: DiscoveryStrategyProvider
     setup_stalking_service: DiscoveryStalkingProvider | None = None
+    setup_stalking_invalidator: DiscoveryStalkingInvalidator | None = None
     min_confidence: Decimal = Decimal("0")
     candle_request_delay_seconds: float = DEFAULT_DISCOVERY_CANDLE_DELAY_SECONDS
     utc_now: Callable[[], datetime] = _utc_now
@@ -550,6 +563,13 @@ class OpportunityDiscoveryService:
                         trend_result.current_close,
                         trend_result.ema_value,
                     )
+                    self._invalidate_triggered_setup(
+                        signal=signal,
+                        reason=(
+                            f"MTF trend filter rejected BUY: "
+                            f"{trend_result.direction.value}"
+                        ),
+                    )
                     continue
                 if (
                     signal.signal_type is SignalType.SELL
@@ -563,6 +583,13 @@ class OpportunityDiscoveryService:
                         trend_result.direction.value,
                         trend_result.current_close,
                         trend_result.ema_value,
+                    )
+                    self._invalidate_triggered_setup(
+                        signal=signal,
+                        reason=(
+                            f"MTF trend filter rejected SELL: "
+                            f"{trend_result.direction.value}"
+                        ),
                     )
                     continue
 
@@ -609,6 +636,13 @@ class OpportunityDiscoveryService:
                         ltf_result.latest_open,
                         ltf_result.ema_value,
                     )
+                    self._invalidate_triggered_setup(
+                        signal=signal,
+                        reason=(
+                            f"LTF confirmation filter rejected BUY: "
+                            f"{ltf_result.mode.value}"
+                        ),
+                    )
                     continue
                 if (
                     signal.signal_type is SignalType.SELL
@@ -623,6 +657,13 @@ class OpportunityDiscoveryService:
                         ltf_result.latest_close,
                         ltf_result.latest_open,
                         ltf_result.ema_value,
+                    )
+                    self._invalidate_triggered_setup(
+                        signal=signal,
+                        reason=(
+                            f"LTF confirmation filter rejected SELL: "
+                            f"{ltf_result.mode.value}"
+                        ),
                     )
                     continue
 
@@ -648,6 +689,13 @@ class OpportunityDiscoveryService:
                         btc_trend_result.current_close,
                         btc_trend_result.ema_value,
                     )
+                    self._invalidate_triggered_setup(
+                        signal=signal,
+                        reason=(
+                            f"BTC benchmark filter rejected BUY: "
+                            f"btc_trend={btc_trend_result.direction.value}"
+                        ),
+                    )
                     continue
                 if (
                     signal.signal_type is SignalType.SELL
@@ -661,6 +709,13 @@ class OpportunityDiscoveryService:
                         btc_trend_result.direction.value,
                         btc_trend_result.current_close,
                         btc_trend_result.ema_value,
+                    )
+                    self._invalidate_triggered_setup(
+                        signal=signal,
+                        reason=(
+                            f"BTC benchmark filter rejected SELL: "
+                            f"btc_trend={btc_trend_result.direction.value}"
+                        ),
                     )
                     continue
 
@@ -792,6 +847,38 @@ class OpportunityDiscoveryService:
 
         if as_of >= next_expected_close_time:
             raise RuntimeError("Latest closed candle is stale for discovery interval")
+
+    def _invalidate_triggered_setup(
+        self,
+        *,
+        signal: Signal,
+        reason: str,
+    ) -> None:
+        """Invalidate a TRIGGERED stalking setup when a downstream filter rejects it.
+
+        A signal originating from a TRIGGERED setup carries the
+        ``[STALKING_TRIGGERED]`` prefix in its reason field.  When a downstream
+        filter (MTF, LTF, BTC benchmark) rejects such a signal via ``continue``,
+        the stalking setup is left stranded in TRIGGERED status and never
+        auto-expired.  This helper detects that case and calls
+        ``invalidate_setup`` so the setup transitions to INVALIDATED and is
+        removed from the terminal display.
+        """
+        if self.setup_stalking_invalidator is None:
+            return
+        if signal.reason and "[STALKING_TRIGGERED]" in signal.reason:
+            self.setup_stalking_invalidator.invalidate_setup(
+                signal.symbol,
+                reason=(
+                    f"Discovery downstream filter rejected triggered signal: {reason}"
+                ),
+            )
+            _LOGGER.info(
+                "Stalking setup INVALIDATED after downstream filter rejection: "
+                "symbol=%s reason=%s",
+                signal.symbol,
+                reason,
+            )
 
     @classmethod
     def _validate_signal_provenance(
