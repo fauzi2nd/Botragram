@@ -576,3 +576,94 @@ class TestResolveMaxPositionSize:
                 account_balance=Decimal("1000"),
                 max_position_size_usdt=Decimal("200"),
             )
+
+
+# =============================================================================
+# _resolve_max_position_size — runtime <= 0 or non-finite, line 725
+# =============================================================================
+class TestResolveMaxPositionSizeInvalidRuntime:
+    def _engine(self) -> RiskEngine:
+        return RiskEngine(
+            settings=RiskSettings(
+                leverage=5,
+                min_leverage=1,
+                max_leverage=25,
+                max_position_size_usdt=Decimal("100"),
+            )
+        )
+
+    def test_raises_when_runtime_limit_negative(self) -> None:
+        """Line 725: runtime_limit < 0 raises ValueError (not finite and positive)."""
+        engine = self._engine()
+        sig = _signal(signal_type=SignalType.BUY, stop_loss=Decimal("95"))
+        with pytest.raises(ValueError, match="finite and positive"):
+            engine.evaluate(
+                signal=sig,
+                account_balance=Decimal("1000"),
+                max_position_size_usdt=Decimal("-10"),
+            )
+
+    def test_raises_when_runtime_limit_zero(self) -> None:
+        """Line 725: runtime_limit = 0 raises ValueError."""
+        engine = self._engine()
+        sig = _signal(signal_type=SignalType.BUY, stop_loss=Decimal("95"))
+        with pytest.raises(ValueError, match="finite and positive"):
+            engine.evaluate(
+                signal=sig,
+                account_balance=Decimal("1000"),
+                max_position_size_usdt=Decimal("0"),
+            )
+
+
+# =============================================================================
+# calculate_stepped_stop_loss — take_profit=None with step >= 2, line 239
+# =============================================================================
+class TestCalculateSteppedStopLossNoTp:
+    def test_raises_when_step_ge_2_and_no_take_profit(self) -> None:
+        """Line 239: step >= 2 with take_profit=None raises ValueError."""
+        pos = _position(take_profit=None)
+        with pytest.raises(ValueError, match="take-profit"):
+            RiskEngine.calculate_stepped_stop_loss(position=pos, step=2)
+
+    def test_step_one_without_take_profit_returns_breakeven(self) -> None:
+        """Step 1 with no TP is allowed — returns entry + fee_buffer for LONG."""
+        pos = _position(
+            side=PositionSide.LONG,
+            entry_price=Decimal("100"),
+            take_profit=None,
+        )
+        result = RiskEngine.calculate_stepped_stop_loss(position=pos, step=1)
+        assert result > Decimal("100")  # entry + fee_buffer
+
+
+# =============================================================================
+# evaluate() — SELL auto-SL confirms risk_per_unit > 0 (documents line 527 guard)
+# =============================================================================
+class TestEvaluateSellAutoSl:
+    def test_sell_with_auto_sl_is_approved(self) -> None:
+        """SELL with no explicit SL -> auto-calculated SL above entry -> approved.
+
+        Also exercises the fallback strategy path in _resolve_exit_rates (case _).
+        """
+        engine = RiskEngine(
+            settings=RiskSettings(
+                leverage=5,
+                min_leverage=1,
+                max_leverage=25,
+                stop_loss_pct=Decimal("0.02"),
+                take_profit_pct=Decimal("0.04"),
+            )
+        )
+        sig = Signal(
+            symbol="XYZUSDT",
+            signal_type=SignalType.SELL,
+            price=Decimal("100"),
+            confidence=Decimal("0.70"),
+            strategy_name="unknown_strategy",
+            generated_at=_NOW,
+            stop_loss=None,
+            take_profit=None,
+        )
+        result = engine.evaluate(signal=sig, account_balance=Decimal("1000"))
+        assert result.approved
+        assert result.position.notional > Decimal("0")
