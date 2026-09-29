@@ -8,7 +8,7 @@ from typing import cast
 import pytest
 
 from botragram.services import LiveNaturalExitRecoveryService
-from botragram.services.live_natural_exit_recovery_service import (
+from botragram.services.recovery.live_natural_exit_recovery_service import (
     LiveNaturalExitExchange,
 )
 from botragram.storage.memory import (

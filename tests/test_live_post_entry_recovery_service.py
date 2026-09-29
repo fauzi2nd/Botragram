@@ -24,7 +24,7 @@ from botragram.services import (
     LivePostEntryRecoveryResult,
     LivePostEntryRecoveryService,
 )
-from botragram.services.live_post_entry_recovery_service import LiveOrderFetch
+from botragram.services.recovery.live_post_entry_recovery_service import LiveOrderFetch
 from botragram.storage.memory import MemorySubmissionAttemptRepository
 from botragram.storage.memory.live_recovery_repository import (
     MemoryLiveRecoveryRepository,

@@ -476,7 +476,7 @@ async def test_reconcile_waits_for_delayed_exact_cancellation_without_repeating_
         """Keep the bounded reconciliation test fast."""
 
     monkeypatch.setattr(
-        "botragram.services.live_natural_exit_recovery_service.asyncio.sleep",
+        "botragram.services.recovery.live_natural_exit_recovery_service.asyncio.sleep",
         no_delay,
     )
     repository = await _repository()

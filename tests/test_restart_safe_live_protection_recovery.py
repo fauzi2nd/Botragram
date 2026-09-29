@@ -44,7 +44,7 @@ from botragram.services import (
     ClosedPositionLifecycleService,
     LivePositionProtectionService,
 )
-from botragram.services.live_post_entry_recovery_service import (
+from botragram.services.recovery.live_post_entry_recovery_service import (
     LivePostEntryRecoveryResult,
     LivePostEntryRecoveryService,
 )
