@@ -199,6 +199,42 @@ class SetupStalkingService:
         """Return a formatted string of the stalking funnel radar."""
         return self.get_funnel_report().format_funnel_summary()
 
+    # -------------------------------------------------------------------------
+    # Internal: State Transition Logging
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _log_transition(
+        setup: StalkingSetup,
+        new_status: StalkingStatus,
+        *,
+        bar: int | None = None,
+        reason: str = "",
+    ) -> None:
+        """Emit one canonical INFO line for every stalking state transition.
+
+        Format::
+
+            [STALKING] SYMBOL SIDE: OLD_STATUS→NEW_STATUS  bar=N/M  reason=...
+
+        Having a single consistent format means the full lifecycle of any
+        setup can be found with a single grep for the symbol name.
+        """
+        bar_str = (
+            f"  bar={bar}/{setup.max_bars}"
+            if bar is not None
+            else f"  bar={setup.current_bar}/{setup.max_bars}"
+        )
+        reason_str = f"  reason={reason}" if reason else ""
+        _LOGGER.info(
+            "[STALKING] %s %s: %s\u2192%s%s%s",
+            setup.symbol,
+            setup.side.value,
+            setup.status.value,
+            new_status.value,
+            bar_str,
+            reason_str,
+        )
+
     @property
     def max_candidates(self) -> int:
         """Return the maximum allowed concurrent stalking candidates."""
@@ -409,6 +445,19 @@ class SetupStalkingService:
             self._funnel_registered += 1
             self._prune_history_locked()
 
+            self._log_transition(
+                setup,
+                StalkingStatus.STALKING,
+                bar=0,
+                reason=(
+                    f"anchor={setup.anchor_price}"
+                    f" retest={setup.target_retest_price}"
+                    f" invalidation={setup.invalidation_price}"
+                    f" zone={setup.htf_zone_label}"
+                    f" pattern={setup.pattern_name}"
+                    f" reversal_confirmed={setup.reversal_confirmed}"
+                ),
+            )
             _LOGGER.info(
                 "Registered setup stalking: symbol=%s side=%s pattern=%s "
                 "anchor=%s retest_target=%s invalidation=%s max_bars=%d zone=%s "
@@ -511,12 +560,11 @@ class SetupStalkingService:
                         last_processed_candle_close_time=candle.close_time,
                     )
                     self._setups[candle.symbol] = updated
-                    _LOGGER.info(
-                        "Setup stalking TRIGGER EXPIRED (unexecuted after 1 bar): "
-                        "symbol=%s bar=%d/%d",
-                        candle.symbol,
-                        setup.current_bar,
-                        setup.max_bars,
+                    self._log_transition(
+                        setup,
+                        StalkingStatus.EXPIRED,
+                        bar=setup.current_bar,
+                        reason="trigger unexecuted after 1 bar",
                     )
                     return updated
                 return None
@@ -558,11 +606,11 @@ class SetupStalkingService:
                     last_processed_candle_close_time=candle.close_time,
                 )
                 self._setups[candle.symbol] = updated
-                _LOGGER.info(
-                    "Setup stalking EXPIRED: symbol=%s bar=%d/%d (window exhausted)",
-                    candle.symbol,
-                    setup.max_bars,
-                    setup.max_bars,
+                self._log_transition(
+                    setup,
+                    StalkingStatus.EXPIRED,
+                    bar=setup.max_bars,
+                    reason="bar window exhausted",
                 )
                 return updated
 
@@ -581,14 +629,14 @@ class SetupStalkingService:
                         last_processed_candle_close_time=candle.close_time,
                     )
                     self._setups[candle.symbol] = updated
-                    _LOGGER.info(
-                        "Setup stalking INVALIDATED: symbol=%s side=SHORT "
-                        "bar=%d/%d candle_high=%s breached anchor_high=%s (0 loss)",
-                        candle.symbol,
-                        next_bar,
-                        setup.max_bars,
-                        candle.high_price,
-                        setup.invalidation_price,
+                    self._log_transition(
+                        setup,
+                        StalkingStatus.INVALIDATED,
+                        bar=next_bar,
+                        reason=(
+                            f"SHORT: candle_high={candle.high_price} breached "
+                            f"invalidation={setup.invalidation_price} (0 loss)"
+                        ),
                     )
                     return updated
             else:
@@ -603,14 +651,14 @@ class SetupStalkingService:
                         last_processed_candle_close_time=candle.close_time,
                     )
                     self._setups[candle.symbol] = updated
-                    _LOGGER.info(
-                        "Setup stalking INVALIDATED: symbol=%s side=LONG "
-                        "bar=%d/%d candle_low=%s breached anchor_low=%s (0 loss)",
-                        candle.symbol,
-                        next_bar,
-                        setup.max_bars,
-                        candle.low_price,
-                        setup.invalidation_price,
+                    self._log_transition(
+                        setup,
+                        StalkingStatus.INVALIDATED,
+                        bar=next_bar,
+                        reason=(
+                            f"LONG: candle_low={candle.low_price} breached "
+                            f"invalidation={setup.invalidation_price} (0 loss)"
+                        ),
                     )
                     return updated
 
@@ -674,15 +722,14 @@ class SetupStalkingService:
                             last_processed_candle_close_time=candle.close_time,
                         )
                         self._setups[candle.symbol] = updated
-                        _LOGGER.info(
-                            "Setup stalking EXPIRED: symbol=%s side=%s "
-                            "pattern=%s reversal confirmed on final bar %d/%d "
-                            "without remaining retest window",
-                            candle.symbol,
-                            setup.side.value,
-                            pattern_name,
-                            next_bar,
-                            setup.max_bars,
+                        self._log_transition(
+                            setup,
+                            StalkingStatus.EXPIRED,
+                            bar=next_bar,
+                            reason=(
+                                f"reversal confirmed on final bar, no retest window "
+                                f"pattern={pattern_name}"
+                            ),
                         )
                         return updated
 
@@ -699,16 +746,14 @@ class SetupStalkingService:
                         last_processed_candle_close_time=candle.close_time,
                     )
                     self._setups[candle.symbol] = updated
-                    _LOGGER.info(
-                        "Setup stalking REVERSAL CONFIRMED: symbol=%s side=%s "
-                        "pattern=%s retest_target=%s invalidation=%s bar=%d/%d",
-                        candle.symbol,
-                        setup.side.value,
-                        pattern_name,
-                        target_retest,
-                        invalidation_price,
-                        next_bar,
-                        setup.max_bars,
+                    self._log_transition(
+                        setup,
+                        StalkingStatus.STALKING,
+                        bar=next_bar,
+                        reason=(
+                            f"reversal confirmed pattern={pattern_name} "
+                            f"retest={target_retest} invalidation={invalidation_price}"
+                        ),
                     )
                     return updated
 
@@ -776,14 +821,11 @@ class SetupStalkingService:
                         last_processed_candle_close_time=candle.close_time,
                     )
                     self._setups[candle.symbol] = updated
-                    _LOGGER.info(
-                        "Setup stalking TRIGGERED: symbol=%s side=%s bar=%d/%d "
-                        "retest target reached at %s",
-                        candle.symbol,
-                        setup.side.value,
-                        next_bar,
-                        setup.max_bars,
-                        setup.target_retest_price,
+                    self._log_transition(
+                        setup,
+                        StalkingStatus.TRIGGERED,
+                        bar=next_bar,
+                        reason=f"retest target reached at {setup.target_retest_price}",
                     )
                     return updated
 
@@ -799,11 +841,11 @@ class SetupStalkingService:
                     last_processed_candle_close_time=candle.close_time,
                 )
                 self._setups[candle.symbol] = updated
-                _LOGGER.info(
-                    "Setup stalking EXPIRED: symbol=%s bar=%d/%d (no entry)",
-                    candle.symbol,
-                    next_bar,
-                    setup.max_bars,
+                self._log_transition(
+                    setup,
+                    StalkingStatus.EXPIRED,
+                    bar=next_bar,
+                    reason="max_bars reached, no retest entry",
                 )
                 return updated
 
@@ -867,10 +909,10 @@ class SetupStalkingService:
                 updated_at=now,
             )
             self._setups[symbol] = updated
-            _LOGGER.info(
-                "Setup stalking manually INVALIDATED: symbol=%s reason=%s",
-                symbol,
-                reason,
+            self._log_transition(
+                setup,
+                StalkingStatus.INVALIDATED,
+                reason=reason,
             )
             return updated
 
@@ -892,10 +934,10 @@ class SetupStalkingService:
                 updated_at=now,
             )
             self._setups[symbol] = updated
-            _LOGGER.info(
-                "Setup stalking CONSUMED: symbol=%s reason=%s",
-                symbol,
-                reason,
+            self._log_transition(
+                setup,
+                StalkingStatus.CONSUMED,
+                reason=reason,
             )
             return updated
 
