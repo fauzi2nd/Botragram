@@ -41,6 +41,7 @@ from botragram.utils.validator import validate_symbol
 
 __all__ = [
     "OpportunityDiscoveryService",
+    "SignalFilterResult",
 ]
 
 
@@ -56,6 +57,47 @@ _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 def _utc_now() -> datetime:
     """Return the current timezone-aware UTC discovery time."""
     return datetime.now(UTC)
+
+
+# =============================================================================
+# Filter Result
+# =============================================================================
+@dataclass(slots=True, kw_only=True, frozen=True)
+class SignalFilterResult:
+    """Outcome of a single downstream filter evaluation.
+
+    Accumulating these across MTF / LTF / BTC benchmark means the discovery
+    loop can emit **one structured log line per signal** that lists every
+    filter that was applied and which one (if any) rejected the signal.
+    This makes rejection context visible without requiring manual log
+    correlation across multiple log lines.
+
+    Example log output when a signal passes all filters::
+
+        [FILTER] ORCLUSDT SELL: MTF=pass LTF=pass BTC=pass -> ACTIONABLE
+
+    Example when rejected::
+
+        [FILTER] ORCLUSDT SELL: MTF=pass LTF=pass BTC=REJECT(btc_trend=BULL) -> DROPPED
+    """
+
+    passed: bool
+    filter_name: str
+    detail: str = ""
+
+    def as_label(self) -> str:
+        """Return a compact label for inclusion in a structured log line."""
+        if self.passed:
+            return f"{self.filter_name}=pass"
+        detail = f"({self.detail})" if self.detail else ""
+        return f"{self.filter_name}=REJECT{detail}"
+
+
+_FILTER_SKIPPED: Final[SignalFilterResult] = SignalFilterResult(
+    passed=True,
+    filter_name="",
+    detail="",
+)
 
 
 # =============================================================================
@@ -546,52 +588,12 @@ class OpportunityDiscoveryService:
                     candle_limit=self.mtf_ema_period + 1,
                     require_strict_sequence=False,
                 )
-                trend_result = evaluate_mtf_trend(
-                    closed_mtf_candles,
-                    ema_period=self.mtf_ema_period,
+                mtf_result = self._apply_mtf_filter(
+                    signal=signal,
+                    closed_candles=closed_mtf_candles,
                 )
-                if (
-                    signal.signal_type is SignalType.BUY
-                    and not trend_result.is_aligned_with_buy
-                ):
-                    _LOGGER.info(
-                        "MTF trend filter rejected BUY signal for %s: "
-                        "higher_tf=%s trend=%s close=%s ema=%s",
-                        symbol,
-                        self.mtf_interval.value,
-                        trend_result.direction.value,
-                        trend_result.current_close,
-                        trend_result.ema_value,
-                    )
-                    self._invalidate_triggered_setup(
-                        signal=signal,
-                        reason=(
-                            f"MTF trend filter rejected BUY: "
-                            f"{trend_result.direction.value}"
-                        ),
-                    )
-                    continue
-                if (
-                    signal.signal_type is SignalType.SELL
-                    and not trend_result.is_aligned_with_sell
-                ):
-                    _LOGGER.info(
-                        "MTF trend filter rejected SELL signal for %s: "
-                        "higher_tf=%s trend=%s close=%s ema=%s",
-                        symbol,
-                        self.mtf_interval.value,
-                        trend_result.direction.value,
-                        trend_result.current_close,
-                        trend_result.ema_value,
-                    )
-                    self._invalidate_triggered_setup(
-                        signal=signal,
-                        reason=(
-                            f"MTF trend filter rejected SELL: "
-                            f"{trend_result.direction.value}"
-                        ),
-                    )
-                    continue
+            else:
+                mtf_result = _FILTER_SKIPPED
 
             if self.ltf_confirmation_enabled:
                 needed_ltf = (
@@ -617,55 +619,12 @@ class OpportunityDiscoveryService:
                     candle_limit=needed_ltf,
                     require_strict_sequence=False,
                 )
-                ltf_result = evaluate_ltf_micro_confirmation(
-                    closed_ltf_candles,
-                    mode=self.ltf_confirmation_mode,
-                    ema_period=self.ltf_ema_period,
+                ltf_result = self._apply_ltf_filter(
+                    signal=signal,
+                    closed_candles=closed_ltf_candles,
                 )
-                if (
-                    signal.signal_type is SignalType.BUY
-                    and not ltf_result.is_aligned_with_buy
-                ):
-                    _LOGGER.info(
-                        "LTF micro confirmation filter rejected BUY signal for %s: "
-                        "ltf=%s mode=%s close=%s open=%s ema=%s",
-                        symbol,
-                        self.ltf_interval.value,
-                        ltf_result.mode.value,
-                        ltf_result.latest_close,
-                        ltf_result.latest_open,
-                        ltf_result.ema_value,
-                    )
-                    self._invalidate_triggered_setup(
-                        signal=signal,
-                        reason=(
-                            f"LTF confirmation filter rejected BUY: "
-                            f"{ltf_result.mode.value}"
-                        ),
-                    )
-                    continue
-                if (
-                    signal.signal_type is SignalType.SELL
-                    and not ltf_result.is_aligned_with_sell
-                ):
-                    _LOGGER.info(
-                        "LTF micro confirmation filter rejected SELL signal for %s: "
-                        "ltf=%s mode=%s close=%s open=%s ema=%s",
-                        symbol,
-                        self.ltf_interval.value,
-                        ltf_result.mode.value,
-                        ltf_result.latest_close,
-                        ltf_result.latest_open,
-                        ltf_result.ema_value,
-                    )
-                    self._invalidate_triggered_setup(
-                        signal=signal,
-                        reason=(
-                            f"LTF confirmation filter rejected SELL: "
-                            f"{ltf_result.mode.value}"
-                        ),
-                    )
-                    continue
+            else:
+                ltf_result = _FILTER_SKIPPED
 
             if (
                 self.btc_trend_filter_enabled
@@ -676,48 +635,42 @@ class OpportunityDiscoveryService:
                     btc_trend_result = await self._evaluate_btc_benchmark_trend(
                         as_of=as_of,
                     )
-                if (
-                    signal.signal_type is SignalType.BUY
-                    and not btc_trend_result.is_aligned_with_buy
-                ):
-                    _LOGGER.info(
-                        "BTC benchmark trend filter rejected BUY signal for %s: "
-                        "btc_tf=%s btc_trend=%s btc_close=%s btc_ema=%s",
-                        symbol,
-                        self.btc_trend_interval.value,
-                        btc_trend_result.direction.value,
-                        btc_trend_result.current_close,
-                        btc_trend_result.ema_value,
-                    )
-                    self._invalidate_triggered_setup(
-                        signal=signal,
-                        reason=(
-                            f"BTC benchmark filter rejected BUY: "
-                            f"btc_trend={btc_trend_result.direction.value}"
-                        ),
-                    )
-                    continue
-                if (
-                    signal.signal_type is SignalType.SELL
-                    and not btc_trend_result.is_aligned_with_sell
-                ):
-                    _LOGGER.info(
-                        "BTC benchmark trend filter rejected SELL signal for %s: "
-                        "btc_tf=%s btc_trend=%s btc_close=%s btc_ema=%s",
-                        symbol,
-                        self.btc_trend_interval.value,
-                        btc_trend_result.direction.value,
-                        btc_trend_result.current_close,
-                        btc_trend_result.ema_value,
-                    )
-                    self._invalidate_triggered_setup(
-                        signal=signal,
-                        reason=(
-                            f"BTC benchmark filter rejected SELL: "
-                            f"btc_trend={btc_trend_result.direction.value}"
-                        ),
-                    )
-                    continue
+                btc_result = self._apply_btc_filter(
+                    signal=signal,
+                    trend_result=btc_trend_result,
+                )
+            else:
+                btc_result = _FILTER_SKIPPED
+
+            # --- Emit one structured log line per signal -------------------
+            # Format: [FILTER] SYMBOL SIDE: MTF=pass LTF=REJECT(...) BTC=pass
+            mtf_label = mtf_result.as_label() if mtf_result.filter_name else "MTF=skip"
+            ltf_label = ltf_result.as_label() if ltf_result.filter_name else "LTF=skip"
+            btc_label = btc_result.as_label() if btc_result.filter_name else "BTC=skip"
+
+            rejected_result: SignalFilterResult | None = None
+            for _r in (mtf_result, ltf_result, btc_result):
+                if _r.filter_name and not _r.passed:
+                    rejected_result = _r
+                    break
+
+            verdict = "DROPPED" if rejected_result else "ACTIONABLE"
+            _LOGGER.info(
+                "[FILTER] %s %s: %s %s %s -> %s",
+                symbol,
+                signal.signal_type.value,
+                mtf_label,
+                ltf_label,
+                btc_label,
+                verdict,
+            )
+
+            if rejected_result is not None:
+                self._invalidate_triggered_setup(
+                    signal=signal,
+                    reason=rejected_result.as_label(),
+                )
+                continue
 
             _LOGGER.info(
                 "Discovery actionable opportunity found: symbol=%s side=%s "
@@ -847,6 +800,126 @@ class OpportunityDiscoveryService:
 
         if as_of >= next_expected_close_time:
             raise RuntimeError("Latest closed candle is stale for discovery interval")
+
+    # -------------------------------------------------------------------------
+    # Internal: Downstream Signal Filters
+    # -------------------------------------------------------------------------
+    def _apply_mtf_filter(
+        self,
+        *,
+        signal: Signal,
+        closed_candles: Sequence[Candle],
+    ) -> SignalFilterResult:
+        """Evaluate MTF trend alignment and return a typed filter result."""
+        trend_result = evaluate_mtf_trend(
+            closed_candles,
+            ema_period=self.mtf_ema_period,
+        )
+        if (
+            signal.signal_type is SignalType.BUY
+            and not trend_result.is_aligned_with_buy
+        ):
+            return SignalFilterResult(
+                passed=False,
+                filter_name="MTF",
+                detail=(
+                    f"tf={self.mtf_interval.value}"
+                    f" trend={trend_result.direction.value}"
+                    f" close={trend_result.current_close}"
+                    f" ema={trend_result.ema_value}"
+                ),
+            )
+        if (
+            signal.signal_type is SignalType.SELL
+            and not trend_result.is_aligned_with_sell
+        ):
+            return SignalFilterResult(
+                passed=False,
+                filter_name="MTF",
+                detail=(
+                    f"tf={self.mtf_interval.value}"
+                    f" trend={trend_result.direction.value}"
+                    f" close={trend_result.current_close}"
+                    f" ema={trend_result.ema_value}"
+                ),
+            )
+        return SignalFilterResult(passed=True, filter_name="MTF")
+
+    def _apply_ltf_filter(
+        self,
+        *,
+        signal: Signal,
+        closed_candles: Sequence[Candle],
+    ) -> SignalFilterResult:
+        """Evaluate LTF micro-confirmation alignment and return a typed result."""
+        ltf_result = evaluate_ltf_micro_confirmation(
+            closed_candles,
+            mode=self.ltf_confirmation_mode,
+            ema_period=self.ltf_ema_period,
+        )
+        if signal.signal_type is SignalType.BUY and not ltf_result.is_aligned_with_buy:
+            return SignalFilterResult(
+                passed=False,
+                filter_name="LTF",
+                detail=(
+                    f"tf={self.ltf_interval.value}"
+                    f" mode={ltf_result.mode.value}"
+                    f" close={ltf_result.latest_close}"
+                    f" ema={ltf_result.ema_value}"
+                ),
+            )
+        if (
+            signal.signal_type is SignalType.SELL
+            and not ltf_result.is_aligned_with_sell
+        ):
+            return SignalFilterResult(
+                passed=False,
+                filter_name="LTF",
+                detail=(
+                    f"tf={self.ltf_interval.value}"
+                    f" mode={ltf_result.mode.value}"
+                    f" close={ltf_result.latest_close}"
+                    f" ema={ltf_result.ema_value}"
+                ),
+            )
+        return SignalFilterResult(passed=True, filter_name="LTF")
+
+    def _apply_btc_filter(
+        self,
+        *,
+        signal: Signal,
+        trend_result: MtfTrendResult,
+    ) -> SignalFilterResult:
+        """Evaluate BTC benchmark trend alignment and return a typed result."""
+        if (
+            signal.signal_type is SignalType.BUY
+            and not trend_result.is_aligned_with_buy
+        ):
+            return SignalFilterResult(
+                passed=False,
+                filter_name="BTC",
+                detail=(
+                    f"tf={self.btc_trend_interval.value}"
+                    f" trend={trend_result.direction.value}"
+                    f" close={trend_result.current_close}"
+                    f" ema={trend_result.ema_value}"
+                ),
+            )
+        if (
+            signal.signal_type is SignalType.SELL
+            and not trend_result.is_aligned_with_sell
+        ):
+            return SignalFilterResult(
+                passed=False,
+                filter_name="BTC",
+                detail=(
+                    f"tf={self.btc_trend_interval.value}"
+                    f" trend={trend_result.direction.value}"
+                    f" close={trend_result.current_close}"
+                    f" ema={trend_result.ema_value}"
+                ),
+            )
+        return SignalFilterResult(passed=True, filter_name="BTC")
 
     def _invalidate_triggered_setup(
         self,
