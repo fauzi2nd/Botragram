@@ -1595,6 +1595,14 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 return False, "BB lower zone (anti-lembah guard)"
 
         # 2. MACD Momentum Guard
+        #
+        # Option B semantics:
+        #   LONG  — pass if histogram > 0  OR  histogram is rising  (curr > prev)
+        #   SHORT — pass if histogram < 0  OR  histogram is falling (curr < prev)
+        #
+        # Reject only when BOTH conditions fail, i.e. momentum gives no
+        # bullish/bearish signal at all. This allows entry during early-stage
+        # momentum transitions that occur naturally at retest.
         min_macd_vals = self.macd_slow_period + self.macd_signal_period - 1
         if self.use_macd and len(close_prices) >= min_macd_vals:
             macd_result = calculate_macd(
@@ -1612,26 +1620,22 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 )
 
                 if side is PositionSide.LONG:
-                    if curr_hist <= Decimal("0"):
+                    hist_positive = curr_hist > Decimal("0")
+                    hist_rising = prev_hist is not None and curr_hist > prev_hist
+                    if not (hist_positive or hist_rising):
                         return (
                             False,
-                            "MACD histogram not positive (momentum not bullish)",
-                        )
-                    if prev_hist is not None and curr_hist < prev_hist:
-                        return (
-                            False,
-                            "MACD histogram decaying (hollow bar / momentum loss)",
+                            "MACD histogram not positive and not rising"
+                            " (no bullish momentum signal)",
                         )
                 else:
-                    if curr_hist >= Decimal("0"):
+                    hist_negative = curr_hist < Decimal("0")
+                    hist_falling = prev_hist is not None and curr_hist < prev_hist
+                    if not (hist_negative or hist_falling):
                         return (
                             False,
-                            "MACD histogram not negative (momentum not bearish)",
-                        )
-                    if prev_hist is not None and curr_hist > prev_hist:
-                        return (
-                            False,
-                            "MACD histogram rising (hollow bar / momentum loss)",
+                            "MACD histogram not negative and not falling"
+                            " (no bearish momentum signal)",
                         )
 
         return True, ""
