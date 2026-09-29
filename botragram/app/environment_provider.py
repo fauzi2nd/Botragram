@@ -24,6 +24,7 @@ from pathlib import Path
 # =============================================================================
 from dotenv import dotenv_values, load_dotenv
 
+from botragram.app.env_validator import validate_env_file
 from botragram.constants.env import (
     ENV_ACCOUNT_RATIO_HTF_PERIOD,
     ENV_ACTIVE_EXCHANGE,
@@ -364,6 +365,7 @@ class EnvironmentProvider:
         self._profile: EnvironmentProfile | None = None
         self._profile_path: str | None = None
 
+        validate_env_file(self._env_path)
         load_dotenv(
             dotenv_path=self._env_path,
             override=override,
