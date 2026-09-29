@@ -42,7 +42,7 @@ from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.models import BacktestRequest, BacktestResult
 from botragram.services.backtest_service import BacktestService
-from botragram.services.setup_stalking_service import SetupStalkingService
+from botragram.services.discovery.setup_stalking_service import SetupStalkingService
 from botragram.services.stored_resampled_candle_provider import (
     StoredResampledCandleProvider,
 )

@@ -2133,7 +2133,7 @@ async def _run_candle_pacing_delay_test() -> None:
             sleep_calls.append(seconds)
 
     with patch(
-        "botragram.services.opportunity_discovery_service.asyncio.sleep",
+        "botragram.services.discovery.opportunity_discovery_service.asyncio.sleep",
         side_effect=fake_sleep,
     ):
         await service.discover_symbols(

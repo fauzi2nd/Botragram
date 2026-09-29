@@ -18,6 +18,16 @@ from botragram.services.candle_sync_service import CandleSyncService
 from botragram.services.closed_position_lifecycle_service import (
     ClosedPositionLifecycleService,
 )
+from botragram.services.discovery.opportunity_discovery_service import (
+    OpportunityDiscoveryService,
+)
+from botragram.services.discovery.setup_stalking_service import (
+    SetupStalkingService,
+    StalkingSetupProvider,
+)
+from botragram.services.discovery.volume_ranked_discovery_universe_service import (
+    VolumeRankedDiscoveryUniverseService,
+)
 from botragram.services.execution_authorization_service import (
     ExecutionAuthorizationService,
 )
@@ -71,9 +81,6 @@ from botragram.services.live_trading_performance_service import (
 )
 from botragram.services.market_service import MarketService
 from botragram.services.operator_exit_service import OperatorExitService
-from botragram.services.opportunity_discovery_service import (
-    OpportunityDiscoveryService,
-)
 from botragram.services.order_service import OrderService
 from botragram.services.paper_trading_service import (
     NotificationPublisher,
@@ -86,18 +93,11 @@ from botragram.services.position_service import PositionService
 from botragram.services.runtime_recovery_service import RuntimeRecoveryService
 from botragram.services.runtime_reporter import RuntimeReporter
 from botragram.services.runtime_risk_limit_service import RuntimeRiskLimitService
-from botragram.services.setup_stalking_service import (
-    SetupStalkingService,
-    StalkingSetupProvider,
-)
 from botragram.services.stored_resampled_candle_provider import (
     StoredResampledCandleProvider,
 )
 from botragram.services.strategy_service import StrategyService
 from botragram.services.trading_service import TradingService
-from botragram.services.volume_ranked_discovery_universe_service import (
-    VolumeRankedDiscoveryUniverseService,
-)
 
 __all__ = [
     "CandleRetentionService",

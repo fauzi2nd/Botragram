@@ -40,7 +40,7 @@ from botragram.enums import (
 )
 from botragram.models import Candle, Signal
 from botragram.models.stalking import StalkingSetup
-from botragram.services.setup_stalking_service import SetupStalkingService
+from botragram.services.discovery.setup_stalking_service import SetupStalkingService
 
 _START_TIME = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
 

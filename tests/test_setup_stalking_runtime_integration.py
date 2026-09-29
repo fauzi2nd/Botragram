@@ -38,10 +38,10 @@ from botragram.enums import (
     StrategyType,
 )
 from botragram.models import Candle, Signal
-from botragram.services.opportunity_discovery_service import (
+from botragram.services.discovery.opportunity_discovery_service import (
     OpportunityDiscoveryService,
 )
-from botragram.services.setup_stalking_service import SetupStalkingService
+from botragram.services.discovery.setup_stalking_service import SetupStalkingService
 from botragram.services.strategy_service import StrategyService
 from botragram.storage.memory.signal_repository import MemorySignalRepository
 from botragram.strategies import StrategyResolver

@@ -49,7 +49,7 @@ from botragram.enums import (
 )
 from botragram.models import BacktestRequest, BacktestResult, Candle, Signal
 from botragram.services.backtest_service import BacktestService
-from botragram.services.setup_stalking_service import SetupStalkingService
+from botragram.services.discovery.setup_stalking_service import SetupStalkingService
 from botragram.services.strategy_service import StrategyService
 from botragram.storage import MemorySignalRepository
 from botragram.storage.sqlite import (

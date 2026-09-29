@@ -37,7 +37,7 @@ from botragram.indicators.trend.ltf_micro_filter import (
     evaluate_ltf_micro_confirmation,
 )
 from botragram.models import Candle, Signal
-from botragram.services.opportunity_discovery_service import (
+from botragram.services.discovery.opportunity_discovery_service import (
     OpportunityDiscoveryService,
 )
 

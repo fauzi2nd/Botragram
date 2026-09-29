@@ -38,7 +38,7 @@ from botragram.enums import (
 from botragram.models import Candle, Signal
 from botragram.models.stalking import StalkingSetup
 from botragram.repositories import SignalRepository
-from botragram.services.setup_stalking_service import SetupStalkingService
+from botragram.services.discovery.setup_stalking_service import SetupStalkingService
 from botragram.services.strategy_service import StrategyService
 from botragram.storage import MemorySignalRepository
 from botragram.strategies.factory import StrategyResolver
