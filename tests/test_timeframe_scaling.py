@@ -47,7 +47,7 @@ from botragram.enums import (
 from botragram.exchanges.base import BaseExchangeClient
 from botragram.models import Candle, Position, Signal, Ticker
 from botragram.repositories import CandleRepository, PositionRepository
-from botragram.services.position_protection_manager import (
+from botragram.services.protection.position_protection_manager import (
     PositionProtectionManager,
     resolve_adaptive_trailing_timeframe,
 )

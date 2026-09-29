@@ -1354,7 +1354,9 @@ def test_stepped_protection_comprehensive_matrix_and_parity() -> None:
 
     # 5. Live Protection Manager and Backtest parity:
     # Live _resolve_step delegates to resolve_target_protection_step
-    from botragram.services.position_protection_manager import PositionProtectionManager
+    from botragram.services.protection.position_protection_manager import (
+        PositionProtectionManager,
+    )
 
     for prog, roi in [
         (Decimal("0.05"), Decimal("0.10")),

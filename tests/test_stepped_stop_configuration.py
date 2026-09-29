@@ -44,7 +44,7 @@ from botragram.enums import (
     TradeMode,
 )
 from botragram.models import BacktestRequest, Candle, Position, Signal, Ticker
-from botragram.services.position_protection_manager import (
+from botragram.services.protection.position_protection_manager import (
     PositionProtectionManager,
 )
 from botragram.storage.memory import MemoryPositionRepository

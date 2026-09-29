@@ -57,15 +57,9 @@ from botragram.services.live_portfolio_recovery_service import (
 from botragram.services.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
 )
-from botragram.services.live_position_protection_service import (
-    LivePositionProtectionService,
-)
 from botragram.services.live_post_entry_recovery_service import (
     LivePostEntryRecoveryResult,
     LivePostEntryRecoveryService,
-)
-from botragram.services.live_protection_monitoring_service import (
-    LiveProtectionMonitoringService,
 )
 from botragram.services.live_runtime_health_service import LiveRuntimeHealthService
 from botragram.services.live_runtime_portfolio_reconciliation_service import (
@@ -88,8 +82,16 @@ from botragram.services.paper_trading_service import (
     PaperTradingService,
 )
 from botragram.services.position_exit_service import PositionExitService
-from botragram.services.position_protection_manager import PositionProtectionManager
 from botragram.services.position_service import PositionService
+from botragram.services.protection.live_position_protection_service import (
+    LivePositionProtectionService,
+)
+from botragram.services.protection.live_protection_monitoring_service import (
+    LiveProtectionMonitoringService,
+)
+from botragram.services.protection.position_protection_manager import (
+    PositionProtectionManager,
+)
 from botragram.services.runtime_recovery_service import RuntimeRecoveryService
 from botragram.services.runtime_reporter import RuntimeReporter
 from botragram.services.runtime_risk_limit_service import RuntimeRiskLimitService

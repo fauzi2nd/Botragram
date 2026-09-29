@@ -20,7 +20,9 @@ from botragram.engine.risk_engine import RiskEngine
 from botragram.enums import Interval, PositionSide, TradeMode, TrailingMode
 from botragram.exchanges.base import BaseExchangeClient
 from botragram.models import Candle, Position, Ticker
-from botragram.services.position_protection_manager import PositionProtectionManager
+from botragram.services.protection.position_protection_manager import (
+    PositionProtectionManager,
+)
 from botragram.storage.memory.candle_repository import MemoryCandleRepository
 from botragram.storage.memory.position_repository import MemoryPositionRepository
 

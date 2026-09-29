@@ -17,7 +17,7 @@ from botragram.models import (
     Ticker,
 )
 from botragram.services.live_market_stream_service import LiveMarketStreamService
-from botragram.services.live_protection_monitoring_service import (
+from botragram.services.protection.live_protection_monitoring_service import (
     LiveProtectionMonitoringService,
     PositionProtectionTickHandler,
 )
