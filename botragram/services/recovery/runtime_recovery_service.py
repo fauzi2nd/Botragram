@@ -8,8 +8,10 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Final, Protocol
 
+from botragram.app.runtime.multi_context_activation import (
+    MultiContextRunnerActivationPreconditions,
+)
 from botragram.app.runtime_control import TradingRuntimeControl
-from botragram.app.trading_runner import MultiContextRunnerActivationPreconditions
 from botragram.enums import (
     Interval,
     LiveMarketStreamLifecycleStatus,

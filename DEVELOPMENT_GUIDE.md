@@ -591,9 +591,14 @@ python -m ruff check .
 python -m pyright
 python -m mypy botragram
 pyrefly check --min-severity warn
-python -m pytest
+python -m pytest --cov=botragram --cov-report=term --cov-fail-under=80
 git diff --check
 ```
+
+Coverage minimum 80% pada perintah gate adalah baseline sementara agar coverage
+tidak turun; target proyek tetap 90%. Naikkan batas minimum setelah test cabang
+keselamatan bertambah. GitHub Release Gate memeriksa diff commit dengan
+`git diff --check HEAD^ HEAD` pada checkout dua commit, bukan diff worktree bersih.
 
 Dan specialized safety suites:
 
@@ -681,6 +686,10 @@ Commit mengikuti Conventional Commits:
 - `build:`, `ci:`, `chore:`
 
 Aturan perubahan:
+
+- Perubahan menuju `main` WAJIB melalui pull request dengan authoritative release
+  gate berstatus success. Tag rilis hanya dibuat pada commit hasil merge yang
+  telah lulus workflow CI untuk SHA yang sama.
 
 - Satu commit SEHARUSNYA memiliki satu tujuan yang kohesif.
 - Unrelated cleanup tidak dicampur dengan feature atau bug fix.

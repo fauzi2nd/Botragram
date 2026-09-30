@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
       - name: Configure git safe.directory (self-hosted Windows runner)
         shell: powershell
@@ -73,13 +75,13 @@ jobs:
       - name: Automated test suite (pytest)
         id: pytest
         continue-on-error: true
-        run: python -m pytest
+        run: python -m pytest --cov=botragram --cov-report=term --cov-fail-under=80
 
-      - name: Git diff whitespace check (git diff --check)
+      - name: Commit diff whitespace check (git diff --check HEAD^ HEAD)
         id: git_diff_check
         continue-on-error: true
         working-directory: ${{ github.workspace }}
-        run: git diff --check
+        run: git diff --check HEAD^ HEAD
 
       - name: Specialized suite - Position Protection
         id: position_protection
@@ -104,7 +106,7 @@ jobs:
               "mypy"                       = "${{ steps.mypy.outcome }}"
               "pyrefly"                    = "${{ steps.pyrefly.outcome }}"
               "pytest"                     = "${{ steps.pytest.outcome }}"
-              "git diff --check"           = "${{ steps.git_diff_check.outcome }}"
+              "commit diff --check"        = "${{ steps.git_diff_check.outcome }}"
               "position protection"        = "${{ steps.position_protection.outcome }}"
               "partial TP hardening"       = "${{ steps.partial_tp.outcome }}"
           }
