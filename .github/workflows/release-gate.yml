@@ -75,7 +75,7 @@ jobs:
       - name: Automated test suite (pytest)
         id: pytest
         continue-on-error: true
-        run: python -m pytest --cov=botragram --cov-report=term --cov-fail-under=80
+        run: python -m pytest --cov=botragram --cov-report=term --cov-fail-under=80.75
 
       - name: Commit diff whitespace check (git diff --check HEAD^ HEAD)
         id: git_diff_check

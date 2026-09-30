@@ -11,7 +11,6 @@ from decimal import Decimal
 from typing import Final, Protocol
 from uuid import uuid4
 
-from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.enums import (
     ClosedPositionProvenance,
     ClosedPositionReason,
@@ -57,6 +56,7 @@ from botragram.services.position.closed_position_lifecycle_service import (
 from botragram.services.position.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
 )
+from botragram.services.runtime.runtime_control_contract import RuntimeControl
 from botragram.utils.retry import CappedExponentialBackoff
 
 __all__ = ["OperatorExitService"]
@@ -199,7 +199,7 @@ class OperatorExitService:
     trade_mode: TradeMode
     market_type: MarketType
     exchange_environment: ExchangeEnvironment
-    runtime_control: TradingRuntimeControl
+    runtime_control: RuntimeControl
     operator_exit_repository: OperatorExitRepository
     position_repository: PositionRepository
     market_stream_owner: _MarketStreamOwner

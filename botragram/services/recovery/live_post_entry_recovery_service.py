@@ -28,7 +28,6 @@ from typing import Final, Protocol
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.enums import (
     ClosedPositionProvenance,
     ClosedPositionReason,
@@ -51,6 +50,7 @@ from botragram.repositories.live_recovery_repository import LiveRecoveryReposito
 from botragram.services.position.closed_position_lifecycle_service import (
     ClosedPositionLifecycleService,
 )
+from botragram.services.runtime.runtime_control_contract import PositionProtectionGate
 
 # =============================================================================
 # Exports
@@ -200,7 +200,7 @@ class LivePostEntryRecoveryService:
     live_recovery_repository: LiveRecoveryRepository
     position_service: LivePositionVisibility
     protection_service: LiveProtectionVerification
-    runtime_control: TradingRuntimeControl
+    runtime_control: PositionProtectionGate
     order_service: LiveOrderFetch | None = None
     # Optional protection reconciler to probe persisted protection identities
     protection_reconciler: LiveProtectionVerification | None = None

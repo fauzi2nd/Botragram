@@ -61,7 +61,6 @@ botragram/
 |   |   |-- autonomous_live_cycle_executor.py # Ranked LIVE protected entry
 |   |   |-- context_cycle_scheduler.py # Per-context cycle cadence
 |   |   |-- live_runtime_recovery_policy.py # Pure LIVE recovery health gates
-|   |   |-- multi_context_activation.py # Immutable activation preconditions
 |   |   |-- paper_cycle_executors.py # PAPER discovery cycle adapters
 |   |   `-- single_symbol_cycle_executor.py # Single-symbol runtime adapter
 |   |-- runtime_control.py
@@ -233,6 +232,8 @@ botragram/
 |   |-- runtime/
 |   |   |-- live_runtime_health_service.py # Derived recovered LIVE health aggregation
 |   |   |-- live_runtime_portfolio_reconciliation_service.py # Canonical 0/1/N management reconciliation
+|   |   |-- multi_context_activation.py # Immutable LIVE activation preconditions
+|   |   |-- runtime_control_contract.py # Service-facing runtime safety contract
 |   |   |-- runtime_reporter.py # Runtime status and portfolio reporting
 |   |   `-- runtime_risk_limit_service.py # Durable runtime canary-limit authority
 |   |-- strategy_service.py
@@ -339,6 +340,11 @@ tidak boleh membuat HTTP client, database, repository, atau service konkret.
 Notifikasi service memakai kontrak formatter; implementasi HTML Telegram hanya
 dibangun dan disuntikkan oleh `DependencyProvider`. Retensi candle memakai
 kontrak optimasi storage tanpa SQL atau tipe SQLite di service.
+
+Pengecualian legacy yang belum dituntaskan: `engine/backtest/backtest_engine.py`
+masih membangun repository memory dan PAPER service untuk replay. Memindahkan
+orchestrator tersebut tanpa lapisan alias akan mengubah API `BacktestEngine` yang
+dipakai CLI dan script manual; perubahan itu perlu rilis major terpisah.
 
 ## Runtime-Owned Paths
 
