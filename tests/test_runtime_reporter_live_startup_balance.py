@@ -9,7 +9,7 @@ from decimal import Decimal
 from botragram.enums import TradeMode
 from botragram.models import Account, Balance, Notification, Position
 from botragram.services.health_service import HealthService
-from botragram.services.runtime_reporter import RuntimeReporter
+from botragram.services.runtime.runtime_reporter import RuntimeReporter
 from botragram.telegram.presentation.notification_message_formatter import (
     TelegramNotificationMessageFormatter,
 )

@@ -44,7 +44,9 @@ from botragram.enums import (
 from botragram.models import AutonomousLiveEntryAuthorization
 from botragram.services import AutonomousLiveRecoveryObservabilityService
 from botragram.storage.memory import MemorySubmissionAttemptRepository
-from botragram.telegram.messages import get_autonomous_live_recovery_message
+from botragram.telegram.presentation.messages import (
+    get_autonomous_live_recovery_message,
+)
 
 
 # =============================================================================

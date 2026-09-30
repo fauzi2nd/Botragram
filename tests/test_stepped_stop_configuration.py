@@ -34,7 +34,7 @@ from botragram.app import SettingsManager
 from botragram.app.environment_provider import EnvironmentProvider
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine import RiskEngine
-from botragram.engine.backtest_engine import BacktestEngine
+from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import (
     Interval,
     MarketType,

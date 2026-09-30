@@ -18,8 +18,8 @@ from __future__ import annotations
 # =============================================================================
 from botragram.telegram.bot import TelegramBot
 from botragram.telegram.handlers import register_handlers
-from botragram.telegram.keyboards import get_main_menu_keyboard
-from botragram.telegram.messages import (
+from botragram.telegram.presentation.keyboards import get_main_menu_keyboard
+from botragram.telegram.presentation.messages import (
     get_drawdown_alert_message,
     get_paper_entry_message,
     get_paper_exit_message,

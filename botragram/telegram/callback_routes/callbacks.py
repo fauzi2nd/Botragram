@@ -106,7 +106,9 @@ __all__ = [
 # =============================================================================
 # Constants
 # =============================================================================
-_LOGGER: Final[logging.Logger] = logging.getLogger("botragram.telegram.callbacks")
+_LOGGER: Final[logging.Logger] = logging.getLogger(
+    "botragram.telegram.callback_routes.callbacks"
+)
 _EXCHANGE_CALLBACKS: Final[frozenset[str]] = frozenset(
     {
         "cb_exchange_bybit",

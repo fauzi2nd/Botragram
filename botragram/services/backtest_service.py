@@ -24,7 +24,7 @@ from typing import Final, Protocol
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.engine.backtest_engine import BacktestEngine
+from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import Interval
 from botragram.models import BacktestRequest, BacktestResult, Candle
 

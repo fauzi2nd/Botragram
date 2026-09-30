@@ -16,7 +16,7 @@ from unittest.mock import create_autospec
 
 import pytest
 
-from botragram.engine.risk_engine import RiskEngine
+from botragram.engine.risk.risk_engine import RiskEngine
 from botragram.enums import Interval, PositionSide, TradeMode, TrailingMode
 from botragram.exchanges.base import BaseExchangeClient
 from botragram.models import Candle, Position, Ticker

@@ -10,7 +10,7 @@ from decimal import Decimal
 from time import monotonic
 from typing import Final, Protocol
 
-from botragram.engine.risk_engine import (
+from botragram.engine.risk.risk_engine import (
     DEFAULT_BREAKEVEN_FEE_BUFFER,
     DEFAULT_BREAKEVEN_ROI_THRESHOLD,
     LOCKED_PROGRESS_LAG,
@@ -37,11 +37,11 @@ from botragram.exceptions import (
 from botragram.exchanges.base import BaseExchangeClient
 from botragram.models import Notification, Order, Position, Ticker
 from botragram.repositories import CandleRepository, PositionRepository
-from botragram.services.live_position_lifecycle_coordinator import (
-    LivePositionLifecycleCoordinator,
-)
 from botragram.services.notification_message_formatter import (
     NotificationMessageFormatter,
+)
+from botragram.services.position.live_position_lifecycle_coordinator import (
+    LivePositionLifecycleCoordinator,
 )
 
 __all__ = [

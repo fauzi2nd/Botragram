@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from botragram.constants.telegram import MENU_STRATEGY
 from botragram.enums import ExecutionPolicy
-from botragram.telegram.keyboards import get_main_menu_keyboard
+from botragram.telegram.presentation.keyboards import get_main_menu_keyboard
 
 
 def test_autonomous_live_home_exposes_strategy_control() -> None:

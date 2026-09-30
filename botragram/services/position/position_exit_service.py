@@ -28,7 +28,7 @@ from uuid import uuid4
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.engine.position_exit_engine import PositionExitEngine
+from botragram.engine.position.position_exit_engine import PositionExitEngine
 from botragram.enums import (
     Interval,
     NotificationType,

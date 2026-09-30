@@ -29,10 +29,10 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine.cfd_financing_engine import CfdFinancingEngine
-from botragram.engine.cfd_sizing_engine import CfdSizingEngine
-from botragram.engine.risk_engine import RiskEngine
-from botragram.engine.trading_engine import TradingEngine
+from botragram.engine.cfd.cfd_financing_engine import CfdFinancingEngine
+from botragram.engine.cfd.cfd_sizing_engine import CfdSizingEngine
+from botragram.engine.risk.risk_engine import RiskEngine
+from botragram.engine.trading.trading_engine import TradingEngine
 from botragram.enums import AssetClass, MarketType, SignalType
 from botragram.models import CfdContractSpec, Signal
 

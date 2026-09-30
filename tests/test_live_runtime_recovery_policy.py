@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from botragram.app.live_runtime_recovery_policy import LiveRuntimeRecoveryPolicy
+from botragram.app.runtime.live_runtime_recovery_policy import LiveRuntimeRecoveryPolicy
 from botragram.enums import (
     Interval,
     LiveRuntimeHealthReason,

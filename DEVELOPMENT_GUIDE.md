@@ -724,6 +724,9 @@ menghapus package/module utama.
 `PROJECT_STRUCTURE.md` adalah referensi kanonik struktur repository. Ringkasan
 di bawah WAJIB tetap konsisten dengannya.
 
+Import modul yang dipindahkan pada refaktor bounded context WAJIB memakai path
+subpackage kanonis; path datar penerus import tidak disediakan lagi.
+
 Tree ini menampilkan package dan module utama; rincian models dan package yang
 diringkas tidak menggantikan inventaris lengkap `rg --files botragram tests`.
 
@@ -737,22 +740,17 @@ Botragram/
 |   |-- app/
 |   |   |-- __init__.py
 |   |   |-- application.py
-|   |   |-- autonomous_live_cycle_executor.py # Compatibility import for runtime/
 |   |   |-- backfill_command.py       # Historical candle backfill CLI runner
 |   |   |-- backtest_command.py       # Backtest CLI composition dan report
 |   |   |-- connectivity.py           # Backward-compatible classifier re-export
-|   |   |-- context_cycle_scheduler.py # Compatibility import for runtime/
 |   |   |-- dependency_provider.py    # Composition root dan manual wiring container
 |   |   |-- env_validator.py          # Duplicate environment-key validation at startup
 |   |   |-- environment_provider.py
 |   |   |-- global_discovery_telemetry.py # Read-only ranked discovery snapshot
 |   |   |-- lifecycle.py
 |   |   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
-|   |   |-- live_runtime_recovery_policy.py # Compatibility import for runtime/
 |   |   |-- market_type_switch.py     # Guarded Spot/Futures soft restart
-|   |   |-- multi_context_activation.py # Compatibility import for runtime/
 |   |   |-- operator_terminal_monitor.py # Operator dashboard monitor adapter
-|   |   |-- paper_cycle_executors.py # Compatibility import for runtime/
 |   |   |-- responsive_terminal_monitor.py # Terminal monitor responsive layout
 |   |   |-- runtime/
 |   |   |   |-- __init__.py
@@ -766,7 +764,6 @@ Botragram/
 |   |   |-- runtime_instance_lock.py  # One runtime per database-scoped deployment
 |   |   |-- runtime_limited_autonomous_live_executor.py # Dynamic capacity adapter
 |   |   |-- settings_manager.py
-|   |   |-- single_symbol_cycle_executor.py # Compatibility import for runtime/
 |   |   |-- shutdown.py
 |   |   |-- startup.py
 |   |   |-- terminal_monitor.py       # Rich status/stream/log dashboard
@@ -815,21 +812,9 @@ Botragram/
 |   |   |   `-- position_exit_engine.py
 |   |   |-- risk/
 |   |   |   `-- risk_engine.py
-|   |   |-- trading/
-|   |   |   |-- signal_engine.py
-|   |   |   `-- trading_engine.py
-|   |   |-- backtest_engine.py # Compatibility import for backtest/
-|   |   |-- cfd_financing_engine.py # Compatibility import for cfd/
-|   |   |-- cfd_sizing_engine.py # Compatibility import for cfd/
-|   |   |-- market_calendar.py # Compatibility import for cfd/
-|   |   |-- order_engine.py # Compatibility import for order/
-|   |   |-- pnl_engine.py # Compatibility import for accounting/
-|   |   |-- portfolio_engine.py # Compatibility import for portfolio/
-|   |   |-- position_engine.py # Compatibility import for position/
-|   |   |-- position_exit_engine.py # Compatibility import for position/
-|   |   |-- risk_engine.py # Compatibility import for risk/
-|   |   |-- signal_engine.py # Compatibility import for trading/
-|   |   `-- trading_engine.py # Compatibility import for trading/
+|   |   `-- trading/
+|   |       |-- signal_engine.py
+|   |       `-- trading_engine.py
 |   |-- enums/
 |   |   |-- __init__.py
 |   |   |-- base.py
@@ -938,14 +923,9 @@ Botragram/
 |   |-- services/
 |   |   |-- __init__.py
 |   |   |-- account_service.py
-|   |   |-- autonomous_live_entry_execution_service.py # Compatibility import for execution/
-|   |   |-- autonomous_live_entry_intent_service.py # Compatibility import for execution/
 |   |   |-- autonomous_live_recovery_observability_service.py
 |   |   |-- autonomous_paper_execution_service.py
 |   |   |-- backtest_service.py
-|   |   |-- candle_retention_service.py # Compatibility import for market/
-|   |   |-- candle_sync_service.py # Compatibility import for market/
-|   |   |-- closed_position_lifecycle_service.py # Compatibility import for position/
 |   |   |-- discovery/
 |   |   |   |-- __init__.py
 |   |   |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
@@ -958,18 +938,13 @@ Botragram/
 |   |   |   |-- execution_authorization_service.py
 |   |   |   |-- live_futures_entry_service.py
 |   |   |   `-- order_service.py
-|   |   |-- execution_authorization_service.py # Compatibility import for execution/
 |   |   |-- health_service.py
 |   |   |-- human_confirmed_paper_execution_service.py
 |   |   |-- live_account_drawdown_service.py
 |   |   |-- live_entry_risk_evaluation_service.py
 |   |   |-- live_executable_quote_service.py # Shared fresh LIVE quote/staleness gate
-|   |   |-- live_futures_entry_service.py # Compatibility import for execution/
 |   |   |-- live_futures_user_data_cache.py
 |   |   |-- live_market_stream_service.py
-|   |   |-- live_position_lifecycle_coordinator.py # Compatibility import for position/
-|   |   |-- live_runtime_health_service.py # Compatibility import for runtime/
-|   |   |-- live_runtime_portfolio_reconciliation_service.py # Compatibility import for runtime/
 |   |   |-- live_trading_performance_service.py # Net lifecycle performance
 |   |   |-- market/
 |   |   |   |-- __init__.py
@@ -977,10 +952,8 @@ Botragram/
 |   |   |   |-- candle_sync_service.py
 |   |   |   |-- market_service.py
 |   |   |   `-- stored_resampled_candle_provider.py
-|   |   |-- market_service.py # Compatibility import for market/
 |   |   |-- notification_message_formatter.py # Notification formatting contract
 |   |   |-- operator_exit_service.py
-|   |   |-- order_service.py # Compatibility import for execution/
 |   |   |-- paper_trading_service.py
 |   |   |-- position/
 |   |   |   |-- __init__.py
@@ -988,8 +961,6 @@ Botragram/
 |   |   |   |-- live_position_lifecycle_coordinator.py
 |   |   |   |-- position_exit_service.py
 |   |   |   `-- position_service.py
-|   |   |-- position_exit_service.py # Compatibility import for position/
-|   |   |-- position_service.py # Compatibility import for position/
 |   |   |-- protection/
 |   |   |   |-- __init__.py
 |   |   |   |-- live_position_protection_service.py
@@ -1008,9 +979,6 @@ Botragram/
 |   |   |   |-- live_runtime_portfolio_reconciliation_service.py
 |   |   |   |-- runtime_reporter.py
 |   |   |   `-- runtime_risk_limit_service.py
-|   |   |-- runtime_reporter.py # Compatibility import for runtime/
-|   |   |-- runtime_risk_limit_service.py # Compatibility import for runtime/
-|   |   |-- stored_resampled_candle_provider.py # Compatibility import for market/
 |   |   |-- strategy_service.py
 |   |   `-- trading_service.py
 |   |-- storage/
@@ -1049,13 +1017,10 @@ Botragram/
 |   |   |   |-- callbacks.py # Callback router and configuration controls
 |   |   |   |-- execution_policy.py # Guarded trading-mode switch callbacks
 |   |   |   `-- operator_exit.py # Guarded portfolio-exit callbacks
-|   |   |-- callbacks.py # Compatibility import for callback_routes/
 |   |   |-- commands.py
 |   |   |-- context.py
 |   |   |-- handlers.py
-|   |   |-- keyboards.py # Compatibility import for presentation/
 |   |   |-- leverage_commands.py
-|   |   |-- messages.py # Compatibility import for presentation/
 |   |   |-- operator_exit_commands.py
 |   |   |-- operator_exit_progress.py
 |   |   |-- presentation/

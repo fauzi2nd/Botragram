@@ -37,8 +37,8 @@ from botragram.app.backtest_command import (
 )
 from botragram.config import Settings
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine.backtest_engine import BacktestEngine
-from botragram.engine.signal_engine import SignalEngine
+from botragram.engine.backtest.backtest_engine import BacktestEngine
+from botragram.engine.trading.signal_engine import SignalEngine
 from botragram.enums import (
     Interval,
     MarketType,

@@ -45,7 +45,7 @@ from botragram.models import (
     SubmissionAttempt,
 )
 from botragram.repositories import SubmissionAttemptRepository
-from botragram.services.live_position_lifecycle_coordinator import (
+from botragram.services.position.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
 )
 

@@ -27,7 +27,7 @@ from botragram.constants.telegram import (
     CMD_START,
     CMD_STATUS,
 )
-from botragram.telegram.callbacks import handle_callback_query
+from botragram.telegram.callback_routes.callbacks import handle_callback_query
 from botragram.telegram.commands import (
     balance_command,
     exchange_command,

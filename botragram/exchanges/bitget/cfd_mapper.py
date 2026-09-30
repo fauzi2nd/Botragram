@@ -25,7 +25,7 @@ from typing import Final, cast
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.engine.market_calendar import MarketCalendarEngine
+from botragram.engine.cfd.market_calendar import MarketCalendarEngine
 from botragram.enums import (
     AssetClass,
     CfdInstrumentStatus,

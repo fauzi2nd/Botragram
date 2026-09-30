@@ -36,7 +36,7 @@ from decimal import Decimal
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
 from botragram.constants import BYBIT_REST_BASE_URL
-from botragram.engine.backtest_engine import BacktestEngine
+from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.models import BacktestRequest

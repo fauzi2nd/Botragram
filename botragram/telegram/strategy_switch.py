@@ -14,7 +14,7 @@ from botragram.enums import StrategyType
 from botragram.exceptions import ExecutionPolicySwitchBlockedError
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
-from botragram.telegram.keyboards import get_strategy_keyboard
+from botragram.telegram.presentation.keyboards import get_strategy_keyboard
 
 __all__ = ["strategy_switch_callback", "strategy_switch_command"]
 

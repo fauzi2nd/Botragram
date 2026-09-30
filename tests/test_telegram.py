@@ -52,7 +52,7 @@ from botragram.enums import (
 from botragram.models import ExecutionAuthorization, Order, Position, Signal, Trade
 from botragram.telegram.bot import get_bot_commands
 from botragram.telegram.context import BotContext
-from botragram.telegram.keyboards import (
+from botragram.telegram.presentation.keyboards import (
     get_activity_menu_keyboard,
     get_configuration_menu_keyboard,
     get_dashboard_menu_keyboard,
@@ -68,7 +68,7 @@ from botragram.telegram.keyboards import (
     get_tpsl_ratio_keyboard,
     get_trading_menu_keyboard,
 )
-from botragram.telegram.messages import (
+from botragram.telegram.presentation.messages import (
     get_exchange_message,
     get_execution_authorization_message,
     get_interval_message,

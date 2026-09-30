@@ -27,9 +27,9 @@ from typing import Final, cast
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.engine.cfd_financing_engine import CfdFinancingEngine
-from botragram.engine.cfd_sizing_engine import CfdSizingEngine
-from botragram.engine.market_calendar import MarketCalendarEngine
+from botragram.engine.cfd.cfd_financing_engine import CfdFinancingEngine
+from botragram.engine.cfd.cfd_sizing_engine import CfdSizingEngine
+from botragram.engine.cfd.market_calendar import MarketCalendarEngine
 from botragram.enums import (
     Interval,
     OrderSide,

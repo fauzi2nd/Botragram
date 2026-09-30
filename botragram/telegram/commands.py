@@ -71,7 +71,8 @@ from botragram.telegram.context import (
     MARKET_SEARCH_PENDING_KEY,
     BotContext,
 )
-from botragram.telegram.keyboards import (
+from botragram.telegram.leverage_commands import leverage_command
+from botragram.telegram.presentation.keyboards import (
     get_activity_menu_keyboard,
     get_configuration_menu_keyboard,
     get_dashboard_menu_keyboard,
@@ -87,8 +88,7 @@ from botragram.telegram.keyboards import (
     get_stream_keyboard,
     get_trading_menu_keyboard,
 )
-from botragram.telegram.leverage_commands import leverage_command
-from botragram.telegram.messages import (
+from botragram.telegram.presentation.messages import (
     get_balance_message,
     get_exchange_message,
     get_history_message,

@@ -30,7 +30,7 @@ from pathlib import Path
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
 from botragram.constants import BYBIT_REST_BASE_URL
-from botragram.engine.backtest_engine import BacktestEngine
+from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import ExchangeType, Interval, MarketType, SignalType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.indicators import calculate_ema

@@ -24,7 +24,9 @@ from botragram.telegram.presentation.messages import (
 
 __all__ = ["handle_execution_authorization_callback"]
 
-_LOGGER: Final[logging.Logger] = logging.getLogger("botragram.telegram.callbacks")
+_LOGGER: Final[logging.Logger] = logging.getLogger(
+    "botragram.telegram.callback_routes.callbacks"
+)
 _APPROVE_PREFIX: Final[str] = "cb_opportunity_approve_"
 _REJECT_PREFIX: Final[str] = "cb_opportunity_reject_"
 

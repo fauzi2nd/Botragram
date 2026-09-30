@@ -35,7 +35,7 @@ from botragram.services.live_account_drawdown_service import (
     DrawdownNotificationPublisher,
     LiveAccountDrawdownService,
 )
-from botragram.telegram.messages import get_drawdown_alert_message
+from botragram.telegram.presentation.messages import get_drawdown_alert_message
 from botragram.telegram.presentation.notification_message_formatter import (
     TelegramNotificationMessageFormatter,
 )

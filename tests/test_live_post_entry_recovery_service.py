@@ -1276,7 +1276,7 @@ async def test_filled_entry_with_manual_close_recovers_and_stages_manual_order()
     )
     from botragram.exceptions import ExchangeOrderNotFoundError
     from botragram.models import Order, Trade
-    from botragram.services.closed_position_lifecycle_service import (
+    from botragram.services.position.closed_position_lifecycle_service import (
         ClosedPositionLifecycleService,
     )
     from botragram.storage.memory.closed_position_lifecycle_repository import (

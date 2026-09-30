@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from botragram.app.context_cycle_scheduler import ContextCycleScheduler
+from botragram.app.runtime.context_cycle_scheduler import ContextCycleScheduler
 from botragram.enums import Interval, StrategyType
 from botragram.models import LiveRuntimePositionContext
 

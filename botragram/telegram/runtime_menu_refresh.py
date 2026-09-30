@@ -23,8 +23,8 @@ from botragram.telegram.context import (
     MARKET_SEARCH_PENDING_KEY,
     BotContext,
 )
-from botragram.telegram.keyboards import get_main_menu_keyboard
-from botragram.telegram.messages import (
+from botragram.telegram.presentation.keyboards import get_main_menu_keyboard
+from botragram.telegram.presentation.messages import (
     get_resume_message,
     get_runtime_pause_message,
     get_startup_configuration_message,

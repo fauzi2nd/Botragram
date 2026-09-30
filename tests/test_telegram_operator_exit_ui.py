@@ -32,14 +32,14 @@ from botragram.models import (
     OperatorExitSnapshot,
     Position,
 )
-from botragram.telegram.callbacks import handle_callback_query
+from botragram.telegram.callback_routes.callbacks import handle_callback_query
 from botragram.telegram.commands import positions_command
 from botragram.telegram.context import (
     ALLOWED_CHAT_IDS_KEY,
     BOT_CONTEXT_KEY,
     BotContext,
 )
-from botragram.telegram.keyboards import (
+from botragram.telegram.presentation.keyboards import (
     get_operator_exit_confirmation_keyboard,
 )
 
@@ -421,7 +421,9 @@ async def test_mode_switch_with_position_offers_guarded_flatten_transition(
         ),
     )
 
-    caplog.set_level(logging.ERROR, logger="botragram.telegram.callbacks")
+    caplog.set_level(
+        logging.ERROR, logger="botragram.telegram.callback_routes.callbacks"
+    )
     await handle_callback_query(
         update,
         _context(service=service, switcher=switcher),

@@ -30,7 +30,7 @@ import pytest
 # =============================================================================
 from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.models import RuntimeRiskLimits
-from botragram.telegram.callbacks import handle_callback_query
+from botragram.telegram.callback_routes.callbacks import handle_callback_query
 from botragram.telegram.context import (
     ALLOWED_CHAT_IDS_KEY,
     BOT_CONTEXT_KEY,

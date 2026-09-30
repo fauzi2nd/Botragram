@@ -26,11 +26,11 @@ from botragram.telegram.context import (
     BotContext,
 )
 from botragram.telegram.handlers import register_handlers
-from botragram.telegram.keyboards import (
+from botragram.telegram.presentation.keyboards import (
     get_execution_authorization_keyboard,
     get_main_menu_keyboard,
 )
-from botragram.telegram.messages import get_execution_authorization_message
+from botragram.telegram.presentation.messages import get_execution_authorization_message
 
 __all__ = ["TelegramBot", "get_bot_commands"]
 

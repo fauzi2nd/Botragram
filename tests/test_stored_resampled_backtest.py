@@ -29,7 +29,7 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine.backtest_engine import BacktestEngine
+from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import (
     Interval,
     MarketType,
@@ -38,7 +38,7 @@ from botragram.enums import (
 )
 from botragram.models import BacktestRequest, Candle, Signal
 from botragram.services.backtest_service import BacktestService
-from botragram.services.stored_resampled_candle_provider import (
+from botragram.services.market.stored_resampled_candle_provider import (
     StoredResampledCandleProvider,
 )
 from botragram.storage.sqlite import (

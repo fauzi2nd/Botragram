@@ -35,7 +35,7 @@ from typing import Final
 from botragram.app.environment_provider import EnvironmentProvider
 from botragram.app.settings_manager import SettingsManager
 from botragram.constants import BYBIT_REST_BASE_URL
-from botragram.engine.backtest_engine import BacktestEngine
+from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import (
     ExchangeType,
     Interval,

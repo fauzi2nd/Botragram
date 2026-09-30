@@ -28,7 +28,7 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine.risk_engine import RiskEngine
+from botragram.engine.risk.risk_engine import RiskEngine
 from botragram.enums import SignalType, StrategyType
 from botragram.models import Signal
 

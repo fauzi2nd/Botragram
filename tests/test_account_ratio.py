@@ -33,7 +33,7 @@ import pytest
 # =============================================================================
 from botragram.app.environment_provider import EnvironmentProvider
 from botragram.app.settings_manager import SettingsManager
-from botragram.engine.signal_engine import SignalEngine
+from botragram.engine.trading.signal_engine import SignalEngine
 from botragram.enums import Interval, SignalType, StrategyType
 from botragram.exchanges.bybit.client import BybitExchangeClient
 from botragram.exchanges.bybit.mapper import BybitExchangeMapper
@@ -42,7 +42,7 @@ from botragram.indicators import (
     evaluate_account_ratio_sentiment,
 )
 from botragram.models import Candle, Signal
-from botragram.services.market_service import MarketService
+from botragram.services.market.market_service import MarketService
 from botragram.strategies.base.strategy import BaseStrategy
 
 _START_TIME = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)

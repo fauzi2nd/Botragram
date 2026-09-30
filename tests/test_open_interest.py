@@ -30,7 +30,7 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.config.strategy_settings import StrategySettings
-from botragram.engine.signal_engine import SignalEngine
+from botragram.engine.trading.signal_engine import SignalEngine
 from botragram.enums import (
     Interval,
     OpenInterestRegime,
@@ -45,7 +45,7 @@ from botragram.indicators.derivatives.open_interest import (
     evaluate_oi_confluence,
 )
 from botragram.models import Candle, Signal
-from botragram.services.market_service import MarketService
+from botragram.services.market.market_service import MarketService
 from botragram.strategies.factory import StrategyFactory
 from botragram.strategies.price_action.morph import MorphStrategy
 

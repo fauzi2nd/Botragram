@@ -28,7 +28,9 @@ from botragram.telegram.presentation.keyboards import (
 
 __all__ = ["handle_execution_policy_callback"]
 
-_LOGGER: Final[logging.Logger] = logging.getLogger("botragram.telegram.callbacks")
+_LOGGER: Final[logging.Logger] = logging.getLogger(
+    "botragram.telegram.callback_routes.callbacks"
+)
 _POLICY_SELECT_CALLBACK_PREFIX: Final[str] = "cb_policy_select_"
 _POLICY_CONFIRM_CALLBACK_PREFIX: Final[str] = "cb_policy_confirm_"
 _POLICY_CANCEL_CALLBACK: Final[str] = "cb_policy_cancel"

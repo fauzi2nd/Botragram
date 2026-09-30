@@ -20,7 +20,7 @@ from botragram.enums import (
 )
 from botragram.models import LivePortfolioRecoveryResult, Position
 from botragram.repositories import CandleRepository, SignalRepository
-from botragram.services.live_position_lifecycle_coordinator import (
+from botragram.services.position.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
 )
 

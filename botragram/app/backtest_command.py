@@ -36,14 +36,14 @@ from botragram.constants import (
     BYBIT_REST_BASE_URL,
     BYBIT_TESTNET_REST_BASE_URL,
 )
-from botragram.engine.backtest_engine import BacktestEngine
-from botragram.engine.signal_engine import SignalEngine
+from botragram.engine.backtest.backtest_engine import BacktestEngine
+from botragram.engine.trading.signal_engine import SignalEngine
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.models import BacktestRequest, BacktestResult
 from botragram.services.backtest_service import BacktestService
 from botragram.services.discovery.setup_stalking_service import SetupStalkingService
-from botragram.services.stored_resampled_candle_provider import (
+from botragram.services.market.stored_resampled_candle_provider import (
     StoredResampledCandleProvider,
 )
 from botragram.services.strategy_service import StrategyService

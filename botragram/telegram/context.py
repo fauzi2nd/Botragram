@@ -511,7 +511,7 @@ class BotContext:
         confirmed: bool = False,
     ) -> str:
         """Return strategy details formatted with active interval and RRR."""
-        from botragram.telegram.messages import get_strategy_message
+        from botragram.telegram.presentation.messages import get_strategy_message
 
         try:
             strategy_type = StrategyType(strategy_name.casefold())

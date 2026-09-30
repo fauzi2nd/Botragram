@@ -23,7 +23,7 @@ from decimal import Decimal
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.engine.signal_engine import (
+from botragram.engine.trading.signal_engine import (
     SignalEngine,
     has_account_ratio_evaluation,
     has_funding_evaluation,

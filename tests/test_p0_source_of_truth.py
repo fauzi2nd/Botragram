@@ -28,7 +28,7 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine.risk_engine import RiskEngine
+from botragram.engine.risk.risk_engine import RiskEngine
 from botragram.enums import Interval, SignalType, StrategyType
 from botragram.models import Candle, Signal
 from botragram.strategies.price_action.pinbar_engulfing_ema_rsi import (

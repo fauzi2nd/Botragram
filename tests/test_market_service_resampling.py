@@ -31,7 +31,7 @@ import pytest
 from botragram.enums import Interval
 from botragram.exchanges.base import BaseExchangeClient, BaseStreamClient
 from botragram.models import Candle
-from botragram.services.market_service import MarketService
+from botragram.services.market.market_service import MarketService
 from botragram.storage.sqlite import (
     SQLiteCandleRepository,
     SQLiteDatabase,

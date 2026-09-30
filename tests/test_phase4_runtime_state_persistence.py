@@ -21,7 +21,9 @@ from botragram.enums import (
     MarketType,
     OrderType,
 )
-from botragram.services.live_futures_entry_service import LiveFuturesEntryService
+from botragram.services.execution.live_futures_entry_service import (
+    LiveFuturesEntryService,
+)
 from botragram.storage.memory import MemoryRuntimeSettingsRepository
 from botragram.storage.sqlite import (
     SQLiteDatabase,

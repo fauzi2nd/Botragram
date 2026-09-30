@@ -24,7 +24,7 @@ from botragram.telegram.context import (
     BotContext,
     BotRuntimeControl,
 )
-from botragram.telegram.messages import get_strategy_message
+from botragram.telegram.presentation.messages import get_strategy_message
 from botragram.telegram.runtime_menu_refresh import (
     menu_message_handler_with_runtime_refresh,
 )

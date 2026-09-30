@@ -89,7 +89,7 @@ from botragram.constants.env import (
     ENV_PIER_VOLUME_MULTIPLIER,
     ENV_PIER_VOLUME_PERIOD,
 )
-from botragram.engine.risk_engine import RiskEngine
+from botragram.engine.risk.risk_engine import RiskEngine
 from botragram.enums import Interval, SignalType, StrategyType
 from botragram.models import Candle, Signal
 from botragram.strategies.factory import StrategyFactory

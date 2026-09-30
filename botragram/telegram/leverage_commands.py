@@ -31,8 +31,8 @@ from telegram.ext import ContextTypes
 from botragram.constants.telegram import DEFAULT_PARSE_MODE
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
-from botragram.telegram.keyboards import get_leverage_keyboard
-from botragram.telegram.messages import get_leverage_message
+from botragram.telegram.presentation.keyboards import get_leverage_keyboard
+from botragram.telegram.presentation.messages import get_leverage_message
 
 __all__ = ["leverage_command", "set_leverage_command"]
 

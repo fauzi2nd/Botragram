@@ -29,7 +29,7 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.engine.position_exit_engine import PositionExitEngine
+from botragram.engine.position.position_exit_engine import PositionExitEngine
 from botragram.enums import (
     Interval,
     OrderSide,
@@ -48,7 +48,7 @@ from botragram.models import (
     Signal,
     TradingResult,
 )
-from botragram.services.position_exit_service import PositionExitService
+from botragram.services.position.position_exit_service import PositionExitService
 
 _NOW = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
 

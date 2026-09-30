@@ -498,7 +498,7 @@ async def test_position_service_sync_preserves_partial_tp_order_id() -> None:
     """Verify position service sync preserves partial_tp_order_id."""
     from unittest.mock import AsyncMock
 
-    from botragram.services.position_service import PositionService
+    from botragram.services.position.position_service import PositionService
 
     stored = replace(
         _position(),
@@ -618,7 +618,7 @@ async def test_position_service_sync_preserves_pending_partial_tp_fields() -> No
     """Verify position service sync preserves pending partial TP fields."""
     from unittest.mock import AsyncMock
 
-    from botragram.services.position_service import PositionService
+    from botragram.services.position.position_service import PositionService
 
     stored = replace(
         _position(),

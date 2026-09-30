@@ -48,7 +48,7 @@ from botragram.exceptions import (
 from botragram.models import Order, Position, SubmissionAttempt, Trade
 from botragram.repositories import SubmissionAttemptRepository
 from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
-from botragram.services.closed_position_lifecycle_service import (
+from botragram.services.position.closed_position_lifecycle_service import (
     ClosedPositionLifecycleService,
 )
 

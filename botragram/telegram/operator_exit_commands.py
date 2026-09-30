@@ -13,7 +13,7 @@ from botragram.exceptions import OperatorExitConfirmationUnavailableError
 from botragram.models import OperatorExitConfirmation, OperatorExitSnapshot
 from botragram.telegram.access import is_authorized_update
 from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
-from botragram.telegram.keyboards import (
+from botragram.telegram.presentation.keyboards import (
     get_operator_exit_confirmation_keyboard,
 )
 

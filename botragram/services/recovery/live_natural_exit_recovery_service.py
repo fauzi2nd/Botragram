@@ -28,10 +28,10 @@ from botragram.repositories import (
     PositionRepository,
     SubmissionAttemptRepository,
 )
-from botragram.services.closed_position_lifecycle_service import (
+from botragram.services.position.closed_position_lifecycle_service import (
     ClosedPositionLifecycleService,
 )
-from botragram.services.live_position_lifecycle_coordinator import (
+from botragram.services.position.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
 )
 

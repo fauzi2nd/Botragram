@@ -59,7 +59,7 @@ from botragram.services.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
 from botragram.telegram.access import is_chat_allowed
-from botragram.telegram.callbacks import handle_callback_query
+from botragram.telegram.callback_routes.callbacks import handle_callback_query
 from botragram.telegram.commands import (
     balance_command,
     history_command,
