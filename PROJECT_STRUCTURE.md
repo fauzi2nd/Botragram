@@ -7,6 +7,11 @@ dibuat dan tanggung jawabnya disetujui.
 Aturan arsitektur, dependency direction, coding standard, dan quality gate tetap
 berasal dari `DEVELOPMENT_GUIDE.md`.
 
+Tree menampilkan package dan module utama. Rincian `enums`, `models`,
+`repositories`, serta package tanpa daftar anak merupakan ringkasan, bukan daftar
+seluruh file. Inventaris lengkap source dapat diperiksa dengan
+`rg --files botragram tests`.
+
 ## Root Repository
 
 ```text
@@ -40,21 +45,35 @@ botragram/
 |-- __init__.py
 |-- app/
 |   |-- application.py
+|   |-- autonomous_live_cycle_executor.py # Compatibility import for runtime/
 |   |-- backfill_command.py  # Historical candle backfill CLI runner
 |   |-- backtest_command.py  # Isolated backtest CLI composition dan report
 |   |-- connectivity.py      # Backward-compatible classifier re-export
+|   |-- context_cycle_scheduler.py # Compatibility import for runtime/
 |   |-- dependency_provider.py # Composition root dan manual wiring container
+|   |-- env_validator.py       # Startup validation for duplicate environment keys
 |   |-- environment_provider.py
 |   |-- global_discovery_telemetry.py # Read-only ranked discovery phase/outcome snapshot
 |   |-- lifecycle.py
 |   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
+|   |-- live_runtime_recovery_policy.py # Compatibility import for runtime/
 |   |-- market_type_switch.py # Guarded MarketType/ExecutionPolicy in-process reconfiguration/soft restart
+|   |-- multi_context_activation.py # Compatibility import for runtime/
 |   |-- operator_terminal_monitor.py # Operator dashboard monitor adapter
+|   |-- paper_cycle_executors.py # Compatibility import for runtime/
 |   |-- responsive_terminal_monitor.py # Terminal monitor responsive layout
+|   |-- runtime/
+|   |   |-- autonomous_live_cycle_executor.py # Ranked LIVE protected entry
+|   |   |-- context_cycle_scheduler.py # Per-context cycle cadence
+|   |   |-- live_runtime_recovery_policy.py # Pure LIVE recovery health gates
+|   |   |-- multi_context_activation.py # Immutable activation preconditions
+|   |   |-- paper_cycle_executors.py # PAPER discovery cycle adapters
+|   |   `-- single_symbol_cycle_executor.py # Single-symbol runtime adapter
 |   |-- runtime_control.py
 |   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
 |   |-- runtime_limited_autonomous_live_executor.py # Dynamic durable capacity adapter
 |   |-- settings_manager.py
+|   |-- single_symbol_cycle_executor.py # Compatibility import for runtime/
 |   |-- shutdown.py
 |   |-- startup.py
 |   |-- terminal_monitor.py    # Rich status/stream/log dashboard
@@ -83,15 +102,38 @@ botragram/
 |   |-- telegram.py
 |   `-- time.py
 |-- engine/
-|   |-- backtest_engine.py   # Deterministic candle replay through PAPER path
-|   |-- order_engine.py
-|   |-- pnl_engine.py
-|   |-- portfolio_engine.py
-|   |-- position_engine.py
-|   |-- position_exit_engine.py
-|   |-- risk_engine.py
-|   |-- signal_engine.py
-|   `-- trading_engine.py
+|   |-- accounting/
+|   |   `-- pnl_engine.py # Profit/loss calculations
+|   |-- backtest/
+|   |   `-- backtest_engine.py # Deterministic PAPER-path candle replay
+|   |-- cfd/
+|   |   |-- cfd_financing_engine.py # CFD holding-cost calculations
+|   |   |-- cfd_sizing_engine.py # CFD contract sizing
+|   |   `-- market_calendar.py # TradFi market-session calendar
+|   |-- order/
+|   |   `-- order_engine.py # Order execution decisions
+|   |-- portfolio/
+|   |   `-- portfolio_engine.py # Portfolio calculations
+|   |-- position/
+|   |   |-- position_engine.py # Position management calculations
+|   |   `-- position_exit_engine.py # Position exit decisions
+|   |-- risk/
+|   |   `-- risk_engine.py # Risk evaluation and sizing
+|   |-- trading/
+|   |   |-- signal_engine.py # Signal generation
+|   |   `-- trading_engine.py # Trading execution decisions
+|   |-- backtest_engine.py # Compatibility import for backtest/
+|   |-- cfd_financing_engine.py # Compatibility import for cfd/
+|   |-- cfd_sizing_engine.py # Compatibility import for cfd/
+|   |-- market_calendar.py # Compatibility import for cfd/
+|   |-- order_engine.py # Compatibility import for order/
+|   |-- pnl_engine.py # Compatibility import for accounting/
+|   |-- portfolio_engine.py # Compatibility import for portfolio/
+|   |-- position_engine.py # Compatibility import for position/
+|   |-- position_exit_engine.py # Compatibility import for position/
+|   |-- risk_engine.py # Compatibility import for risk/
+|   |-- signal_engine.py # Compatibility import for trading/
+|   `-- trading_engine.py # Compatibility import for trading/
 |-- enums/                     # Closed domain choices, including exchange_environment.py
 |   |-- autonomous_live_entry_execution_status.py # Typed protected-entry outcome
 |   |-- autonomous_live_entry_intent_status.py # Typed autonomous intent outcome
@@ -150,6 +192,7 @@ botragram/
 |   `-- runtime_risk_limits.py # Durable autonomous LIVE runtime entry limits
 |-- repositories/              # Persistence interfaces, including lifecycle ledger
 |   |-- autonomous_live_opportunity_claim_repository.py # Atomic single-claim candidate gate
+|   |-- candle_storage_optimizer.py # Backend-neutral post-prune maintenance contract
 |   |-- closed_position_lifecycle_repository.py # Durable entry-identity ledger contract
 |   |-- execution_authorization_repository.py # Human paper approval contract
 |   |-- live_equity_high_water_repository.py # Peak balance persistence contract
@@ -161,48 +204,74 @@ botragram/
 |   `-- submission_attempt_repository.py # Incomplete entry attempt contract
 |-- services/
 |   |-- account_service.py
-|   |-- autonomous_live_entry_execution_service.py # Fresh-risk protected network-scoped entry adapter
-|   |-- autonomous_live_entry_intent_service.py # Pure network-scoped intent authorization
+|   |-- autonomous_live_entry_execution_service.py # Compatibility import for execution/
+|   |-- autonomous_live_entry_intent_service.py # Compatibility import for execution/
 |   |-- autonomous_live_recovery_observability_service.py # Read-only recovery view
 |   |-- autonomous_paper_execution_service.py # Ranked PAPER candidate execution
 |   |-- backtest_service.py   # Paginated historical candle orchestration
-|   |-- candle_retention_service.py
-|   |-- candle_sync_service.py
-|   |-- closed_position_lifecycle_service.py # Exact-order gross/fee/net enrichment
-|   |-- execution_authorization_service.py # PAPER human-approval boundary
+|   |-- candle_retention_service.py # Compatibility import for market/candle_retention_service.py
+|   |-- candle_sync_service.py # Compatibility import for market/candle_sync_service.py
+|   |-- closed_position_lifecycle_service.py # Compatibility import for position/
+|   |-- discovery/
+|   |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
+|   |   |-- setup_stalking_service.py # Pre-entry setup tracking and confirmation
+|   |   `-- volume_ranked_discovery_universe_service.py # Ranked snapshot and bounded rotation
+|   |-- execution/
+|   |   |-- autonomous_live_entry_execution_service.py # Fresh-risk protected entry adapter
+|   |   |-- autonomous_live_entry_intent_service.py # Network-scoped intent authorization
+|   |   |-- execution_authorization_service.py # PAPER human-approval boundary
+|   |   |-- live_futures_entry_service.py # Protected Futures MARKET entry workflow
+|   |   `-- order_service.py # Order submission and persistence
+|   |-- execution_authorization_service.py # Compatibility import for execution/
 |   |-- health_service.py
 |   |-- human_confirmed_paper_execution_service.py # Discovery-to-approval orchestration
 |   |-- live_account_drawdown_service.py # Account-level drawdown protection against peak equity
 |   |-- live_entry_risk_evaluation_service.py # Authoritative portfolio/balance decision
 |   |-- live_executable_quote_service.py # Shared fresh quote and signal provenance gate
-|   |-- live_futures_entry_service.py # Protected Futures MARKET entry workflow
+|   |-- live_futures_entry_service.py # Compatibility import for execution/
 |   |-- live_futures_user_data_cache.py # Thread-safe cached private Futures account state
 |   |-- live_market_stream_service.py # Production 0/1/N LIVE stream ownership
-|   |-- live_natural_exit_recovery_service.py # Automatic detection and ledgering of natural SL/TP fills
-|   |-- live_portfolio_recovery_service.py # LIVE portfolio safety recovery
-|   |-- live_position_lifecycle_coordinator.py # Per-symbol mutex coordinator across entry/exit/protection
-|   |-- live_position_protection_service.py # Shared LIVE SL/TP reconciliation
-|   |-- live_post_entry_recovery_service.py # ACKNOWLEDGED entry recovery core
-|   |-- live_protection_monitoring_service.py # Production 0/1/N protection monitor owner
-|   |-- live_runtime_health_service.py # Derived recovered LIVE health aggregation
-|   |-- live_runtime_portfolio_reconciliation_service.py # Canonical 0/1/N LIVE management reconciliation
-|   |-- live_submission_recovery_service.py # GET-only incomplete entry recovery
+|   |-- live_position_lifecycle_coordinator.py # Compatibility import for position/
+|   |-- live_runtime_health_service.py # Compatibility import for runtime/
+|   |-- live_runtime_portfolio_reconciliation_service.py # Compatibility import for runtime/
 |   |-- live_trading_performance_service.py # One net outcome per completed lifecycle
-|   |-- market_service.py
-|   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
+|   |-- market/
+|   |   |-- candle_retention_service.py # Stored candle retention
+|   |   |-- candle_sync_service.py # Bounded candle gap synchronization
+|   |   |-- market_service.py # Exchange and persisted market data access
+|   |   `-- stored_resampled_candle_provider.py # Stored candle replay input
+|   |-- market_service.py # Compatibility import for market/market_service.py
+|   |-- notification_message_formatter.py # Transport-neutral notification formatting contract
 |   |-- operator_exit_service.py # Guarded PAPER/LIVE close + flatten-and-switch orchestration
-|   |-- order_service.py
+|   |-- order_service.py # Compatibility import for execution/
 |   |-- paper_trading_service.py
-|   |-- position_exit_service.py
-|   |-- position_protection_manager.py # Stream-driven stepped SL+
-|   |-- position_service.py
-|   |-- runtime_recovery_service.py # Restart recovery dan live protection gate
-|   |-- runtime_reporter.py
-|   |-- runtime_risk_limit_service.py # Durable runtime canary-limit authority
-|   |-- stored_resampled_candle_provider.py
+|   |-- position/
+|   |   |-- closed_position_lifecycle_service.py # Exact-order gross/fee/net enrichment
+|   |   |-- live_position_lifecycle_coordinator.py # Per-symbol lifecycle serialization
+|   |   |-- position_exit_service.py # In-flight position exit orchestration
+|   |   `-- position_service.py # Position sync and persistence
+|   |-- position_exit_service.py # Compatibility import for position/
+|   |-- position_service.py # Compatibility import for position/
+|   |-- protection/
+|   |   |-- live_position_protection_service.py # Shared LIVE SL/TP reconciliation
+|   |   |-- live_protection_monitoring_service.py # Production 0/1/N protection monitor owner
+|   |   `-- position_protection_manager.py # Stream-driven stepped SL+
+|   |-- recovery/
+|   |   |-- live_natural_exit_recovery_service.py # Natural SL/TP fill detection and ledgering
+|   |   |-- live_portfolio_recovery_service.py # LIVE portfolio safety recovery
+|   |   |-- live_post_entry_recovery_service.py # ACKNOWLEDGED entry recovery core
+|   |   |-- live_submission_recovery_service.py # GET-only incomplete entry recovery
+|   |   `-- runtime_recovery_service.py # Restart recovery dan live protection gate
+|   |-- runtime/
+|   |   |-- live_runtime_health_service.py # Derived recovered LIVE health aggregation
+|   |   |-- live_runtime_portfolio_reconciliation_service.py # Canonical 0/1/N management reconciliation
+|   |   |-- runtime_reporter.py # Runtime status and portfolio reporting
+|   |   `-- runtime_risk_limit_service.py # Durable runtime canary-limit authority
+|   |-- runtime_reporter.py # Compatibility import for runtime/
+|   |-- runtime_risk_limit_service.py # Compatibility import for runtime/
+|   |-- stored_resampled_candle_provider.py # Compatibility import for market/
 |   |-- strategy_service.py
-|   |-- trading_service.py
-|   `-- volume_ranked_discovery_universe_service.py # Full ranked snapshot, bounded rotation
+|   `-- trading_service.py
 |-- storage/
 |   |-- base/
 |   |-- memory/
@@ -230,15 +299,24 @@ botragram/
 |-- telegram/
 |   |-- access.py
 |   |-- bot.py
-|   |-- callbacks.py
+|   |-- callback_routes/
+|   |   |-- authorization.py # PAPER approval callback boundary
+|   |   |-- callbacks.py # Callback routing and remaining configuration controls
+|   |   |-- execution_policy.py # Guarded trading-mode switch callbacks
+|   |   `-- operator_exit.py # Guarded portfolio-exit callbacks
+|   |-- callbacks.py # Compatibility import for callback_routes/
 |   |-- commands.py
 |   |-- context.py
 |   |-- handlers.py
-|   |-- keyboards.py
+|   |-- keyboards.py # Compatibility import for presentation/
 |   |-- leverage_commands.py
-|   |-- messages.py
+|   |-- messages.py # Compatibility import for presentation/
 |   |-- operator_exit_commands.py # Explicit chat-bound portfolio exit controls
 |   |-- operator_exit_progress.py # Real-time progress updates during operator exit
+|   |-- presentation/
+|   |   |-- keyboards.py # Telegram reply and inline keyboard layouts
+|   |   |-- messages.py # Telegram HTML message templates
+|   |   `-- notification_message_formatter.py # Domain-fact to Telegram HTML adapter
 |   |-- query_service.py
 |   |-- risk_limit_commands.py # Paused durable runtime-limit controls
 |   |-- runtime_menu_refresh.py # Mode-aware home menu synchronization
@@ -267,6 +345,7 @@ tests/
 |-- manual/                    # Explicit real-network/local smoke scripts
 |   |-- __init__.py
 |   `-- *.py
+|-- terminal_helpers.py        # Explicit Rich console dimensions for portable tests
 `-- test_*.py                 # Automated unit/integration/contract tests
     termasuk test_backtest.py untuk replay, ambiguity, pagination, dan CLI
 ```
@@ -291,6 +370,9 @@ domain models/enums -> tidak bergantung pada application atau infrastructure
 
 Concrete dependency hanya dibangun oleh `DependencyProvider`. Service dan engine
 tidak boleh membuat HTTP client, database, repository, atau service konkret.
+Notifikasi service memakai kontrak formatter; implementasi HTML Telegram hanya
+dibangun dan disuntikkan oleh `DependencyProvider`. Retensi candle memakai
+kontrak optimasi storage tanpa SQL atau tipe SQLite di service.
 
 ## Runtime-Owned Paths
 

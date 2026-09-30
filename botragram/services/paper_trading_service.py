@@ -51,9 +51,8 @@ from botragram.repositories import (
     PositionRepository,
     TradeRepository,
 )
-from botragram.telegram.messages import (
-    get_paper_entry_message,
-    get_paper_exit_message,
+from botragram.services.notification_message_formatter import (
+    NotificationMessageFormatter,
 )
 
 __all__ = [
@@ -97,6 +96,7 @@ class PaperTradingService:
     trading_engine: TradingEngine
     pnl_engine: PnLEngine
     notification_publisher: NotificationPublisher | None = None
+    notification_formatter: NotificationMessageFormatter | None = None
     quote_asset: str = "USDT"
     initial_balance: Decimal = _DEFAULT_INITIAL_BALANCE
     fee_rate: Decimal = _DEFAULT_FEE_RATE
@@ -114,6 +114,11 @@ class PaperTradingService:
 
     def __post_init__(self) -> None:
         """Validate immutable simulation settings."""
+        if (
+            self.notification_publisher is not None
+            and self.notification_formatter is None
+        ):
+            raise ValueError("Paper notification formatter is required")
         normalized_asset = self.quote_asset.strip().upper()
 
         if not normalized_asset:
@@ -692,19 +697,21 @@ class PaperTradingService:
         await self.order_repository.save(order=order)
         await self.trade_repository.save(trade=trade)
         await self.position_repository.save(position=position)
-        await self._publish_notification(
-            notification=Notification(
-                title="Paper entry executed",
-                message=get_paper_entry_message(
-                    order=order,
-                    trade=trade,
-                    position=position,
-                    available_balance=available_balance - required_balance,
-                ),
-                level=NotificationType.ORDER,
-                created_at=signal.generated_at,
+        formatter = self.notification_formatter
+        if formatter is not None:
+            await self._publish_notification(
+                notification=Notification(
+                    title="Paper entry executed",
+                    message=formatter.paper_entry(
+                        order=order,
+                        trade=trade,
+                        position=position,
+                        available_balance=available_balance - required_balance,
+                    ),
+                    level=NotificationType.ORDER,
+                    created_at=signal.generated_at,
+                )
             )
-        )
 
         return TradingResult(executed=True, decision=decision, order=order)
 
@@ -819,19 +826,21 @@ class PaperTradingService:
         available_balance = await self.get_available_balance(
             initial_balance=initial_balance,
         )
-        await self._publish_notification(
-            notification=Notification(
-                title="Paper position closed",
-                message=get_paper_exit_message(
-                    order=order,
-                    trade=trade,
-                    available_balance=available_balance,
-                    reason=close_reason,
-                ),
-                level=NotificationType.TRADE,
-                created_at=signal.generated_at,
+        formatter = self.notification_formatter
+        if formatter is not None:
+            await self._publish_notification(
+                notification=Notification(
+                    title="Paper position closed",
+                    message=formatter.paper_exit(
+                        order=order,
+                        trade=trade,
+                        available_balance=available_balance,
+                        reason=close_reason,
+                    ),
+                    level=NotificationType.TRADE,
+                    created_at=signal.generated_at,
+                )
             )
-        )
 
         return TradingResult(
             executed=True,

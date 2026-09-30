@@ -39,16 +39,15 @@ from botragram.models import Candle, Position, Signal
 _NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def _settings(**overrides: object) -> RiskSettings:
-    base: dict[str, object] = {
-        "leverage": 5,
-        "min_leverage": 1,
-        "max_leverage": 25,
-        "min_order_notional_usdt": Decimal("5"),
-        "slot_margin_buffer_pct": Decimal("0.05"),
-    }
-    base.update(overrides)
-    return RiskSettings(**base)  # type: ignore[arg-type]
+def _settings() -> RiskSettings:
+    """Return the shared valid risk configuration for boundary tests."""
+    return RiskSettings(
+        leverage=5,
+        min_leverage=1,
+        max_leverage=25,
+        min_order_notional_usdt=Decimal("5"),
+        slot_margin_buffer_pct=Decimal("0.05"),
+    )
 
 
 def _signal(

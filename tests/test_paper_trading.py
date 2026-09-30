@@ -34,6 +34,9 @@ from botragram.storage.sqlite import (
     SQLiteMigrationManager,
     SQLitePositionRepository,
 )
+from botragram.telegram.presentation.notification_message_formatter import (
+    TelegramNotificationMessageFormatter,
+)
 
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -85,6 +88,11 @@ def _create_fixture(
         ),
         pnl_engine=PnLEngine(),
         notification_publisher=notification_publisher,
+        notification_formatter=(
+            TelegramNotificationMessageFormatter()
+            if notification_publisher is not None
+            else None
+        ),
         initial_balance=initial_balance,
         close_on_opposite_signal=close_on_opposite_signal,
     )

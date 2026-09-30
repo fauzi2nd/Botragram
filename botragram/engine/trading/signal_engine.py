@@ -1,0 +1,370 @@
+"""
+Botragram
+
+Description:
+    Trading signal generation engine in the trading context.
+
+Python:
+    3.14+
+"""
+
+# =============================================================================
+# Future
+# =============================================================================
+from __future__ import annotations
+
+# =============================================================================
+# Standard Library
+# =============================================================================
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from decimal import Decimal
+from typing import Protocol, runtime_checkable
+
+# =============================================================================
+# Local Imports
+# =============================================================================
+from botragram.enums import PositionSide, SignalType, StrategyType
+from botragram.models import Candle, Signal
+from botragram.strategies.factory import StrategyResolver
+
+__all__ = [
+    "SignalEngine",
+    "StructuralTargetValidator",
+    "TriggerGuardsValidator",
+    "ZoneCandidateDetailedDetector",
+    "ZoneCandidateDetector",
+    "has_account_ratio_evaluation",
+    "has_funding_evaluation",
+    "has_oi_evaluation",
+]
+
+
+# =============================================================================
+# Protocols
+# =============================================================================
+@runtime_checkable
+class StructuralTargetValidator(Protocol):
+    """Protocol for strategies validating and clamping structural take-profit."""
+
+    def clamp_structural_take_profit(
+        self,
+        *,
+        side: PositionSide,
+        entry_price: Decimal,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+        candles: Sequence[Candle],
+    ) -> tuple[Decimal | None, str]:
+        """Clamp take-profit to walls/floors and validate min_structural_rr."""
+        ...
+
+
+@runtime_checkable
+class TriggerGuardsValidator(Protocol):
+    """Protocol for strategies validating execution trigger guards."""
+
+    def validate_trigger_guards(
+        self,
+        *,
+        side: PositionSide,
+        candles: Sequence[Candle],
+    ) -> tuple[bool, str]:
+        """Validate whether trigger guards (e.g. BB, MACD) allow entry execution."""
+        ...
+
+
+@runtime_checkable
+class ZoneCandidateDetailedDetector(Protocol):
+    """Protocol for strategies implementing detailed zone candidate detection."""
+
+    def detect_zone_candidate_detailed(
+        self,
+        *,
+        candles: Sequence[Candle],
+    ) -> tuple[Signal | None, str]:
+        """Detect zone candidate returning signal and diagnostic rejection reason."""
+        ...
+
+
+@runtime_checkable
+class ZoneCandidateDetector(Protocol):
+    """Protocol for strategies implementing simple zone candidate detection."""
+
+    def detect_zone_candidate(
+        self,
+        *,
+        candles: Sequence[Candle],
+    ) -> Signal | None:
+        """Detect whether market state qualifies as a zone candidate."""
+        ...
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+def has_oi_evaluation(reason: str | None) -> bool:
+    """Return whether Open Interest analysis was already applied to signal reason."""
+    if not reason:
+        return False
+    return (
+        "[REJECTED_OI]" in reason
+        or "[OI_CONFLUENCE]" in reason
+        or "[OI:" in reason
+        or "[Bullish Long Buildup" in reason
+        or "[Transient Long Buildup" in reason
+        or "[Warning: Short Covering" in reason
+        or "[Contradictory Short Buildup" in reason
+        or "[Warning: Long Liquidation" in reason
+        or "[Bearish Short Buildup" in reason
+        or "[Transient Short Buildup" in reason
+        or "[Contradictory Long Buildup" in reason
+        or "Short Covering squeeze" in reason
+        or "Long Liquidation flush" in reason
+    )
+
+
+def has_funding_evaluation(reason: str | None) -> bool:
+    """Return whether Funding sentiment filter was already applied to signal reason."""
+    if not reason:
+        return False
+    return (
+        "[REJECTED_FUNDING_CROWDED]" in reason
+        or "[CROWDED_LONG: funding" in reason
+        or "[CROWDED_SHORT: funding" in reason
+    )
+
+
+def has_account_ratio_evaluation(reason: str | None) -> bool:
+    """Return whether Account L/S Ratio filter was already applied to signal reason."""
+    if not reason:
+        return False
+    return (
+        "[REJECTED_LS_RATIO]" in reason
+        or "crowded long)" in reason
+        or "crowded short)" in reason
+        or "Top Trader L/S" in reason
+        or "Account L/S" in reason
+        or "Global L/S" in reason
+    )
+
+
+# =============================================================================
+# Signal Engine
+# =============================================================================
+@dataclass(slots=True, kw_only=True, frozen=True)
+class SignalEngine:
+    """Generate signals from an explicit type resolved by an immutable registry."""
+
+    strategy_resolver: StrategyResolver
+    default_strategy_type: StrategyType
+    invert_signals: bool = False
+    use_open_interest: bool = False
+    min_oi_change_pct: Decimal = Decimal("0.0")
+    oi_confidence_bonus: Decimal = Decimal("0.05")
+    require_oi_confluence: bool = False
+    filter_funding_sentiment: bool = False
+    max_long_funding_rate: Decimal = Decimal("0.0005")
+    min_short_funding_rate: Decimal = Decimal("-0.0005")
+    require_funding_sentiment: bool = True
+    filter_account_ratio: bool = False
+    max_long_account_ratio: Decimal = Decimal("0.75")
+    min_short_account_ratio: Decimal = Decimal("0.25")
+    require_account_ratio_confluence: bool = True
+    confirm_htf_account_ratio: bool = False
+
+    def generate(
+        self,
+        *,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> Signal:
+        """Generate a trading signal from market candles.
+
+        Args:
+            candles: Candles ordered from oldest to newest.
+            strategy_type: Explicit strategy selection. Omitted only by legacy
+                non-context callers, which use the immutable configured default.
+
+        Returns:
+            Signal generated by the resolved strategy, optionally inverted.
+
+        Raises:
+            ValueError: If candle data is invalid or insufficient.
+        """
+        resolved_strategy_type = (
+            strategy_type if strategy_type is not None else self.default_strategy_type
+        )
+        strategy = self.strategy_resolver.resolve(
+            strategy_type=resolved_strategy_type,
+        )
+        signal = strategy.generate_signal(
+            candles=candles,
+        )
+
+        if self.invert_signals:
+            if signal.signal_type is SignalType.BUY:
+                signal = replace(
+                    signal,
+                    signal_type=SignalType.SELL,
+                    reason=f"[INVERTED] {signal.reason}",
+                )
+            elif signal.signal_type is SignalType.SELL:
+                signal = replace(
+                    signal,
+                    signal_type=SignalType.BUY,
+                    reason=f"[INVERTED] {signal.reason}",
+                )
+
+        return self.apply_confluence_filters(
+            signal=signal,
+            candles=candles,
+            strategy_type=resolved_strategy_type,
+        )
+
+    def apply_confluence_filters(
+        self,
+        *,
+        signal: Signal,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> Signal:
+        """Apply OI, funding sentiment, and account ratio filters to a signal."""
+        if signal.signal_type is SignalType.HOLD:
+            return signal
+
+        resolved_strategy_type = (
+            strategy_type if strategy_type is not None else self.default_strategy_type
+        )
+        strategy = self.strategy_resolver.resolve(
+            strategy_type=resolved_strategy_type,
+        )
+
+        if self.use_open_interest:
+            if not has_oi_evaluation(signal.reason):
+                signal = strategy.apply_open_interest_confluence(
+                    signal=signal,
+                    candles=candles,
+                    min_change_pct=self.min_oi_change_pct,
+                    confidence_bonus=self.oi_confidence_bonus,
+                    strict=self.require_oi_confluence,
+                )
+
+        if self.filter_funding_sentiment and signal.signal_type is not SignalType.HOLD:
+            if not has_funding_evaluation(signal.reason):
+                signal = strategy.apply_funding_sentiment_filter(
+                    signal=signal,
+                    candles=candles,
+                    max_long_funding=self.max_long_funding_rate,
+                    min_short_funding=self.min_short_funding_rate,
+                    strict=self.require_funding_sentiment,
+                )
+
+        if self.filter_account_ratio and signal.signal_type is not SignalType.HOLD:
+            if not has_account_ratio_evaluation(signal.reason):
+                signal = strategy.apply_account_ratio_filter(
+                    signal=signal,
+                    candles=candles,
+                    max_long_ratio=self.max_long_account_ratio,
+                    min_short_ratio=self.min_short_account_ratio,
+                    strict=self.require_account_ratio_confluence,
+                    confirm_htf=self.confirm_htf_account_ratio,
+                )
+
+        return signal
+
+    def get_minimum_candles(self, *, strategy_type: StrategyType) -> int:
+        """Return the requirement for one explicit strategy type."""
+        return self.strategy_resolver.resolve(
+            strategy_type=strategy_type,
+        ).minimum_candles
+
+    def detect_zone_candidate(
+        self,
+        *,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> Signal | None:
+        """Detect whether market state qualifies as a Stage 1 zone candidate."""
+        candidate, _ = self.detect_zone_candidate_detailed(
+            candles=candles,
+            strategy_type=strategy_type,
+        )
+        return candidate
+
+    def detect_zone_candidate_detailed(
+        self,
+        *,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> tuple[Signal | None, str]:
+        """Detect zone candidate returning signal and diagnostic rejection reason."""
+        resolved_strategy_type = (
+            strategy_type if strategy_type is not None else self.default_strategy_type
+        )
+        strategy = self.strategy_resolver.resolve(
+            strategy_type=resolved_strategy_type,
+        )
+        if isinstance(strategy, ZoneCandidateDetailedDetector):
+            return strategy.detect_zone_candidate_detailed(candles=candles)
+        if isinstance(strategy, ZoneCandidateDetector):
+            candidate = strategy.detect_zone_candidate(candles=candles)
+            if candidate is not None:
+                return candidate, ""
+            return None, "Candidate rejected"
+        return None, "No detector available"
+
+    def validate_trigger_guards(
+        self,
+        *,
+        side: PositionSide,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> tuple[bool, str]:
+        """Validate execution trigger guards using the resolved strategy.
+
+        Returns:
+            Tuple of (is_valid, rejection_reason). If strategy does not implement
+            guards, returns (True, "").
+        """
+        resolved_strategy_type = (
+            strategy_type if strategy_type is not None else self.default_strategy_type
+        )
+        strategy = self.strategy_resolver.resolve(
+            strategy_type=resolved_strategy_type,
+        )
+        if isinstance(strategy, TriggerGuardsValidator):
+            return strategy.validate_trigger_guards(side=side, candles=candles)
+        return True, ""
+
+    def clamp_structural_take_profit(
+        self,
+        *,
+        side: PositionSide,
+        entry_price: Decimal,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> tuple[Decimal | None, str]:
+        """Clamp take-profit to structural walls/floors using the resolved strategy.
+
+        Returns:
+            Tuple of (clamped_tp, note_or_rejection_reason).
+            If clamped_tp is None, setup is rejected due to insufficient RR.
+        """
+        resolved_strategy_type = (
+            strategy_type if strategy_type is not None else self.default_strategy_type
+        )
+        strategy = self.strategy_resolver.resolve(
+            strategy_type=resolved_strategy_type,
+        )
+        if isinstance(strategy, StructuralTargetValidator):
+            return strategy.clamp_structural_take_profit(
+                side=side,
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                candles=candles,
+            )
+        return take_profit, ""

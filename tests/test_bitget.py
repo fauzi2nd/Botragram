@@ -523,8 +523,11 @@ async def test_bitget_futures_exchange_client_verify_mainnet_readiness() -> None
     unauth_client = BitgetFuturesExchangeClient(
         rest=unauthenticated_rest, mapper=BitgetExchangeMapper()
     )
-    with pytest.raises(ExchangeError, match="credentials are required"):
-        await unauth_client.verify_mainnet_readiness()
+    try:
+        with pytest.raises(ExchangeError, match="credentials are required"):
+            await unauth_client.verify_mainnet_readiness()
+    finally:
+        await unauth_client.close()
 
 
 @pytest.mark.asyncio

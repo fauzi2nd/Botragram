@@ -37,6 +37,8 @@ from botragram.storage.sqlite import (
     SQLiteRuntimeSettingsRepository,
 )
 
+pytestmark = pytest.mark.usefixtures("stub_binance_time_sync")
+
 _TMP_DIRS: list[object] = []
 
 
@@ -67,6 +69,29 @@ async def test_dependency_provider_loads_persisted_strategy_on_boot() -> None:
         # Runtime control and settings should have adopted EMA_SCALPING
         assert provider.runtime_control.strategy_type is StrategyType.EMA_SCALPING
         assert provider.runtime_control.interval is Interval.M5
+    finally:
+        await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_dependency_provider_restores_persisted_risk_controls() -> None:
+    """Persisted leverage and dynamic mode reach settings and runtime control."""
+    db_path = _get_temp_db_path()
+    database = SQLiteDatabase(database_path=db_path)
+    await database.connect()
+    await SQLiteMigrationManager(database=database).initialize()
+    repo = SQLiteRuntimeSettingsRepository(database=database)
+    await repo.save_leverage(leverage=7)
+    await repo.save_dynamic_leverage(enabled=True)
+    await database.close()
+
+    provider = DependencyProvider(database_path=db_path, settings=Settings())
+    await provider.initialize()
+    try:
+        assert provider.settings.risk.leverage == 7
+        assert provider.runtime_control.leverage == 7
+        assert provider.settings.risk.dynamic_leverage_enabled
+        assert provider.runtime_control.dynamic_leverage_enabled
     finally:
         await provider.close()
 

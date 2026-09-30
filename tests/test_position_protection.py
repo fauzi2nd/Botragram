@@ -42,6 +42,9 @@ from botragram.storage.memory import (
     MemoryPositionRepository,
     MemoryTradeRepository,
 )
+from botragram.telegram.presentation.notification_message_formatter import (
+    TelegramNotificationMessageFormatter,
+)
 
 _NOW = datetime(2026, 8, 7, tzinfo=UTC)
 
@@ -1374,6 +1377,7 @@ async def test_partial_take_profit_paper_execution() -> None:
         exchange_client=exchange,
         position_refresh_seconds=0.001,
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         partial_tp_enabled=True,
         partial_tp_ratio=Decimal("0.50"),
         partial_tp_trigger_progress=Decimal("0.50"),
@@ -1434,6 +1438,7 @@ async def test_partial_take_profit_live_execution() -> None:
         exchange_client=exchange,
         position_refresh_seconds=0.001,
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         partial_tp_enabled=True,
         partial_tp_ratio=Decimal("0.50"),
         partial_tp_trigger_progress=Decimal("0.50"),

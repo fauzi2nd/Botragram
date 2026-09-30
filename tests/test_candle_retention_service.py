@@ -17,6 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -32,8 +33,17 @@ from botragram.enums import Interval
 from botragram.models import Candle
 from botragram.services import CandleRetentionService
 from botragram.storage.memory import MemoryCandleRepository
+from botragram.storage.sqlite import SQLiteDatabase
 
 _NOW = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+
+
+@dataclass(slots=True)
+class _RecordingOptimizer:
+    calls: int = 0
+
+    async def optimize_after_prune(self) -> None:
+        self.calls += 1
 
 
 def _make_candle(*, symbol: str, open_time: datetime) -> Candle:
@@ -95,6 +105,36 @@ async def test_prune_expired_candles_removes_only_older_than_retention() -> None
     )
     assert len(remaining) == 1
     assert remaining[0].open_time == fresh_candle.open_time
+
+
+@pytest.mark.asyncio
+async def test_storage_optimization_runs_only_after_deleted_candles() -> None:
+    repository = MemoryCandleRepository()
+    optimizer = _RecordingOptimizer()
+    service = CandleRetentionService(
+        candle_repository=repository,
+        database=optimizer,
+        utc_now=lambda: _NOW,
+    )
+    assert await service.prune_expired_candles() == 0
+    assert optimizer.calls == 0
+
+    await repository.save(
+        candle=_make_candle(symbol="BTCUSDT", open_time=_NOW - timedelta(days=10))
+    )
+    assert await service.prune_expired_candles() == 1
+    assert optimizer.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_sqlite_storage_optimization_contract() -> None:
+    """The production SQLite adapter accepts the storage-neutral maintenance call."""
+    database = SQLiteDatabase(database_path=":memory:")
+    await database.connect()
+    try:
+        await database.optimize_after_prune()
+    finally:
+        await database.close()
 
 
 @pytest.mark.asyncio

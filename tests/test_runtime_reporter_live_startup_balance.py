@@ -10,6 +10,9 @@ from botragram.enums import TradeMode
 from botragram.models import Account, Balance, Notification, Position
 from botragram.services.health_service import HealthService
 from botragram.services.runtime_reporter import RuntimeReporter
+from botragram.telegram.presentation.notification_message_formatter import (
+    TelegramNotificationMessageFormatter,
+)
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -95,6 +98,7 @@ async def _run_live_startup_balance_test() -> None:
         paper_trading_service=FakePaperBalanceProvider(),
         position_repository=FakePositionRepository(),
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         trade_mode=TradeMode.LIVE,
         symbol="BTCUSDT",
     )

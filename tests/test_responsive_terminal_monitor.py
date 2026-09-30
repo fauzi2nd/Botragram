@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from io import StringIO
 
-from rich.console import Console
+import pytest
 
 from botragram.app import TerminalMonitor, TradingRuntimeControl
 from botragram.app.runtime_control import MarketStreamTelemetry
@@ -17,6 +17,7 @@ from botragram.engine import PnLEngine
 from botragram.enums import PositionSide, TradeMode
 from botragram.models import Position
 from botragram.services.paper_trading_service import PaperPortfolioSnapshot
+from tests.terminal_helpers import create_terminal_console
 
 
 @dataclass(slots=True, frozen=True)
@@ -60,7 +61,7 @@ def _monitor(*, width: int, height: int = 60) -> TerminalMonitor:
         pnl_engine=PnLEngine(),
         trade_mode=TradeMode.LIVE,
         quote_asset="USDT",
-        console=Console(
+        console=create_terminal_console(
             file=StringIO(),
             force_terminal=False,
             width=width,
@@ -120,7 +121,7 @@ def _render(
     """Render one dashboard to plain text at selected terminal dimensions."""
     active_monitor = monitor or _monitor(width=width)
     output = StringIO()
-    console = Console(
+    console = create_terminal_console(
         file=output,
         force_terminal=False,
         width=width,
@@ -264,3 +265,30 @@ def test_wide_terminal_keeps_existing_desktop_dashboard() -> None:
     assert "Trading Performance" in rendered
     assert "Global Discovery" in rendered
     assert "Managed LIVE Positions" in rendered
+
+
+@pytest.mark.parametrize("terminal", ("dumb", "xterm-256color"))
+@pytest.mark.parametrize(
+    ("width", "has_summary", "has_separate_discovery"),
+    ((89, False, True), (90, True, True), (139, True, True), (140, True, False)),
+)
+def test_dashboard_breakpoints_use_explicit_console_dimensions(
+    monkeypatch: pytest.MonkeyPatch,
+    terminal: str,
+    width: int,
+    has_summary: bool,
+    has_separate_discovery: bool,
+) -> None:
+    """Select compact, medium, and wide layouts regardless of host terminal hints."""
+    monkeypatch.setenv("TERM", terminal)
+    monkeypatch.setenv("COLUMNS", "40")
+    monkeypatch.setenv("LINES", "10")
+    monitor = _monitor(width=width)
+
+    layout = monitor.render_dashboard(_status())
+    children = tuple(child.name for child in layout.children)
+
+    assert monitor.console.size == (width, 60)
+    assert ("summary" in children) is has_summary
+    assert ("discovery" in children) is has_separate_discovery
+    assert children[-3:] == ("active_stalking", "managed_positions", "logs")

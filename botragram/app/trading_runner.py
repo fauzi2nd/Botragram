@@ -19,8 +19,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from decimal import Decimal
+from enum import Enum
 from time import monotonic, time
 from typing import Final, Protocol, runtime_checkable
 
@@ -29,17 +30,33 @@ from botragram.app.global_discovery_telemetry import (
     GlobalDiscoverySnapshot,
     GlobalDiscoveryTelemetry,
 )
+from botragram.app.runtime.autonomous_live_cycle_executor import (
+    AutonomousLiveCycleUnsafeError,
+    AutonomousLiveTradingCycleExecutor,
+    GlobalDiscoveryCycleReport,
+)
+from botragram.app.runtime.context_cycle_scheduler import ContextCycleScheduler
+from botragram.app.runtime.live_runtime_recovery_policy import (
+    LiveRuntimeRecoveryPolicy,
+)
+from botragram.app.runtime.multi_context_activation import (
+    MultiContextActivationPreconditionProvider,
+    MultiContextRunnerActivationPreconditions,
+)
+from botragram.app.runtime.paper_cycle_executors import (
+    AutonomousPaperTradingCycleExecutor,
+    HumanConfirmedPaperTradingCycleExecutor,
+)
+from botragram.app.runtime.single_symbol_cycle_executor import (
+    SingleSymbolTradingCycleExecutor,
+)
 from botragram.app.runtime_control import TradingRuntimeControl
 
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.enums import (
-    AutonomousLiveEntryExecutionStatus,
     Interval,
-    LiveMarketStreamLifecycleStatus,
-    LivePortfolioRecoveryStatus,
-    LiveRuntimeHealthReason,
     LiveRuntimeHealthStatus,
     OrderType,
     SignalType,
@@ -47,23 +64,10 @@ from botragram.enums import (
     TradeMode,
 )
 from botragram.models import (
-    AutonomousLiveEntryAuthorization,
-    AutonomousLiveEntryExecutionResult,
-    AutonomousLiveEntryIntent,
-    AutonomousLiveEntryIntentResult,
     DiscoveryScanReport,
-    DiscoveryUniverseBatch,
-    ExecutionAuthorization,
-    LiveEntryRiskEvaluation,
-    LiveMarketStreamIdentity,
-    LiveMarketStreamState,
-    LiveProtectionMonitorState,
     LiveRecoveredPositionManagementAuthorization,
     LiveRuntimeHealthSnapshot,
-    LiveRuntimePortfolioContext,
     LiveRuntimePositionContext,
-    Signal,
-    TradingDecision,
     TradingResult,
 )
 from botragram.utils.retry import CappedExponentialBackoff
@@ -93,86 +97,11 @@ _DEFAULT_HEARTBEAT_INTERVAL_SECONDS: Final[float] = 30.0
 _DEFAULT_AUTONOMOUS_LIVE_HEALTH_CHECK_INTERVAL_SECONDS: Final[float] = 1.0
 _DEFAULT_CANDLE_CLOSE_BUFFER_SECONDS: Final[float] = 2.0
 _RESULT_REASON_UNAVAILABLE: Final[str] = "No reason provided"
-_AUTONOMOUS_LIVE_CLOSED_CANDLE_REPLAY_REASON: Final[str] = (
-    "closed_candle_opportunity_already_claimed"
-)
-_AUTONOMOUS_LIVE_RATE_LIMIT_REASON: Final[str] = "skipped_rate_limit"
-_UNATTENDED_RECOVERY_HEALTH_REASONS: Final[frozenset[LiveRuntimeHealthReason]] = (
-    frozenset(
-        {
-            LiveRuntimeHealthReason.STREAM_MISSING,
-            LiveRuntimeHealthReason.STREAM_NOT_READY,
-            LiveRuntimeHealthReason.STREAM_FAILED,
-            LiveRuntimeHealthReason.STREAM_STALE,
-            LiveRuntimeHealthReason.USER_DATA_STREAM_NOT_READY,
-            LiveRuntimeHealthReason.MONITOR_MISSING,
-            LiveRuntimeHealthReason.MONITOR_UNHEALTHY,
-            LiveRuntimeHealthReason.RECONCILIATION_REQUIRED,
-        }
-    )
-)
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 
 
 class _RecoveredPortfolioReconciliationRequiredError(RuntimeError):
     """Stop a batch when recovered LIVE portfolio state becomes stale."""
-
-
-class AutonomousLiveCycleUnsafeError(RuntimeError):
-    """Stop autonomous LIVE while preserving completed candidate truth."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        completed_results: Sequence[TradingResult] = (),
-    ) -> None:
-        """Initialize an unsafe cycle with already completed candidate results."""
-        super().__init__(message)
-        self.completed_results = tuple(completed_results)
-
-
-@dataclass(slots=True, kw_only=True, frozen=True)
-class GlobalDiscoveryCycleReport:
-    """Describe one completed autonomous global-discovery cycle factually."""
-
-    results: tuple[TradingResult, ...] = ()
-    batch: DiscoveryUniverseBatch | None = None
-    signals: tuple[Signal, ...] = ()
-    skipped_capacity: bool = False
-    skipped_rate_limit: bool = False
-    stopped_by_capacity: bool = False
-
-    def __post_init__(self) -> None:
-        """Reject contradictory capacity and discovery facts."""
-        if self.skipped_capacity and self.skipped_rate_limit:
-            raise ValueError("Global discovery cannot have multiple skip reasons")
-        if self.skipped_capacity and (
-            self.batch is not None
-            or self.signals
-            or self.results
-            or self.stopped_by_capacity
-        ):
-            raise ValueError("Capacity-skipped discovery cannot contain scan results")
-        if self.skipped_rate_limit and self.stopped_by_capacity:
-            raise ValueError("Rate-limited discovery cannot stop by capacity")
-        if (
-            self.skipped_rate_limit
-            and self.batch is None
-            and (self.signals or self.results)
-        ):
-            raise ValueError("Rate-limited candidate facts require a ranked batch")
-        if self.batch is None and self.signals:
-            raise ValueError("Discovered signals require a ranked universe batch")
-        if self.stopped_by_capacity and self.batch is None:
-            raise ValueError(
-                "Capacity-stopped discovery requires a ranked universe batch"
-            )
-
-    @property
-    def scanned_count(self) -> int:
-        """Return the exact number of ranked symbols scanned by this cycle."""
-        return len(self.batch.entries) if self.batch is not None else 0
 
 
 class _AutonomousLiveRuntimeHealthUnsafeError(RuntimeError):
@@ -186,17 +115,26 @@ class _AutonomousLiveRuntimeHealthUnsafeError(RuntimeError):
         self.snapshot = snapshot
 
 
+@dataclass(slots=True, kw_only=True, frozen=True)
+class _HealthRecoveryResult:
+    """Describe a health-recovery attempt without granting runtime authority."""
+
+    recovered: bool
+    attempts_used: int
+    wait_for_global_cadence: bool
+
+
+class _RecoveryConvergence(Enum):
+    """Classify a single post-recovery authority check."""
+
+    CONVERGED = "converged"
+    RETRY = "retry"
+    UNSAFE = "unsafe"
+
+
 # =============================================================================
 # Runtime Contracts
 # =============================================================================
-class _AutonomousLiveOpportunityClaimProvider(Protocol):
-    """Atomically deny replay of one exact autonomous LIVE closed candle."""
-
-    async def claim(self, *, signal: Signal, interval: Interval) -> bool:
-        """Return true only when the closed-candle identity was newly claimed."""
-        ...
-
-
 class TradingCycleExecutor(Protocol):
     """Execute one complete runtime trading cycle."""
 
@@ -249,176 +187,6 @@ class _GlobalDiscoveryCycleReportingExecutor(Protocol):
         ...
 
 
-class _AutonomousLivePositionExitProvider(Protocol):
-    """Evaluate in-flight positions upon candle close for early exit."""
-
-    async def evaluate_active_positions(
-        self,
-        *,
-        interval: Interval,
-        candle_limit: int = ...,
-    ) -> Sequence[object]:
-        """Evaluate active open positions for early exit."""
-        ...
-
-
-class _AutonomousLiveStalkingProvider(Protocol):
-    """Protocol for managing stalking state during autonomous live execution."""
-
-    @property
-    def is_paused(self) -> bool:
-        """Return whether stalking is currently paused."""
-        ...
-
-    def clear_all(self) -> None:
-        """Clear all active stalking setups."""
-        ...
-
-    def set_paused(self, paused: bool) -> None:
-        """Pause or resume stalking operations."""
-        ...
-
-    def invalidate_setup(
-        self,
-        symbol: str,
-        reason: str = "Execution guard rejected",
-    ) -> object:
-        """Explicitly invalidate a stalking setup."""
-        ...
-
-
-class SingleSymbolExecutionProvider(Protocol):
-    """Execute the existing single-symbol trading workflow."""
-
-    async def execute(
-        self,
-        *,
-        symbol: str,
-        interval: Interval,
-        candle_limit: int,
-        strategy_type: StrategyType | None = None,
-        live_management_authorization: (
-            LiveRecoveredPositionManagementAuthorization | None
-        ) = None,
-        current_drawdown_pct: Decimal = Decimal("0"),
-        order_type: OrderType = OrderType.MARKET,
-        price: Decimal | None = None,
-        account_balance_override: Decimal | None = None,
-        synchronize_position: bool = True,
-        submit_order: bool = True,
-    ) -> TradingResult:
-        """Execute and return one single-symbol trading result."""
-        ...
-
-
-class AutonomousPaperExecutionProvider(Protocol):
-    """Execute a bounded autonomous PAPER opportunity cycle."""
-
-    async def execute(
-        self,
-        *,
-        quote_asset: str,
-        interval: Interval,
-        candle_limit: int,
-        max_symbols: int,
-        top_n: int,
-        initial_balance: Decimal | None = None,
-    ) -> Sequence[TradingResult]:
-        """Discover and execute ranked PAPER candidates."""
-        ...
-
-
-class OpportunityDiscoveryProvider(Protocol):
-    """Discover deterministic actionable market opportunities."""
-
-    async def discover_symbols(
-        self,
-        *,
-        symbols: Sequence[str],
-        interval: Interval,
-        candle_limit: int,
-        top_n: int,
-        strategy_type: StrategyType,
-    ) -> Sequence[Signal]:
-        """Return ranked actionable signals for one explicit symbol batch."""
-        ...
-
-
-class DiscoveryUniverseProvider(Protocol):
-    """Own process-local ranked discovery batches for autonomous LIVE."""
-
-    universe_limit: int
-    batch_size: int
-
-    async def get_current_batch(self) -> DiscoveryUniverseBatch:
-        """Return the current batch without consuming it."""
-        ...
-
-    def complete_batch(self, *, batch: DiscoveryUniverseBatch) -> None:
-        """Advance after normal discovery completion."""
-        ...
-
-
-class _DiscoveryRateLimitGovernor(Protocol):
-    """Gate optional discovery without delaying safety-critical exchange work."""
-
-    def should_throttle_discovery(self) -> bool:
-        """Return whether new discovery must yield to exchange headroom."""
-        ...
-
-
-class AutonomousLiveIntentProvider(Protocol):
-    """Authorize one fresh decision as a transient autonomous LIVE intent."""
-
-    def authorize(
-        self,
-        *,
-        decision: TradingDecision,
-        interval: Interval,
-        strategy_type: StrategyType,
-        authorization: AutonomousLiveEntryAuthorization | None,
-    ) -> AutonomousLiveEntryIntentResult:
-        """Return a typed pre-mutation intent outcome."""
-        ...
-
-
-class LiveEntryRiskEvaluationProvider(Protocol):
-    """Provide current portfolio-aware risk decisions for one signal."""
-
-    async def evaluate(self, *, signal: Signal) -> LiveEntryRiskEvaluation:
-        """Return the canonical current decision evaluation."""
-        ...
-
-
-class AutonomousLiveEntryExecutionProvider(Protocol):
-    """Execute one authorized network-scoped protected entry."""
-
-    async def execute(
-        self,
-        *,
-        intent: AutonomousLiveEntryIntent,
-        authorization: AutonomousLiveEntryAuthorization | None,
-    ) -> AutonomousLiveEntryExecutionResult:
-        """Return the typed protected-entry execution outcome."""
-        ...
-
-
-class HumanConfirmedPaperExecutionProvider(Protocol):
-    """Prepare bounded PAPER opportunities for explicit human approval."""
-
-    async def execute(
-        self,
-        *,
-        quote_asset: str,
-        interval: Interval,
-        candle_limit: int,
-        max_symbols: int,
-        top_n: int,
-    ) -> Sequence[ExecutionAuthorization]:
-        """Return newly prepared non-executed authorizations."""
-        ...
-
-
 class TradingRuntimeObserver(Protocol):
     """Observe runtime lifecycle without controlling trading decisions."""
 
@@ -459,647 +227,6 @@ class _LiveRuntimeHealthProvider(Protocol):
     def get_snapshot(self) -> LiveRuntimeHealthSnapshot:
         """Return the current local runtime-health snapshot."""
         ...
-
-
-class _LiveRuntimePortfolioReconciler(Protocol):
-    """Reconcile authoritative LIVE exposure into local management ownership."""
-
-    async def reconcile_context(self) -> LiveRuntimePortfolioContext | None:
-        """Return the exact managed portfolio, or none when reconciliation is unsafe."""
-        ...
-
-
-class MultiContextActivationPreconditionProvider(Protocol):
-    """Build current LIVE multi-context activation state without runner I/O."""
-
-    def get_multi_context_activation_preconditions(
-        self,
-        *,
-        runtime_is_stopping: bool,
-    ) -> MultiContextRunnerActivationPreconditions | None:
-        """Return current exact multi-context activation state."""
-        ...
-
-
-@dataclass(slots=True, kw_only=True, frozen=True)
-class MultiContextRunnerActivationPreconditions:
-    """Describe whether a recovered context portfolio can run safely.
-
-    The value object separates verified runtime substrate from authorization.
-    It deliberately does not resume a runner or select a primary context.
-    """
-
-    portfolio_status: LivePortfolioRecoveryStatus
-    contexts: tuple[LiveRuntimePositionContext, ...]
-    stream_states: tuple[LiveMarketStreamState, ...]
-    monitor_states: tuple[LiveProtectionMonitorState, ...]
-    live_management_authorization: LiveRecoveredPositionManagementAuthorization
-    runtime_is_paused: bool
-    runtime_is_stopping: bool
-
-    @property
-    def runtime_representation_valid(self) -> bool:
-        """Return whether contexts match their typed recovery outcome."""
-        context_count = len(self.contexts)
-        return (
-            self.portfolio_status is LivePortfolioRecoveryStatus.SINGLE_POSITION_SAFE
-            and context_count == 1
-        ) or (
-            self.portfolio_status is LivePortfolioRecoveryStatus.MULTIPLE_POSITIONS_SAFE
-            and context_count > 1
-        )
-
-    @property
-    def stream_substrate_ready(self) -> bool:
-        """Return whether every context has exactly one ready owned stream."""
-        expected_identities = frozenset(
-            LiveMarketStreamIdentity.from_runtime_context(context=context)
-            for context in self.contexts
-        )
-        actual_identities = tuple(
-            stream_state.identity for stream_state in self.stream_states
-        )
-        return (
-            bool(expected_identities)
-            and len(actual_identities) == len(set(actual_identities))
-            and frozenset(actual_identities) == expected_identities
-            and all(
-                stream_state.lifecycle_status is LiveMarketStreamLifecycleStatus.RUNNING
-                and stream_state.first_tick_received
-                for stream_state in self.stream_states
-            )
-        )
-
-    @property
-    def protection_monitoring_ready(self) -> bool:
-        """Return whether every context has one active healthy exact monitor."""
-        expected_contexts = frozenset(self.contexts)
-        actual_contexts = tuple(
-            monitor_state.context for monitor_state in self.monitor_states
-        )
-        return (
-            bool(expected_contexts)
-            and len(actual_contexts) == len(set(actual_contexts))
-            and frozenset(actual_contexts) == expected_contexts
-            and all(
-                monitor_state.is_active and monitor_state.failure_type is None
-                for monitor_state in self.monitor_states
-            )
-        )
-
-    @property
-    def is_eligible(self) -> bool:
-        """Return whether all future runner-activation requirements are met."""
-        return (
-            self.runtime_representation_valid
-            and self.stream_substrate_ready
-            and self.protection_monitoring_ready
-            and self.live_management_authorization.authorizes_contexts(
-                contexts=self.contexts,
-            )
-            and not self.runtime_is_paused
-            and not self.runtime_is_stopping
-        )
-
-    @property
-    def can_activate(self) -> bool:
-        """Return whether readiness and authorization permit a paused activation."""
-        return (
-            self.runtime_representation_valid
-            and self.stream_substrate_ready
-            and self.protection_monitoring_ready
-            and self.live_management_authorization.authorizes_contexts(
-                contexts=self.contexts,
-            )
-            and not self.runtime_is_stopping
-        )
-
-
-@dataclass(slots=True, kw_only=True, frozen=True)
-class SingleSymbolTradingCycleExecutor:
-    """Adapt the established single-symbol service to the runtime contract."""
-
-    trading_service: SingleSymbolExecutionProvider
-
-    async def execute(
-        self,
-        *,
-        symbol: str,
-        interval: Interval,
-        candle_limit: int,
-        strategy_type: StrategyType | None = None,
-        live_management_authorization: (
-            LiveRecoveredPositionManagementAuthorization | None
-        ) = None,
-        current_drawdown_pct: Decimal = Decimal("0"),
-        order_type: OrderType = OrderType.MARKET,
-        price: Decimal | None = None,
-        account_balance_override: Decimal | None = None,
-        synchronize_position: bool = True,
-        submit_order: bool = True,
-    ) -> Sequence[TradingResult]:
-        """Execute the existing single-symbol workflow as one cycle result."""
-        if live_management_authorization is None:
-            result = await self.trading_service.execute(
-                symbol=symbol,
-                interval=interval,
-                strategy_type=strategy_type,
-                candle_limit=candle_limit,
-                current_drawdown_pct=current_drawdown_pct,
-                order_type=order_type,
-                price=price,
-                account_balance_override=account_balance_override,
-                synchronize_position=synchronize_position,
-                submit_order=submit_order,
-            )
-            return (result,)
-
-        result = await self.trading_service.execute(
-            symbol=symbol,
-            interval=interval,
-            strategy_type=strategy_type,
-            live_management_authorization=live_management_authorization,
-            candle_limit=candle_limit,
-            current_drawdown_pct=current_drawdown_pct,
-            order_type=order_type,
-            price=price,
-            account_balance_override=account_balance_override,
-            synchronize_position=synchronize_position,
-            submit_order=submit_order,
-        )
-        return (result,)
-
-
-@dataclass(slots=True, kw_only=True, frozen=True)
-class AutonomousPaperTradingCycleExecutor:
-    """Adapt autonomous discovery to a runtime cycle with PAPER-only safety."""
-
-    autonomous_execution_service: AutonomousPaperExecutionProvider
-    quote_asset: str
-    max_symbols: int
-    top_n: int
-
-    def __post_init__(self) -> None:
-        """Normalize and validate static autonomous-discovery inputs."""
-        normalized_quote_asset = self.quote_asset.strip().upper()
-
-        if not normalized_quote_asset:
-            raise ValueError("Autonomous execution quote asset must not be empty")
-
-        if self.max_symbols <= 0:
-            raise ValueError("Autonomous execution maximum symbols must be positive")
-
-        if self.top_n <= 0:
-            raise ValueError("Autonomous execution top N must be positive")
-
-        object.__setattr__(self, "quote_asset", normalized_quote_asset)
-
-    async def execute(
-        self,
-        *,
-        symbol: str,
-        interval: Interval,
-        candle_limit: int,
-        strategy_type: StrategyType | None = None,
-        live_management_authorization: (
-            LiveRecoveredPositionManagementAuthorization | None
-        ) = None,
-        current_drawdown_pct: Decimal = Decimal("0"),
-        order_type: OrderType = OrderType.MARKET,
-        price: Decimal | None = None,
-        account_balance_override: Decimal | None = None,
-        synchronize_position: bool = True,
-        submit_order: bool = True,
-    ) -> Sequence[TradingResult]:
-        """Execute one bounded PAPER discovery cycle without order submission."""
-        _ = (
-            symbol,
-            strategy_type,
-            live_management_authorization,
-            current_drawdown_pct,
-            order_type,
-            price,
-            synchronize_position,
-        )
-
-        if submit_order:
-            raise RuntimeError("Autonomous execution is restricted to paper mode")
-
-        return await self.autonomous_execution_service.execute(
-            quote_asset=self.quote_asset,
-            interval=interval,
-            candle_limit=candle_limit,
-            max_symbols=self.max_symbols,
-            top_n=self.top_n,
-            initial_balance=account_balance_override,
-        )
-
-    @property
-    def last_scan_report(self) -> DiscoveryScanReport | None:
-        """Return the most recent discovery scan report if available."""
-        discovery = getattr(
-            self.autonomous_execution_service, "discovery_service", None
-        )
-        report = getattr(discovery, "last_scan_report", None)
-        return report if isinstance(report, DiscoveryScanReport) else None
-
-
-@dataclass(slots=True, kw_only=True, frozen=True)
-class AutonomousLiveTradingCycleExecutor:
-    """Compose ranked network discovery with sequential protected LIVE entry.
-
-    It has no exchange client dependency. Discovery binds each candidate to
-    the executor's explicit closed-candle strategy context before the durable
-    replay claim, fresh canonical risk decision, intent authorization, and
-    protected-entry mutation boundary.
-    """
-
-    discovery_service: OpportunityDiscoveryProvider
-    discovery_universe_service: DiscoveryUniverseProvider
-    risk_evaluation_service: LiveEntryRiskEvaluationProvider
-    intent_service: AutonomousLiveIntentProvider
-    execution_service: AutonomousLiveEntryExecutionProvider
-    opportunity_claim_repository: _AutonomousLiveOpportunityClaimProvider
-    authorization: AutonomousLiveEntryAuthorization
-    quote_asset: str
-    max_symbols: int
-    top_n: int
-    max_open_positions: int
-    strategy_type: StrategyType
-    live_runtime_portfolio_reconciler: _LiveRuntimePortfolioReconciler
-    discovery_rate_limit_governor: _DiscoveryRateLimitGovernor | None = None
-    position_exit_service: _AutonomousLivePositionExitProvider | None = None
-    setup_stalking_service: _AutonomousLiveStalkingProvider | None = None
-
-    def __post_init__(self) -> None:
-        """Validate the static network-scoped discovery composition."""
-        quote_asset = self.quote_asset.strip().upper()
-        if not quote_asset:
-            raise ValueError("Autonomous LIVE quote asset must not be empty")
-        if self.max_symbols <= 0:
-            raise ValueError("Autonomous LIVE maximum symbols must be positive")
-        if self.top_n <= 0:
-            raise ValueError("Autonomous LIVE top N must be positive")
-        if isinstance(self.max_open_positions, bool) or self.max_open_positions <= 0:
-            raise ValueError("Autonomous LIVE maximum open positions must be positive")
-        if self.top_n > self.discovery_universe_service.batch_size:
-            raise ValueError("Autonomous LIVE top N must not exceed batch size")
-        if not self.authorization.new_live_entry_allowed:
-            raise ValueError("Autonomous LIVE requires network entry authorization")
-        object.__setattr__(self, "quote_asset", quote_asset)
-
-    async def execute_global(
-        self,
-        *,
-        interval: Interval,
-        candle_limit: int,
-    ) -> Sequence[TradingResult]:
-        """Preserve the established sequence-returning global executor contract."""
-        report = await self.execute_global_report(
-            interval=interval,
-            candle_limit=candle_limit,
-        )
-        return report.results
-
-    async def execute_global_report(
-        self,
-        *,
-        interval: Interval,
-        candle_limit: int,
-    ) -> GlobalDiscoveryCycleReport:
-        """Discover, process, and report one bounded autonomous LIVE cycle."""
-        portfolio = await self._reconcile_live_runtime_portfolio()
-        if portfolio is None:
-            raise AutonomousLiveCycleUnsafeError(
-                "Autonomous LIVE portfolio reconciliation failed before discovery"
-            )
-
-        if self.position_exit_service is not None and portfolio.contexts:
-            exit_decisions = await self.position_exit_service.evaluate_active_positions(
-                interval=interval,
-                candle_limit=candle_limit,
-            )
-            if any(getattr(d, "should_exit", False) for d in exit_decisions):
-                reconciled = await self._reconcile_live_runtime_portfolio()
-                if reconciled is not None:
-                    portfolio = reconciled
-
-        if self._portfolio_is_full(portfolio=portfolio):
-            if self.setup_stalking_service is not None:
-                self.setup_stalking_service.set_paused(True)
-            return GlobalDiscoveryCycleReport(skipped_capacity=True)
-
-        if self.setup_stalking_service is not None:
-            self.setup_stalking_service.set_paused(False)
-
-        if self._optional_entry_is_rate_limited():
-            return GlobalDiscoveryCycleReport(skipped_rate_limit=True)
-
-        batch = await self.discovery_universe_service.get_current_batch()
-        signals = tuple(
-            await self.discovery_service.discover_symbols(
-                symbols=tuple(entry.symbol for entry in batch.entries),
-                interval=interval,
-                candle_limit=candle_limit,
-                top_n=self.top_n,
-                strategy_type=self.strategy_type,
-            )
-        )
-        self.discovery_universe_service.complete_batch(batch=batch)
-        results: list[TradingResult] = []
-        stopped_by_capacity = False
-        skipped_rate_limit = False
-
-        for signal in signals:
-            if self._portfolio_is_full(portfolio=portfolio):
-                if self.setup_stalking_service is not None:
-                    self.setup_stalking_service.set_paused(True)
-                stopped_by_capacity = True
-                break
-            if self._optional_entry_is_rate_limited():
-                skipped_rate_limit = True
-                break
-
-            claimed = await self.opportunity_claim_repository.claim(
-                signal=signal,
-                interval=interval,
-            )
-            if not claimed:
-                results.append(self._closed_candle_replay_result(signal=signal))
-                continue
-
-            evaluation = await self.risk_evaluation_service.evaluate(signal=signal)
-            decision = evaluation.decision
-            intent_result = self.intent_service.authorize(
-                decision=decision,
-                interval=interval,
-                strategy_type=self.strategy_type,
-                authorization=self.authorization,
-            )
-            if intent_result.intent is None:
-                if self.setup_stalking_service is not None:
-                    self.setup_stalking_service.invalidate_setup(
-                        signal.symbol,
-                        reason=f"Intent rejected: {intent_result.status.value}",
-                    )
-                results.append(
-                    self._non_executed_result(
-                        decision=decision,
-                        reason=intent_result.status.value,
-                    )
-                )
-                continue
-
-            if self._optional_entry_is_rate_limited():
-                if self.setup_stalking_service is not None:
-                    self.setup_stalking_service.invalidate_setup(
-                        signal.symbol,
-                        reason=_AUTONOMOUS_LIVE_RATE_LIMIT_REASON,
-                    )
-                results.append(
-                    self._non_executed_result(
-                        decision=decision,
-                        reason=_AUTONOMOUS_LIVE_RATE_LIMIT_REASON,
-                    )
-                )
-                skipped_rate_limit = True
-                break
-
-            execution_result = await self.execution_service.execute(
-                intent=intent_result.intent,
-                authorization=self.authorization,
-            )
-            results.append(self._to_trading_result(result=execution_result))
-
-            if (
-                execution_result.status
-                is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED
-            ):
-                reconciled_portfolio = await self._reconcile_live_runtime_portfolio()
-                if reconciled_portfolio is None:
-                    raise AutonomousLiveCycleUnsafeError(
-                        "Autonomous LIVE protected entry was not adopted into "
-                        "runtime management",
-                        completed_results=results,
-                    )
-                portfolio = reconciled_portfolio
-                if self._portfolio_is_full(portfolio=portfolio):
-                    if self.setup_stalking_service is not None:
-                        self.setup_stalking_service.set_paused(True)
-                    stopped_by_capacity = True
-                    break
-            else:
-                if self.setup_stalking_service is not None:
-                    self.setup_stalking_service.invalidate_setup(
-                        signal.symbol,
-                        reason=f"Execution failed: {execution_result.status.value}",
-                    )
-
-            if execution_result.status in {
-                AutonomousLiveEntryExecutionStatus.SUBMISSION_BLOCKED,
-                AutonomousLiveEntryExecutionStatus.EXECUTION_UNSAFE,
-            }:
-                raise AutonomousLiveCycleUnsafeError(
-                    "Autonomous LIVE protected entry requires recovery: "
-                    f"{execution_result.status.value}"
-                )
-
-        return GlobalDiscoveryCycleReport(
-            results=tuple(results),
-            batch=batch,
-            signals=signals,
-            skipped_rate_limit=skipped_rate_limit,
-            stopped_by_capacity=stopped_by_capacity,
-        )
-
-    async def _reconcile_live_runtime_portfolio(
-        self,
-    ) -> LiveRuntimePortfolioContext | None:
-        """Return authoritative managed exposure before discovery and after entry."""
-        return await self.live_runtime_portfolio_reconciler.reconcile_context()
-
-    def _portfolio_is_full(self, *, portfolio: LiveRuntimePortfolioContext) -> bool:
-        """Return whether the authoritative managed portfolio has no entry capacity."""
-        return len(portfolio.contexts) >= self.max_open_positions
-
-    def _optional_entry_is_rate_limited(self) -> bool:
-        """Gate only fresh discovery and entry without delaying reconciliation."""
-        governor = self.discovery_rate_limit_governor
-        return governor is not None and governor.should_throttle_discovery()
-
-    async def execute(
-        self,
-        *,
-        symbol: str,
-        interval: Interval,
-        candle_limit: int,
-        strategy_type: StrategyType | None = None,
-        live_management_authorization: (
-            LiveRecoveredPositionManagementAuthorization | None
-        ) = None,
-        current_drawdown_pct: Decimal = Decimal("0"),
-        order_type: OrderType = OrderType.MARKET,
-        price: Decimal | None = None,
-        account_balance_override: Decimal | None = None,
-        synchronize_position: bool = True,
-        submit_order: bool = True,
-    ) -> Sequence[TradingResult]:
-        """Satisfy the legacy executor boundary without using a symbol context."""
-        _ = (
-            symbol,
-            strategy_type,
-            live_management_authorization,
-            current_drawdown_pct,
-            order_type,
-            price,
-            account_balance_override,
-            synchronize_position,
-        )
-        if not submit_order:
-            raise RuntimeError("Autonomous LIVE execution requires LIVE submission")
-        return await self.execute_global(
-            interval=interval,
-            candle_limit=candle_limit,
-        )
-
-    @staticmethod
-    def _closed_candle_replay_result(*, signal: Signal) -> TradingResult:
-        """Return one safe result without repeating risk or entry work."""
-        decision = TradingDecision(
-            should_execute=False,
-            signal=signal,
-            risk_result=None,
-            reason=_AUTONOMOUS_LIVE_CLOSED_CANDLE_REPLAY_REASON,
-        )
-        return TradingResult(
-            executed=False,
-            decision=decision,
-            order=None,
-            reason=_AUTONOMOUS_LIVE_CLOSED_CANDLE_REPLAY_REASON,
-        )
-
-    @staticmethod
-    def _non_executed_result(
-        *,
-        decision: TradingDecision,
-        reason: str,
-    ) -> TradingResult:
-        """Return an explicit safe no-entry workflow result."""
-        return TradingResult(
-            executed=False,
-            decision=replace(decision, should_execute=False, reason=reason),
-            order=None,
-            reason=reason,
-        )
-
-    @classmethod
-    def _to_trading_result(
-        cls,
-        *,
-        result: AutonomousLiveEntryExecutionResult,
-    ) -> TradingResult:
-        """Translate typed entry outcomes without exposing exchange exceptions."""
-        if result.decision is None:
-            raise RuntimeError("Autonomous LIVE execution result lacks a decision")
-
-        if result.status is AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED:
-            return TradingResult(
-                executed=True,
-                decision=result.decision,
-                order=result.order,
-                reason=result.status.value,
-            )
-
-        return cls._non_executed_result(
-            decision=result.decision,
-            reason=result.status.value,
-        )
-
-
-@dataclass(slots=True, kw_only=True, frozen=True)
-class HumanConfirmedPaperTradingCycleExecutor:
-    """Adapt confirmation discovery to a PAPER runtime cycle without execution."""
-
-    human_confirmation_service: HumanConfirmedPaperExecutionProvider
-    quote_asset: str
-    max_symbols: int
-    top_n: int
-
-    def __post_init__(self) -> None:
-        """Normalize and validate static confirmation-discovery inputs."""
-        normalized_quote_asset = self.quote_asset.strip().upper()
-
-        if not normalized_quote_asset:
-            raise ValueError("Human confirmation quote asset must not be empty")
-
-        if self.max_symbols <= 0:
-            raise ValueError("Human confirmation maximum symbols must be positive")
-
-        if self.top_n <= 0:
-            raise ValueError("Human confirmation top N must be positive")
-
-        object.__setattr__(self, "quote_asset", normalized_quote_asset)
-
-    async def execute(
-        self,
-        *,
-        symbol: str,
-        interval: Interval,
-        candle_limit: int,
-        strategy_type: StrategyType | None = None,
-        live_management_authorization: (
-            LiveRecoveredPositionManagementAuthorization | None
-        ) = None,
-        current_drawdown_pct: Decimal = Decimal("0"),
-        order_type: OrderType = OrderType.MARKET,
-        price: Decimal | None = None,
-        account_balance_override: Decimal | None = None,
-        synchronize_position: bool = True,
-        submit_order: bool = True,
-    ) -> Sequence[TradingResult]:
-        """Prepare human approvals while structurally rejecting order submission."""
-        _ = (
-            symbol,
-            strategy_type,
-            live_management_authorization,
-            current_drawdown_pct,
-            order_type,
-            price,
-            account_balance_override,
-            synchronize_position,
-        )
-
-        if submit_order:
-            raise RuntimeError("Human-confirmed execution is restricted to paper mode")
-
-        authorizations = await self.human_confirmation_service.execute(
-            quote_asset=self.quote_asset,
-            interval=interval,
-            candle_limit=candle_limit,
-            max_symbols=self.max_symbols,
-            top_n=self.top_n,
-        )
-        return tuple(
-            TradingResult(
-                executed=False,
-                decision=TradingDecision(
-                    should_execute=False,
-                    signal=authorization.signal,
-                    risk_result=None,
-                    reason="Pending human PAPER approval",
-                ),
-                order=None,
-                reason="Pending human PAPER approval",
-            )
-            for authorization in authorizations
-        )
-
-    @property
-    def last_scan_report(self) -> DiscoveryScanReport | None:
-        """Return the most recent discovery scan report if available."""
-        discovery = getattr(self.human_confirmation_service, "discovery_service", None)
-        report = getattr(discovery, "last_scan_report", None)
-        return report if isinstance(report, DiscoveryScanReport) else None
 
 
 # =============================================================================
@@ -1155,8 +282,8 @@ class TradingRunner:
         init=False,
         repr=False,
     )
-    _context_next_eligible_monotonic: dict[LiveRuntimePositionContext, float] = field(
-        default_factory=dict[LiveRuntimePositionContext, float],
+    _context_scheduler: ContextCycleScheduler = field(
+        default_factory=ContextCycleScheduler,
         init=False,
         repr=False,
     )
@@ -1444,97 +571,38 @@ class TradingRunner:
                 try:
                     health_snapshot = self._get_autonomous_live_runtime_health_failure()
                     if health_snapshot is not None:
-                        health_error = _AutonomousLiveRuntimeHealthUnsafeError(
+                        health_recovery = await self._recover_from_health_failure(
                             snapshot=health_snapshot,
-                        )
-                        health_reason = health_snapshot.reason
-                        if self._is_unattended_health_recovery_safe(
-                            snapshot=health_snapshot,
-                        ):
-                            if health_reason is None:
-                                raise RuntimeError(
-                                    "Unattended health recovery reason is missing"
-                                )
-                            recovered = await self._recover_unattended_live_runtime(
-                                error=health_error,
-                                reason=health_reason.value,
-                            )
-                            if not recovered:
-                                break
-                            autonomous_live_recovery_attempts = 0
-                            consecutive_failures = 0
-                            continue
-
-                        recovery_allowed = (
-                            health_snapshot.status is LiveRuntimeHealthStatus.DEGRADED
-                            and health_snapshot.authorization_present
-                            and health_snapshot.authorization_exact
-                        )
-                        (
-                            recovered,
-                            autonomous_live_recovery_attempts,
-                        ) = await self._handle_autonomous_live_runtime_failure(
-                            error=health_error,
                             attempts_used=autonomous_live_recovery_attempts,
-                            recovery_allowed=recovery_allowed,
                         )
-                        if not recovered:
+                        if not health_recovery.recovered:
                             break
 
+                        autonomous_live_recovery_attempts = (
+                            health_recovery.attempts_used
+                        )
                         consecutive_failures = 0
-                        self._global_next_eligible_monotonic = (
-                            monotonic() + self._get_global_cadence_seconds()
-                        )
-                        self._observe_global_discovery(
-                            operation="waiting",
-                            observation=lambda telemetry: telemetry.wait_until(
-                                next_eligible_monotonic=(
-                                    self._global_next_eligible_monotonic
-                                )
-                            ),
-                        )
-                        await self._wait_for_global_cycle()
+                        if health_recovery.wait_for_global_cadence:
+                            self._schedule_next_global_cycle(
+                                delay_seconds=self._get_global_cadence_seconds(),
+                            )
+                            await self._wait_for_global_cycle()
                         continue
 
                     if self._is_global_cycle_executor():
                         results = await self._run_global_cycle()
-                        self._global_next_eligible_monotonic = (
-                            monotonic() + self._calculate_next_global_cycle_delay()
-                        )
-                        self._observe_global_discovery(
-                            operation="waiting",
-                            observation=lambda telemetry: telemetry.wait_until(
-                                next_eligible_monotonic=(
-                                    self._global_next_eligible_monotonic
-                                )
-                            ),
+                        self._schedule_next_global_cycle(
+                            delay_seconds=self._calculate_next_global_cycle_delay(),
                         )
                         await self._notify_cycle_completed(results=results)
                         await self._wait_for_global_cycle()
                         continue
 
                     contexts = self._get_cycle_contexts_snapshot()
-                    if not self._is_multi_context_batch_authorized(
-                        contexts=contexts,
-                    ):
-                        self._pause_unauthorized_multi_context_runtime()
+                    batch = await self._run_due_context_batch(contexts=contexts)
+                    if batch is None:
                         continue
-                    eligible_contexts = self._get_eligible_contexts(
-                        contexts=contexts,
-                    )
-                    if not eligible_contexts:
-                        await self._wait_for_next_eligible_context(
-                            contexts=contexts,
-                        )
-                        continue
-
-                    self._active_batch_context_count = len(eligible_contexts)
-                    try:
-                        results = await self.run_context_cycles_once(
-                            contexts=eligible_contexts,
-                        )
-                    finally:
-                        self._active_batch_context_count = 0
+                    eligible_contexts, results = batch
                 except _RecoveredPortfolioReconciliationRequiredError:
                     self._pause_unauthorized_multi_context_runtime()
                     continue
@@ -1552,16 +620,8 @@ class TradingRunner:
                         break
 
                     consecutive_failures = 0
-                    self._global_next_eligible_monotonic = (
-                        monotonic() + self._calculate_next_global_cycle_delay()
-                    )
-                    self._observe_global_discovery(
-                        operation="waiting",
-                        observation=lambda telemetry: telemetry.wait_until(
-                            next_eligible_monotonic=(
-                                self._global_next_eligible_monotonic
-                            )
-                        ),
+                    self._schedule_next_global_cycle(
+                        delay_seconds=self._calculate_next_global_cycle_delay(),
                     )
                     await self._wait_for_global_cycle()
                     continue
@@ -1633,6 +693,46 @@ class TradingRunner:
         except TimeoutError:
             return
 
+    async def _recover_from_health_failure(
+        self,
+        *,
+        snapshot: LiveRuntimeHealthSnapshot,
+        attempts_used: int,
+    ) -> _HealthRecoveryResult:
+        """Select unattended or operational recovery for one unsafe health fact."""
+        error = _AutonomousLiveRuntimeHealthUnsafeError(snapshot=snapshot)
+        if self._is_unattended_health_recovery_safe(snapshot=snapshot):
+            if snapshot.reason is None:
+                raise RuntimeError("Unattended health recovery reason is missing")
+            recovered = await self._recover_unattended_live_runtime(
+                error=error,
+                reason=snapshot.reason.value,
+            )
+            return _HealthRecoveryResult(
+                recovered=recovered,
+                attempts_used=0 if recovered else attempts_used,
+                wait_for_global_cadence=False,
+            )
+
+        recovery_allowed = (
+            snapshot.status is LiveRuntimeHealthStatus.DEGRADED
+            and snapshot.authorization_present
+            and snapshot.authorization_exact
+        )
+        (
+            recovered,
+            new_attempts_used,
+        ) = await self._handle_autonomous_live_runtime_failure(
+            error=error,
+            attempts_used=attempts_used,
+            recovery_allowed=recovery_allowed,
+        )
+        return _HealthRecoveryResult(
+            recovered=recovered,
+            attempts_used=new_attempts_used,
+            wait_for_global_cadence=recovered,
+        )
+
     async def _recover_unattended_live_runtime(
         self,
         *,
@@ -1648,29 +748,10 @@ class TradingRunner:
         if provider is None or health_provider is None:
             return False
 
-        self._outage_known_position_count = len(self.runtime_control.runtime_contexts)
-        self.runtime_control.set_position_protection_ready(False)
-        self.runtime_control.pause()
-        self._pause_global_discovery_telemetry()
-        outage_started = monotonic()
-        self._outage_started_monotonic = outage_started
-        self._outage_reason = reason
-        self._next_recovery_retry_seconds = 0.0
-        if reason == "reconciliation_required":
-            _LOGGER.info(
-                "Autonomous LIVE runtime paused for routine exit reconciliation: "
-                "reason=%s error_type=%s entry_enabled=false",
-                reason,
-                type(error).__name__,
-            )
-        else:
-            _LOGGER.critical(
-                "Autonomous LIVE runtime paused for unattended recovery: "
-                "reason=%s error_type=%s entry_enabled=false",
-                reason,
-                type(error).__name__,
-            )
-
+        outage_started = self._begin_unattended_recovery(
+            error=error,
+            reason=reason,
+        )
         retry_attempt = 0
         recovery_attempts = 0
         waiting_for_private_stream = False
@@ -1711,100 +792,151 @@ class TradingRunner:
                     return False
 
                 recovery_attempts += 1
-                try:
-                    recovered = await provider.recover(activate_runtime=False)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as recovery_error:
-                    if not is_transient_connectivity_error(recovery_error):
-                        _LOGGER.exception(
-                            "Autonomous LIVE unattended recovery failed with a "
-                            "non-transient error: attempt=%d",
-                            recovery_attempts,
-                        )
-                        raise
-                    recovered = False
-
+                recovered = await self._attempt_unattended_recovery(
+                    provider=provider,
+                    attempt=recovery_attempts,
+                )
                 self._remember_current_outage_positions()
                 if not recovered:
                     continue
 
-                health_snapshot = health_provider.get_snapshot()
-                if self._recovery_ready_to_activate(snapshot=health_snapshot):
-                    try:
-                        self._activate_recovered_runtime(
-                            snapshot=health_snapshot,
-                        )
-                    except Exception:
-                        _LOGGER.exception(
-                            "Autonomous LIVE recovered runtime activation failed"
-                        )
-                        return False
-                    health_snapshot = health_provider.get_snapshot()
-
-                if self._authoritative_recovery_converged(
-                    snapshot=health_snapshot,
-                ):
-                    outage_seconds = max(0.0, monotonic() - outage_started)
-                    if reason == "reconciliation_required":
-                        _LOGGER.info(
-                            "Autonomous LIVE routine exit reconciliation completed: "
-                            "reason=%s attempts=%d duration=%.1fs "
-                            "positions_known=%d positions_state=authoritative",
-                            reason,
-                            recovery_attempts,
-                            outage_seconds,
-                            len(health_snapshot.contexts),
-                        )
-                    else:
-                        _LOGGER.warning(
-                            "Autonomous LIVE unattended recovery restored "
-                            "authoritative state: reason=%s attempts=%d "
-                            "outage_seconds=%.1f positions_known=%d "
-                            "positions_state=authoritative",
-                            reason,
-                            recovery_attempts,
-                            outage_seconds,
-                            len(health_snapshot.contexts),
-                        )
-                    return True
-
-                self.runtime_control.set_position_protection_ready(False)
-                self.runtime_control.pause()
-                if self._private_user_data_reseed_pending(
-                    snapshot=health_snapshot,
-                ):
-                    continue
-
-                if health_snapshot.reason in _UNATTENDED_RECOVERY_HEALTH_REASONS:
-                    _LOGGER.warning(
-                        "Autonomous LIVE recovery has not converged: "
-                        "health_status=%s health_reason=%s entry_enabled=false",
-                        health_snapshot.status.value,
-                        (
-                            health_snapshot.reason.value
-                            if health_snapshot.reason is not None
-                            else "unknown"
-                        ),
-                    )
-                    continue
-
-                _LOGGER.critical(
-                    "Autonomous LIVE recovery reported REST success but runtime "
-                    "health is not authoritative: health_status=%s "
-                    "health_reason=%s entry_enabled=false",
-                    health_snapshot.status.value,
-                    (
-                        health_snapshot.reason.value
-                        if health_snapshot.reason is not None
-                        else "unknown"
-                    ),
+                convergence = self._evaluate_unattended_recovery_convergence(
+                    health_provider=health_provider,
+                    reason=reason,
+                    recovery_attempts=recovery_attempts,
+                    outage_started=outage_started,
                 )
-                return False
+                if convergence is _RecoveryConvergence.CONVERGED:
+                    return True
+                if convergence is _RecoveryConvergence.UNSAFE:
+                    return False
 
             return False
         finally:
             self._clear_outage_observability()
+
+    def _begin_unattended_recovery(
+        self,
+        *,
+        error: Exception,
+        reason: str,
+    ) -> float:
+        """Pause LIVE entry and record the start of an observed outage."""
+        self._outage_known_position_count = len(self.runtime_control.runtime_contexts)
+        self.runtime_control.set_position_protection_ready(False)
+        self.runtime_control.pause()
+        self._pause_global_discovery_telemetry()
+        outage_started = monotonic()
+        self._outage_started_monotonic = outage_started
+        self._outage_reason = reason
+        self._next_recovery_retry_seconds = 0.0
+        if reason == "reconciliation_required":
+            _LOGGER.info(
+                "Autonomous LIVE runtime paused for routine exit reconciliation: "
+                "reason=%s error_type=%s entry_enabled=false",
+                reason,
+                type(error).__name__,
+            )
+        else:
+            _LOGGER.critical(
+                "Autonomous LIVE runtime paused for unattended recovery: "
+                "reason=%s error_type=%s entry_enabled=false",
+                reason,
+                type(error).__name__,
+            )
+        return outage_started
+
+    async def _attempt_unattended_recovery(
+        self,
+        *,
+        provider: _AutonomousLiveRuntimeRecovery,
+        attempt: int,
+    ) -> bool:
+        """Run one dependency recovery pass while preserving cancellation."""
+        try:
+            return await provider.recover(activate_runtime=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception as recovery_error:
+            if not is_transient_connectivity_error(recovery_error):
+                _LOGGER.exception(
+                    "Autonomous LIVE unattended recovery failed with a "
+                    "non-transient error: attempt=%d",
+                    attempt,
+                )
+                raise
+            return False
+
+    def _evaluate_unattended_recovery_convergence(
+        self,
+        *,
+        health_provider: _LiveRuntimeHealthProvider,
+        reason: str,
+        recovery_attempts: int,
+        outage_started: float,
+    ) -> _RecoveryConvergence:
+        """Activate only authoritative recovery and classify the remaining risk."""
+        health_snapshot = health_provider.get_snapshot()
+        if self._recovery_ready_to_activate(snapshot=health_snapshot):
+            try:
+                self._activate_recovered_runtime(snapshot=health_snapshot)
+            except Exception:
+                _LOGGER.exception("Autonomous LIVE recovered runtime activation failed")
+                return _RecoveryConvergence.UNSAFE
+            health_snapshot = health_provider.get_snapshot()
+
+        if self._authoritative_recovery_converged(snapshot=health_snapshot):
+            outage_seconds = max(0.0, monotonic() - outage_started)
+            if reason == "reconciliation_required":
+                _LOGGER.info(
+                    "Autonomous LIVE routine exit reconciliation completed: "
+                    "reason=%s attempts=%d duration=%.1fs "
+                    "positions_known=%d positions_state=authoritative",
+                    reason,
+                    recovery_attempts,
+                    outage_seconds,
+                    len(health_snapshot.contexts),
+                )
+            else:
+                _LOGGER.warning(
+                    "Autonomous LIVE unattended recovery restored "
+                    "authoritative state: reason=%s attempts=%d "
+                    "outage_seconds=%.1f positions_known=%d "
+                    "positions_state=authoritative",
+                    reason,
+                    recovery_attempts,
+                    outage_seconds,
+                    len(health_snapshot.contexts),
+                )
+            return _RecoveryConvergence.CONVERGED
+
+        self.runtime_control.set_position_protection_ready(False)
+        self.runtime_control.pause()
+        if self._private_user_data_reseed_pending(snapshot=health_snapshot):
+            return _RecoveryConvergence.RETRY
+
+        health_reason = (
+            health_snapshot.reason.value
+            if health_snapshot.reason is not None
+            else "unknown"
+        )
+        if LiveRuntimeRecoveryPolicy.is_retryable_reason(health_snapshot.reason):
+            _LOGGER.warning(
+                "Autonomous LIVE recovery has not converged: "
+                "health_status=%s health_reason=%s entry_enabled=false",
+                health_snapshot.status.value,
+                health_reason,
+            )
+            return _RecoveryConvergence.RETRY
+
+        _LOGGER.critical(
+            "Autonomous LIVE recovery reported REST success but runtime "
+            "health is not authoritative: health_status=%s "
+            "health_reason=%s entry_enabled=false",
+            health_snapshot.status.value,
+            health_reason,
+        )
+        return _RecoveryConvergence.UNSAFE
 
     def _unattended_live_recovery_supported(self) -> bool:
         """Return whether authoritative autonomous LIVE recovery is available."""
@@ -1821,7 +953,7 @@ class TradingRunner:
         snapshot: LiveRuntimeHealthSnapshot,
     ) -> bool:
         """Return whether private Futures state still lacks a fresh REST seed."""
-        return snapshot.reason is LiveRuntimeHealthReason.USER_DATA_STREAM_NOT_READY
+        return LiveRuntimeRecoveryPolicy.is_private_stream_reseed_pending(snapshot)
 
     def _authoritative_recovery_converged(
         self,
@@ -1829,22 +961,12 @@ class TradingRunner:
         snapshot: LiveRuntimeHealthSnapshot,
     ) -> bool:
         """Return whether recovered state can safely reopen autonomous entry."""
-        if (
-            snapshot.runner_paused
-            or self.runtime_control.is_paused
-            or not self.runtime_control.is_position_protection_ready
-        ):
-            return False
-        if snapshot.status is LiveRuntimeHealthStatus.ACTIVE:
-            return (
-                snapshot.reason is None
-                and snapshot.authorization_present
-                and snapshot.authorization_exact
-            )
-        return (
-            snapshot.status is LiveRuntimeHealthStatus.INACTIVE
-            and snapshot.reason is LiveRuntimeHealthReason.NO_POSITIONS
-            and not snapshot.contexts
+        return LiveRuntimeRecoveryPolicy.has_converged(
+            snapshot,
+            runner_paused=self.runtime_control.is_paused,
+            position_protection_ready=(
+                self.runtime_control.is_position_protection_ready
+            ),
         )
 
     def _recovery_ready_to_activate(
@@ -1853,22 +975,12 @@ class TradingRunner:
         snapshot: LiveRuntimeHealthSnapshot,
     ) -> bool:
         """Return whether paused recovery substrate is complete and authoritative."""
-        if (
-            not snapshot.runner_paused
-            or not self.runtime_control.is_paused
-            or not self.runtime_control.is_position_protection_ready
-        ):
-            return False
-        if snapshot.contexts:
-            return (
-                snapshot.status is LiveRuntimeHealthStatus.PAUSED
-                and snapshot.reason is LiveRuntimeHealthReason.RUNNER_PAUSED
-                and snapshot.authorization_present
-                and snapshot.authorization_exact
-            )
-        return (
-            snapshot.status is LiveRuntimeHealthStatus.INACTIVE
-            and snapshot.reason is LiveRuntimeHealthReason.NO_POSITIONS
+        return LiveRuntimeRecoveryPolicy.is_ready_to_activate(
+            snapshot,
+            runner_paused=self.runtime_control.is_paused,
+            position_protection_ready=(
+                self.runtime_control.is_position_protection_ready
+            ),
         )
 
     def _activate_recovered_runtime(
@@ -1902,14 +1014,7 @@ class TradingRunner:
         snapshot: LiveRuntimeHealthSnapshot,
     ) -> bool:
         """Allow dependency recovery only with no exposure or exact ownership."""
-        return (
-            snapshot.status is not LiveRuntimeHealthStatus.BLOCKED
-            and snapshot.reason in _UNATTENDED_RECOVERY_HEALTH_REASONS
-            and (
-                not snapshot.contexts
-                or (snapshot.authorization_present and snapshot.authorization_exact)
-            )
-        )
+        return LiveRuntimeRecoveryPolicy.is_unattended_recovery_safe(snapshot)
 
     async def _handle_autonomous_live_runtime_failure(
         self,
@@ -2341,6 +1446,30 @@ class TradingRunner:
             live_management_authorization=live_management_authorization,
         )
 
+    async def _run_due_context_batch(
+        self,
+        *,
+        contexts: tuple[LiveRuntimePositionContext, ...],
+    ) -> (
+        tuple[tuple[LiveRuntimePositionContext, ...], tuple[TradingResult, ...]] | None
+    ):
+        """Run due contexts sequentially after checking LIVE batch authority."""
+        if not self._is_multi_context_batch_authorized(contexts=contexts):
+            self._pause_unauthorized_multi_context_runtime()
+            return None
+
+        eligible_contexts = self._get_eligible_contexts(contexts=contexts)
+        if not eligible_contexts:
+            await self._wait_for_next_eligible_context(contexts=contexts)
+            return None
+
+        self._active_batch_context_count = len(eligible_contexts)
+        try:
+            results = await self.run_context_cycles_once(contexts=eligible_contexts)
+        finally:
+            self._active_batch_context_count = 0
+        return eligible_contexts, results
+
     def _is_global_cycle_executor(self) -> bool:
         """Return whether composition selected one market-wide cycle executor."""
         return isinstance(self.executor, GlobalTradingCycleExecutor)
@@ -2569,6 +1698,16 @@ class TradingRunner:
         """Return the delay in seconds until the next global discovery cycle."""
         return self.calculate_next_global_cycle_delay()
 
+    def _schedule_next_global_cycle(self, *, delay_seconds: float) -> None:
+        """Set the next global deadline and expose it to optional telemetry."""
+        self._global_next_eligible_monotonic = monotonic() + delay_seconds
+        self._observe_global_discovery(
+            operation="waiting",
+            observation=lambda telemetry: telemetry.wait_until(
+                next_eligible_monotonic=self._global_next_eligible_monotonic
+            ),
+        )
+
     async def _wait_for_global_cycle(self) -> None:
         """Wait for cadence while waking early on recovered-runtime degradation."""
         while not self._stop_event.is_set():
@@ -2656,13 +1795,7 @@ class TradingRunner:
         contexts: tuple[LiveRuntimePositionContext, ...],
     ) -> tuple[LiveRuntimePositionContext, ...]:
         """Return snapshot contexts due for one sequential batch."""
-        current_monotonic = monotonic()
-        return tuple(
-            context
-            for context in contexts
-            if self._context_next_eligible_monotonic.get(context, 0.0)
-            <= current_monotonic
-        )
+        return self._context_scheduler.eligible(contexts=contexts, now=monotonic())
 
     def _mark_contexts_completed(
         self,
@@ -2670,11 +1803,11 @@ class TradingRunner:
         contexts: tuple[LiveRuntimePositionContext, ...],
     ) -> None:
         """Schedule every fully successful context using its own cadence."""
-        completed_at = monotonic()
-        for context in contexts:
-            self._context_next_eligible_monotonic[context] = (
-                completed_at + self._get_context_cadence_seconds(context=context)
-            )
+        self._context_scheduler.mark_completed(
+            contexts=contexts,
+            completed_at=monotonic(),
+            cycle_interval_seconds=self.cycle_interval_seconds,
+        )
 
     async def _wait_for_next_eligible_context(
         self,
@@ -2682,11 +1815,10 @@ class TradingRunner:
         contexts: tuple[LiveRuntimePositionContext, ...],
     ) -> None:
         """Wait once for the earliest context cadence without delaying a batch."""
-        deadlines = tuple(
-            self._context_next_eligible_monotonic.get(context, 0.0)
-            for context in contexts
+        next_deadline = self._context_scheduler.next_deadline(
+            contexts=contexts,
+            now=monotonic(),
         )
-        next_deadline = min(deadlines, default=monotonic())
         await self._wait_for_delay(
             delay_seconds=max(0.0, next_deadline - monotonic()),
         )
@@ -2697,14 +1829,7 @@ class TradingRunner:
         contexts: tuple[LiveRuntimePositionContext, ...],
     ) -> None:
         """Drop process-local scheduling state for contexts no longer present."""
-        active_contexts = frozenset(contexts)
-        stale_contexts = tuple(
-            context
-            for context in self._context_next_eligible_monotonic
-            if context not in active_contexts
-        )
-        for context in stale_contexts:
-            del self._context_next_eligible_monotonic[context]
+        self._context_scheduler.prune(contexts=contexts)
 
     def _get_context_cadence_seconds(
         self,

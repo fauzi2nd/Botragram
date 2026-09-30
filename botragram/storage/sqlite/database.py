@@ -181,6 +181,10 @@ class SQLiteDatabase:
 
         return max(affected_rows, 0)
 
+    async def optimize_after_prune(self) -> None:
+        """Run SQLite's maintenance optimization after candle retention."""
+        await self.execute(statement="PRAGMA optimize;")
+
     async def execute_many(
         self,
         *,

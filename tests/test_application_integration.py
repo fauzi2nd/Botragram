@@ -67,6 +67,8 @@ from botragram.services import (
 )
 from botragram.telegram import TelegramBot
 
+pytestmark = pytest.mark.usefixtures("stub_binance_time_sync")
+
 
 # =============================================================================
 # Integration Tests

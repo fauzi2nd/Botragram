@@ -6,7 +6,11 @@ import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 from botragram.app import DependencyProvider
+
+pytestmark = pytest.mark.usefixtures("stub_binance_time_sync")
 
 _TMP_DIRS: list[object] = []
 

@@ -25,11 +25,6 @@ from io import StringIO
 from typing import Sequence
 
 # =============================================================================
-# Third-Party Imports
-# =============================================================================
-from rich.console import Console
-
-# =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.app import TerminalMonitor, TradingRuntimeControl
@@ -45,6 +40,7 @@ from botragram.enums import (
 )
 from botragram.models import Position, StalkingSetup
 from botragram.services.paper_trading_service import PaperPortfolioSnapshot
+from tests.terminal_helpers import create_terminal_console
 
 _START_TIME = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
 
@@ -80,7 +76,7 @@ def _create_monitor(
     setups: tuple[StalkingSetup, ...] = (),
     width: int = 140,
 ) -> TerminalMonitor:
-    console = Console(file=StringIO(), force_terminal=True, width=width)
+    console = create_terminal_console(file=StringIO(), force_terminal=True, width=width)
     return TerminalMonitor(
         runtime_control=TradingRuntimeControl(
             strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI
@@ -101,7 +97,7 @@ def _create_responsive_monitor(
     setups: tuple[StalkingSetup, ...] = (),
     width: int = 120,
 ) -> ResponsiveTerminalMonitor:
-    console = Console(file=StringIO(), force_terminal=True, width=width)
+    console = create_terminal_console(file=StringIO(), force_terminal=True, width=width)
     return ResponsiveTerminalMonitor(
         runtime_control=TradingRuntimeControl(
             strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI
@@ -144,7 +140,7 @@ def test_stalking_panel_renders_empty_state() -> None:
     panel = layout["active_stalking"].renderable
 
     buffer = StringIO()
-    console = Console(file=buffer, force_terminal=True, width=120)
+    console = create_terminal_console(file=buffer, force_terminal=True, width=120)
     console.print(panel)
     output = buffer.getvalue()
 
@@ -177,7 +173,7 @@ def test_stalking_panel_renders_active_candidate_details() -> None:
     layout = monitor.render_dashboard(status)
     panel = layout["active_stalking"].renderable
     buffer = StringIO()
-    console = Console(file=buffer, force_terminal=True, width=140)
+    console = create_terminal_console(file=buffer, force_terminal=True, width=140)
     console.print(panel)
     output = buffer.getvalue()
 
@@ -293,7 +289,7 @@ def test_terminal_monitor_sorts_triggered_first_then_highest_bar() -> None:
     panel = layout["active_stalking"].renderable
 
     string_io = StringIO()
-    console = Console(file=string_io, force_terminal=True, width=140)
+    console = create_terminal_console(file=string_io, force_terminal=True, width=140)
     console.print(panel)
     output: str = string_io.getvalue()
 
@@ -364,7 +360,7 @@ def test_terminal_monitor_cleans_and_suspends_stalking_when_capacity_full() -> N
         async def get_open_positions(self) -> Sequence[Position]:
             return (pos,)
 
-    console = Console(file=StringIO(), force_terminal=True, width=140)
+    console = create_terminal_console(file=StringIO(), force_terminal=True, width=140)
     monitor = ResponsiveTerminalMonitor(
         runtime_control=TradingRuntimeControl(symbol="BTCUSDT"),
         paper_balance_provider=FakePaperBalance(),
@@ -388,7 +384,7 @@ def test_terminal_monitor_cleans_and_suspends_stalking_when_capacity_full() -> N
     layout = monitor.render_dashboard(status)
     panel = layout["active_stalking"].renderable
     string_io = StringIO()
-    c = Console(file=string_io, force_terminal=True, width=140)
+    c = create_terminal_console(file=string_io, force_terminal=True, width=140)
     c.print(panel)
     output = string_io.getvalue()
 

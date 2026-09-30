@@ -36,6 +36,9 @@ from botragram.services.live_account_drawdown_service import (
     LiveAccountDrawdownService,
 )
 from botragram.telegram.messages import get_drawdown_alert_message
+from botragram.telegram.presentation.notification_message_formatter import (
+    TelegramNotificationMessageFormatter,
+)
 
 
 @dataclass(slots=True)
@@ -81,6 +84,16 @@ class _RecordingPublisher(DrawdownNotificationPublisher):
         self.notifications.append(notification)
 
 
+def test_drawdown_publisher_requires_a_message_formatter() -> None:
+    """Reject notification wiring that cannot render a drawdown alert."""
+    with pytest.raises(ValueError, match="formatter is required"):
+        LiveAccountDrawdownService(
+            repository=_MemoryHighWaterRepository(),
+            asset="USDT",
+            notification_publisher=_RecordingPublisher(),
+        )
+
+
 def test_drawdown_alert_message_formatting() -> None:
     """Validate HTML formatting of warning and critical drawdown alert messages."""
     warning_msg = get_drawdown_alert_message(
@@ -124,6 +137,7 @@ async def test_drawdown_alert_triggered_at_thresholds() -> None:
         repository=repository,
         asset="USDT",
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         max_drawdown_pct=Decimal("0.10"),  # 10% max DD
         warning_threshold_ratio=Decimal("0.75"),  # 7.5% DD
         critical_threshold_ratio=Decimal("0.90"),  # 9.0% DD
@@ -169,6 +183,7 @@ async def test_drawdown_alert_publisher_failure_non_blocking() -> None:
         repository=repository,
         asset="USDT",
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         max_drawdown_pct=Decimal("0.10"),
     )
 

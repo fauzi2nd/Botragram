@@ -75,6 +75,7 @@ from botragram.services.live_futures_user_data_cache import (
 from botragram.services.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
+from tests.terminal_helpers import create_terminal_console
 
 
 # =============================================================================
@@ -156,6 +157,8 @@ class RecordingAlternateScreenConsole(Console):
             file=StringIO(),
             force_terminal=True,
             width=140,
+            height=60,
+            legacy_windows=False,
         )
         self.alt_screen_states: list[bool] = []
 
@@ -251,7 +254,7 @@ def _create_monitor(
     terminal_console = console
 
     if terminal_console is None:
-        terminal_console = Console(
+        terminal_console = create_terminal_console(
             file=StringIO(),
             force_terminal=True,
             width=140,
@@ -408,7 +411,7 @@ async def _run_completed_candidate_test() -> None:
     monitor.global_discovery_telemetry_provider = telemetry
     status = await monitor.collect_status()
     output = StringIO()
-    Console(file=output, force_terminal=False, width=180, height=60).print(
+    create_terminal_console(file=output, width=180, height=60).print(
         monitor.render_dashboard(status)
     )
     rendered = output.getvalue()
@@ -446,7 +449,7 @@ async def _run_capacity_skipped_global_discovery_test() -> None:
     monitor.global_discovery_telemetry_provider = telemetry
     status = await monitor.collect_status()
     output = StringIO()
-    Console(file=output, force_terminal=False, width=180, height=60).print(
+    create_terminal_console(file=output, width=180, height=60).print(
         monitor.render_dashboard(status)
     )
     rendered = output.getvalue()
@@ -524,7 +527,7 @@ async def _run_zero_position_global_discovery_test() -> None:
     assert status.autonomous_live_recovery is not None
     assert status.autonomous_live_recovery.autonomous_entry_authorized
     output = StringIO()
-    Console(file=output, force_terminal=False, width=180, height=60).print(
+    create_terminal_console(file=output, width=180, height=60).print(
         monitor.render_dashboard(status)
     )
     rendered = output.getvalue()
@@ -590,7 +593,7 @@ async def _run_terminal_recovery_block_test() -> None:
 
     status = await monitor.collect_status()
     output = StringIO()
-    Console(file=output, force_terminal=False, width=180).print(
+    create_terminal_console(file=output, width=180).print(
         monitor.render_dashboard(status)
     )
     rendered = output.getvalue()
@@ -634,7 +637,7 @@ async def _run_dynamic_runtime_capacity_test() -> None:
     )
     first_status = await monitor.collect_status()
     first_output = StringIO()
-    Console(file=first_output, force_terminal=False, width=180).print(
+    create_terminal_console(file=first_output, width=180).print(
         monitor.render_dashboard(first_status)
     )
     assert "0 / 1" in first_output.getvalue()
@@ -647,7 +650,7 @@ async def _run_dynamic_runtime_capacity_test() -> None:
     )
     second_status = await monitor.collect_status()
     second_output = StringIO()
-    Console(file=second_output, force_terminal=False, width=180).print(
+    create_terminal_console(file=second_output, width=180).print(
         monitor.render_dashboard(second_status)
     )
     assert "0 / 2" in second_output.getvalue()
@@ -755,7 +758,7 @@ async def _run_terminal_multi_context_health_test() -> None:
     status = await monitor.collect_status()
     compact = await monitor.refresh()
     output = StringIO()
-    Console(file=output, force_terminal=False, width=140).print(
+    create_terminal_console(file=output, width=140).print(
         monitor.render_dashboard(status)
     )
     rendered = output.getvalue()
@@ -793,7 +796,7 @@ async def _run_rich_dashboard_render_test() -> None:
     monitor.log_handler.emit(record)
     status = await monitor.collect_status()
     output = StringIO()
-    console = Console(file=output, force_terminal=False, width=140, height=60)
+    console = create_terminal_console(file=output, width=140, height=60)
 
     console.print(monitor.render_dashboard(status))
     rendered = output.getvalue()
@@ -1049,7 +1052,7 @@ def _render_live(
     monitor.max_open_positions = max_open_positions
     status = asyncio.run(monitor.collect_status())
     output = StringIO()
-    Console(file=output, force_terminal=False, width=170, height=50).print(
+    create_terminal_console(file=output, width=170, height=50).print(
         monitor.render_dashboard(status)
     )
     return output.getvalue()
@@ -1083,7 +1086,7 @@ def test_paper_monitor_ignores_injected_live_health_provider() -> None:
 
     status = asyncio.run(monitor.collect_status())
     output = StringIO()
-    Console(file=output, force_terminal=False, width=180, height=60).print(
+    create_terminal_console(file=output, width=180, height=60).print(
         monitor.render_dashboard(status)
     )
     rendered = output.getvalue()
@@ -1369,11 +1372,11 @@ def test_terminal_discovery_candidates_are_bounded_and_separate() -> None:
     status = asyncio.run(monitor.collect_status())
     dashboard = monitor.render_dashboard(status)
     output = StringIO()
-    console = Console(file=output, force_terminal=False, width=200, height=100)
+    console = create_terminal_console(file=output, width=200, height=100)
     console.print(dashboard)
     rendered = output.getvalue()
     safety_output = StringIO()
-    Console(file=safety_output, force_terminal=False, width=100).print(
+    create_terminal_console(file=safety_output, width=100).print(
         dashboard["status"].renderable
     )
     safety = safety_output.getvalue()
@@ -1436,7 +1439,7 @@ def test_terminal_live_performance_and_full_width_positions_render() -> None:
     status = asyncio.run(monitor.collect_status())
     dashboard = monitor.render_dashboard(status)
     output = StringIO()
-    Console(file=output, force_terminal=False, width=170, height=50).print(dashboard)
+    create_terminal_console(file=output, width=170, height=50).print(dashboard)
     rendered = output.getvalue()
 
     assert performance_provider.calls == 1
@@ -1493,7 +1496,7 @@ def test_terminal_strategy_display_reflects_configured_strategy() -> None:
     status = asyncio.run(monitor.collect_status())
     dashboard = monitor.render_dashboard(status)
     output = StringIO()
-    Console(file=output, force_terminal=False, width=170, height=50).print(dashboard)
+    create_terminal_console(file=output, width=170, height=50).print(dashboard)
     rendered = output.getvalue()
 
     assert "EMA_SCALPING" in rendered
@@ -1521,7 +1524,7 @@ def test_terminal_paper_discovery_window_and_scanned_count() -> None:
     monitor.global_discovery_telemetry_provider = telemetry
     status = asyncio.run(monitor.collect_status())
     output = StringIO()
-    Console(file=output, force_terminal=False, width=170, height=50).print(
+    create_terminal_console(file=output, width=170, height=50).print(
         monitor.render_dashboard(status)
     )
     rendered = output.getvalue()

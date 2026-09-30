@@ -18,6 +18,7 @@ from __future__ import annotations
 # Standard Library
 # =============================================================================
 from decimal import Decimal
+from typing import TypedDict, Unpack
 
 # =============================================================================
 # Third Party
@@ -33,7 +34,51 @@ from botragram.config.risk_settings import RiskSettings
 # =============================================================================
 # Helpers
 # =============================================================================
-def _valid_base() -> dict[str, object]:
+class _RiskOverrides(TypedDict, total=False):
+    """Typed constructor fields exercised by the validation tests."""
+
+    leverage: int
+    min_leverage: int
+    max_leverage: int
+    pier_leverage: int
+    pier_max_position_size_usdt: Decimal
+    pier_risk_per_trade_pct: Decimal
+    pier_trailing_swing_window: int
+    pier_trailing_buffer_pct: Decimal
+    pier_partial_tp_ratio: Decimal
+    pier_partial_tp_trigger_progress: Decimal
+    pier_early_exit_min_confidence: float
+    max_executable_quote_age_ms: int
+    max_position_size_usdt: Decimal
+    max_open_positions: int
+    stop_loss_pct: Decimal
+    take_profit_pct: Decimal
+    scalping_stop_loss_pct: Decimal
+    scalping_take_profit_pct: Decimal
+    trend_stop_loss_pct: Decimal
+    trend_take_profit_pct: Decimal
+    swing_stop_loss_pct: Decimal
+    swing_take_profit_pct: Decimal
+    ema_scalping_stop_loss_pct: Decimal
+    ema_scalping_take_profit_pct: Decimal
+    ema_cross_stop_loss_pct: Decimal
+    ema_cross_take_profit_pct: Decimal
+    pier_stop_loss_pct: Decimal
+    pier_take_profit_pct: Decimal
+    breakeven_progress_threshold: Decimal
+    trailing_swing_window: int
+    trailing_buffer_pct: Decimal
+    partial_tp_enabled: bool
+    partial_tp_ratio: Decimal
+    partial_tp_trigger_progress: Decimal
+    volatility_sizing_enabled: bool
+    baseline_volatility_pct: Decimal
+    early_exit_min_confidence: float
+    slot_margin_buffer_pct: Decimal
+    min_order_notional_usdt: Decimal
+
+
+def _valid_base() -> _RiskOverrides:
     """Return a minimal valid RiskSettings kwargs dict."""
     return {
         "leverage": 5,
@@ -42,10 +87,11 @@ def _valid_base() -> dict[str, object]:
     }
 
 
-def _make(**overrides: object) -> RiskSettings:
+def _make(**overrides: Unpack[_RiskOverrides]) -> RiskSettings:
+    """Construct settings with typed overrides, including invalid test values."""
     base = _valid_base()
     base.update(overrides)
-    return RiskSettings(**base)  # type: ignore[arg-type]
+    return RiskSettings(**base)
 
 
 # =============================================================================

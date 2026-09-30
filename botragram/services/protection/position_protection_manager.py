@@ -40,7 +40,9 @@ from botragram.repositories import CandleRepository, PositionRepository
 from botragram.services.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
 )
-from botragram.telegram.messages import get_partial_tp_message
+from botragram.services.notification_message_formatter import (
+    NotificationMessageFormatter,
+)
 
 __all__ = [
     "PartialTpNotificationPublisher",
@@ -122,6 +124,7 @@ class PositionProtectionManager:
         default_factory=LivePositionLifecycleCoordinator,
     )
     notification_publisher: PartialTpNotificationPublisher | None = None
+    notification_formatter: NotificationMessageFormatter | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _cached_position: Position | None = field(default=None, init=False, repr=False)
     _cached_position_version: int = field(default=0, init=False, repr=False)
@@ -130,6 +133,11 @@ class PositionProtectionManager:
 
     def __post_init__(self) -> None:
         """Validate the bounded repository refresh cadence and thresholds."""
+        if (
+            self.notification_publisher is not None
+            and self.notification_formatter is None
+        ):
+            raise ValueError("Partial TP notification formatter is required")
         if self.position_refresh_seconds <= 0:
             raise ValueError("Position refresh interval must be greater than zero")
 
@@ -1076,7 +1084,10 @@ class PositionProtectionManager:
             return
 
         try:
-            msg = get_partial_tp_message(
+            formatter = self.notification_formatter
+            if formatter is None:
+                raise RuntimeError("Partial TP notification formatter is unavailable")
+            msg = formatter.partial_take_profit(
                 position=position,
                 closed_quantity=close_qty,
                 remaining_quantity=remaining_qty,

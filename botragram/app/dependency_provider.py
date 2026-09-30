@@ -178,6 +178,9 @@ from botragram.storage.sqlite.live_recovery_repository import (
 from botragram.strategies.factory import StrategyFactory
 from botragram.telegram import TelegramBot
 from botragram.telegram.context import BotContext
+from botragram.telegram.presentation.notification_message_formatter import (
+    TelegramNotificationMessageFormatter,
+)
 from botragram.telegram.query_service import TelegramQueryService
 
 __all__ = ["DependencyProvider"]
@@ -228,6 +231,7 @@ class DependencyProvider:
         "_live_trading_performance_service",
         "_market_service",
         "_market_type_switch_service",
+        "_notification_formatter",
         "_operator_exit_service",
         "_opportunity_discovery_service",
         "_operator_exit_repository",
@@ -284,6 +288,7 @@ class DependencyProvider:
             if settings is not None
             else Settings(exchange=ExchangeSettings(exchange=ExchangeType.BINANCE))
         )
+        self._notification_formatter = TelegramNotificationMessageFormatter()
         self._autonomous_live_entry_authorization = (
             self._build_autonomous_live_entry_authorization()
         )
@@ -498,58 +503,7 @@ class DependencyProvider:
             await SQLiteMigrationManager(database=database).initialize()
             await self._migrate_legacy_testnet_live_ledger(database=database)
             self._build_repositories(database=database)
-            persisted_strategy = await self.runtime_settings_repository.get_strategy()
-            if persisted_strategy is not None:
-                if persisted_strategy is not self._settings.strategy.strategy_type:
-                    strat_interval, strat_source = (
-                        SettingsManager.resolve_strategy_interval_from_environment(
-                            persisted_strategy
-                        )
-                    )
-                    self._settings = replace(
-                        self._settings,
-                        strategy=replace(
-                            self._settings.strategy,
-                            strategy_type=persisted_strategy,
-                            strategy_interval=strat_interval,
-                            strategy_interval_source=strat_source,
-                        ),
-                    )
-                self._runtime_control.strategy_type = persisted_strategy
-                self._runtime_control.interval = (
-                    self._settings.effective_strategy_interval
-                )
-            else:
-                self._runtime_control.interval = (
-                    self._settings.effective_strategy_interval
-                )
-            persisted_leverage = await self.runtime_settings_repository.get_leverage()
-            if persisted_leverage is not None:
-                self._settings = replace(
-                    self._settings,
-                    risk=replace(self._settings.risk, leverage=persisted_leverage),
-                )
-                self._runtime_control.leverage = persisted_leverage
-            else:
-                self._runtime_control.leverage = self._settings.risk.leverage
-            persisted_dynamic_leverage = (
-                await self.runtime_settings_repository.get_dynamic_leverage()
-            )
-            if persisted_dynamic_leverage is not None:
-                self._settings = replace(
-                    self._settings,
-                    risk=replace(
-                        self._settings.risk,
-                        dynamic_leverage_enabled=persisted_dynamic_leverage,
-                    ),
-                )
-                self._runtime_control.dynamic_leverage_enabled = (
-                    persisted_dynamic_leverage
-                )
-            else:
-                self._runtime_control.dynamic_leverage_enabled = (
-                    self._settings.risk.dynamic_leverage_enabled
-                )
+            await self._restore_runtime_settings()
             await self._initialize_runtime_risk_limit_service()
             await self._build_exchange_dependencies()
             self._build_engines()
@@ -563,163 +517,11 @@ class DependencyProvider:
             self._build_live_account_drawdown_service()
             await self._start_live_futures_user_data_service()
             self._build_services()
-            self._health_service = HealthService(
-                database=database,
-                exchange=self.exchange_client,
-            )
-            self._runtime_reporter = RuntimeReporter(
-                health_service=self.health_service,
-                paper_trading_service=self.paper_trading_service,
-                position_repository=self.position_repository,
-                notification_publisher=self.telegram_bot,
-                trade_mode=self._settings.app.trade_mode,
-                symbol=self._settings.market.symbol,
-            )
-            self._live_protection_monitoring_service = LiveProtectionMonitoringService(
-                manager_factory=self._create_position_protection_manager,
-            )
-            tick_listeners: tuple[MarketTickListener, ...] = (
-                self.live_protection_monitoring_service,
-            )
-            if self._settings.app.trade_mode is TradeMode.PAPER:
-                tick_listeners += (self.paper_trading_service,)
-
-            self._live_market_stream_service = LiveMarketStreamService(
-                market_service=self.market_service,
-                runtime_control=self.runtime_control,
-                tick_listeners=tick_listeners,
-            )
-            reconciliation_service = LiveRuntimePortfolioReconciliationService(
-                runtime_control=self.runtime_control,
-                live_portfolio_recovery_service=self.live_portfolio_recovery_service,
-                market_stream_service=self.live_market_stream_service,
-                protection_monitoring_service=self.live_protection_monitoring_service,
-                first_tick_timeout_seconds=15.0,
-                live_natural_exit_recovery_service=(
-                    self.live_natural_exit_recovery_service
-                ),
-            )
-            self._live_runtime_portfolio_reconciliation_service = reconciliation_service
-            self._live_runtime_health_service = LiveRuntimeHealthService(
-                runtime_control=self.runtime_control,
-                market_stream_service=self.live_market_stream_service,
-                protection_monitoring_service=self.live_protection_monitoring_service,
-                live_futures_user_data_service=self._live_futures_user_data_service,
-                stream_stale_after_seconds=60.0,
-            )
+            self._build_runtime_monitoring(database=database)
             self._trading_cycle_executor = self._build_trading_cycle_executor()
 
-            query_service = TelegramQueryService(
-                symbol=self._settings.market.symbol,
-                market_service=self.market_service,
-                paper_trading_service=self.paper_trading_service,
-                live_balance_provider=(
-                    self._live_futures_user_data_service
-                    if self._live_futures_user_data_service is not None
-                    else self.account_service
-                    if self._settings.app.trade_mode is TradeMode.LIVE
-                    else None
-                ),
-                position_repository=self.position_repository,
-                trade_repository=self.trade_repository,
-                order_repository=self.order_repository,
-                market_stream_service=self.live_market_stream_service,
-                quote_asset=self._settings.market.quote_asset,
-                interval=self._settings.market.interval,
-                strategy_type=self._settings.strategy.strategy_type,
-                runtime_control=self.runtime_control,
-                live_runtime_health_service=self.live_runtime_health_service,
-                autonomous_live_recovery_observability_service=(
-                    self.autonomous_live_recovery_observability_service
-                ),
-                live_trading_performance_service=self.live_trading_performance_service,
-                pnl_engine=self.pnl_engine,
-                live_futures_user_data_service=self._live_futures_user_data_service,
-            )
-            self._telegram_query_service = query_service
-            self._market_type_switch_service = MarketTypeSwitchService(
-                trade_mode=self._settings.app.trade_mode,
-                runtime_control=self.runtime_control,
-                position_repository=self.position_repository,
-                position_service=self.position_service,
-                restart_coordinator=self.restart_coordinator,
-                settings=self._settings,
-                submission_attempt_repository=self.submission_attempt_repository,
-                runtime_settings_repository=self.runtime_settings_repository,
-            )
-            self._operator_exit_service = OperatorExitService(
-                trade_mode=self._settings.app.trade_mode,
-                market_type=self._settings.exchange.market_type,
-                exchange_environment=self._settings.exchange.environment,
-                runtime_control=self.runtime_control,
-                operator_exit_repository=self.operator_exit_repository,
-                position_repository=self.position_repository,
-                market_stream_owner=self.live_market_stream_service,
-                execution_policy_switcher=self.market_type_switch_service,
-                live_position_service=self.position_service,
-                live_exchange=self.exchange_client,
-                submission_attempt_repository=self.submission_attempt_repository,
-                closed_lifecycle_service=self._closed_position_lifecycle_service,
-                live_runtime_reconciler=(
-                    self.live_runtime_portfolio_reconciliation_service
-                ),
-                order_repository=self.order_repository,
-                lifecycle_coordinator=self._live_position_lifecycle_coordinator,
-                paper_trading_service=self.paper_trading_service,
-                market_price_provider=self.market_service,
-            )
-            await self.operator_exit_service.initialize()
-            self._runtime_recovery_service = RuntimeRecoveryService(
-                trade_mode=self._settings.app.trade_mode,
-                market_type=self._settings.exchange.market_type,
-                runtime_control=self.runtime_control,
-                stream_controller=query_service,
-                market_stream_service=self.live_market_stream_service,
-                protection_monitoring_service=self.live_protection_monitoring_service,
-                position_repository=self.position_repository,
-                signal_repository=self.signal_repository,
-                candle_repository=self.candle_repository,
-                live_portfolio_recovery_service=self.live_portfolio_recovery_service,
-                live_runtime_portfolio_reconciliation_service=(
-                    self.live_runtime_portfolio_reconciliation_service
-                ),
-                submission_attempt_repository=self.submission_attempt_repository,
-                live_submission_recovery_service=self.live_submission_recovery_service,
-                live_post_entry_recovery_service=self.live_post_entry_recovery_service,
-                live_natural_exit_recovery_service=(
-                    self.live_natural_exit_recovery_service
-                ),
-                operator_exit_recovery_service=self.operator_exit_service,
-                autonomous_live_entry_authorization=(
-                    self._autonomous_live_entry_authorization
-                    if self._settings.app.effective_execution_policy
-                    is ExecutionPolicy.AUTONOMOUS_LIVE
-                    else None
-                ),
-            )
-            await self.telegram_bot.sync_context(
-                context=BotContext(
-                    is_running=True,
-                    trade_mode=self._settings.app.trade_mode.value,
-                    execution_policy=self._settings.app.effective_execution_policy,
-                    symbol=self._settings.market.symbol,
-                    strategy_name=self._settings.strategy.strategy_type.value,
-                    configured_interval=self._settings.market.interval,
-                    exchange_type=self._settings.exchange.exchange.value,
-                    leverage=self.runtime_control.leverage,
-                    leverage_ceiling=max(50, self.runtime_control.leverage),
-                    query_provider=query_service,
-                    runtime_control=self.runtime_control,
-                    market_type_switcher=self.market_type_switch_service,
-                    execution_authorization_service=(
-                        self._execution_authorization_service
-                    ),
-                    runtime_risk_limit_service=self._runtime_risk_limit_service,
-                    operator_exit_service=self.operator_exit_service,
-                    risk_settings=self._settings.risk,
-                    strategy_settings=self._settings.strategy,
-                )
-            )
+            query_service = await self._build_operator_services()
+            await self._sync_telegram_context(query_service=query_service)
             try:
                 await self.telegram_bot.start_with_retry(
                     max_attempts=3, delay_seconds=1.0
@@ -1048,6 +850,226 @@ class DependencyProvider:
         self._trade_repository = SQLiteTradeRepository(database=database)
         self._position_repository = SQLitePositionRepository(database=database)
 
+    def _build_runtime_monitoring(self, *, database: SQLiteDatabase) -> None:
+        """Wire runtime health, market streams, and portfolio reconciliation."""
+        self._health_service = HealthService(
+            database=database,
+            exchange=self.exchange_client,
+        )
+        self._runtime_reporter = RuntimeReporter(
+            health_service=self.health_service,
+            paper_trading_service=self.paper_trading_service,
+            position_repository=self.position_repository,
+            notification_publisher=self.telegram_bot,
+            notification_formatter=self._notification_formatter,
+            trade_mode=self._settings.app.trade_mode,
+            symbol=self._settings.market.symbol,
+        )
+        self._live_protection_monitoring_service = LiveProtectionMonitoringService(
+            manager_factory=self._create_position_protection_manager,
+        )
+        tick_listeners: tuple[MarketTickListener, ...] = (
+            self.live_protection_monitoring_service,
+        )
+        if self._settings.app.trade_mode is TradeMode.PAPER:
+            tick_listeners += (self.paper_trading_service,)
+
+        self._live_market_stream_service = LiveMarketStreamService(
+            market_service=self.market_service,
+            runtime_control=self.runtime_control,
+            tick_listeners=tick_listeners,
+        )
+        self._live_runtime_portfolio_reconciliation_service = (
+            LiveRuntimePortfolioReconciliationService(
+                runtime_control=self.runtime_control,
+                live_portfolio_recovery_service=self.live_portfolio_recovery_service,
+                market_stream_service=self.live_market_stream_service,
+                protection_monitoring_service=self.live_protection_monitoring_service,
+                first_tick_timeout_seconds=15.0,
+                live_natural_exit_recovery_service=(
+                    self.live_natural_exit_recovery_service
+                ),
+            )
+        )
+        self._live_runtime_health_service = LiveRuntimeHealthService(
+            runtime_control=self.runtime_control,
+            market_stream_service=self.live_market_stream_service,
+            protection_monitoring_service=self.live_protection_monitoring_service,
+            live_futures_user_data_service=self._live_futures_user_data_service,
+            stream_stale_after_seconds=60.0,
+        )
+
+    async def _build_operator_services(self) -> TelegramQueryService:
+        """Wire operator queries, guarded exits, and startup recovery in order."""
+        query_service = TelegramQueryService(
+            symbol=self._settings.market.symbol,
+            market_service=self.market_service,
+            paper_trading_service=self.paper_trading_service,
+            live_balance_provider=(
+                self._live_futures_user_data_service
+                if self._live_futures_user_data_service is not None
+                else self.account_service
+                if self._settings.app.trade_mode is TradeMode.LIVE
+                else None
+            ),
+            position_repository=self.position_repository,
+            trade_repository=self.trade_repository,
+            order_repository=self.order_repository,
+            market_stream_service=self.live_market_stream_service,
+            quote_asset=self._settings.market.quote_asset,
+            interval=self._settings.market.interval,
+            strategy_type=self._settings.strategy.strategy_type,
+            runtime_control=self.runtime_control,
+            live_runtime_health_service=self.live_runtime_health_service,
+            autonomous_live_recovery_observability_service=(
+                self.autonomous_live_recovery_observability_service
+            ),
+            live_trading_performance_service=self.live_trading_performance_service,
+            pnl_engine=self.pnl_engine,
+            live_futures_user_data_service=self._live_futures_user_data_service,
+        )
+        self._telegram_query_service = query_service
+        self._market_type_switch_service = MarketTypeSwitchService(
+            trade_mode=self._settings.app.trade_mode,
+            runtime_control=self.runtime_control,
+            position_repository=self.position_repository,
+            position_service=self.position_service,
+            restart_coordinator=self.restart_coordinator,
+            settings=self._settings,
+            submission_attempt_repository=self.submission_attempt_repository,
+            runtime_settings_repository=self.runtime_settings_repository,
+        )
+        self._operator_exit_service = OperatorExitService(
+            trade_mode=self._settings.app.trade_mode,
+            market_type=self._settings.exchange.market_type,
+            exchange_environment=self._settings.exchange.environment,
+            runtime_control=self.runtime_control,
+            operator_exit_repository=self.operator_exit_repository,
+            position_repository=self.position_repository,
+            market_stream_owner=self.live_market_stream_service,
+            execution_policy_switcher=self.market_type_switch_service,
+            live_position_service=self.position_service,
+            live_exchange=self.exchange_client,
+            submission_attempt_repository=self.submission_attempt_repository,
+            closed_lifecycle_service=self._closed_position_lifecycle_service,
+            live_runtime_reconciler=(
+                self.live_runtime_portfolio_reconciliation_service
+            ),
+            order_repository=self.order_repository,
+            lifecycle_coordinator=self._live_position_lifecycle_coordinator,
+            paper_trading_service=self.paper_trading_service,
+            market_price_provider=self.market_service,
+        )
+        await self.operator_exit_service.initialize()
+        self._runtime_recovery_service = RuntimeRecoveryService(
+            trade_mode=self._settings.app.trade_mode,
+            market_type=self._settings.exchange.market_type,
+            runtime_control=self.runtime_control,
+            stream_controller=query_service,
+            market_stream_service=self.live_market_stream_service,
+            protection_monitoring_service=self.live_protection_monitoring_service,
+            position_repository=self.position_repository,
+            signal_repository=self.signal_repository,
+            candle_repository=self.candle_repository,
+            live_portfolio_recovery_service=self.live_portfolio_recovery_service,
+            live_runtime_portfolio_reconciliation_service=(
+                self.live_runtime_portfolio_reconciliation_service
+            ),
+            submission_attempt_repository=self.submission_attempt_repository,
+            live_submission_recovery_service=self.live_submission_recovery_service,
+            live_post_entry_recovery_service=self.live_post_entry_recovery_service,
+            live_natural_exit_recovery_service=(
+                self.live_natural_exit_recovery_service
+            ),
+            operator_exit_recovery_service=self.operator_exit_service,
+            autonomous_live_entry_authorization=(
+                self._autonomous_live_entry_authorization
+                if self._settings.app.effective_execution_policy
+                is ExecutionPolicy.AUTONOMOUS_LIVE
+                else None
+            ),
+        )
+        return query_service
+
+    async def _sync_telegram_context(
+        self,
+        *,
+        query_service: TelegramQueryService,
+    ) -> None:
+        """Publish the fully wired operator context before Telegram startup."""
+        await self.telegram_bot.sync_context(
+            context=BotContext(
+                is_running=True,
+                trade_mode=self._settings.app.trade_mode.value,
+                execution_policy=self._settings.app.effective_execution_policy,
+                symbol=self._settings.market.symbol,
+                strategy_name=self._settings.strategy.strategy_type.value,
+                configured_interval=self._settings.market.interval,
+                exchange_type=self._settings.exchange.exchange.value,
+                leverage=self.runtime_control.leverage,
+                leverage_ceiling=max(50, self.runtime_control.leverage),
+                query_provider=query_service,
+                runtime_control=self.runtime_control,
+                market_type_switcher=self.market_type_switch_service,
+                execution_authorization_service=(self._execution_authorization_service),
+                runtime_risk_limit_service=self._runtime_risk_limit_service,
+                operator_exit_service=self.operator_exit_service,
+                risk_settings=self._settings.risk,
+                strategy_settings=self._settings.strategy,
+            )
+        )
+
+    async def _restore_runtime_settings(self) -> None:
+        """Apply persisted strategy and risk controls before dependency wiring."""
+        persisted_strategy = await self.runtime_settings_repository.get_strategy()
+        if persisted_strategy is not None:
+            if persisted_strategy is not self._settings.strategy.strategy_type:
+                strat_interval, strat_source = (
+                    SettingsManager.resolve_strategy_interval_from_environment(
+                        persisted_strategy
+                    )
+                )
+                self._settings = replace(
+                    self._settings,
+                    strategy=replace(
+                        self._settings.strategy,
+                        strategy_type=persisted_strategy,
+                        strategy_interval=strat_interval,
+                        strategy_interval_source=strat_source,
+                    ),
+                )
+            self._runtime_control.strategy_type = persisted_strategy
+            self._runtime_control.interval = self._settings.effective_strategy_interval
+        else:
+            self._runtime_control.interval = self._settings.effective_strategy_interval
+
+        persisted_leverage = await self.runtime_settings_repository.get_leverage()
+        if persisted_leverage is not None:
+            self._settings = replace(
+                self._settings,
+                risk=replace(self._settings.risk, leverage=persisted_leverage),
+            )
+            self._runtime_control.leverage = persisted_leverage
+        else:
+            self._runtime_control.leverage = self._settings.risk.leverage
+
+        persisted_dynamic_leverage = (
+            await self.runtime_settings_repository.get_dynamic_leverage()
+        )
+        if persisted_dynamic_leverage is not None:
+            self._settings = replace(
+                self._settings,
+                risk=replace(
+                    self._settings.risk,
+                    dynamic_leverage_enabled=persisted_dynamic_leverage,
+                ),
+            )
+            self._runtime_control.dynamic_leverage_enabled = persisted_dynamic_leverage
+        else:
+            self._runtime_control.dynamic_leverage_enabled = (
+                self._settings.risk.dynamic_leverage_enabled
+            )
+
     async def _initialize_runtime_risk_limit_service(self) -> None:
         """Create one durable authority only for autonomous LIVE execution."""
         if (
@@ -1230,6 +1252,7 @@ class DependencyProvider:
             repository=SQLiteLiveEquityHighWaterRepository(database=database),
             asset=self._settings.market.quote_asset,
             notification_publisher=self.telegram_bot,
+            notification_formatter=self._notification_formatter,
             max_drawdown_pct=self._settings.risk.max_drawdown_pct,
         )
 
@@ -1371,6 +1394,24 @@ class DependencyProvider:
     def _build_services(self) -> None:
         exchange_client = self.exchange_client
         runtime_limits = self._runtime_risk_limit_service
+        self._build_market_discovery_services(exchange_client=exchange_client)
+        self._build_order_position_account_services(exchange_client=exchange_client)
+        self._build_live_recovery_foundation_services(
+            exchange_client=exchange_client,
+            runtime_limits=runtime_limits,
+        )
+        self._build_live_entry_services(
+            exchange_client=exchange_client,
+            runtime_limits=runtime_limits,
+        )
+        self._build_trade_workflow_services()
+
+    def _build_market_discovery_services(
+        self,
+        *,
+        exchange_client: BaseExchangeClient,
+    ) -> None:
+        """Wire market storage, strategy, and ranked opportunity discovery."""
         self._market_service = MarketService(
             exchange_client=exchange_client,
             stream_client=self.stream_client,
@@ -1432,6 +1473,13 @@ class DependencyProvider:
             ),
             use_open_interest=self._settings.strategy.use_open_interest,
         )
+
+    def _build_order_position_account_services(
+        self,
+        *,
+        exchange_client: BaseExchangeClient,
+    ) -> None:
+        """Wire the shared order, position, and account access boundaries."""
         self._order_service = OrderService(
             order_engine=self.order_engine,
             order_repository=self.order_repository,
@@ -1441,11 +1489,20 @@ class DependencyProvider:
             position_repository=self.position_repository,
         )
         self._account_service = AccountService(exchange_client=exchange_client)
+
+    def _build_live_recovery_foundation_services(
+        self,
+        *,
+        exchange_client: BaseExchangeClient,
+        runtime_limits: RuntimeRiskLimitService | None,
+    ) -> None:
+        """Wire LIVE lifecycle, risk, protection, and recovery prerequisites."""
         self._closed_position_lifecycle_service = (
             ClosedPositionLifecycleService(
                 repository=self.closed_position_lifecycle_repository,
                 trade_history=exchange_client,
                 notification_publisher=self.telegram_bot,
+                notification_formatter=self._notification_formatter,
                 pnl_asset=self._settings.market.quote_asset,
             )
             if isinstance(
@@ -1510,6 +1567,14 @@ class DependencyProvider:
                 authorization=self._autonomous_live_entry_authorization,
             )
         )
+
+    def _build_live_entry_services(
+        self,
+        *,
+        exchange_client: BaseExchangeClient,
+        runtime_limits: RuntimeRiskLimitService | None,
+    ) -> None:
+        """Wire durable post-entry recovery before protected LIVE submission."""
         if isinstance(
             self.submission_attempt_repository,
             SQLiteSubmissionAttemptRepository,
@@ -1570,6 +1635,9 @@ class DependencyProvider:
         self._live_trading_performance_service = LiveTradingPerformanceService(
             lifecycle_repository=self.closed_position_lifecycle_repository,
         )
+
+    def _build_trade_workflow_services(self) -> None:
+        """Wire PAPER simulation, trading workflow, and execution policies."""
         cfd_sizing = CfdSizingEngine()
         cfd_financing = CfdFinancingEngine(sizing=cfd_sizing)
         self._paper_trading_service = PaperTradingService(
@@ -1579,6 +1647,7 @@ class DependencyProvider:
             trading_engine=self.trading_engine,
             pnl_engine=self.pnl_engine,
             notification_publisher=self.telegram_bot,
+            notification_formatter=self._notification_formatter,
             quote_asset=self._settings.market.quote_asset,
             cfd_sizing_engine=cfd_sizing,
             cfd_financing_engine=cfd_financing,
@@ -1787,6 +1856,7 @@ class DependencyProvider:
             exchange_client=self.exchange_client,
             lifecycle_coordinator=self._live_position_lifecycle_coordinator,
             notification_publisher=self.telegram_bot,
+            notification_formatter=self._notification_formatter,
             stepped_stop_enabled=self._settings.risk.stepped_stop_enabled,
             stepped_stop_thresholds=self._settings.risk.stepped_stop_thresholds,
             stepped_stop_locked_lag=self._settings.risk.stepped_stop_locked_lag,

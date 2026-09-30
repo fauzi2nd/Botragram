@@ -1,0 +1,373 @@
+"""Durably aggregate exact exchange fills into one closed position lifecycle."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Final, Protocol
+
+from botragram.enums import (
+    ClosedPositionProvenance,
+    ClosedPositionReason,
+    NotificationType,
+    OrderSide,
+    OrderStatus,
+    PositionSide,
+)
+from botragram.models import (
+    ClosedPositionLifecycle,
+    Notification,
+    Order,
+    PendingClosedPositionLifecycle,
+    Position,
+    SubmissionAttempt,
+    Trade,
+)
+from botragram.repositories import ClosedPositionLifecycleRepository
+from botragram.services.notification_message_formatter import (
+    NotificationMessageFormatter,
+)
+
+__all__ = ["ClosedLifecycleNotificationPublisher", "ClosedPositionLifecycleService"]
+
+
+_DECIMAL_ZERO: Final[Decimal] = Decimal("0")
+_LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+
+
+class ExactOrderTradeHistory(Protocol):
+    """Fetch every fill for one exact exchange order identity."""
+
+    async def get_trades_for_order(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+    ) -> Sequence[Trade]:
+        """Return all authoritative fills for one symbol/order identity."""
+        ...
+
+
+class ClosedLifecycleNotificationPublisher(Protocol):
+    """Publish trade completion notifications without affecting safety flows."""
+
+    async def publish(self, *, notification: Notification) -> None:
+        """Deliver one notification to listening channels."""
+        ...
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class ClosedPositionLifecycleService:
+    """Stage closure ownership and enrich it without affecting exchange cleanup."""
+
+    repository: ClosedPositionLifecycleRepository
+    trade_history: ExactOrderTradeHistory
+    notification_publisher: ClosedLifecycleNotificationPublisher | None = None
+    notification_formatter: NotificationMessageFormatter | None = None
+    pnl_asset: str = "USDT"
+
+    def __post_init__(self) -> None:
+        """Require an explicit asset for gross PnL and compatible fees."""
+        if (
+            self.notification_publisher is not None
+            and self.notification_formatter is None
+        ):
+            raise ValueError("Closed lifecycle notification formatter is required")
+        if not self.pnl_asset.strip():
+            raise ValueError("Closed lifecycle PnL asset must not be empty")
+
+    async def stage(
+        self,
+        *,
+        position: Position,
+        attempt: SubmissionAttempt,
+        exit_order: Order,
+        close_reason: ClosedPositionReason,
+        provenance: ClosedPositionProvenance,
+    ) -> PendingClosedPositionLifecycle:
+        """Persist exact entry/exit ownership before local position deletion."""
+        entry_identity = position.entry_client_order_id
+        entry_order_id = attempt.exchange_order_id
+        exit_identity = exit_order.client_order_id
+        if entry_identity is None or entry_identity != attempt.client_order_id:
+            raise RuntimeError("Closed lifecycle requires matching entry identity")
+        if entry_order_id is None:
+            raise RuntimeError("Closed lifecycle requires an exchange entry order ID")
+        if exit_identity is None:
+            raise RuntimeError("Closed lifecycle requires an exit client identity")
+        if exit_order.symbol.upper() != position.symbol.upper():
+            raise RuntimeError("Closed lifecycle exit symbol does not match position")
+        if attempt.symbol.upper() != position.symbol.upper():
+            raise RuntimeError("Closed lifecycle entry symbol does not match position")
+        expected_entry_side = (
+            OrderSide.BUY if position.side is PositionSide.LONG else OrderSide.SELL
+        )
+        expected_exit_side = (
+            OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+        )
+        if attempt.side is not expected_entry_side:
+            raise RuntimeError("Closed lifecycle entry side does not match position")
+        if exit_order.side is not expected_exit_side:
+            raise RuntimeError("Closed lifecycle exit side does not match position")
+        if exit_order.status is not OrderStatus.FILLED:
+            raise RuntimeError("Closed lifecycle requires a FILLED exit order")
+        execution_order_id = exit_order.execution_order_id
+        if execution_order_id is None or not execution_order_id.strip():
+            execution_order_id = exit_order.order_id
+
+        if position.partial_tp_executed and position.partial_tp_order_id:
+            execution_order_id = f"{position.partial_tp_order_id},{execution_order_id}"
+
+        lifecycle = PendingClosedPositionLifecycle(
+            entry_client_order_id=entry_identity,
+            symbol=position.symbol.upper(),
+            position_side=position.side,
+            entry_order_id=entry_order_id,
+            exit_client_order_id=exit_identity,
+            exit_order_id=execution_order_id,
+            close_reason=close_reason,
+            provenance=provenance,
+            recorded_at=exit_order.updated_at,
+        )
+        await self.repository.stage(lifecycle=lifecycle)
+        return lifecycle
+
+    async def has_durable_ownership(
+        self,
+        *,
+        entry_client_order_id: str,
+    ) -> bool:
+        """Return whether ownership already survived a prior local commit."""
+        return (
+            await self.repository.get_by_entry_client_order_id(
+                entry_client_order_id=entry_client_order_id,
+            )
+            is not None
+        )
+
+    async def complete(self, *, entry_client_order_id: str) -> None:
+        """Aggregate exact entry and exit fills into one immutable closed trade."""
+        record = await self.repository.get_by_entry_client_order_id(
+            entry_client_order_id=entry_client_order_id,
+        )
+        if record is None or isinstance(record, ClosedPositionLifecycle):
+            return
+
+        entry_fills = tuple(
+            await self.trade_history.get_trades_for_order(
+                symbol=record.symbol,
+                order_id=record.entry_order_id,
+            )
+        )
+        self._require_exact_fills(
+            fills=entry_fills,
+            order_id=record.entry_order_id,
+            label="entry",
+        )
+
+        exit_order_ids = tuple(
+            oid.strip() for oid in record.exit_order_id.split(",") if oid.strip()
+        )
+        exit_fills_list: list[Trade] = []
+        for exit_oid in exit_order_ids:
+            order_fills = tuple(
+                await self.trade_history.get_trades_for_order(
+                    symbol=record.symbol,
+                    order_id=exit_oid,
+                )
+            )
+            self._require_exact_fills(
+                fills=order_fills,
+                order_id=exit_oid,
+                label="exit",
+            )
+            exit_fills_list.extend(order_fills)
+        exit_fills = tuple(exit_fills_list)
+        total_entry_qty = sum(
+            (fill.quantity for fill in entry_fills), start=_DECIMAL_ZERO
+        )
+        total_exit_qty = sum(
+            (fill.quantity for fill in exit_fills), start=_DECIMAL_ZERO
+        )
+        if total_entry_qty > _DECIMAL_ZERO and total_exit_qty > total_entry_qty:
+            exit_fills = self._allocate_exit_fills(
+                fills=exit_fills,
+                target_qty=total_entry_qty,
+            )
+            total_exit_qty = sum(
+                (fill.quantity for fill in exit_fills), start=_DECIMAL_ZERO
+            )
+
+        if any(fill.realized_pnl is None for fill in exit_fills):
+            if total_entry_qty > _DECIMAL_ZERO and total_entry_qty == total_exit_qty:
+                entry_notional = sum(
+                    (fill.price * fill.quantity for fill in entry_fills),
+                    start=_DECIMAL_ZERO,
+                )
+                exit_notional = sum(
+                    (fill.price * fill.quantity for fill in exit_fills),
+                    start=_DECIMAL_ZERO,
+                )
+                fallback_gross_pnl = (
+                    exit_notional - entry_notional
+                    if record.position_side is PositionSide.LONG
+                    else entry_notional - exit_notional
+                )
+                exit_fills = tuple(
+                    replace(
+                        fill,
+                        realized_pnl=fallback_gross_pnl
+                        * (fill.quantity / total_exit_qty),
+                    )
+                    if fill.realized_pnl is None
+                    else fill
+                    for fill in exit_fills
+                )
+                _LOGGER.info(
+                    "Resolved fallback realized PnL from execution fills: "
+                    "symbol=%s gross_pnl=%s",
+                    record.symbol,
+                    fallback_gross_pnl,
+                )
+
+        if any(fill.realized_pnl is None for fill in exit_fills):
+            raise RuntimeError("Closed lifecycle exit fill lacks realized PnL")
+
+        all_fills = entry_fills + exit_fills
+        fee_assets = {fill.fee_asset.upper() for fill in all_fills}
+        if len(fee_assets) != 1:
+            raise RuntimeError("Closed lifecycle fees use incompatible assets")
+        fee_asset = next(iter(fee_assets))
+        if fee_asset != self.pnl_asset.strip().upper():
+            raise RuntimeError(
+                "Closed lifecycle fee asset does not match the configured PnL asset"
+            )
+        gross_realized_pnl = sum(
+            (fill.realized_pnl for fill in exit_fills if fill.realized_pnl is not None),
+            start=_DECIMAL_ZERO,
+        )
+        fee = sum((fill.fee for fill in all_fills), start=_DECIMAL_ZERO)
+        completed = ClosedPositionLifecycle(
+            ownership=record,
+            gross_realized_pnl=gross_realized_pnl,
+            fee=fee,
+            fee_asset=fee_asset,
+            net_pnl=gross_realized_pnl - fee,
+            closed_at=max(fill.executed_at for fill in exit_fills),
+        )
+        await self.repository.complete(lifecycle=completed)
+
+        publisher = self.notification_publisher
+        if publisher is not None:
+            try:
+                formatter = self.notification_formatter
+                if formatter is None:
+                    raise RuntimeError(
+                        "Closed lifecycle notification formatter unavailable"
+                    )
+                message = formatter.trade_completed(
+                    lifecycle=completed,
+                    entry_fills=entry_fills,
+                    exit_fills=exit_fills,
+                )
+                await publisher.publish(
+                    notification=Notification(
+                        title=f"Trade Completed: {record.symbol}",
+                        message=message,
+                        level=NotificationType.INFO,
+                        created_at=datetime.now(timezone.utc),
+                    )
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Failed to deliver trade completion notification for %s",
+                    record.symbol,
+                )
+
+    async def complete_best_effort(self, *, entry_client_order_id: str) -> None:
+        """Enrich performance without masking completed safety cleanup."""
+        try:
+            await self.complete(entry_client_order_id=entry_client_order_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Closed lifecycle financial enrichment remains pending: "
+                "entry_client_order_id=%s",
+                entry_client_order_id,
+            )
+
+    async def reconcile_pending_best_effort(self) -> None:
+        """Retry every durable pending enrichment after restart/reconciliation."""
+        try:
+            pending = await self.repository.get_pending()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception("Closed lifecycle pending lookup failed")
+            return
+        for lifecycle in pending:
+            await self.complete_best_effort(
+                entry_client_order_id=lifecycle.entry_client_order_id,
+            )
+
+    @staticmethod
+    def _require_exact_fills(
+        *,
+        fills: tuple[Trade, ...],
+        order_id: str,
+        label: str,
+    ) -> None:
+        """Require non-empty fills that all match one authoritative order."""
+        if not fills:
+            raise RuntimeError(f"Closed lifecycle {label} order has no fills")
+        if any(fill.order_id != order_id for fill in fills):
+            raise RuntimeError(
+                f"Closed lifecycle {label} fills do not match the exact order"
+            )
+
+    @staticmethod
+    def _allocate_exit_fills(
+        *,
+        fills: tuple[Trade, ...],
+        target_qty: Decimal,
+    ) -> tuple[Trade, ...]:
+        """Allocate chronological exit fills up to target_qty.
+
+        When a position is closed via a reversal order, the order's total
+        executed quantity exceeds the stored position entry quantity because
+        the excess quantity opened a new opposite-side position.
+        This method retains only the portion of fills closing the original
+        position, pro-rating fees and realized PnL proportionally.
+        """
+        allocated: list[Trade] = []
+        remaining = target_qty
+        for fill in sorted(fills, key=lambda t: (t.executed_at, t.trade_id)):
+            if remaining <= _DECIMAL_ZERO:
+                break
+            if fill.quantity <= remaining:
+                allocated.append(fill)
+                remaining -= fill.quantity
+            else:
+                fraction = remaining / fill.quantity
+                allocated_fee = fill.fee * fraction
+                allocated_pnl = (
+                    fill.realized_pnl * fraction
+                    if fill.realized_pnl is not None
+                    else None
+                )
+                allocated.append(
+                    replace(
+                        fill,
+                        quantity=remaining,
+                        quote_quantity=fill.price * remaining,
+                        fee=allocated_fee,
+                        realized_pnl=allocated_pnl,
+                    )
+                )
+                remaining = _DECIMAL_ZERO
+        return tuple(allocated)

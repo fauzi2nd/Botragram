@@ -11,6 +11,9 @@ from botragram.enums import NotificationType, SignalType, TradeMode
 from botragram.models import Notification, Signal, TradingDecision, TradingResult
 from botragram.services import HealthService, RuntimeReporter
 from botragram.storage.memory import MemoryPositionRepository
+from botragram.telegram.presentation.notification_message_formatter import (
+    TelegramNotificationMessageFormatter,
+)
 
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -140,6 +143,7 @@ async def _run_runtime_reporter_test() -> None:
         paper_trading_service=FakeBalanceProvider(balance=Decimal("10000")),
         position_repository=MemoryPositionRepository(),
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         trade_mode=TradeMode.PAPER,
         symbol="BTCUSDT",
         report_every_cycles=2,
@@ -197,6 +201,7 @@ async def _run_live_reporter_test() -> None:
         ),
         position_repository=MemoryPositionRepository(),
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         trade_mode=TradeMode.LIVE,
         symbol="BTCUSDT",
         report_every_cycles=1,
@@ -228,6 +233,7 @@ async def _run_unavailable_balance_report_test() -> None:
         ),
         position_repository=MemoryPositionRepository(),
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         trade_mode=TradeMode.PAPER,
         symbol="BTCUSDT",
     )

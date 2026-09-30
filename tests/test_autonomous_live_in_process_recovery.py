@@ -509,6 +509,80 @@ async def _run_degraded_runtime_health_recovery_test() -> None:
     assert not control.is_paused
 
 
+def test_unattended_recovery_rejects_non_authoritative_rest_success() -> None:
+    """A successful REST pass cannot reopen entry after authorization is lost."""
+    asyncio.run(_run_non_authoritative_rest_success_test())
+
+
+async def _run_non_authoritative_rest_success_test() -> None:
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.DEGRADED,
+        reason=LiveRuntimeHealthReason.STREAM_FAILED,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    recovery = _RecoveryProvider(control=control, outcomes=[True])
+
+    def lose_authorization() -> None:
+        health.status = LiveRuntimeHealthStatus.BLOCKED
+        health.reason = LiveRuntimeHealthReason.AUTHORIZATION_MISSING
+
+    recovery.on_success = lose_authorization
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+
+    await asyncio.wait_for(runner.run(), timeout=1.0)
+
+    assert recovery.calls == 1
+    assert executor.calls == 0
+    assert control.is_paused
+    assert not control.is_position_protection_ready
+    assert not runner.is_running
+
+
+def test_non_transient_unattended_recovery_error_propagates_fail_closed() -> None:
+    """Fatal dependency recovery errors must never resume a fresh LIVE cycle."""
+    asyncio.run(_run_non_transient_unattended_recovery_error_test())
+
+
+async def _run_non_transient_unattended_recovery_error_test() -> None:
+    control = _active_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.INACTIVE,
+        reason=LiveRuntimeHealthReason.NO_POSITIONS,
+        authorization_present=False,
+        authorization_exact=False,
+    )
+    executor = _GlobalExecutor(
+        unsafe_failures_remaining=0,
+        connectivity_failures_remaining=1,
+    )
+    recovery = _RecoveryProvider(
+        control=control,
+        failure=RuntimeError("configured fatal recovery failure"),
+    )
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+
+    with pytest.raises(RuntimeError, match="configured fatal recovery failure"):
+        await asyncio.wait_for(runner.run(), timeout=1.0)
+
+    assert recovery.calls == 1
+    assert executor.calls == 1
+    assert control.is_paused
+    assert not control.is_position_protection_ready
+
+
 def test_degraded_reconciliation_required_consumes_unattended_recovery() -> None:
     asyncio.run(_run_degraded_reconciliation_required_recovery_test())
 

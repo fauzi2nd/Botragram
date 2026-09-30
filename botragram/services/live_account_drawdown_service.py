@@ -31,7 +31,9 @@ from typing import Final, Protocol
 from botragram.enums import NotificationType
 from botragram.models import Notification
 from botragram.repositories import LiveEquityHighWaterRepository
-from botragram.telegram.messages import get_drawdown_alert_message
+from botragram.services.notification_message_formatter import (
+    NotificationMessageFormatter,
+)
 
 # =============================================================================
 # Exports
@@ -66,6 +68,7 @@ class LiveAccountDrawdownService:
     repository: LiveEquityHighWaterRepository
     asset: str
     notification_publisher: DrawdownNotificationPublisher | None = None
+    notification_formatter: NotificationMessageFormatter | None = None
     max_drawdown_pct: Decimal = Decimal("0.10")
     warning_threshold_ratio: Decimal = Decimal("0.75")
     critical_threshold_ratio: Decimal = Decimal("0.90")
@@ -78,6 +81,11 @@ class LiveAccountDrawdownService:
 
     def __post_init__(self) -> None:
         """Normalize the configured collateral asset."""
+        if (
+            self.notification_publisher is not None
+            and self.notification_formatter is None
+        ):
+            raise ValueError("Drawdown notification formatter is required")
         normalized_asset = self.asset.strip().upper()
         if not normalized_asset:
             raise ValueError("LIVE drawdown asset must not be empty")
@@ -155,7 +163,10 @@ class LiveAccountDrawdownService:
         title = (
             f"Drawdown Alert [{level}]: {current_drawdown_pct * Decimal('100'):.1f}%"
         )
-        message = get_drawdown_alert_message(
+        formatter = self.notification_formatter
+        if formatter is None:
+            raise RuntimeError("Drawdown notification formatter is unavailable")
+        message = formatter.drawdown_alert(
             current_drawdown_pct=current_drawdown_pct,
             max_drawdown_pct=self.max_drawdown_pct,
             current_equity=current_equity,

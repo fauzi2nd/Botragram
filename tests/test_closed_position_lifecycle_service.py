@@ -33,6 +33,9 @@ from botragram.services import (
     LiveTradingPerformanceService,
 )
 from botragram.storage.memory import MemoryClosedPositionLifecycleRepository
+from botragram.telegram.presentation.notification_message_formatter import (
+    TelegramNotificationMessageFormatter,
+)
 
 _NOW = datetime(2026, 8, 26, tzinfo=UTC)
 _ENTRY_CLIENT_ID = "btg-11111111111111111111111111111111"
@@ -379,6 +382,7 @@ async def test_closed_lifecycle_service_publishes_completion_notification() -> N
         repository=repository,
         trade_history=history,
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         pnl_asset="USDT",
     )
     await lifecycle_service.stage(
@@ -442,6 +446,7 @@ async def test_closed_lifecycle_fallback_pnl_when_fill_lacks_realized_pnl() -> N
         repository=repository,
         trade_history=history,
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         pnl_asset="USDT",
     )
     await lifecycle_service.stage(
@@ -510,6 +515,7 @@ async def test_closed_lifecycle_short_fallback_pnl_when_fill_lacks_pnl() -> None
         repository=repository,
         trade_history=history,
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         pnl_asset="USDT",
     )
     short_pos = Position(
@@ -640,6 +646,7 @@ async def test_closed_position_lifecycle_aggregates_partial_tp_and_final_exit() 
         repository=repository,
         trade_history=history,
         notification_publisher=publisher,
+        notification_formatter=TelegramNotificationMessageFormatter(),
         pnl_asset="USDT",
     )
     pos = Position(
