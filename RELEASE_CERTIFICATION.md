@@ -1,5 +1,9 @@
 # Botragram Release Certification Report
 
+> Historical certification snapshot for v2.7.11 only. This report does not
+> certify the current main branch or newer release tags. Verify each newer
+> release against its exact commit in the authoritative GitHub Release Gate.
+
 **Target Version:** `v2.7.11`<br>
 **Date:** 2026-09-18<br>
 **Environment:** Windows 11 (Python 3.14.6)<br>
