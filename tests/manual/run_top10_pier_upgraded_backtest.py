@@ -31,12 +31,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from botragram.app.dependency_provider import DependencyProvider
+
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
 from botragram.constants import BYBIT_REST_BASE_URL
-from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.models import BacktestRequest
@@ -125,10 +126,16 @@ async def run_upgraded_pier_top10_backtest() -> list[UpgradeComparisonSummary]:
             baseline_volatility_pct=Decimal("0.015"),
         )
 
-        base_engine = BacktestEngine(strategy=base_strat, risk_settings=shared_risk)
-        upg_engine = BacktestEngine(strategy=upg_strat, risk_settings=shared_risk)
+        base_engine = DependencyProvider.create_backtest_engine(
+            strategy=base_strat, risk_settings=shared_risk
+        )
+        upg_engine = DependencyProvider.create_backtest_engine(
+            strategy=upg_strat, risk_settings=shared_risk
+        )
 
-        dummy_engine = BacktestEngine(strategy=base_strat, risk_settings=shared_risk)
+        dummy_engine = DependencyProvider.create_backtest_engine(
+            strategy=base_strat, risk_settings=shared_risk
+        )
         bt_service = BacktestService(
             exchange_client=exchange_client, engine=dummy_engine
         )

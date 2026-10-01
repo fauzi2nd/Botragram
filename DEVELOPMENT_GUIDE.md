@@ -751,6 +751,7 @@ Botragram/
 |   |   |-- application.py
 |   |   |-- backfill_command.py       # Historical candle backfill CLI runner
 |   |   |-- backtest_command.py       # Backtest CLI composition dan report
+|   |   |-- backtest_session_factory.py # Isolated PAPER replay composition
 |   |   |-- connectivity.py           # Backward-compatible classifier re-export
 |   |   |-- dependency_provider.py    # Composition root dan manual wiring container
 |   |   |-- env_validator.py          # Duplicate environment-key validation at startup

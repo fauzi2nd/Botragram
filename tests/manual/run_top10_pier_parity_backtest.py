@@ -29,13 +29,14 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Final
 
+from botragram.app.dependency_provider import DependencyProvider
+
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.app.environment_provider import EnvironmentProvider
 from botragram.app.settings_manager import SettingsManager
 from botragram.constants import BYBIT_REST_BASE_URL
-from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import (
     ExchangeType,
     Interval,
@@ -222,7 +223,9 @@ async def run_pier_runtime_parity_backtest() -> list[PierParitySymbolSummary]:
     print("=======================================================\n")
 
     try:
-        engine = BacktestEngine(strategy=strategy, risk_settings=risk_settings)
+        engine = DependencyProvider.create_backtest_engine(
+            strategy=strategy, risk_settings=risk_settings
+        )
         bt_service = BacktestService(exchange_client=exchange_client, engine=engine)
 
         for idx, symbol in enumerate(TOP_10_SYMBOLS, start=1):

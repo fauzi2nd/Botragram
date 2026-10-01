@@ -26,13 +26,14 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
+from botragram.app.dependency_provider import DependencyProvider
+
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.app.environment_provider import EnvironmentProvider
 from botragram.app.settings_manager import SettingsManager
 from botragram.constants import BYBIT_REST_BASE_URL
-from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.engine.trading.signal_engine import SignalEngine
 from botragram.enums import (
     ExchangeType,
@@ -412,7 +413,7 @@ async def execute_multi_regime_validation() -> tuple[
             )
 
             # 1. Load historical candles via Bybit REST
-            loader_engine = BacktestEngine(
+            loader_engine = DependencyProvider.create_backtest_engine(
                 strategy=strategy, risk_settings=risk_settings
             )
             bt_service = BacktestService(
@@ -427,7 +428,7 @@ async def execute_multi_regime_validation() -> tuple[
             print(f"  -> {symbol}: Loaded {len(candles)} 15m candles.")
 
             # 2. Run Baseline (Direct PIER Execution without Stalking)
-            engine_baseline = BacktestEngine(
+            engine_baseline = DependencyProvider.create_backtest_engine(
                 strategy=strategy,
                 risk_settings=risk_settings,
                 strategy_service=None,
@@ -473,7 +474,7 @@ async def execute_multi_regime_validation() -> tuple[
                 pier_trailing_mode=TrailingMode.SWING_PIVOT,
                 stepped_stop_enabled=True,
             )
-            engine_stalking = BacktestEngine(
+            engine_stalking = DependencyProvider.create_backtest_engine(
                 strategy=strategy,
                 risk_settings=upgraded_risk,
                 strategy_service=strategy_service,

@@ -27,6 +27,7 @@ from typing import Final
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.app.dependency_provider import DependencyProvider
 from botragram.config import Settings
 from botragram.config.risk_settings import RiskSettings
 from botragram.constants import (
@@ -36,7 +37,6 @@ from botragram.constants import (
     BYBIT_REST_BASE_URL,
     BYBIT_TESTNET_REST_BASE_URL,
 )
-from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.engine.trading.signal_engine import SignalEngine
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.exchanges import ExchangeFactory
@@ -208,7 +208,7 @@ async def run_backtest_command(
             stalking_enabled=True,
         )
 
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=strategy,
         risk_settings=_build_backtest_risk_settings(
             settings=settings,

@@ -35,9 +35,9 @@ from botragram.app.backtest_command import (
     parse_backtest_request,
     run_backtest_command,
 )
+from botragram.app.dependency_provider import DependencyProvider
 from botragram.config import Settings
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.engine.trading.signal_engine import SignalEngine
 from botragram.enums import (
     Interval,
@@ -233,6 +233,28 @@ def _create_request() -> BacktestRequest:
 # =============================================================================
 # Engine Tests
 # =============================================================================
+def test_backtest_composition_creates_isolated_paper_sessions() -> None:
+    """Each replay receives fresh repositories, even on the same engine."""
+    engine = DependencyProvider.create_backtest_engine(
+        strategy=BuyThenHoldStrategy(),
+        risk_settings=RiskSettings(leverage=10),
+    )
+    request = _create_request()
+
+    first = engine.session_factory.create(
+        request=request,
+        risk_settings=engine.risk_settings,
+    )
+    second = engine.session_factory.create(
+        request=request,
+        risk_settings=engine.risk_settings,
+    )
+
+    assert first.paper_service is not second.paper_service
+    assert first.position_repository is not second.position_repository
+    assert first.trade_repository is not second.trade_repository
+
+
 def test_backtest_uses_stop_loss_first_when_one_candle_hits_both_exits() -> None:
     """Enforce the documented conservative SL-first OHLC policy."""
     result = asyncio.run(_run_ambiguous_candle_backtest())
@@ -248,7 +270,7 @@ def test_backtest_uses_stop_loss_first_when_one_candle_hits_both_exits() -> None
 
 async def _run_ambiguous_candle_backtest() -> BacktestResult:
     """Replay a candle whose range crosses both configured exit levels."""
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=BuyThenHoldStrategy(),
         risk_settings=RiskSettings(leverage=10),
     )
@@ -285,7 +307,7 @@ def test_backtest_arms_stepped_stop_for_the_next_candle_only() -> None:
 
 async def _run_stepped_protection_backtest() -> BacktestResult:
     """Cross the first step, then hit the tightened stop on the next candle."""
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=BuyThenHoldStrategy(),
         risk_settings=RiskSettings(leverage=10),
     )
@@ -337,7 +359,7 @@ def test_backtest_arms_breakeven_stop_when_target_roi_reached() -> None:
 
 async def _run_breakeven_protection_backtest() -> BacktestResult:
     """Cross 30% ROI without reaching 30% TP progress, then hit Breakeven+ stop."""
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=BuyThenHoldStrategy(),
         risk_settings=RiskSettings(
             leverage=20,
@@ -420,7 +442,7 @@ async def test_backtest_simulates_partial_tp_with_live_parity() -> None:
     )
 
     # 1. With partial TP ENABLED
-    engine_enabled = BacktestEngine(
+    engine_enabled = DependencyProvider.create_backtest_engine(
         strategy=BuyThenHoldStrategy(),
         risk_settings=RiskSettings(
             leverage=10,
@@ -450,7 +472,7 @@ async def test_backtest_simulates_partial_tp_with_live_parity() -> None:
     )
 
     # 2. With partial TP DISABLED
-    engine_disabled = BacktestEngine(
+    engine_disabled = DependencyProvider.create_backtest_engine(
         strategy=BuyThenHoldStrategy(),
         risk_settings=RiskSettings(
             leverage=10,
@@ -503,7 +525,7 @@ async def test_backtest_partial_tp_same_candle_advances_stepped_protection() -> 
         end_time=_START_TIME + timedelta(minutes=3),
         initial_balance=Decimal("100"),
     )
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=BuyThenHoldStrategy(),
         risk_settings=RiskSettings(
             leverage=10,
@@ -557,7 +579,7 @@ async def test_backtest_partial_tp_gap_candle_fill_behavior() -> None:
         end_time=_START_TIME + timedelta(minutes=3),
         initial_balance=Decimal("100"),
     )
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=BuyThenHoldStrategy(),
         risk_settings=RiskSettings(
             leverage=10,
@@ -596,7 +618,7 @@ async def test_backtest_partial_tp_gap_candle_fill_behavior() -> None:
             close_price="102.5",
         ),
     )
-    engine_short = BacktestEngine(
+    engine_short = DependencyProvider.create_backtest_engine(
         strategy=SellThenHoldStrategy(),
         risk_settings=RiskSettings(
             leverage=10,
@@ -688,7 +710,7 @@ async def _run_paginated_backtest() -> tuple[BacktestResult, HistoricalCandleStu
     )
     service = BacktestService(
         exchange_client=provider,
-        engine=BacktestEngine(
+        engine=DependencyProvider.create_backtest_engine(
             strategy=BuyThenHoldStrategy(),
             risk_settings=RiskSettings(leverage=10),
         ),
@@ -806,7 +828,7 @@ def test_backtest_cli_parses_close_on_opposite_signal() -> None:
 @pytest.mark.asyncio
 async def test_backtest_engine_respects_close_on_opposite_signal_flag() -> None:
     """Verify BacktestEngine ignores opposite signals by default for live parity."""
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=AlternatingSignalStrategy(),
         risk_settings=RiskSettings(leverage=10),
     )
@@ -913,7 +935,7 @@ async def test_backtest_engine_with_stalking_strategy_service() -> None:
         stalking_enabled=True,
     )
 
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=fake_strat,
         risk_settings=RiskSettings(leverage=10),
         strategy_service=strategy_service,
@@ -981,7 +1003,7 @@ async def test_backtest_engine_with_stalking_strategy_service() -> None:
 @pytest.mark.asyncio
 async def test_backtest_engine_swing_pivot_trailing_stop_with_be_floor() -> None:
     """BacktestEngine advances trailing stop with SWING_PIVOT and BE floor."""
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=BuyThenHoldStrategy(),
         risk_settings=RiskSettings(
             leverage=10,

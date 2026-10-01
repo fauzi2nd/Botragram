@@ -28,8 +28,8 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
+from botragram.app.dependency_provider import DependencyProvider
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import (
     Interval,
     MarketType,
@@ -133,7 +133,7 @@ async def test_stored_resampled_backtest_m5() -> None:
             take_profit_pct=Decimal("0.10"),
             max_open_positions=1,
         )
-        engine = BacktestEngine(
+        engine = DependencyProvider.create_backtest_engine(
             strategy=strategy,
             risk_settings=risk_settings,
         )

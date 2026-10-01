@@ -47,6 +47,7 @@ botragram/
 |   |-- application.py
 |   |-- backfill_command.py  # Historical candle backfill CLI runner
 |   |-- backtest_command.py  # Isolated backtest CLI composition dan report
+|   |-- backtest_session_factory.py # Isolated PAPER replay composition
 |   |-- connectivity.py      # Backward-compatible classifier re-export
 |   |-- dependency_provider.py # Composition root dan manual wiring container
 |   |-- env_validator.py       # Startup validation for duplicate environment keys
@@ -341,10 +342,11 @@ Notifikasi service memakai kontrak formatter; implementasi HTML Telegram hanya
 dibangun dan disuntikkan oleh `DependencyProvider`. Retensi candle memakai
 kontrak optimasi storage tanpa SQL atau tipe SQLite di service.
 
-Pengecualian legacy yang belum dituntaskan: `engine/backtest/backtest_engine.py`
-masih membangun repository memory dan PAPER service untuk replay. Memindahkan
-orchestrator tersebut tanpa lapisan alias akan mengubah API `BacktestEngine` yang
-dipakai CLI dan script manual; perubahan itu perlu rilis major terpisah.
+`BacktestEngine` menerima `BacktestSessionFactory` abstrak dan tidak membangun
+repository atau PAPER service secara langsung. `DependencyProvider` menyediakan
+`create_backtest_engine(...)` untuk CLI, tes, dan script manual. Constructor
+langsung `BacktestEngine(...)` sekarang mewajibkan `session_factory`; ini
+perubahan API major dari v3.x.
 
 ## Runtime-Owned Paths
 

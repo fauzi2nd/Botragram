@@ -16,6 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
+from botragram.app.backtest_session_factory import InMemoryBacktestSessionFactory
 from botragram.app.live_futures_user_data_service import LiveFuturesUserDataService
 from botragram.app.market_type_switch import (
     MarketTypeSwitchService,
@@ -34,6 +35,7 @@ from botragram.app.trading_runner import (
 )
 from botragram.config import Settings
 from botragram.config.exchange_settings import ExchangeSettings
+from botragram.config.risk_settings import RiskSettings
 from botragram.constants import (
     BINANCE_FUTURES_REST_BASE_URL,
     BINANCE_FUTURES_TESTNET_REST_BASE_URL,
@@ -70,6 +72,7 @@ from botragram.engine import (
     SignalEngine,
     TradingEngine,
 )
+from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import (
     ExchangeEnvironment,
     ExchangeType,
@@ -175,6 +178,7 @@ from botragram.storage.sqlite import (
 from botragram.storage.sqlite.live_recovery_repository import (
     SQLiteLiveRecoveryRepository,
 )
+from botragram.strategies.base import BaseStrategy
 from botragram.strategies.factory import StrategyFactory
 from botragram.telegram import TelegramBot
 from botragram.telegram.context import BotContext
@@ -432,6 +436,21 @@ class DependencyProvider:
     @property
     def settings(self) -> Settings:
         return self._settings
+
+    @staticmethod
+    def create_backtest_engine(
+        *,
+        strategy: BaseStrategy,
+        risk_settings: RiskSettings,
+        strategy_service: StrategyService | None = None,
+    ) -> BacktestEngine:
+        """Compose an isolated replay engine without runtime resource startup."""
+        return BacktestEngine(
+            strategy=strategy,
+            risk_settings=risk_settings,
+            session_factory=InMemoryBacktestSessionFactory(),
+            strategy_service=strategy_service,
+        )
 
     @property
     def autonomous_live_entry_authorization(
