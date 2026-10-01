@@ -25,7 +25,6 @@ from enum import Enum
 from time import monotonic, time
 from typing import Final, Protocol, runtime_checkable
 
-from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.app.runtime.autonomous_live_cycle_executor import (
     AutonomousLiveCycleUnsafeError,
     AutonomousLiveTradingCycleExecutor,
@@ -70,6 +69,7 @@ from botragram.services.runtime.multi_context_activation import (
     MultiContextActivationPreconditionProvider,
     MultiContextRunnerActivationPreconditions,
 )
+from botragram.utils.connectivity import is_transient_connectivity_error
 from botragram.utils.retry import CappedExponentialBackoff
 
 __all__ = [
