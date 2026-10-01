@@ -28,7 +28,7 @@ from typing import Protocol
 from botragram.engine import SignalEngine
 from botragram.enums import SignalType, StalkingStatus, StrategyType
 from botragram.models import Candle, Signal
-from botragram.models.stalking import StalkingFunnelReport, StalkingSetup
+from botragram.models.strategy.stalking import StalkingFunnelReport, StalkingSetup
 from botragram.repositories import SignalRepository
 
 __all__ = [

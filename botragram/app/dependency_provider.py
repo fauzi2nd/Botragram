@@ -115,7 +115,9 @@ from botragram.repositories import (
     SubmissionAttemptRepository,
     TradeRepository,
 )
-from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
+from botragram.repositories.runtime.live_recovery_repository import (
+    LiveRecoveryRepository,
+)
 from botragram.services import (
     AccountService,
     AutonomousLiveEntryExecutionService,

@@ -17,6 +17,7 @@ __all__: list[str] = []
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[1] / "botragram" / "services"
 _ENGINE_ROOT = Path(__file__).resolve().parents[1] / "botragram" / "engine"
+_DOMAIN_ROOT = Path(__file__).resolve().parents[1] / "botragram"
 _APP_PACKAGE = "botragram.app"
 _ENGINE_FORBIDDEN_PACKAGES = ("botragram.services", "botragram.storage")
 
@@ -41,6 +42,31 @@ def test_engines_do_not_import_services_or_storage() -> None:
         )
         == []
     )
+
+
+def test_domain_packages_keep_feature_modules_in_context_folders() -> None:
+    """Only cross-context entry points remain directly under domain roots."""
+    expected_root_files = {
+        "enums": {"__init__.py", "base.py", "log_level.py", "notification_type.py"},
+        "models": {"__init__.py", "notification.py"},
+        "repositories": {"__init__.py"},
+    }
+    for package, expected in expected_root_files.items():
+        actual = {path.name for path in (_DOMAIN_ROOT / package).glob("*.py")}
+        assert actual == expected
+
+
+def test_domain_packages_do_not_import_higher_layers() -> None:
+    """Enums, models, and repository contracts stay independent of adapters."""
+    forbidden = ("botragram.app", "botragram.services", "botragram.storage")
+    for package in ("enums", "models", "repositories"):
+        assert (
+            _find_import_violations(
+                source_root=_DOMAIN_ROOT / package,
+                forbidden_packages=forbidden,
+            )
+            == []
+        )
 
 
 def _find_import_violations(

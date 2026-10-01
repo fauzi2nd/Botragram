@@ -830,9 +830,18 @@ Botragram/
 |   |-- enums/
 |   |   |-- __init__.py
 |   |   |-- base.py
-|   |   |-- environment.py
-|   |   |-- live_futures_user_data_status.py # Freshness state for private Futures cache
-|   |   `-- <domain_enum>.py
+|   |   |-- log_level.py
+|   |   |-- notification_type.py
+|   |   |-- ai/
+|   |   |-- account/
+|   |   |-- cfd/
+|   |   |-- discovery/
+|   |   |-- execution/
+|   |   |-- market/
+|   |   |-- position/
+|   |   |-- recovery/
+|   |   |-- runtime/
+|   |   `-- strategy/
 |   |-- exceptions/
 |   |   |-- __init__.py
 |   |   |-- base.py
@@ -900,38 +909,25 @@ Botragram/
 |   |       |-- obv.py
 |   |       `-- vwap.py
 |   |-- models/
-|   |   |-- futures_user_data.py # Immutable private account, position, and order updates
 |   |   |-- __init__.py
-|   |   |-- account.py
-|   |   |-- backtest.py
-|   |   |-- balance.py
-|   |   |-- candle.py
 |   |   |-- notification.py
-|   |   |-- order.py
-|   |   |-- position.py
-|   |   |-- risk.py
-|   |   |-- signal.py
-|   |   |-- ticker.py
-|   |   |-- trade.py
-|   |   |-- closed_position_lifecycle.py # Durable closed LIVE position identity and PnL
-|   |   `-- trading.py
+|   |   |-- account/ # Account, balance, private Futures updates
+|   |   |-- backtest/ # Historical replay models
+|   |   |-- cfd/ # CFD contract and financing models
+|   |   |-- discovery/ # Ranked universe and discovery reports
+|   |   |-- execution/ # Order, signal, trade, risk, entry authority
+|   |   |-- market/ # Candle, ticker, venue, stream facts
+|   |   |-- position/ # Position, protection, exit, lifecycle
+|   |   |-- recovery/ # Recovered LIVE contexts
+|   |   |-- runtime/ # Health and runtime risk-limit snapshots
+|   |   `-- strategy/ # Stalking setup facts
 |   |-- repositories/
 |   |   |-- __init__.py
-|   |   |-- autonomous_live_opportunity_claim_repository.py
-|   |   |-- candle_repository.py
-|   |   |-- candle_storage_optimizer.py # Storage-neutral retention maintenance
-|   |   |-- closed_position_lifecycle_repository.py
-|   |   |-- execution_authorization_repository.py
-|   |   |-- live_equity_high_water_repository.py
-|   |   |-- live_recovery_repository.py
-|   |   |-- operator_exit_repository.py
-|   |   |-- order_repository.py
-|   |   |-- position_repository.py
-|   |   |-- runtime_risk_limit_repository.py
-|   |   |-- runtime_settings_repository.py
-|   |   |-- signal_repository.py
-|   |   |-- submission_attempt_repository.py
-|   |   `-- trade_repository.py
+|   |   |-- discovery/ # Opportunity-claim contract
+|   |   |-- execution/ # Order, trade, signal, authorization contracts
+|   |   |-- market/ # Candle and retention contracts
+|   |   |-- position/ # Position, lifecycle, operator-exit contracts
+|   |   `-- runtime/ # Settings, recovery, equity, risk-limit contracts
 |   |-- services/
 |   |   |-- __init__.py
 |   |   |-- account/

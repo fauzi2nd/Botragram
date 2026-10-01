@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from botragram.models import SubmissionAttempt
-from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
+from botragram.repositories.runtime.live_recovery_repository import (
+    LiveRecoveryRepository,
+)
 from botragram.storage.sqlite.submission_attempt_repository import (
     SQLiteSubmissionAttemptRepository,
 )

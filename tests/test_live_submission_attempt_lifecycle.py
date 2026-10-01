@@ -34,7 +34,7 @@ from botragram.models import (
     Signal,
     SubmissionAttempt,
 )
-from botragram.models.risk import PositionSize
+from botragram.models.execution.risk import PositionSize
 from botragram.repositories import SubmissionAttemptRepository
 from botragram.services import LiveFuturesEntryService
 

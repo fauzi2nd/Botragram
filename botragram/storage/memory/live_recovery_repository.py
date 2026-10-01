@@ -11,7 +11,9 @@ from botragram.repositories import (
     PositionRepository,
     SubmissionAttemptRepository,
 )
-from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
+from botragram.repositories.runtime.live_recovery_repository import (
+    LiveRecoveryRepository,
+)
 
 __all__ = ["MemoryLiveRecoveryRepository", "PositionDeleter"]
 

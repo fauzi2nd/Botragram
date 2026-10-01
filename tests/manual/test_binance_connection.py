@@ -21,8 +21,8 @@ import asyncio
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.exchange_type import ExchangeType
-from botragram.enums.interval import Interval
+from botragram.enums.market.exchange_type import ExchangeType
+from botragram.enums.market.interval import Interval
 from botragram.exchanges.factory import ExchangeFactory
 
 

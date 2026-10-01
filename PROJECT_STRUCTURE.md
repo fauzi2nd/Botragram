@@ -119,10 +119,20 @@ botragram/
 |   `-- trading/
 |       |-- signal_engine.py # Signal generation
 |       `-- trading_engine.py # Trading execution decisions
-|-- enums/                     # Closed domain choices, including exchange_environment.py
-|   |-- autonomous_live_entry_execution_status.py # Typed protected-entry outcome
-|   |-- autonomous_live_entry_intent_status.py # Typed autonomous intent outcome
-|   `-- global_discovery_cycle_outcome.py # Last completed discovery outcome
+|-- enums/                     # Closed domain choices; public exports remain at package root
+|   |-- base.py
+|   |-- log_level.py
+|   |-- notification_type.py
+|   |-- ai/
+|   |-- account/
+|   |-- cfd/
+|   |-- discovery/
+|   |-- execution/
+|   |-- market/
+|   |-- position/
+|   |-- recovery/
+|   |-- runtime/
+|   `-- strategy/
 |-- exceptions/                # Project-specific exception hierarchy
 |-- exchanges/
 |   |-- factory.py
@@ -150,43 +160,24 @@ botragram/
 |   |-- trend/
 |   |-- volatility/
 |   `-- volume/
-|-- models/                    # Immutable domain/data models
-|   |-- autonomous_live_entry_authorization.py # Network-scoped future-entry capability
-|   |-- autonomous_live_entry_execution.py # Typed protected-entry execution result
-|   |-- autonomous_live_entry_intent.py # Transient authorized LIVE entry intent
-|   |-- autonomous_live_recovery_snapshot.py # Immutable durable recovery status
-|   |-- backtest.py            # Backtest request, trade, metrics, dan result
-|   |-- closed_position_lifecycle.py # One authoritative closed LIVE position lifecycle
-|   |-- discovery_universe_batch.py # Immutable contiguous ranked discovery window
-|   |-- exchange_symbol_rules.py # Venue precision, lot size, min notional, price filter rules
-|   |-- executable_quote.py    # Proven fresh executable quote snapshot
-|   |-- execution_authorization.py # Human approval challenge/authorization
-|   |-- futures_user_data.py   # Cached private balance and position account facts
-|   |-- live_entry_risk_evaluation.py # Immutable fresh LIVE risk decision
-|   |-- live_equity_high_water_mark.py # Durable high-water mark for live account drawdown
-|   |-- live_market_stream_identity.py # LIVE ticker subscription identity
-|   |-- live_market_stream_state.py # Immutable per-stream telemetry snapshot
-|   |-- live_portfolio_recovery.py # Portfolio-level recovery observation and facts
-|   |-- live_protection_monitor_state.py # Production protection health state
-|   |-- live_recovered_position_management_authorization.py # Authorized management token
-|   |-- live_runtime_health_snapshot.py # Read-only recovered LIVE health snapshot
-|   |-- live_runtime_portfolio_context.py # Immutable recovered LIVE portfolio
-|   |-- live_runtime_position_context.py # One recovered LIVE runtime context
-|   |-- market_universe_entry.py # Binance-independent ranked market fact
-|   |-- operator_exit.py       # Durable operator exit operation/attempt/confirmation snapshots
-|   `-- runtime_risk_limits.py # Durable autonomous LIVE runtime entry limits
-|-- repositories/              # Persistence interfaces, including lifecycle ledger
-|   |-- autonomous_live_opportunity_claim_repository.py # Atomic single-claim candidate gate
-|   |-- candle_storage_optimizer.py # Backend-neutral post-prune maintenance contract
-|   |-- closed_position_lifecycle_repository.py # Durable entry-identity ledger contract
-|   |-- execution_authorization_repository.py # Human paper approval contract
-|   |-- live_equity_high_water_repository.py # Peak balance persistence contract
-|   |-- live_recovery_repository.py # Durable live recovery state contract
-|   |-- operator_exit_repository.py # Restart-safe operator exit ownership contract
-|   |-- position_repository.py # Active position persistence contract
-|   |-- runtime_risk_limit_repository.py # Durable current-limit + audit boundary
-|   |-- runtime_settings_repository.py # Durable runtime configuration and strategy persistence
-|   `-- submission_attempt_repository.py # Incomplete entry attempt contract
+|-- models/                    # Immutable domain/data models; package-root exports remain
+|   |-- notification.py        # Cross-context notification fact
+|   |-- account/               # Account, balance, private Futures updates
+|   |-- backtest/              # Historical replay request and result
+|   |-- cfd/                   # CFD contracts and financing
+|   |-- discovery/             # Ranked universe and discovery reports
+|   |-- execution/             # Orders, signals, trades, risk, entry authority
+|   |-- market/                # Candles, ticker, venue rules, stream facts
+|   |-- position/              # Position, protection, exit, lifecycle
+|   |-- recovery/              # Recovered LIVE portfolio and contexts
+|   |-- runtime/               # Runtime health and risk-limit snapshots
+|   `-- strategy/              # Stalking setup facts
+|-- repositories/              # Persistence interfaces; implementations remain in storage/
+|   |-- discovery/             # Atomic opportunity-claim contract
+|   |-- execution/             # Order, signal, trade, authorization contracts
+|   |-- market/                # Candle and retention contracts
+|   |-- position/              # Position, lifecycle, operator-exit contracts
+|   `-- runtime/               # Runtime settings, recovery, equity, risk limits
 |-- services/
 |   |-- account/
 |   |   |-- account_service.py
@@ -328,11 +319,15 @@ boleh mengirim order tanpa intent eksplisit.
 ## Dependency Direction
 
 Modul hasil pengelompokan pada `app/cli`, `app/runtime`, `app/settings`,
-`app/terminal`, subpackage `engine` dan `services`, serta
+`app/terminal`, subpackage `engine`, `services`, `models`, `enums`, dan
+`repositories`, serta
 `telegram/callback_routes`, `telegram/command_handlers`, dan
 `telegram/presentation` adalah lokasi import kanonis. Modul penerus import
 pada path datar lama telah dihapus; pemanggil yang memakai import langsung
-v4.x harus memperbarui path modulnya pada v5.0.0.
+v4.x harus memperbarui path modulnya pada v5.0.0; pemanggil import langsung
+model, enum, atau repository pada path datar v5.x harus memakai subpackage
+domain kanonis pada v6.0.0. Ekspor simbol melalui `botragram.models`,
+`botragram.enums`, dan `botragram.repositories` tetap tersedia.
 
 ```text
 main.py
