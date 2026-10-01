@@ -24,8 +24,6 @@ Botragram/
 |-- data/                      # SQLite runtime data; ignored by Git
 |-- logs/                      # Runtime logs; ignored by Git
 |-- .env.example              # Public environment-variable template
-|-- .env.autonomous_testnet_soak.example # Explicit autonomous TESTNET soak base
-|-- .env.autonomous_testnet_soak.testnet.example # TESTNET credential template
 |-- .env.mainnet.example      # Mainnet credential template
 |-- .env.testnet.example      # Testnet credential template
 |-- .gitignore

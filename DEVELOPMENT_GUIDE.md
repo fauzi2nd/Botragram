@@ -1061,8 +1061,6 @@ Botragram/
 |-- data/                         # SQLite runtime; isi diabaikan Git
 |-- logs/                         # Log runtime; isi diabaikan Git
 |-- .env.example
-|-- .env.autonomous_testnet_soak.example
-|-- .env.autonomous_testnet_soak.testnet.example
 |-- .env.mainnet.example
 |-- .env.testnet.example
 |-- .gitignore
