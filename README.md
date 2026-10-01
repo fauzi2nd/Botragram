@@ -56,27 +56,11 @@ main.py (Composition Bootstrap)
 
 ## Daftar Strategi & Risk-Reward Ratio (RRR)
 
-Botragram mendukung 16 strategi trading yang secara otomatis menerapkan Timeframe optimal dan profil *Risk-Reward Ratio* (SL/TP):
+Saat ini hanya strategi PIER yang dapat dipilih untuk trading dan backtest. Identifier strategi lama tetap dikenali untuk membaca riwayat, tetapi tidak dapat diaktifkan kembali.
 
 | Kategori | Strategi (`STRATEGY_TYPE`) | Auto Timeframe | Default SL / TP | Rasio RRR | Deskripsi & Indikator |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| **Price Action** | `choch_fvg` *(Rekomendasi)* | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **Smart Money Concepts**: Change of Character (CHoCH), Liquidity Sweep, Displacement Candle, dan FVG Imbalance Retest. |
-| **Price Action** | `pinbar_engulfing_ema_rsi` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **Price Action Confluence**: Pinbar (Hammer/Star) & Engulfing pada EMA 21 Pullback, EMA 200 Trend Filter, dan RSI Momentum. |
-| **Price Action** | `choch_rsi_bb_hybrid` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **SMC + Mean Reversion**: CHoCH structural breakout terkonfirmasi RSI oversold/overbought dan Bollinger Bands boundary bounce. |
-| **Price Action** | `liquidity_sweep_exhaustion` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **Liquidity Grab**: Sweep swing high/low palsu diikuti penolakan cepat (exhaustion wick), volume spike, dan ATR risk levels. |
-| **Price Action** | `high_confluence_exhaustion` | **15m** | **1.0% / 2.5%** | **1 : 2.5** | **Exhaustion Mean Reversion**: Konvergensi ekstrem Bollinger Bands, RSI threshold, low ADX trendiness, dan volume spike. |
-| **Price Action** | `botragram_origin` | **5m / 15m** | **3.0% / 4.5%** | **1 : 1.5** | **Candlestick Patterns & TA Hooks**: Pola Single, Dual, & Triple dengan quality scoring, confluence deduplication, volume baseline exclusion, dan filter TA (EMA, RSI, BB, MACD, PSAR). |
-| **Scalping** | `rsi_bb_scalping` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Mean reversion oversold/overbought pada Bollinger Bands & RSI. |
-| **Scalping** | `ema_scalping` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Fast EMA momentum scalping dengan konfirmasi body ratio candle dan dynamic ATR. |
-| **Scalping** | `vwap_breakout` | **5m** | **0.5% / 1.0%** | **1 : 2.0** | Breakout intraday di atas/bawah Volume Weighted Average Price (VWAP). |
-| **Trend Following** | `ema_cross` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Perpotongan garis Fast EMA dan Slow EMA (Trend Golden/Death Cross). |
-| **Trend Following** | `ema_rsi` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Konfirmasi trend EMA dikombinasikan dengan momentum filter RSI. |
-| **Trend Following** | `supertrend` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Indikator volatilitas Supertrend berbasis Average True Range (ATR). |
-| **Trend Following** | `ichimoku_cloud` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Tenkan/Kijun cross terkonfirmasi Kumo Cloud & Chikou Span. |
-| **Trend Following** | `adx_trend` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Filter kekuatan trend ADX dengan konfirmasi arah pergerakan DMI (+DI/-DI). |
-| **Trend Following** | `bollinger_breakout`| **15m** | **1.5% / 3.0%** | **1 : 2.0** | Breakout volatilitas dari fase konsolidasi/squeeze Bollinger Bands. |
-| **Trend Following** | `quad_confluence` | **15m** | **1.5% / 3.0%** | **1 : 2.0** | Konvergensi 4 indikator teknikal (Stochastic RSI, Bollinger Bands, Parabolic SAR, dan MACD). |
-| **Swing Trading** | `macd_swing` | **1h** | **2.5% / 5.0%** | **1 : 2.0** | Swing trading multi-day berdasarkan MACD histogram & zero-line crossover. |
+| **Price Action** | `pinbar_engulfing_ema_rsi` | **15m** | **1.2% / 2.4%** | **1 : 2.0** | **Price Action Confluence**: Pinbar (Hammer/Star) & Engulfing pada EMA 21 Pullback, EMA 200 Trend Filter, dan RSI Momentum. |
 
 ---
 
@@ -143,8 +127,8 @@ AUTONOMOUS_EXECUTION_ENABLED=true
 AUTONOMOUS_LIVE_ENTRY_ENABLED=false
 AUTONOMOUS_MAINNET_ENTRY_ENABLED=false
 
-# Pilihan Strategi (Default: choch_fvg atau pinbar_engulfing_ema_rsi)
-STRATEGY_TYPE=choch_fvg
+# Satu-satunya strategi aktif
+STRATEGY_TYPE=pinbar_engulfing_ema_rsi
 LOG_LEVEL=INFO
 
 # Timeframe Konfigurasi
@@ -170,25 +154,18 @@ DISCOVERY_MAX_UNIVERSE_SYMBOLS=150 # Plafon maksimal universe (fokus koin top-vo
 DISCOVERY_CADENCE_SECONDS=        # Interval jeda scanning (opsional)
 DISCOVERY_CANDLE_DELAY_SECONDS=0.05 # Pacing jeda antar fetch candle (rate limit safety)
 
-# Parameter Khusus Strategi (Timeframe & Indikator per Strategi)
-# CHOCH_INTERVAL=5m               # Timeframe khusus choch_fvg
-# CHOCH_SWING_WINDOW=5            # Window bar swing high/low lookback (default: 5)
-# CHOCH_FVG_LOOKBACK=20           # Window pencarian imbalance/FVG (default: 20)
-# CHOCH_MIN_BODY_RATIO=0.50       # Minimal rasio body candle displacement (default: 0.50)
-# CHOCH_VOLUME_MULTIPLIER=1.20    # Pengali volume candle displacement vs SMA (default: 1.20)
+# Parameter khusus PIER
 # PIER_INTERVAL=15m               # Timeframe khusus pinbar_engulfing_ema_rsi
-# ORIGIN_INTERVAL=5m             # Timeframe khusus botragram_origin
 ```
 
 ### Hierarki & Resolusi Timeframe
 
 Resolusi timeframe memiliki single source of truth yang transparan:
 1. Argumen CLI `--interval` saat menjalankan backtest (prioritas tertinggi).
-2. Konfigurasi timeframe spesifik strategi aktif di `.env` (misal `PIER_INTERVAL`, `ORIGIN_INTERVAL`, `MORPH_INTERVAL`, `CHOCH_INTERVAL`, dll.).
-3. Konfigurasi kategori (`SCALPING_INTERVAL`, `TREND_INTERVAL`, `SWING_INTERVAL`).
-4. `GLOBAL_MARKET_INTERVAL` (atau fallback legacy `MARKET_INTERVAL`) jika strategi tidak mengatur interval khusus.
-5. Project safe default (`5m`) bila konfigurasi sama sekali tidak tersedia.
-6. `MTF_TIMEFRAME` (misal 15m) adalah konfirmasi tren terpisah dan tidak pernah menimpa strategy timeframe.
+2. `PIER_INTERVAL` di `.env` jika diatur.
+3. `GLOBAL_MARKET_INTERVAL` (atau fallback legacy `MARKET_INTERVAL`) jika PIER tidak mengatur interval khusus.
+4. Project safe default (`5m`) bila konfigurasi sama sekali tidak tersedia.
+5. `MTF_TIMEFRAME` (misal 15m) adalah konfirmasi tren terpisah dan tidak pernah menimpa strategy timeframe.
 
 ```text
                     ┌────────────────────────┐
@@ -245,7 +222,7 @@ Botragram menyediakan 4 kebijakan eksekusi:
 Botragram dilengkapi arsitektur **Persistent Runtime Settings**:
 - Ketika strategi diubah melalui Telegram (`/strategy` atau callback menu), pilihan baru disimpan ke tabel `runtime_settings` di database SQLite.
 - Jika terjadi *unplanned shutdown*, mati lampu, atau crash PC, saat Botragram dinyalakan kembali:
-  1. Strategi runtime yang terakhir dipilih akan dipulihkan secara otomatis.
+  1. Strategi runtime PIER dipulihkan secara otomatis; pilihan strategi lama dalam riwayat tidak diaktifkan kembali.
   2. Posisi yang sedang terbuka (*legacy positions*) tetap diproteksi dengan SL/TP aslinya tanpa dipaksa tutup.
   3. Siklus pencarian entry baru akan langsung menggunakan strategi pilihan terbaru Anda.
 
@@ -294,15 +271,10 @@ Dashboard terminal interaktif menampilkan informasi:
 Engine backtesting berjalan terpisah dan memakai data candle historis publik Binance:
 
 ```powershell
-# Contoh backtest strategi Price Action SMC (choch_fvg)
+# Contoh backtest strategi PIER
 python main.py backtest --market-type futures --symbol BTCUSDT `
-  --interval 5m --strategy choch_fvg `
+  --interval 15m --strategy pinbar_engulfing_ema_rsi `
   --start 2025-01-01 --end 2025-01-31 --balance 1000
-
-# Contoh backtest strategi Scalping (rsi_bb_scalping)
-python main.py backtest --market-type futures --symbol ETHUSDT `
-  --interval 5m --strategy rsi_bb_scalping `
-  --start 2025-01-01 --end 2025-01-14 --balance 500
 ```
 
 Hasil laporan mencakup: Saldo Akhir, Total PnL, Win Rate %, Profit Factor, Max Drawdown %, Rasio Long/Short, Biaya Fee, dan daftar riwayat transaksi.

@@ -1,49 +1,9 @@
-"""
-Botragram
+"""PIER price-action strategy."""
 
-Description:
-    Price action and Smart Money Concepts strategies.
-
-Python:
-    3.14+
-"""
-
-# =============================================================================
-# Future
-# =============================================================================
 from __future__ import annotations
 
-# =============================================================================
-# Local Imports
-# =============================================================================
-from botragram.strategies.price_action.botragram_origin import (
-    BotragramOriginStrategy,
-)
-from botragram.strategies.price_action.choch_fvg import ChochFvgStrategy
-from botragram.strategies.price_action.choch_rsi_bb_hybrid import (
-    ChochRsiBbHybridStrategy,
-    DailyHybridScalpingStrategy,
-    HybridStructureMeanReversionStrategy,
-)
-from botragram.strategies.price_action.high_confluence_exhaustion import (
-    HighConfluenceExhaustionStrategy,
-)
-from botragram.strategies.price_action.liquidity_sweep_exhaustion import (
-    LiquiditySweepExhaustionStrategy,
-)
-from botragram.strategies.price_action.morph import MorphStrategy
 from botragram.strategies.price_action.pinbar_engulfing_ema_rsi import (
     PinbarEngulfingEmaRsiStrategy,
 )
 
-__all__ = [
-    "BotragramOriginStrategy",
-    "ChochFvgStrategy",
-    "ChochRsiBbHybridStrategy",
-    "DailyHybridScalpingStrategy",
-    "HighConfluenceExhaustionStrategy",
-    "HybridStructureMeanReversionStrategy",
-    "LiquiditySweepExhaustionStrategy",
-    "MorphStrategy",
-    "PinbarEngulfingEmaRsiStrategy",
-]
+__all__ = ["PinbarEngulfingEmaRsiStrategy"]

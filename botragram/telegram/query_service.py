@@ -156,7 +156,7 @@ class TelegramQueryService:
     live_trading_performance_service: LiveTradingPerformanceProvider | None = None
     quote_asset: str = "USDT"
     interval: Interval = Interval.M15
-    strategy_type: StrategyType = StrategyType.EMA_CROSS
+    strategy_type: StrategyType = StrategyType.PINBAR_ENGULFING_EMA_RSI
     runtime_control: RuntimeSymbolProvider | None = None
     live_runtime_health_service: LiveRuntimeHealthProvider | None = None
     autonomous_live_recovery_observability_service: (

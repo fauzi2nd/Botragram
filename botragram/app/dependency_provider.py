@@ -1048,6 +1048,15 @@ class DependencyProvider:
     async def _restore_runtime_settings(self) -> None:
         """Apply persisted strategy and risk controls before dependency wiring."""
         persisted_strategy = await self.runtime_settings_repository.get_strategy()
+        if (
+            persisted_strategy is not None
+            and persisted_strategy is not StrategyType.PINBAR_ENGULFING_EMA_RSI
+        ):
+            _LOGGER.warning(
+                "Ignoring unavailable persisted strategy: strategy=%s",
+                persisted_strategy.value,
+            )
+            persisted_strategy = None
         if persisted_strategy is not None:
             if persisted_strategy is not self._settings.strategy.strategy_type:
                 strat_interval, strat_source = (

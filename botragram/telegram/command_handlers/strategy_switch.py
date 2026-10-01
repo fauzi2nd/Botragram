@@ -82,7 +82,7 @@ def _current_strategy(bot_context: BotContext) -> StrategyType:
     try:
         return StrategyType(bot_context.strategy_name)
     except ValueError:
-        return StrategyType.EMA_CROSS
+        return StrategyType.PINBAR_ENGULFING_EMA_RSI
 
 
 def _flatten_for_strategy_keyboard(
@@ -233,6 +233,11 @@ async def strategy_switch_callback(
         await query.edit_message_text(
             "⚠️ <b>Strategy tidak didukung.</b>",
             parse_mode=DEFAULT_PARSE_MODE,
+        )
+        return
+    if target is not StrategyType.PINBAR_ENGULFING_EMA_RSI:
+        await query.edit_message_text(
+            "Only PIER is available for new strategy selection."
         )
         return
 

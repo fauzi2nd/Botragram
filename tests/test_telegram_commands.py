@@ -1312,7 +1312,7 @@ async def _run_open_position_startup_recovery_test() -> None:
 
     current_callbacks = (
         "cb_market_btcusdt",
-        "cb_strategy_ema_cross",
+        "cb_strategy_pinbar_engulfing_ema_rsi",
         "cb_interval_15m",
     )
 
@@ -1328,7 +1328,6 @@ async def _run_open_position_startup_recovery_test() -> None:
 
     blocked_callbacks = (
         ("cb_market_ethusdt", "market"),
-        ("cb_strategy_supertrend", "strategy"),
         ("cb_interval_1m", "interval"),
     )
 
@@ -1338,8 +1337,12 @@ async def _run_open_position_startup_recovery_test() -> None:
         assert "Tutup semua posisi" in query.replies[-1]
         assert selection_name in query.replies[-1]
 
+    query.data = "cb_strategy_supertrend"
+    await handle_callback_query(update, context)
+    assert "Only PIER" in query.replies[-1]
+
     assert runtime_control.symbol == "BTCUSDT"
-    assert runtime_control.strategy_type.value == "ema_cross"
+    assert runtime_control.strategy_type.value == "pinbar_engulfing_ema_rsi"
     assert runtime_control.interval.value == "15m"
     assert "110.00 USDT" in query.replies[0]
 
@@ -1516,8 +1519,7 @@ async def _run_inline_menu_navigation_test() -> None:
     strategy_cbs = {
         button.callback_data for row in markup.inline_keyboard for button in row
     }
-    assert "cb_strategy_ema_scalping" in strategy_cbs
-    assert "cb_strategy_rsi_bb_scalping" in strategy_cbs
+    assert strategy_cbs == {"cb_strategy_pinbar_engulfing_ema_rsi", "cb_back_main"}
 
     # Market inline menu
     query.data = "cb_market"
@@ -1598,7 +1600,7 @@ async def _run_strategy_switch_callback_direct_tap_test() -> None:
     """Check cb_strategy callback edits message with strategy selection menu."""
     bot_context = BotContext(
         execution_policy=ExecutionPolicy.AUTONOMOUS_LIVE,
-        strategy_name="ichimoku_cloud",
+        strategy_name="pinbar_engulfing_ema_rsi",
     )
     query = FakeCallbackQuery(data="cb_strategy")
     update = cast(
@@ -1621,12 +1623,10 @@ async def _run_strategy_switch_callback_direct_tap_test() -> None:
 
     await strategy_switch_callback(update, context)
     assert "Strategy" in query.replies[-1]
-    assert "ichimoku_cloud" in query.replies[-1]
+    assert "pinbar_engulfing_ema_rsi" in query.replies[-1]
     markup = query.reply_markups[-1]
     assert isinstance(markup, InlineKeyboardMarkup)
     callbacks = {
         button.callback_data for row in markup.inline_keyboard for button in row
     }
-    assert "cb_strategy_ema_scalping" in callbacks
-    assert "cb_strategy_rsi_bb_scalping" in callbacks
-    assert "cb_strategy_vwap_breakout" in callbacks
+    assert callbacks == {"cb_strategy_pinbar_engulfing_ema_rsi", "cb_back_main"}

@@ -720,27 +720,7 @@ def get_strategy_keyboard(
     confirmed: bool = False,
 ) -> InlineKeyboardMarkup:
     """Return the implemented strategy selection keyboard."""
-    strategies = (
-        ("EMA Cross", "ema_cross"),
-        ("EMA + RSI", "ema_rsi"),
-        ("EMA Scalping", "ema_scalping"),
-        ("RSI + BB Scalping", "rsi_bb_scalping"),
-        ("VWAP Breakout", "vwap_breakout"),
-        ("CHoCH + FVG", "choch_fvg"),
-        ("MORPH (Orderflow)", "morph"),
-        ("Choch + RSI/BB", "choch_rsi_bb_hybrid"),
-        ("Liquidity Sweep (LSE)", "liquidity_sweep_exhaustion"),
-        ("High Confluence", "high_confluence_exhaustion"),
-        ("Quad-Confluence", "quad_confluence"),
-        ("Pinbar + Engulfing", "pinbar_engulfing_ema_rsi"),
-        ("Botragram Origin", "botragram_origin"),
-        ("NY 4H Range", "ny_4h_range_scalping"),
-        ("MACD Swing", "macd_swing"),
-        ("Supertrend", "supertrend"),
-        ("Bollinger Breakout", "bollinger_breakout"),
-        ("ADX Trend", "adx_trend"),
-        ("Ichimoku Cloud", "ichimoku_cloud"),
-    )
+    strategies = (("PIER", "pinbar_engulfing_ema_rsi"),)
     normalized_active = active_strategy.lower()
     buttons = [
         InlineKeyboardButton(

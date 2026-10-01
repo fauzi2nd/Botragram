@@ -385,7 +385,7 @@ class BotContext:
     trade_mode: str = "PAPER"
     execution_policy: ExecutionPolicy = ExecutionPolicy.SINGLE_SYMBOL
     symbol: str = "BTCUSDT"
-    strategy_name: str = "EMA_CROSS"
+    strategy_name: str = "pinbar_engulfing_ema_rsi"
     configured_interval: Interval = Interval.M15
     exchange_type: str = "BINANCE"
     last_price: Decimal = Decimal("0")

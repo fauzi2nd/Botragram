@@ -651,7 +651,7 @@ def test_backtest_cli_parses_dates_as_an_inclusive_utc_range() -> None:
             "--interval",
             "15m",
             "--strategy",
-            "ema_cross",
+            "pinbar_engulfing_ema_rsi",
             "--start",
             "2026-01-01",
             "--end",
@@ -730,7 +730,7 @@ def test_backtest_cli_parses_data_source_and_database_path() -> None:
             "--interval",
             "5m",
             "--strategy",
-            "ema_scalping",
+            "pinbar_engulfing_ema_rsi",
             "--start",
             "2026-09-01",
             "--end",
@@ -767,7 +767,7 @@ async def test_backtest_command_runs_with_local_resampled_data() -> None:
                 low_price=f"{995 + i}",
                 close_price=f"{1002 + i}",
             )
-            for i in range(100)
+            for i in range(1_010)
         )
         await repo.save_many(candles=candles)
     finally:
@@ -778,10 +778,10 @@ async def test_backtest_command_runs_with_local_resampled_data() -> None:
         request = BacktestRequest(
             symbol="BTCUSDT",
             interval=Interval.M5,
-            strategy_type=StrategyType.EMA_SCALPING,
+            strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
             market_type=MarketType.FUTURES,
             start_time=_START_TIME,
-            end_time=_START_TIME + timedelta(minutes=99),
+            end_time=_START_TIME + timedelta(minutes=1_009),
             initial_balance=Decimal("10000"),
             data_source="local",
             database_path=str(db_file),
@@ -792,7 +792,7 @@ async def test_backtest_command_runs_with_local_resampled_data() -> None:
             request=request,
         )
 
-        assert result.candle_count == 20
+        assert result.candle_count == 202
         assert "Local SQLite Resampled (1m -> 5m)" in result.data_source_description
 
     finally:
@@ -810,7 +810,7 @@ def test_backtest_cli_parses_close_on_opposite_signal() -> None:
         "--interval",
         "1m",
         "--strategy",
-        "ema_scalping",
+        "pinbar_engulfing_ema_rsi",
         "--start",
         "2026-09-01",
         "--end",

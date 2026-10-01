@@ -1,12 +1,9 @@
-"""Guarded in-process strategy session switching regressions."""
+"""PIER-only strategy switching and runtime restart regressions."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from decimal import Decimal
-from pathlib import Path
 
 import pytest
 
@@ -17,28 +14,21 @@ from botragram.app import (
     prepare_restarted_runtime_session,
 )
 from botragram.config import Settings
-from botragram.enums import PositionSide, StrategyType, TradeMode
-from botragram.exceptions import ExecutionPolicySwitchBlockedError
+from botragram.enums import StrategyType, TradeMode
 from botragram.models import Position
-
-_NOW = datetime(2026, 8, 30, tzinfo=UTC)
 
 
 @dataclass(slots=True, kw_only=True)
 class _StoredPositions:
-    positions: tuple[Position, ...] = ()
-
     async def get_open_positions(self) -> Sequence[Position]:
-        return self.positions
+        return ()
 
 
 @dataclass(slots=True, kw_only=True)
 class _LivePositions:
-    positions: tuple[Position, ...] = ()
-
     async def get_all(self, *, synchronize: bool = False) -> Sequence[Position]:
         del synchronize
-        return self.positions
+        return ()
 
 
 @dataclass(slots=True)
@@ -49,23 +39,7 @@ class _HomeMenuPublisher:
         self.refreshed = True
 
 
-def _position() -> Position:
-    return Position(
-        symbol="BTCUSDT",
-        side=PositionSide.LONG,
-        quantity=Decimal("0.01"),
-        entry_price=Decimal("65000"),
-        current_price=Decimal("65000"),
-        unrealized_pnl=Decimal("0"),
-        leverage=1,
-        opened_at=_NOW,
-        updated_at=_NOW,
-    )
-
-
-@pytest.mark.asyncio
-async def test_strategy_switch_stages_exact_soft_restart_target() -> None:
-    """Rebuild the session so immutable autonomous executors use the new strategy."""
+def _switch_service() -> tuple[MarketTypeSwitchService, RuntimeRestartCoordinator]:
     coordinator = RuntimeRestartCoordinator()
     service = MarketTypeSwitchService(
         trade_mode=TradeMode.PAPER,
@@ -75,57 +49,26 @@ async def test_strategy_switch_stages_exact_soft_restart_target() -> None:
         restart_coordinator=coordinator,
         settings=Settings(),
     )
+    return service, coordinator
 
-    assert service.current_strategy_type is StrategyType.EMA_CROSS
-    assert await service.prepare_strategy(strategy_type=StrategyType.EMA_SCALPING)
+
+@pytest.mark.asyncio
+async def test_strategy_switch_rejects_removed_strategy() -> None:
+    """Do not stage a restart for a legacy strategy identifier."""
+    service, coordinator = _switch_service()
+    with pytest.raises(ValueError, match="Only PIER"):
+        await service.prepare_strategy(strategy_type=StrategyType.EMA_SCALPING)
     assert coordinator.consume() is None
 
-    service.commit_strategy(strategy_type=StrategyType.EMA_SCALPING)
-
-    assert await coordinator.wait() is StrategyType.EMA_SCALPING
-    assert coordinator.consume() is StrategyType.EMA_SCALPING
-
 
 @pytest.mark.asyncio
-async def test_strategy_switch_allows_legacy_positions_by_default() -> None:
-    """Allow switching future strategy while open positions remain managed."""
-    coordinator = RuntimeRestartCoordinator()
-    service = MarketTypeSwitchService(
-        trade_mode=TradeMode.PAPER,
-        runtime_control=TradingRuntimeControl(),
-        position_repository=_StoredPositions(positions=(_position(),)),
-        position_service=_LivePositions(),
-        restart_coordinator=coordinator,
-        settings=Settings(),
+async def test_selecting_active_pier_is_a_noop() -> None:
+    """Keep the sole active strategy without creating a restart target."""
+    service, coordinator = _switch_service()
+    assert service.current_strategy_type is StrategyType.PINBAR_ENGULFING_EMA_RSI
+    assert not await service.prepare_strategy(
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI
     )
-
-    assert await service.prepare_strategy(strategy_type=StrategyType.EMA_SCALPING)
-    service.commit_strategy(strategy_type=StrategyType.EMA_SCALPING)
-    assert await coordinator.wait() is StrategyType.EMA_SCALPING
-
-
-@pytest.mark.asyncio
-async def test_strategy_switch_rejects_open_positions_when_disallowed() -> None:
-    """Keep strategy provenance stable when strict flattening is required."""
-    coordinator = RuntimeRestartCoordinator()
-    service = MarketTypeSwitchService(
-        trade_mode=TradeMode.PAPER,
-        runtime_control=TradingRuntimeControl(),
-        position_repository=_StoredPositions(positions=(_position(),)),
-        position_service=_LivePositions(),
-        restart_coordinator=coordinator,
-        settings=Settings(),
-    )
-
-    with pytest.raises(
-        ExecutionPolicySwitchBlockedError,
-        match="Close every active position before switching strategy",
-    ):
-        await service.prepare_strategy(
-            strategy_type=StrategyType.EMA_SCALPING,
-            allow_legacy_positions=False,
-        )
-
     assert coordinator.consume() is None
 
 
@@ -137,56 +80,10 @@ async def test_strategy_restart_session_remains_paused() -> None:
     publisher = _HomeMenuPublisher()
 
     await prepare_restarted_runtime_session(
-        restart_target=StrategyType.EMA_SCALPING,
+        restart_target=StrategyType.PINBAR_ENGULFING_EMA_RSI,
         runtime_control=runtime_control,
         home_menu_publisher=publisher,
     )
 
     assert runtime_control.is_paused
     assert publisher.refreshed
-
-
-@pytest.mark.asyncio
-async def test_prepare_strategy_resolves_strategy_interval(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Verify prepare_strategy resolves the target strategy's interval."""
-    test_env = tmp_path / "test.env"
-    test_env.write_text("")
-    monkeypatch.setenv("BOTRAGRAM_ENV_FILE", str(test_env))
-    monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)
-    monkeypatch.setenv("TRADE_MODE", "PAPER")
-    monkeypatch.setenv("EXECUTION_POLICY", "single_symbol")
-    monkeypatch.setenv("AUTONOMOUS_LIVE_ENTRY_ENABLED", "false")
-    monkeypatch.setenv("AUTONOMOUS_MAINNET_ENTRY_ENABLED", "false")
-    monkeypatch.setenv("STRATEGY_TYPE", "botragram_origin")
-    monkeypatch.setenv("ORIGIN_INTERVAL", "3m")
-    monkeypatch.setenv("PIER_INTERVAL", "15m")
-    from botragram.app.settings.environment_provider import EnvironmentProvider
-    from botragram.app.settings.settings_manager import SettingsManager
-    from botragram.enums import Interval
-
-    env_provider = EnvironmentProvider(env_path=str(test_env))
-    manager = SettingsManager(environment_provider=env_provider)
-    settings = manager.load()
-    assert settings.strategy.strategy_interval is Interval.M3
-
-    coordinator = RuntimeRestartCoordinator()
-    service = MarketTypeSwitchService(
-        trade_mode=TradeMode.PAPER,
-        runtime_control=TradingRuntimeControl(),
-        position_repository=_StoredPositions(),
-        position_service=_LivePositions(),
-        restart_coordinator=coordinator,
-        settings=settings,
-    )
-
-    assert await service.prepare_strategy(
-        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI
-    )
-    strat_interval, strat_source = manager.resolve_strategy_interval(
-        StrategyType.PINBAR_ENGULFING_EMA_RSI
-    )
-    assert strat_interval is Interval.M15
-    assert strat_source == "PIER_INTERVAL"

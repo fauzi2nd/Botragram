@@ -1578,128 +1578,23 @@ class EnvironmentProvider:
     def get_strategy_interval(
         self, strategy_type: StrategyType | str
     ) -> tuple[str, str]:
-        """Return (raw_value, source_name) for a specific strategy's timeframe.
-
-        Checks strategy-specific environment variables, user-friendly aliases
-        (_INTERVAL, _TIMEFRAME, _TF), and category fallbacks (e.g. SCALPING_INTERVAL).
-        """
-        st_val = (
+        """Return the configured PIER timeframe and its source name."""
+        normalized = (
             strategy_type.value
             if isinstance(strategy_type, StrategyType)
             else strategy_type.lower().strip()
         )
-        candidates: list[str] = []
-        if st_val == "pinbar_engulfing_ema_rsi":
-            candidates = [
-                "PIER_INTERVAL",
-                "PIER_TIMEFRAME",
-                "PIER_TF",
-                "PINBAR_ENGULFING_EMA_RSI_INTERVAL",
-            ]
-        elif st_val == "botragram_origin":
-            candidates = [
-                "ORIGIN_INTERVAL",
-                "ORIGIN_TIMEFRAME",
-                "ORIGIN_TF",
-                "BOTRAGRAM_INTERVAL",
-                "BOTRAGRAM_TIMEFRAME",
-                "BOTRAGRAM_TF",
-            ]
-        elif st_val == "morph":
-            candidates = ["MORPH_INTERVAL", "MORPH_TIMEFRAME", "MORPH_TF"]
-        elif st_val == "choch_fvg":
-            candidates = [
-                "CHOCH_INTERVAL",
-                "CHOCH_FVG_INTERVAL",
-                "CHOCH_TIMEFRAME",
-                "CHOCH_TF",
-            ]
-        elif st_val == "choch_rsi_bb_hybrid":
-            candidates = [
-                "CRBB_INTERVAL",
-                "CRBB_TIMEFRAME",
-                "CRBB_TF",
-                "CHOCH_RSI_BB_HYBRID_INTERVAL",
-            ]
-        elif st_val == "high_confluence_exhaustion":
-            candidates = [
-                "HCE_INTERVAL",
-                "HCE_TIMEFRAME",
-                "HCE_TF",
-                "HIGH_CONFLUENCE_EXHAUSTION_INTERVAL",
-            ]
-        elif st_val == "liquidity_sweep_exhaustion":
-            candidates = [
-                "LSE_INTERVAL",
-                "LSE_TIMEFRAME",
-                "LSE_TF",
-                "LIQUIDITY_SWEEP_EXHAUSTION_INTERVAL",
-            ]
-        elif st_val == "ny_4h_range_scalping":
-            candidates = [
-                "NY_RANGE_INTERVAL",
-                "NY_RANGE_TIMEFRAME",
-                "NY_RANGE_TF",
-                "NY_4H_RANGE_SCALPING_INTERVAL",
-            ]
-        elif st_val == "quad_confluence":
-            candidates = [
-                "QUAD_INTERVAL",
-                "QUAD_CONFLUENCE_INTERVAL",
-                "QUAD_TIMEFRAME",
-                "QUAD_TF",
-                "TREND_INTERVAL",
-                "TREND_TIMEFRAME",
-                "TREND_TF",
-            ]
-        elif st_val in ("ema_scalping", "rsi_bb_scalping", "vwap_breakout"):
-            prefix = st_val.upper()
-            candidates = [
-                f"{prefix}_INTERVAL",
-                f"{prefix}_TIMEFRAME",
-                f"{prefix}_TF",
-                "SCALPING_INTERVAL",
-                "SCALPING_TIMEFRAME",
-                "SCALPING_TF",
-            ]
-        elif st_val == "macd_swing":
-            candidates = [
-                "MACD_SWING_INTERVAL",
-                "MACD_SWING_TIMEFRAME",
-                "MACD_SWING_TF",
-                "SWING_INTERVAL",
-                "SWING_TIMEFRAME",
-                "SWING_TF",
-            ]
-        elif st_val in (
-            "ema_cross",
-            "ema_rsi",
-            "supertrend",
-            "ichimoku_cloud",
-            "adx_trend",
-            "bollinger_breakout",
+        if normalized != StrategyType.PINBAR_ENGULFING_EMA_RSI.value:
+            raise ValueError("Only PIER has an active strategy interval")
+        for key in (
+            "PIER_INTERVAL",
+            "PIER_TIMEFRAME",
+            "PIER_TF",
+            "PINBAR_ENGULFING_EMA_RSI_INTERVAL",
         ):
-            prefix = st_val.upper()
-            candidates = [
-                f"{prefix}_INTERVAL",
-                f"{prefix}_TIMEFRAME",
-                f"{prefix}_TF",
-                "TREND_INTERVAL",
-                "TREND_TIMEFRAME",
-                "TREND_TF",
-            ]
-        else:
-            prefix = st_val.upper()
-            candidates = [
-                f"{prefix}_INTERVAL",
-                f"{prefix}_TIMEFRAME",
-                f"{prefix}_TF",
-            ]
-
-        for key in candidates:
-            val = self._get_var(key)
-            if val:
-                return val, key
+            value = self._get_var(key)
+            if value:
+                return value, key
         return "", ""
 
     def get_discovery_max_universe_symbols(self) -> str:

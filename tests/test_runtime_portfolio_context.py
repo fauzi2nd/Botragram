@@ -93,7 +93,7 @@ def test_clear_contexts_resets_single_and_multiple_runtime_state() -> None:
     assert control.runtime_contexts == ()
     assert control.symbol == "BTCUSDT"
     assert control.interval is Interval.M15
-    assert control.strategy_type is StrategyType.EMA_CROSS
+    assert control.strategy_type is StrategyType.PINBAR_ENGULFING_EMA_RSI
     assert not control.get_stream_telemetry().enabled
     assert control.get_stream_telemetry().event_count == 0
 

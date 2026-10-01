@@ -29,13 +29,10 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.config.strategy_settings import StrategySettings
-from botragram.engine.trading.signal_engine import SignalEngine
 from botragram.enums import (
     Interval,
     OpenInterestRegime,
     SignalType,
-    StrategyType,
 )
 from botragram.exchanges.bybit.client import BybitExchangeClient
 from botragram.indicators.derivatives.open_interest import (
@@ -46,8 +43,7 @@ from botragram.indicators.derivatives.open_interest import (
 )
 from botragram.models import Candle, Signal
 from botragram.services.market.market_service import MarketService
-from botragram.strategies.factory import StrategyFactory
-from botragram.strategies.price_action.morph import MorphStrategy
+from botragram.strategies.price_action import PinbarEngulfingEmaRsiStrategy
 
 _START_TIME = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
 
@@ -286,7 +282,7 @@ def test_evaluate_oi_confluence_buy_and_sell() -> None:
 # =============================================================================
 def test_base_strategy_apply_open_interest_confluence() -> None:
     """Verify BaseStrategy apply_open_interest_confluence adjustments."""
-    strategy = MorphStrategy()
+    strategy = PinbarEngulfingEmaRsiStrategy()
     base_signal = Signal(
         symbol="BTCUSDT",
         signal_type=SignalType.BUY,
@@ -357,61 +353,6 @@ def test_base_strategy_apply_open_interest_confluence() -> None:
     assert (
         rejected_signal.reason is not None and "[REJECTED_OI]" in rejected_signal.reason
     )
-
-
-def test_morph_strategy_with_open_interest_parameters() -> None:
-    """Verify MorphStrategy respects use_open_interest."""
-    settings = StrategySettings(
-        strategy_type=StrategyType.MORPH,
-        use_open_interest=True,
-        morph_use_open_interest=True,
-        morph_min_oi_change_pct=Decimal("0.01"),
-        morph_oi_confidence_bonus=Decimal("0.05"),
-    )
-    strategy = StrategyFactory.create(settings=settings)
-    assert isinstance(strategy, MorphStrategy)
-    assert strategy.use_open_interest is True
-    assert strategy.min_oi_change_pct == Decimal("0.01")
-
-
-def test_signal_engine_universal_open_interest_confluence() -> None:
-    """Verify SignalEngine automatically applies OI confluence across strategies."""
-    settings = StrategySettings(
-        strategy_type=StrategyType.EMA_CROSS,
-        use_open_interest=True,
-        min_oi_change_pct=Decimal("0.0"),
-        require_oi_confluence=False,
-    )
-    resolver = StrategyFactory.create_resolver(settings=settings)
-    engine = SignalEngine(
-        strategy_resolver=resolver,
-        default_strategy_type=StrategyType.EMA_CROSS,
-        use_open_interest=True,
-    )
-
-    # Build 50 candles with EMA golden cross and positive OI delta
-    candles: list[Candle] = []
-    base_price = Decimal("100.0")
-    for i in range(50):
-        price = base_price + Decimal(str(i * 2))  # Strong uptrend
-        candles.append(
-            _make_candle(
-                index=i,
-                open_price=price - Decimal("1"),
-                high_price=price + Decimal("2"),
-                low_price=price - Decimal("2"),
-                close_price=price,
-                volume=Decimal("100.0"),
-                open_interest=Decimal(str(1000 + i * 50)),
-            )
-        )
-
-    signal = engine.generate(candles=candles)
-    if signal.signal_type is SignalType.BUY:
-        # Should have OI confirmation included
-        assert signal.reason is not None and (
-            "Long Buildup" in signal.reason or "OI expanded" in signal.reason
-        )
 
 
 # =============================================================================
