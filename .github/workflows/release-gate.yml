@@ -75,7 +75,12 @@ jobs:
       - name: Automated test suite (pytest)
         id: pytest
         continue-on-error: true
-        run: python -m pytest --cov=botragram --cov-report=term --cov-fail-under=80.75
+        shell: powershell
+        run: |
+          python -m pytest --cov=botragram --cov-report=term --cov-fail-under=80.75
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m coverage report --precision=4 --fail-under=80.75
+          exit $LASTEXITCODE
 
       - name: Commit diff whitespace check (git diff --check HEAD^ HEAD)
         id: git_diff_check

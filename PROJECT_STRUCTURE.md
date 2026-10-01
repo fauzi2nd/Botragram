@@ -30,7 +30,7 @@ Botragram/
 |-- DEVELOPMENT_GUIDE.md       # Normative development rules
 |-- PROJECT_STRUCTURE.md       # Canonical repository structure
 |-- README.md
-|-- RELEASE_CERTIFICATION.md    # Authoritative Windows release certification report
+|-- RELEASE_CERTIFICATION.md    # Historical v2.7.11 certification snapshot
 |-- main.py                    # Process entry point dan composition bootstrap
 |-- pyproject.toml             # Tooling dan package configuration
 `-- requirements.txt

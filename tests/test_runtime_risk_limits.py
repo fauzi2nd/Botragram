@@ -125,6 +125,51 @@ async def test_runtime_limits_reject_values_above_environment_ceiling() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_runtime_limits_restore_persisted_snapshot() -> None:
+    """A restart must restore the operator's durable limit, not the ceiling."""
+    persisted = RuntimeRiskLimits(
+        max_open_positions=1,
+        max_position_size_usdt=Decimal("25"),
+        updated_at=_NOW,
+        updated_by="telegram:7",
+    )
+    service = _service(repository=_MemoryRuntimeRiskLimitRepository(stored=persisted))
+    await service.initialize()
+
+    assert service.get_snapshot() == persisted
+    assert service.max_open_positions_ceiling == 5
+    assert service.max_position_size_usdt_ceiling == Decimal("100")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("positions", "size"),
+    [
+        (0, Decimal("10")),
+        (True, Decimal("10")),
+        (1, Decimal("0")),
+        (1, Decimal("NaN")),
+    ],
+)
+async def test_runtime_limits_reject_invalid_operator_values(
+    positions: int, size: Decimal
+) -> None:
+    """Invalid Telegram limits cannot replace the active snapshot."""
+    service = _service(repository=_MemoryRuntimeRiskLimitRepository())
+    await service.initialize()
+    before = service.get_snapshot()
+
+    with pytest.raises(ValueError):
+        await service.update(
+            max_open_positions=positions,
+            max_position_size_usdt=size,
+            updated_by="telegram:7",
+        )
+
+    assert service.get_snapshot() == before
+
+
 def test_risk_engine_runtime_notional_override_is_bounded_by_env_ceiling() -> None:
     engine = RiskEngine(
         settings=RiskSettings(max_position_size_usdt=Decimal("100")),

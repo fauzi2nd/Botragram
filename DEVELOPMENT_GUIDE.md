@@ -581,7 +581,7 @@ Arsitektur release certification Botragram memiliki dua pilar otoritas verifikas
 
 ### LOCAL RELEASE AUTHORITY
 
-Semua 9 local Windows release gates wajib dijalankan dan PASS dari root repository pada terminal Windows deployment sebelum perubahan dinyatakan siap rilis:
+Semua 10 local Windows release gates wajib dijalankan dan PASS dari root repository pada terminal Windows deployment sebelum perubahan dinyatakan siap rilis:
 
 ```powershell
 python -m compileall -q botragram tests main.py
@@ -592,10 +592,13 @@ python -m pyright
 python -m mypy botragram
 pyrefly check --min-severity warn
 python -m pytest --cov=botragram --cov-report=term --cov-fail-under=80.75
+python -m coverage report --precision=4 --fail-under=80.75
 git diff --check
 ```
 
-Coverage minimum 80,75% pada perintah gate adalah baseline sementara agar coverage
+Coverage minimum 80,75% dicek ulang pada presisi empat desimal agar hasil yang
+dibulatkan pada laporan pytest tidak menyembunyikan kekurangan kecil. Baseline ini
+sementara agar coverage
 tidak turun; target proyek tetap 90%. Naikkan batas minimum setelah test cabang
 keselamatan bertambah. GitHub Release Gate memeriksa diff commit dengan
 `git diff --check HEAD^ HEAD` pada checkout dua commit, bukan diff worktree bersih.

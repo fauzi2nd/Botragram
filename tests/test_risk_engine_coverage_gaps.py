@@ -435,6 +435,7 @@ class TestEvaluateSlotSizingWithVolatility:
             volatility_sizing_enabled=True,
             baseline_volatility_pct=Decimal("0.02"),
             confidence_sizing_enabled=False,
+            risk_per_trade_pct=Decimal("0.50"),
         )
         engine = RiskEngine(settings=settings)
         sig = _signal(
@@ -478,6 +479,7 @@ class TestEvaluateSlotSizingWithConfidence:
             baseline_confidence=Decimal("0.70"),
             max_confidence_multiplier=Decimal("1.5"),
             min_confidence_multiplier=Decimal("0.8"),
+            risk_per_trade_pct=Decimal("0.50"),
         )
         engine = RiskEngine(settings=settings)
         sig_low = _signal(confidence=Decimal("0.50"), stop_loss=Decimal("95"))
@@ -512,6 +514,7 @@ class TestEvaluateSlotNotionalBoundaries:
             min_order_notional_usdt=Decimal("1"),
             max_position_size_usdt=Decimal("10000"),
             confidence_sizing_enabled=False,
+            risk_per_trade_pct=Decimal("0.50"),
         )
         engine = RiskEngine(settings=settings)
         sig = _signal(
@@ -538,6 +541,7 @@ class TestEvaluateSlotNotionalBoundaries:
             min_order_notional_usdt=Decimal("5"),
             max_position_size_usdt=Decimal("10000"),
             confidence_sizing_enabled=False,
+            risk_per_trade_pct=Decimal("0.50"),
         )
         engine = RiskEngine(settings=settings)
         sig = _signal(
