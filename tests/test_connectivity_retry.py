@@ -6,9 +6,9 @@ from socket import gaierror
 
 import pytest
 
-from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.exceptions import ExchangeConnectionError, ExchangeWebSocketError
 from botragram.exchanges.bybit.rest import BybitRestResponseError
+from botragram.utils.connectivity import is_transient_connectivity_error
 from botragram.utils.retry import CappedExponentialBackoff
 
 

@@ -753,7 +753,6 @@ Botragram/
 |   |   |-- cli/
 |   |   |   |-- backfill_command.py # Historical candle backfill CLI runner
 |   |   |   `-- backtest_command.py # Backtest CLI composition dan report
-|   |   |-- connectivity.py           # Backward-compatible classifier re-export
 |   |   |-- dependency_provider.py    # Composition root dan manual wiring container
 |   |   |-- lifecycle.py
 |   |   |-- runtime/

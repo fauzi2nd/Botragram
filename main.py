@@ -41,7 +41,6 @@ from botragram.app.cli.backtest_command import (
     parse_backtest_request,
     run_backtest_command,
 )
-from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.config import Settings
 from botragram.enums import (
     ExchangeType,
@@ -54,6 +53,7 @@ from botragram.storage.sqlite import (
     SQLiteDatabase,
     SQLiteRuntimeSettingsRepository,
 )
+from botragram.utils.connectivity import is_transient_connectivity_error
 from botragram.utils.logger import configure_logging, shutdown_logging
 from botragram.utils.retry import CappedExponentialBackoff
 

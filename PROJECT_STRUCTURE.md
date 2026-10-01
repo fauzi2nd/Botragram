@@ -49,7 +49,6 @@ botragram/
 |   |-- cli/
 |   |   |-- backfill_command.py # Historical candle backfill CLI runner
 |   |   `-- backtest_command.py # Isolated backtest CLI composition dan report
-|   |-- connectivity.py      # Backward-compatible classifier re-export
 |   |-- dependency_provider.py # Composition root dan manual wiring container
 |   |-- lifecycle.py
 |   |-- runtime/
@@ -323,11 +322,18 @@ Modul hasil pengelompokan pada `app/cli`, `app/runtime`, `app/settings`,
 `repositories`, serta
 `telegram/callback_routes`, `telegram/command_handlers`, dan
 `telegram/presentation` adalah lokasi import kanonis. Modul penerus import
-pada path datar lama telah dihapus; pemanggil yang memakai import langsung
+pada path datar lama telah dihapus, termasuk alias `app.connectivity` pada
+v7.0.0;
+pemanggil yang memakai import langsung
 v4.x harus memperbarui path modulnya pada v5.0.0; pemanggil import langsung
 model, enum, atau repository pada path datar v5.x harus memakai subpackage
 domain kanonis pada v6.0.0. Ekspor simbol melalui `botragram.models`,
 `botragram.enums`, dan `botragram.repositories` tetap tersedia.
+
+`config`, `constants`, `exceptions`, dan `utils` sengaja tetap datar: ukuran
+paket kecil, nama modul sudah menunjukkan domain, dan subfolder tambahan
+tidak memperjelas batas dependensi. Versi yang ditampilkan runtime memakai
+`APP_VERSION` dan diverifikasi terhadap `pyproject.toml` oleh tes.
 
 ```text
 main.py

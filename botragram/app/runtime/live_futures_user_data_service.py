@@ -19,7 +19,6 @@ from random import SystemRandom
 from time import monotonic
 from typing import Final, Protocol
 
-from botragram.app.connectivity import is_transient_connectivity_error
 from botragram.enums import LiveFuturesUserDataStatus
 from botragram.models import (
     Account,
@@ -32,6 +31,7 @@ from botragram.services.account.live_futures_user_data_cache import (
     LiveFuturesUserDataCache,
     LiveFuturesUserDataSnapshot,
 )
+from botragram.utils.connectivity import is_transient_connectivity_error
 from botragram.utils.retry import CappedExponentialBackoff
 
 __all__ = [
