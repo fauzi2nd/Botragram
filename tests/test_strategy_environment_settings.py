@@ -29,6 +29,7 @@ import pytest
 # =============================================================================
 from botragram.app.settings.environment_provider import EnvironmentProvider
 from botragram.app.settings.settings_manager import SettingsManager
+from botragram.config.strategy_settings import StrategySettings
 from botragram.enums import Interval, StrategyType
 
 
@@ -113,6 +114,49 @@ def test_optional_origin_values_preserve_defaults_and_validate_overrides(
     monkeypatch.setenv("ORIGIN_MACD_SIGNAL_PERIOD", "0")
     with pytest.raises(ValueError, match="ORIGIN_MACD_SIGNAL_PERIOD"):
         manager.load_strategy_settings()
+
+
+@pytest.mark.parametrize(
+    ("field_name", "raw_value", "expected"),
+    (
+        ("origin_risk_reward_ratio", "1.8", Decimal("1.8")),
+        ("origin_min_sl_pct", "0.011", Decimal("0.011")),
+        ("origin_max_sl_pct", "0.035", Decimal("0.035")),
+        ("origin_fallback_sl_pct", "0.016", Decimal("0.016")),
+        ("origin_min_confidence", "0.72", Decimal("0.72")),
+        ("origin_trend_ema_period", "52", 52),
+        ("origin_volume_period", "22", 22),
+        ("origin_volume_multiplier", "1.2", Decimal("1.2")),
+        ("origin_rsi_period", "16", 16),
+        ("origin_rsi_long_max", "72", Decimal("72")),
+        ("origin_rsi_short_min", "32", Decimal("32")),
+        ("origin_bb_period", "22", 22),
+        ("origin_bb_std_dev", "2.2", Decimal("2.2")),
+        ("origin_macd_fast_period", "13", 13),
+        ("origin_macd_slow_period", "27", 27),
+        ("origin_macd_signal_period", "10", 10),
+        ("origin_psar_max_proximity_pct", "0.009", Decimal("0.009")),
+    ),
+)
+def test_optional_origin_numeric_fields_keep_defaults_and_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    field_name: str,
+    raw_value: str,
+    expected: Decimal | int,
+) -> None:
+    """Keep each Origin numeric default and parse its isolated override."""
+    manager = _create_manager(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, strategy_type=None
+    )
+    environment_name = field_name.upper()
+    monkeypatch.setenv(environment_name, "")
+    assert getattr(manager.load_strategy_settings(), field_name) == getattr(
+        StrategySettings(), field_name
+    )
+
+    monkeypatch.setenv(environment_name, raw_value)
+    assert getattr(manager.load_strategy_settings(), field_name) == expected
 
 
 @pytest.mark.parametrize("strategy_type", tuple(StrategyType))
