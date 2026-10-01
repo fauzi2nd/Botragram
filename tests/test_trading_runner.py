@@ -1146,7 +1146,7 @@ async def _run_paper_cycle_test() -> None:
             symbol="BTCUSDT",
             interval=Interval.M15,
             candle_limit=50,
-            strategy_type=StrategyType.EMA_CROSS,
+            strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
             account_balance_override=Decimal("10000"),
             synchronize_position=False,
             submit_order=False,

@@ -272,7 +272,7 @@ class TerminalMonitor:
     trade_mode: TradeMode
     quote_asset: str
     exchange_name: str = "BINANCE"
-    configured_strategy_type: StrategyType = StrategyType.EMA_CROSS
+    configured_strategy_type: StrategyType = StrategyType.PINBAR_ENGULFING_EMA_RSI
     live_runtime_health_service: LiveRuntimeHealthProvider | None = None
     live_trading_performance_service: LiveTradingPerformanceProvider | None = None
     autonomous_live_recovery_observability_service: (

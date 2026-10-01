@@ -622,33 +622,17 @@ def test_tpsl_ratio_keyboard_and_message() -> None:
 
 
 def test_new_strategy_messages_and_keyboard() -> None:
-    """Verify RSI BB scalping, VWAP breakout, and CHoCH FVG in messages and keyboard."""
-    rsi_msg = get_strategy_message("rsi_bb_scalping", confirmed=True)
-    assert "RSI period" in rsi_msg
-    assert "BB period" in rsi_msg
-
-    vwap_msg = get_strategy_message("vwap_breakout", confirmed=True)
-    assert "VWAP" in vwap_msg
-    assert "ATR period" in vwap_msg
-
-    choch_msg = get_strategy_message("choch_fvg", confirmed=True)
-    assert "CHoCH + FVG" in choch_msg
-    assert "Swing Window" in choch_msg
+    """Expose only PIER in the active strategy menu."""
 
     pier_msg = get_strategy_message("pinbar_engulfing_ema_rsi", confirmed=True)
     assert "Pinbar + Engulfing" in pier_msg
     assert "EMA 200 Macro" in pier_msg
 
-    keyboard = get_strategy_keyboard("rsi_bb_scalping", confirmed=True)
+    keyboard = get_strategy_keyboard("pinbar_engulfing_ema_rsi", confirmed=True)
     callbacks = {
         button.callback_data for row in keyboard.inline_keyboard for button in row
     }
-    assert "cb_strategy_rsi_bb_scalping" in callbacks
-    assert "cb_strategy_vwap_breakout" in callbacks
-    assert "cb_strategy_choch_fvg" in callbacks
-    assert "cb_strategy_pinbar_engulfing_ema_rsi" in callbacks
-    assert "cb_strategy_botragram_origin" in callbacks
-    assert "cb_strategy_ny_4h_range_scalping" in callbacks
+    assert callbacks == {"cb_strategy_pinbar_engulfing_ema_rsi", "cb_back_main"}
 
 
 def test_trading_menu_keyboard_sync_with_pause_state() -> None:

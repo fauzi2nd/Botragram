@@ -814,8 +814,10 @@ class SettingsManager:
                 setting_name="STRATEGY_TYPE",
             )
             if raw_strategy_type
-            else StrategyType.EMA_CROSS
+            else StrategyType.PINBAR_ENGULFING_EMA_RSI
         )
+        if strategy_type is not StrategyType.PINBAR_ENGULFING_EMA_RSI:
+            raise ValueError("Only PIER is available for new strategy selection")
         strategy_interval, strat_interval_source = self.resolve_strategy_interval(
             strategy_type
         )

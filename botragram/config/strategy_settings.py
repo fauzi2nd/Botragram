@@ -41,7 +41,7 @@ __all__ = [
 class StrategySettings:
     """Settings controlling indicator periods and strategy behavior."""
 
-    strategy_type: StrategyType = StrategyType.EMA_CROSS
+    strategy_type: StrategyType = StrategyType.PINBAR_ENGULFING_EMA_RSI
     invert_signals: bool = False
     min_signal_confidence: Decimal = Decimal("0.0")
     mtf_confirmation_enabled: bool = False

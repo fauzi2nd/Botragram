@@ -33,7 +33,7 @@ import pytest
 from botragram.enums import Interval, SignalType, StrategyType
 from botragram.models import Candle, Signal
 from botragram.services import OpportunityDiscoveryService
-from botragram.strategies.trend import EMACrossStrategy
+from botragram.strategies.base import BaseStrategy
 
 # =============================================================================
 # Constants
@@ -189,11 +189,41 @@ class FakeStrategyService:
         return signal
 
 
-@dataclass(slots=True)
-class EmaCrossStrategyService:
-    """Generate real EMA-cross signals while recording strategy input."""
+class _OpenCandleSpikeStrategy(BaseStrategy):
+    """Signal only when the latest candle has an artificial price spike."""
 
-    strategy: EMACrossStrategy = field(default_factory=EMACrossStrategy)
+    __slots__ = ()
+
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.PINBAR_ENGULFING_EMA_RSI
+
+    @property
+    def minimum_candles(self) -> int:
+        return 1
+
+    def generate_signal(self, *, candles: Sequence[Candle]) -> Signal:
+        self.validate_candles(candles=candles)
+        latest = candles[-1]
+        return Signal(
+            symbol=latest.symbol,
+            signal_type=(
+                SignalType.BUY
+                if latest.close_price > Decimal("110")
+                else SignalType.HOLD
+            ),
+            price=latest.close_price,
+            confidence=Decimal("1"),
+            strategy_name=self.strategy_type.value,
+            generated_at=latest.close_time,
+        )
+
+
+@dataclass(slots=True)
+class _OpenCandleSpikeStrategyService:
+    """Record candle input while exercising an open-candle spike guard."""
+
+    strategy: _OpenCandleSpikeStrategy = field(default_factory=_OpenCandleSpikeStrategy)
     saved_candles: tuple[Candle, ...] = ()
     saved_signals: list[Signal] = field(default_factory=list[Signal])
 
@@ -203,9 +233,12 @@ class EmaCrossStrategyService:
         candles: Sequence[Candle],
         strategy_type: StrategyType | None = None,
     ) -> Signal:
-        """Generate one EMA-cross signal without persistence side effects."""
-        if strategy_type is not None and strategy_type is not StrategyType.EMA_CROSS:
-            raise AssertionError("EMA-cross fake received the wrong strategy context")
+        """Generate one spike signal without persistence side effects."""
+        if (
+            strategy_type is not None
+            and strategy_type is not StrategyType.PINBAR_ENGULFING_EMA_RSI
+        ):
+            raise AssertionError("Spike fake received the wrong strategy context")
         self.saved_candles = tuple(candles)
         return self.strategy.generate_signal(candles=candles)
 
@@ -223,7 +256,7 @@ class EmaCrossStrategyService:
         candles: Sequence[Candle],
         strategy_type: StrategyType | None = None,
     ) -> Signal:
-        """Generate and persist one EMA-cross signal."""
+        """Generate and persist one spike signal."""
         signal = self.generate_signal(
             candles=candles,
             strategy_type=strategy_type,
@@ -842,13 +875,13 @@ async def _run_extra_candle_window_test() -> None:
     assert strategy_service.saved_candles == [(first, second)]
 
 
-def test_open_candle_ema_crossover_cannot_create_an_opportunity() -> None:
-    """Prove a crossover that exists only on the open bar cannot drive entry."""
-    asyncio.run(_run_open_candle_ema_crossover_test())
+def test_open_candle_spike_cannot_create_an_opportunity() -> None:
+    """Prove a signal that exists only on the open bar cannot drive entry."""
+    asyncio.run(_run_open_candle_spike_test())
 
 
-async def _run_open_candle_ema_crossover_test() -> None:
-    """Use the real EMA-cross strategy on a closed flat window plus open spike."""
+async def _run_open_candle_spike_test() -> None:
+    """Use a deterministic spike strategy on a closed window plus open bar."""
     symbol = "BTCUSDT"
     start = _NOW - timedelta(minutes=22 * 15)
     closed_candles = tuple(
@@ -868,7 +901,7 @@ async def _run_open_candle_ema_crossover_test() -> None:
         close_price=Decimal("120"),
     )
 
-    raw_signal = EMACrossStrategy().generate_signal(
+    raw_signal = _OpenCandleSpikeStrategy().generate_signal(
         candles=(*closed_candles, open_candle),
     )
     assert raw_signal.signal_type is SignalType.BUY
@@ -877,7 +910,7 @@ async def _run_open_candle_ema_crossover_test() -> None:
         symbols=(symbol,),
         candles_by_symbol={symbol: (*closed_candles, open_candle)},
     )
-    strategy_service = EmaCrossStrategyService()
+    strategy_service = _OpenCandleSpikeStrategyService()
     service = OpportunityDiscoveryService(
         market_service=market_service,
         strategy_service=strategy_service,

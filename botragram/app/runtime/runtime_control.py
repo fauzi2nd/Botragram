@@ -45,7 +45,7 @@ class TradingRuntimeControl:
     market_type: MarketType = MarketType.SPOT
     symbol: str = "BTCUSDT"
     interval: Interval = Interval.M15
-    strategy_type: StrategyType = StrategyType.EMA_CROSS
+    strategy_type: StrategyType = StrategyType.PINBAR_ENGULFING_EMA_RSI
     leverage: int = 1
     stream_enabled: bool = False
     _exchange_confirmed: bool = field(default=False, init=False, repr=False)
@@ -153,7 +153,7 @@ class TradingRuntimeControl:
         raw_strategy: object = object.__getattribute__(self, "strategy_type")
         if isinstance(raw_strategy, StrategyType):
             return raw_strategy
-        return StrategyType.EMA_CROSS
+        return StrategyType.PINBAR_ENGULFING_EMA_RSI
 
     def set_runtime_contexts(
         self,

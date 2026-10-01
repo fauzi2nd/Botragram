@@ -16,6 +16,7 @@ from __future__ import annotations
 # =============================================================================
 # Standard Library Imports
 # =============================================================================
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -29,7 +30,6 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
-from botragram.config.strategy_settings import StrategySettings
 from botragram.engine import (
     PnLEngine,
     PortfolioEngine,
@@ -39,7 +39,8 @@ from botragram.engine import (
 )
 from botragram.enums import Interval, PositionSide, SignalType, StrategyType
 from botragram.models import Candle, Position, Signal
-from botragram.strategies.factory import StrategyFactory
+from botragram.strategies.base import BaseStrategy
+from botragram.strategies.factory import StrategyResolver
 
 # =============================================================================
 # Constants
@@ -756,20 +757,38 @@ def test_portfolio_engine_rejects_invalid_equity() -> None:
 
 def test_signal_engine_inverts_signals_when_enabled() -> None:
     """Verify SignalEngine inverts signals when invert_signals=True."""
-    settings = StrategySettings(
-        strategy_type=StrategyType.EMA_CROSS,
-        fast_period=2,
-        slow_period=3,
+
+    class _BuyStrategy(BaseStrategy):
+        @property
+        def strategy_type(self) -> StrategyType:
+            return StrategyType.PINBAR_ENGULFING_EMA_RSI
+
+        @property
+        def minimum_candles(self) -> int:
+            return 1
+
+        def generate_signal(self, *, candles: Sequence[Candle]) -> Signal:
+            self.validate_candles(candles=candles)
+            return Signal(
+                symbol=candles[-1].symbol,
+                signal_type=SignalType.BUY,
+                price=candles[-1].close_price,
+                confidence=Decimal("0.8"),
+                strategy_name=self.strategy_type.value,
+                generated_at=candles[-1].close_time,
+            )
+
+    resolver = StrategyResolver(
+        strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: _BuyStrategy()}
     )
-    resolver = StrategyFactory.create_resolver(settings=settings)
     engine_normal = SignalEngine(
         strategy_resolver=resolver,
-        default_strategy_type=StrategyType.EMA_CROSS,
+        default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
         invert_signals=False,
     )
     engine_inverted = SignalEngine(
         strategy_resolver=resolver,
-        default_strategy_type=StrategyType.EMA_CROSS,
+        default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
         invert_signals=True,
     )
 

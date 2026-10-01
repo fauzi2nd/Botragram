@@ -252,13 +252,8 @@ botragram/
 |       `-- *_repository.py
 |-- strategies/
 |   |-- factory.py
-|   |-- ai/
 |   |-- base/
-|   |-- breakout/
-|   |-- price_action/          # Smart Money Concepts / Structure Shift (CHoCH, FVG)
-|   |-- scalping/
-|   |-- swing/
-|   `-- trend/
+|   `-- price_action/          # PIER (Pinbar/Engulfing, EMA, RSI)
 |-- telegram/
 |   |-- access.py
 |   |-- bot.py

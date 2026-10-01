@@ -1302,6 +1302,15 @@ async def handle_callback_query(
 
         try:
             strategy_type = StrategyType(raw_strategy)
+            if strategy_type is not StrategyType.PINBAR_ENGULFING_EMA_RSI:
+                await query.edit_message_text(
+                    "Only PIER is available for new strategy selection.",
+                    reply_markup=get_strategy_keyboard(
+                        bot_context.strategy_name,
+                        confirmed=_is_confirmed(control, "strategy"),
+                    ),
+                )
+                return
         except ValueError:
             await query.edit_message_text(
                 "⚠️ <b>Strategy tidak didukung.</b>",

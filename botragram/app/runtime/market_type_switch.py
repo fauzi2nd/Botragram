@@ -382,6 +382,8 @@ class MarketTypeSwitchService:
         allow_legacy_positions: bool = True,
     ) -> bool:
         """Validate and stage a strategy replacement for a fresh runtime session."""
+        if strategy_type is not StrategyType.PINBAR_ENGULFING_EMA_RSI:
+            raise ValueError("Only PIER is available for new strategy selection")
         if self.settings is None:
             raise RuntimeError("Strategy switching is unavailable")
         if strategy_type is self.current_strategy_type:

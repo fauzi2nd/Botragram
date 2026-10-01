@@ -176,9 +176,9 @@ Resolusi timeframe mengikuti hierarki terpisah yang deterministik:
 1. **CLI Flag (Mode Backtest)**:
    Argumen `--interval <val>` memiliki prioritas tertinggi saat menjalankan backtest CLI.
 2. **Active Strategy Timeframe (`<STRATEGY>_INTERVAL`)**:
-   Konfigurasi timeframe langsung pada parameter strategi aktif di `.env` (misalnya `PIER_INTERVAL=15m`, `ORIGIN_INTERVAL=5m`, `MORPH_INTERVAL=15m`, `CHOCH_INTERVAL=5m`, dll., mendukung alias `_TIMEFRAME` dan `_TF`).
+   Konfigurasi timeframe PIER di `.env` (misalnya `PIER_INTERVAL=15m`, juga mendukung alias `PIER_TIMEFRAME` dan `PIER_TF`).
 3. **Category Interval Fallback**:
-   Fallback level kategori seperti `SCALPING_INTERVAL`, `TREND_INTERVAL`, `SWING_INTERVAL` jika `<STRATEGY>_INTERVAL` spesifik tidak diatur.
+   Fallback kategori strategi lama tidak dipakai untuk pemilihan PIER baru.
 4. **Global Market Interval (`GLOBAL_MARKET_INTERVAL`)**:
    Jika timeframe spesifik strategi tidak diatur, strategi otomatis fallback ke `GLOBAL_MARKET_INTERVAL` (atau fallback legacy `MARKET_INTERVAL`).
 5. **Project Safe Default**:
@@ -1010,13 +1010,9 @@ Botragram/
 |   |-- strategies/
 |   |   |-- __init__.py
 |   |   |-- factory.py
-|   |   |-- ai/
 |   |   |-- base/
-|   |   |-- breakout/
 |   |   |-- price_action/
-|   |   |-- scalping/
-|   |   |-- swing/
-|   |   `-- trend/
+|   |   `-- price_action/ # PIER only
 |   |-- telegram/
 |   |   |-- __init__.py
 |   |   |-- access.py

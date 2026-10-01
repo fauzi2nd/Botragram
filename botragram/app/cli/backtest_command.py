@@ -96,11 +96,7 @@ def parse_backtest_request(
     parser.add_argument(
         "--strategy",
         required=True,
-        choices=tuple(
-            strategy.value
-            for strategy in StrategyType
-            if strategy is not StrategyType.CUSTOM
-        ),
+        choices=(StrategyType.PINBAR_ENGULFING_EMA_RSI.value,),
     )
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
