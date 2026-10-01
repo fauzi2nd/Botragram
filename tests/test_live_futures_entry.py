@@ -28,6 +28,7 @@ from botragram.exceptions import (
     LiveEntryExistingPositionError,
     LiveEntryPortfolioCapacityError,
     LiveEntryPreflightError,
+    LiveEntryRiskLimitError,
     LiveSubmissionBlockedError,
     VenueRuleValidationError,
 )
@@ -134,7 +135,11 @@ class FakeOrderService:
         assert symbol
         if self.normalization_error is not None:
             raise self.normalization_error
-        return self.normalized_quantity or quantity
+        return (
+            self.normalized_quantity
+            if self.normalized_quantity is not None
+            else quantity
+        )
 
     async def submit(
         self,
@@ -841,7 +846,7 @@ async def test_final_position_revalidation_cancellation_keeps_gate_closed() -> N
 @pytest.mark.asyncio
 async def test_normalized_notional_uses_authoritative_risk_entry_price() -> None:
     """Retain current risk-price sizing after venue quantity normalization."""
-    orders = FakeOrderService(normalized_quantity=Decimal("0.02"))
+    orders = FakeOrderService(normalized_quantity=Decimal("0.005"))
     service, _ = _service(order_service=orders)
     risk_result = RiskResult(
         approved=True,
@@ -869,7 +874,53 @@ async def test_normalized_notional_uses_authoritative_risk_entry_price() -> None
     )
 
     assert orders.submitted_risk_result is not None
-    assert orders.submitted_risk_result.position.notional == Decimal("1500")
+    assert orders.submitted_risk_result.position.notional == Decimal("375")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "normalized_quantity", [Decimal("0.02"), Decimal("0"), Decimal("NaN")]
+)
+async def test_normalization_cannot_increase_approved_live_risk(
+    normalized_quantity: Decimal,
+) -> None:
+    """Reject invalid or enlarged venue sizing before submitting an order."""
+    orders = FakeOrderService(normalized_quantity=normalized_quantity)
+    service, _ = _service(order_service=orders)
+
+    with pytest.raises(LiveEntryRiskLimitError, match="approved risk size"):
+        await service.execute(
+            signal=_signal(),
+            risk_result=_risk_result(),
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_normalization_cannot_exceed_approved_notional() -> None:
+    """An inconsistent approved plan cannot increase notional at submission."""
+    orders = FakeOrderService()
+    service, _ = _service(order_service=orders)
+    approved = _risk_result()
+    approved = replace(
+        approved,
+        position=replace(approved.position, notional=Decimal("500")),
+    )
+
+    with pytest.raises(LiveEntryRiskLimitError, match="notional exceeds"):
+        await service.execute(
+            signal=_signal(),
+            risk_result=approved,
+            interval=Interval.M15,
+            order_type=OrderType.MARKET,
+            price=None,
+        )
+
+    assert orders.calls == 0
 
 
 @pytest.mark.asyncio

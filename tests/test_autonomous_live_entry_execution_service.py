@@ -582,6 +582,7 @@ def test_buy_risk_uses_current_ask_while_preserving_signal_provenance() -> None:
     assert result.decision.signal.price == Decimal("100")
     assert result.decision.risk_result is not None
     assert result.decision.risk_result.metrics.entry_price == Decimal("125")
+    assert result.decision.risk_result.metrics.risk_amount <= Decimal("10")
     assert result.decision.risk_result.position.quantity != intent.quantity
 
 
