@@ -39,10 +39,6 @@ from botragram.app.runtime.context_cycle_scheduler import ContextCycleScheduler
 from botragram.app.runtime.live_runtime_recovery_policy import (
     LiveRuntimeRecoveryPolicy,
 )
-from botragram.app.runtime.multi_context_activation import (
-    MultiContextActivationPreconditionProvider,
-    MultiContextRunnerActivationPreconditions,
-)
 from botragram.app.runtime.paper_cycle_executors import (
     AutonomousPaperTradingCycleExecutor,
     HumanConfirmedPaperTradingCycleExecutor,
@@ -69,6 +65,10 @@ from botragram.models import (
     LiveRuntimeHealthSnapshot,
     LiveRuntimePositionContext,
     TradingResult,
+)
+from botragram.services.runtime.multi_context_activation import (
+    MultiContextActivationPreconditionProvider,
+    MultiContextRunnerActivationPreconditions,
 )
 from botragram.utils.retry import CappedExponentialBackoff
 

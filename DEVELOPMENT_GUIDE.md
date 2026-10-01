@@ -591,11 +591,11 @@ python -m ruff check .
 python -m pyright
 python -m mypy botragram
 pyrefly check --min-severity warn
-python -m pytest --cov=botragram --cov-report=term --cov-fail-under=80
+python -m pytest --cov=botragram --cov-report=term --cov-fail-under=80.75
 git diff --check
 ```
 
-Coverage minimum 80% pada perintah gate adalah baseline sementara agar coverage
+Coverage minimum 80,75% pada perintah gate adalah baseline sementara agar coverage
 tidak turun; target proyek tetap 90%. Naikkan batas minimum setelah test cabang
 keselamatan bertambah. GitHub Release Gate memeriksa diff commit dengan
 `git diff --check HEAD^ HEAD` pada checkout dua commit, bukan diff worktree bersih.
@@ -751,6 +751,7 @@ Botragram/
 |   |   |-- application.py
 |   |   |-- backfill_command.py       # Historical candle backfill CLI runner
 |   |   |-- backtest_command.py       # Backtest CLI composition dan report
+|   |   |-- backtest_session_factory.py # Isolated PAPER replay composition
 |   |   |-- connectivity.py           # Backward-compatible classifier re-export
 |   |   |-- dependency_provider.py    # Composition root dan manual wiring container
 |   |   |-- env_validator.py          # Duplicate environment-key validation at startup

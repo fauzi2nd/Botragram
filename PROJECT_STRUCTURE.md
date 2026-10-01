@@ -47,6 +47,7 @@ botragram/
 |   |-- application.py
 |   |-- backfill_command.py  # Historical candle backfill CLI runner
 |   |-- backtest_command.py  # Isolated backtest CLI composition dan report
+|   |-- backtest_session_factory.py # Isolated PAPER replay composition
 |   |-- connectivity.py      # Backward-compatible classifier re-export
 |   |-- dependency_provider.py # Composition root dan manual wiring container
 |   |-- env_validator.py       # Startup validation for duplicate environment keys
@@ -61,7 +62,6 @@ botragram/
 |   |   |-- autonomous_live_cycle_executor.py # Ranked LIVE protected entry
 |   |   |-- context_cycle_scheduler.py # Per-context cycle cadence
 |   |   |-- live_runtime_recovery_policy.py # Pure LIVE recovery health gates
-|   |   |-- multi_context_activation.py # Immutable activation preconditions
 |   |   |-- paper_cycle_executors.py # PAPER discovery cycle adapters
 |   |   `-- single_symbol_cycle_executor.py # Single-symbol runtime adapter
 |   |-- runtime_control.py
@@ -233,6 +233,8 @@ botragram/
 |   |-- runtime/
 |   |   |-- live_runtime_health_service.py # Derived recovered LIVE health aggregation
 |   |   |-- live_runtime_portfolio_reconciliation_service.py # Canonical 0/1/N management reconciliation
+|   |   |-- multi_context_activation.py # Immutable LIVE activation preconditions
+|   |   |-- runtime_control_contract.py # Service-facing runtime safety contract
 |   |   |-- runtime_reporter.py # Runtime status and portfolio reporting
 |   |   `-- runtime_risk_limit_service.py # Durable runtime canary-limit authority
 |   |-- strategy_service.py
@@ -339,6 +341,12 @@ tidak boleh membuat HTTP client, database, repository, atau service konkret.
 Notifikasi service memakai kontrak formatter; implementasi HTML Telegram hanya
 dibangun dan disuntikkan oleh `DependencyProvider`. Retensi candle memakai
 kontrak optimasi storage tanpa SQL atau tipe SQLite di service.
+
+`BacktestEngine` menerima `BacktestSessionFactory` abstrak dan tidak membangun
+repository atau PAPER service secara langsung. `DependencyProvider` menyediakan
+`create_backtest_engine(...)` untuk CLI, tes, dan script manual. Constructor
+langsung `BacktestEngine(...)` sekarang mewajibkan `session_factory`; ini
+perubahan API major dari v3.x.
 
 ## Runtime-Owned Paths
 

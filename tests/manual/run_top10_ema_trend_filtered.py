@@ -24,12 +24,13 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
+from botragram.app.dependency_provider import DependencyProvider
+
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
 from botragram.constants import BYBIT_REST_BASE_URL
-from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import ExchangeType, Interval, MarketType, SignalType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.indicators import calculate_ema
@@ -138,10 +139,16 @@ async def run_trend_filter_comparison() -> list[TrendComparisonSummary]:
         filt_strat = TrendFilteredEMAScalpingStrategy()
         risk_settings = RiskSettings(leverage=5)
 
-        base_engine = BacktestEngine(strategy=base_strat, risk_settings=risk_settings)
-        filt_engine = BacktestEngine(strategy=filt_strat, risk_settings=risk_settings)
+        base_engine = DependencyProvider.create_backtest_engine(
+            strategy=base_strat, risk_settings=risk_settings
+        )
+        filt_engine = DependencyProvider.create_backtest_engine(
+            strategy=filt_strat, risk_settings=risk_settings
+        )
 
-        dummy_engine = BacktestEngine(strategy=base_strat, risk_settings=risk_settings)
+        dummy_engine = DependencyProvider.create_backtest_engine(
+            strategy=base_strat, risk_settings=risk_settings
+        )
         bt_service = BacktestService(
             exchange_client=exchange_client, engine=dummy_engine
         )

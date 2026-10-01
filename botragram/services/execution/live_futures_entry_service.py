@@ -11,7 +11,6 @@ from decimal import Decimal
 from typing import Final, Protocol
 from uuid import uuid4
 
-from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.engine import PortfolioEngine
 from botragram.enums import (
     Interval,
@@ -48,6 +47,7 @@ from botragram.repositories import SubmissionAttemptRepository
 from botragram.services.position.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
 )
+from botragram.services.runtime.runtime_control_contract import PositionProtectionGate
 
 __all__ = ["LiveFuturesEntryService"]
 
@@ -155,7 +155,7 @@ class LiveFuturesEntryService:
     order_service: LiveOrderSubmission
     position_service: LivePositionSynchronization
     protection_service: LiveProtectionReconciliation
-    runtime_control: TradingRuntimeControl
+    runtime_control: PositionProtectionGate
     submission_attempt_repository: SubmissionAttemptRepository
     portfolio_engine: PortfolioEngine
     max_open_positions: int

@@ -24,7 +24,6 @@ from typing import Final, Protocol
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.enums import LiveMarketStreamLifecycleStatus, LivePortfolioRecoveryStatus
 from botragram.models import (
     LiveMarketStreamIdentity,
@@ -36,6 +35,7 @@ from botragram.models import (
     LiveRuntimePositionContext,
     Position,
 )
+from botragram.services.runtime.runtime_control_contract import RuntimeControl
 from botragram.utils.connectivity import is_transient_connectivity_error
 
 __all__ = ["LiveRuntimePortfolioReconciliationService"]
@@ -123,7 +123,7 @@ class LiveProtectionMonitorPortfolioOwner(Protocol):
 class LiveRuntimePortfolioReconciliationService:
     """Adopt the exact protected LIVE portfolio into local management state."""
 
-    runtime_control: TradingRuntimeControl
+    runtime_control: RuntimeControl
     live_portfolio_recovery_service: LivePortfolioRecovery
     market_stream_service: LiveMarketStreamPortfolioOwner
     protection_monitoring_service: LiveProtectionMonitorPortfolioOwner

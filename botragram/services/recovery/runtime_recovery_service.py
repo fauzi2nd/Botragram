@@ -8,10 +8,6 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Final, Protocol
 
-from botragram.app.runtime.multi_context_activation import (
-    MultiContextRunnerActivationPreconditions,
-)
-from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.enums import (
     Interval,
     LiveMarketStreamLifecycleStatus,
@@ -52,6 +48,10 @@ from botragram.services.recovery.live_submission_recovery_service import (
 from botragram.services.runtime.live_runtime_portfolio_reconciliation_service import (
     LiveRuntimePortfolioReconciliationService,
 )
+from botragram.services.runtime.multi_context_activation import (
+    MultiContextRunnerActivationPreconditions,
+)
+from botragram.services.runtime.runtime_control_contract import RuntimeControl
 
 __all__ = ["RuntimeRecoveryService"]
 
@@ -146,7 +146,7 @@ class RuntimeRecoveryService:
 
     trade_mode: TradeMode
     market_type: MarketType
-    runtime_control: TradingRuntimeControl
+    runtime_control: RuntimeControl
     stream_controller: MarketStreamController
     market_stream_service: LiveMarketStreamOwner
     protection_monitoring_service: LiveProtectionMonitorOwner

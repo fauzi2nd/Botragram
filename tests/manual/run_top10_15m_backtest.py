@@ -25,12 +25,13 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
+from botragram.app.dependency_provider import DependencyProvider
+
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
 from botragram.constants import BYBIT_REST_BASE_URL
-from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import ExchangeType, Interval, MarketType, SignalType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.indicators import calculate_ema
@@ -152,10 +153,16 @@ async def run_15m_top10_backtest() -> list[TimeframeComparisonSummary]:
             baseline_volatility_pct=Decimal("0.015"),
         )
 
-        base_engine = BacktestEngine(strategy=strat, risk_settings=base_risk)
-        enh_engine = BacktestEngine(strategy=strat, risk_settings=enh_risk)
+        base_engine = DependencyProvider.create_backtest_engine(
+            strategy=strat, risk_settings=base_risk
+        )
+        enh_engine = DependencyProvider.create_backtest_engine(
+            strategy=strat, risk_settings=enh_risk
+        )
 
-        dummy_engine = BacktestEngine(strategy=strat, risk_settings=base_risk)
+        dummy_engine = DependencyProvider.create_backtest_engine(
+            strategy=strat, risk_settings=base_risk
+        )
         bt_service = BacktestService(
             exchange_client=exchange_client, engine=dummy_engine
         )

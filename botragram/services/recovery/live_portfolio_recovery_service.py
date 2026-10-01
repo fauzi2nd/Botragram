@@ -9,7 +9,6 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Final, Protocol
 
-from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.enums import (
     Interval,
     LivePortfolioRecoveryStatus,
@@ -22,6 +21,9 @@ from botragram.models import LivePortfolioRecoveryResult, Position
 from botragram.repositories import CandleRepository, SignalRepository
 from botragram.services.position.live_position_lifecycle_coordinator import (
     LivePositionLifecycleCoordinator,
+)
+from botragram.services.runtime.runtime_control_contract import (
+    LivePortfolioRecoveryRuntime,
 )
 
 __all__ = ["LivePortfolioRecoveryService"]
@@ -56,7 +58,7 @@ class LivePortfolioRecoveryService:
 
     position_service: LivePortfolioPositionRecovery
     protection_service: LivePortfolioProtectionVerification
-    runtime_control: TradingRuntimeControl
+    runtime_control: LivePortfolioRecoveryRuntime
     signal_repository: SignalRepository
     candle_repository: CandleRepository
     lifecycle_coordinator: LivePositionLifecycleCoordinator = field(

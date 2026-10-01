@@ -2,7 +2,7 @@
 Botragram
 
 Description:
-    Immutable readiness facts for recovered LIVE multi-context activation.
+    Immutable service-facing facts for recovered LIVE multi-context activation.
 
 Python:
     3.14+

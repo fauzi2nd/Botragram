@@ -77,6 +77,7 @@ class _RecordingExchange:
     created_client_ids: list[str | None] = field(default_factory=list[str | None])
     canceled_order_ids: list[str] = field(default_factory=list[str])
     fetched_order_ids: list[str] = field(default_factory=list[str])
+    fetched_client_ids: list[str] = field(default_factory=list[str])
 
     async def get_reference_price(self, *, symbol: str) -> Decimal:
         """Return a safe reference price."""
@@ -136,6 +137,7 @@ class _RecordingExchange:
     ) -> Order:
         """Return the order for its stable client identity."""
         assert (symbol, client_order_id) == ("BTCUSDT", "client-1")
+        self.fetched_client_ids.append(client_order_id)
         return _order()
 
 
@@ -229,3 +231,123 @@ async def test_invalid_cancel_identity_never_reaches_exchange() -> None:
         await service.cancel(symbol="BTCUSDT", order_id="  ")
 
     assert exchange.canceled_order_ids == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_persists_exchange_result_once() -> None:
+    """A successful cancellation saves its exact exchange snapshot."""
+    exchange = _RecordingExchange()
+    repository = MemoryOrderRepository()
+    service = OrderService(
+        order_engine=OrderEngine(exchange_client=exchange),
+        order_repository=repository,
+    )
+
+    canceled = await service.cancel(symbol=" btcusdt ", order_id=" order-1 ")
+
+    assert exchange.canceled_order_ids == ["order-1"]
+    assert await repository.get_by_id(order_id="order-1", symbol="BTCUSDT") == canceled
+
+
+@pytest.mark.asyncio
+async def test_get_can_skip_persistence_without_skipping_exchange_lookup() -> None:
+    """GET-only observation never mutates the local order repository."""
+    exchange = _RecordingExchange()
+    repository = MemoryOrderRepository()
+    service = OrderService(
+        order_engine=OrderEngine(exchange_client=exchange),
+        order_repository=repository,
+    )
+
+    observed = await service.get(
+        symbol=" btcusdt ", order_id=" order-1 ", persist=False
+    )
+
+    assert exchange.fetched_order_ids == ["order-1"]
+    assert observed == _order()
+    assert await repository.get_by_id(order_id="order-1", symbol="BTCUSDT") is None
+
+
+@pytest.mark.asyncio
+async def test_client_identity_lookup_does_not_submit_another_order() -> None:
+    """Recovery by stable identity reads and persists without another POST."""
+    exchange = _RecordingExchange()
+    repository = MemoryOrderRepository()
+    service = OrderService(
+        order_engine=OrderEngine(exchange_client=exchange),
+        order_repository=repository,
+    )
+
+    observed = await service.get_by_client_order_id(
+        symbol=" btcusdt ", client_order_id=" client-1 "
+    )
+
+    assert exchange.fetched_client_ids == ["client-1"]
+    assert exchange.created_client_ids == []
+    assert await repository.get_by_id(order_id="order-1", symbol="BTCUSDT") == observed
+
+
+@pytest.mark.asyncio
+async def test_client_identity_lookup_persistence_failure_never_posts() -> None:
+    """Failed recovery persistence propagates without new exchange exposure."""
+    exchange = _RecordingExchange()
+    service = OrderService(
+        order_engine=OrderEngine(exchange_client=exchange),
+        order_repository=_FailingOrderRepository(),
+    )
+
+    with pytest.raises(OSError, match="database unavailable"):
+        await service.get_by_client_order_id(
+            symbol="BTCUSDT", client_order_id="client-1"
+        )
+
+    assert exchange.fetched_client_ids == ["client-1"]
+    assert exchange.created_client_ids == []
+
+
+@pytest.mark.asyncio
+async def test_empty_client_identity_is_rejected_before_exchange_lookup() -> None:
+    """Recovery cannot query the exchange with an ambiguous empty identity."""
+    exchange = _RecordingExchange()
+    service = OrderService(
+        order_engine=OrderEngine(exchange_client=exchange),
+        order_repository=MemoryOrderRepository(),
+    )
+
+    with pytest.raises(ValueError, match="Client order identifier must not be empty"):
+        await service.get_by_client_order_id(symbol="BTCUSDT", client_order_id="   ")
+
+    assert exchange.fetched_client_ids == []
+    assert exchange.created_client_ids == []
+
+
+@pytest.mark.asyncio
+async def test_stored_order_queries_never_contact_exchange() -> None:
+    """Stored-order inspection and bounded listing remain read-only to venue."""
+    exchange = _RecordingExchange()
+    repository = MemoryOrderRepository()
+    await repository.save(order=_order())
+    service = OrderService(
+        order_engine=OrderEngine(exchange_client=exchange),
+        order_repository=repository,
+    )
+
+    assert (
+        await service.get_stored(order_id=" order-1 ", symbol=" btcusdt ") == _order()
+    )
+    assert await service.get_latest(limit=1, symbol=" btcusdt ") == (_order(),)
+    assert await service.get_open_orders(symbol=" btcusdt ") == ()
+    assert exchange.created_client_ids == []
+    assert exchange.fetched_order_ids == []
+
+
+@pytest.mark.asyncio
+async def test_unbounded_order_listing_is_rejected_before_repository_query() -> None:
+    """A zero-length listing cannot silently bypass the query bound."""
+    service = OrderService(
+        order_engine=OrderEngine(exchange_client=_RecordingExchange()),
+        order_repository=MemoryOrderRepository(),
+    )
+
+    with pytest.raises(ValueError, match="Order limit must be greater than zero"):
+        await service.get_latest(limit=0)

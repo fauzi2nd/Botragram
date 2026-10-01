@@ -24,7 +24,6 @@ from typing import Final, Protocol
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.runtime_control import TradingRuntimeControl
 from botragram.enums import (
     LiveFuturesUserDataStatus,
     LiveMarketStreamLifecycleStatus,
@@ -38,6 +37,7 @@ from botragram.models import (
     LiveRuntimeHealthSnapshot,
     LiveRuntimePositionContext,
 )
+from botragram.services.runtime.runtime_control_contract import RuntimeControl
 
 __all__ = ["LiveRuntimeHealthService"]
 
@@ -87,7 +87,7 @@ class LiveFuturesUserDataHealthProvider(Protocol):
 class LiveRuntimeHealthService:
     """Derive one read-only health snapshot from canonical runtime state."""
 
-    runtime_control: TradingRuntimeControl
+    runtime_control: RuntimeControl
     market_stream_service: LiveMarketStreamHealthProvider
     protection_monitoring_service: LiveProtectionMonitorHealthProvider
     live_futures_user_data_service: LiveFuturesUserDataHealthProvider | None = None

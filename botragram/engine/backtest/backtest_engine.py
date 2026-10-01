@@ -19,17 +19,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Final
+from typing import Final, Protocol
 
 # =============================================================================
 # Local Imports
 # =============================================================================
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine.accounting.pnl_engine import PnLEngine
 from botragram.engine.risk.risk_engine import DEFAULT_BREAKEVEN_FEE_BUFFER, RiskEngine
-from botragram.engine.trading.trading_engine import TradingEngine
 from botragram.enums import (
     Interval,
     OrderSide,
@@ -47,18 +45,15 @@ from botragram.models import (
     Signal,
     Ticker,
     Trade,
+    TradingResult,
 )
-from botragram.services.paper_trading_service import PaperTradingService
-from botragram.services.strategy_service import StrategyService
-from botragram.storage import (
-    MemoryOrderRepository,
-    MemoryPositionRepository,
-    MemoryTradeRepository,
-)
+from botragram.repositories import PositionRepository, TradeRepository
 from botragram.strategies.base import BaseStrategy
 
 __all__ = [
     "BacktestEngine",
+    "BacktestSession",
+    "BacktestSessionFactory",
 ]
 
 
@@ -78,6 +73,78 @@ _PROTECTION_WARNING: Final[str] = (
 
 
 # =============================================================================
+# Backtest Contracts
+# =============================================================================
+class BacktestPaperExecution(Protocol):
+    """Execute PAPER replay operations without exposing a concrete service."""
+
+    async def execute(
+        self,
+        *,
+        signal: Signal,
+        current_drawdown_pct: Decimal = Decimal("0"),
+        interval: Interval | None = None,
+        volatility_pct: Decimal | None = None,
+    ) -> TradingResult:
+        """Simulate one signal against the replay portfolio."""
+        ...
+
+    async def on_market_tick(self, *, ticker: Ticker) -> None:
+        """Apply PAPER protection to an intrabar price observation."""
+        ...
+
+    async def execute_partial_close(
+        self,
+        *,
+        symbol: str,
+        close_quantity: Decimal,
+        reference_price: Decimal,
+        new_stop_loss: Decimal | None,
+        new_protection_step: int,
+        executed_at: datetime,
+        reason: str = "Partial take-profit triggered",
+    ) -> TradingResult | None:
+        """Simulate an intrabar partial position close."""
+        ...
+
+    async def get_realized_pnl(self) -> Decimal:
+        """Return realized replay PnL."""
+        ...
+
+
+class BacktestSignalProvider(Protocol):
+    """Generate context-aware signals without coupling replay to a service."""
+
+    def generate_signal(
+        self,
+        *,
+        candles: Sequence[Candle],
+        strategy_type: StrategyType | None = None,
+    ) -> Signal:
+        """Return the signal for a bounded historical candle window."""
+        ...
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class BacktestSession:
+    """Hold one isolated PAPER execution session and its abstract repositories."""
+
+    paper_service: BacktestPaperExecution
+    position_repository: PositionRepository
+    trade_repository: TradeRepository
+
+
+class BacktestSessionFactory(Protocol):
+    """Build one isolated session for each replay request."""
+
+    def create(
+        self, *, request: BacktestRequest, risk_settings: RiskSettings
+    ) -> BacktestSession:
+        """Return fresh PAPER state with no runtime database or exchange access."""
+        ...
+
+
+# =============================================================================
 # Backtest Engine
 # =============================================================================
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -86,7 +153,8 @@ class BacktestEngine:
 
     strategy: BaseStrategy
     risk_settings: RiskSettings
-    strategy_service: StrategyService | None = None
+    session_factory: BacktestSessionFactory
+    strategy_service: BacktestSignalProvider | None = None
 
     async def run(
         self,
@@ -102,22 +170,13 @@ class BacktestEngine:
         if self.strategy.strategy_type is not request.strategy_type:
             raise ValueError("Backtest strategy does not match the request")
 
-        order_repository = MemoryOrderRepository()
-        trade_repository = MemoryTradeRepository()
-        position_repository = MemoryPositionRepository()
-        paper_service = PaperTradingService(
-            order_repository=order_repository,
-            trade_repository=trade_repository,
-            position_repository=position_repository,
-            trading_engine=TradingEngine(
-                risk_engine=RiskEngine(settings=self.risk_settings),
-            ),
-            pnl_engine=PnLEngine(),
-            initial_balance=request.initial_balance,
-            fee_rate=request.fee_rate,
-            slippage_rate=request.slippage_rate,
-            close_on_opposite_signal=request.close_on_opposite_signal,
+        session = self.session_factory.create(
+            request=request,
+            risk_settings=self.risk_settings,
         )
+        paper_service = session.paper_service
+        position_repository = session.position_repository
+        trade_repository = session.trade_repository
         exit_reasons: list[str] = []
         peak_equity = request.initial_balance
         current_drawdown = _DECIMAL_ZERO
@@ -244,8 +303,8 @@ class BacktestEngine:
     async def _apply_intrabar_protection(
         *,
         candle: Candle,
-        paper_service: PaperTradingService,
-        position_repository: MemoryPositionRepository,
+        paper_service: BacktestPaperExecution,
+        position_repository: PositionRepository,
     ) -> str | None:
         """Apply conservative SL-first OHLC protection for an existing position."""
         position = await position_repository.get_by_symbol(symbol=candle.symbol)
@@ -300,8 +359,8 @@ class BacktestEngine:
         self,
         *,
         candle: Candle,
-        paper_service: PaperTradingService,
-        position_repository: MemoryPositionRepository,
+        paper_service: BacktestPaperExecution,
+        position_repository: PositionRepository,
     ) -> str | None:
         """Trigger intrabar partial TP without lookahead if enabled and configured."""
         if not self.risk_settings.partial_tp_enabled:
@@ -398,7 +457,7 @@ class BacktestEngine:
         self,
         *,
         candle: Candle,
-        position_repository: MemoryPositionRepository,
+        position_repository: PositionRepository,
         candles_history: Sequence[Candle] = (),
     ) -> None:
         """Arm stepped SL & trailing stop from this candle for next candle."""
@@ -547,7 +606,7 @@ class BacktestEngine:
     @staticmethod
     async def _equity_state(
         *,
-        paper_service: PaperTradingService,
+        paper_service: BacktestPaperExecution,
         initial_balance: Decimal,
         peak_equity: Decimal,
     ) -> tuple[Decimal, Decimal]:

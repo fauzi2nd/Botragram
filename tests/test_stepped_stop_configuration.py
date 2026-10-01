@@ -31,10 +31,10 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.app import SettingsManager
+from botragram.app.dependency_provider import DependencyProvider
 from botragram.app.environment_provider import EnvironmentProvider
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine import RiskEngine
-from botragram.engine.backtest.backtest_engine import BacktestEngine
 from botragram.enums import (
     Interval,
     MarketType,
@@ -361,7 +361,7 @@ async def test_backtest_engine_stepped_stop_disabled() -> None:
         scalping_take_profit_pct=Decimal("0.06"),
         stepped_stop_enabled=False,
     )
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=BuyThenHoldStrategy(),
         risk_settings=risk,
     )
@@ -419,7 +419,7 @@ async def test_backtest_engine_stepped_stop_enabled() -> None:
         scalping_take_profit_pct=Decimal("0.06"),
         stepped_stop_enabled=True,
     )
-    engine = BacktestEngine(
+    engine = DependencyProvider.create_backtest_engine(
         strategy=BuyThenHoldStrategy(),
         risk_settings=risk,
     )
