@@ -182,6 +182,131 @@ def test_zone_first_reversal_preserves_original_zone_retest_price() -> None:
     assert updated.target_retest_price == Decimal("104")
 
 
+@pytest.mark.parametrize(
+    ("side", "zone", "reversal", "retest", "target", "stop"),
+    [
+        (
+            "short",
+            ("105", "110", "100", "104"),
+            ("103", "105", "100", "101"),
+            ("106", "108", "102", "106"),
+            "107",
+            "112",
+        ),
+        (
+            "long",
+            ("100", "110", "95", "99"),
+            ("102", "104", "98", "103"),
+            ("99", "102", "96", "99"),
+            "97",
+            "90",
+        ),
+    ],
+)
+def test_zone_retest_remains_reachable_after_reversal(
+    side: str,
+    zone: tuple[str, str, str, str],
+    reversal: tuple[str, str, str, str],
+    retest: tuple[str, str, str, str],
+    target: str,
+    stop: str,
+) -> None:
+    """Zone target outside reversal extreme can still trigger within planned stop."""
+    service = SetupStalkingService()
+    zone_candle = _make_candle(
+        index=0,
+        open_price=Decimal(zone[0]),
+        high_price=Decimal(zone[1]),
+        low_price=Decimal(zone[2]),
+        close_price=Decimal(zone[3]),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.HOLD,
+        price=Decimal(target),
+        confidence=Decimal("0.80"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason=f"[STALKING_ZONE_{side.upper()}]",
+        stop_loss=Decimal(stop),
+    )
+    setup = service.register_candidate(signal=signal, setup_candle=zone_candle)
+    assert setup is not None
+    expected_invalidation = Decimal(zone[1] if side == "short" else zone[2])
+    assert setup.invalidation_price == expected_invalidation
+
+    reversal_candle = _make_candle(
+        index=1,
+        open_price=Decimal(reversal[0]),
+        high_price=Decimal(reversal[1]),
+        low_price=Decimal(reversal[2]),
+        close_price=Decimal(reversal[3]),
+    )
+    confirmed = service.on_candle_update(reversal_candle, prev_candle=zone_candle)
+    assert confirmed is not None
+    assert confirmed.reversal_confirmed is True
+    assert confirmed.invalidation_price == expected_invalidation
+
+    retest_candle = _make_candle(
+        index=2,
+        open_price=Decimal(retest[0]),
+        high_price=Decimal(retest[1]),
+        low_price=Decimal(retest[2]),
+        close_price=Decimal(retest[3]),
+    )
+    triggered = service.on_candle_update(retest_candle, prev_candle=reversal_candle)
+    assert triggered is not None
+    assert triggered.status is StalkingStatus.TRIGGERED
+
+
+def test_zone_target_outside_setup_extreme_uses_planned_stop() -> None:
+    """A target beyond the setup candle stays reachable without widening SL."""
+    service = SetupStalkingService()
+    zone_candle = _make_candle(
+        open_price=Decimal("105"),
+        high_price=Decimal("110"),
+        low_price=Decimal("100"),
+        close_price=Decimal("104"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.HOLD,
+        price=Decimal("111"),
+        confidence=Decimal("0.80"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="[STALKING_ZONE_SHORT]",
+        stop_loss=Decimal("112"),
+    )
+    setup = service.register_candidate(signal=signal, setup_candle=zone_candle)
+    assert setup is not None
+    assert setup.target_retest_price == Decimal("111")
+    assert setup.invalidation_price == Decimal("112")
+
+
+def test_zone_rejects_target_beyond_planned_stop() -> None:
+    """Do not widen an existing protective stop to accommodate a zone target."""
+    service = SetupStalkingService()
+    zone_candle = _make_candle(
+        open_price=Decimal("105"),
+        high_price=Decimal("110"),
+        low_price=Decimal("100"),
+        close_price=Decimal("104"),
+    )
+    signal = Signal(
+        symbol="BTCUSDT",
+        signal_type=SignalType.HOLD,
+        price=Decimal("113"),
+        confidence=Decimal("0.80"),
+        strategy_name="PIER",
+        generated_at=_START_TIME,
+        reason="[STALKING_ZONE_SHORT]",
+        stop_loss=Decimal("112"),
+    )
+    with pytest.raises(ValueError, match="Zone SHORT stop loss"):
+        service.register_candidate(signal=signal, setup_candle=zone_candle)
+
+
 def test_bearish_setup_invalidation_breach_peak() -> None:
     """When subsequent bar high breaches anchor high, setup is INVALIDATED (0 loss)."""
     service = SetupStalkingService()
