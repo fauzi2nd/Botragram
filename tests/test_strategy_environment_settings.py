@@ -72,6 +72,49 @@ def test_strategy_type_defaults_to_ema_cross(
     assert manager.load_strategy_settings().strategy_type is StrategyType.EMA_CROSS
 
 
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    (("", None), (" 15m ", Interval.M15)),
+)
+def test_optional_timeframe_override_preserves_disabled_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    raw_value: str,
+    expected: Interval | None,
+) -> None:
+    """Parse a supplied override even when its activation flag is disabled."""
+    monkeypatch.setenv("STRATEGY_TIMEFRAME_OVERRIDE_ENABLED", "false")
+    monkeypatch.setenv("STRATEGY_TIMEFRAME_OVERRIDE", raw_value)
+    manager = _create_manager(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, strategy_type=None
+    )
+
+    assert manager.load_strategy_settings().timeframe_override is expected
+
+
+def test_optional_origin_values_preserve_defaults_and_validate_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep absent Origin values stable and reject invalid supplied values."""
+    manager = _create_manager(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, strategy_type=None
+    )
+    defaults = manager.load_strategy_settings()
+    assert defaults.origin_risk_reward_ratio == Decimal("1.5")
+    assert defaults.origin_macd_signal_period == 9
+
+    monkeypatch.setenv("ORIGIN_RISK_REWARD_RATIO", "2.5")
+    monkeypatch.setenv("ORIGIN_MACD_SIGNAL_PERIOD", "12")
+    overrides = manager.load_strategy_settings()
+    assert overrides.origin_risk_reward_ratio == Decimal("2.5")
+    assert overrides.origin_macd_signal_period == 12
+
+    monkeypatch.setenv("ORIGIN_MACD_SIGNAL_PERIOD", "0")
+    with pytest.raises(ValueError, match="ORIGIN_MACD_SIGNAL_PERIOD"):
+        manager.load_strategy_settings()
+
+
 @pytest.mark.parametrize("strategy_type", tuple(StrategyType))
 def test_strategy_type_accepts_every_supported_value(
     monkeypatch: pytest.MonkeyPatch,

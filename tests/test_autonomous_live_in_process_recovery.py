@@ -514,6 +514,49 @@ def test_unattended_recovery_rejects_non_authoritative_rest_success() -> None:
     asyncio.run(_run_non_authoritative_rest_success_test())
 
 
+def test_unattended_recovery_activation_failure_keeps_live_paused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Never resume LIVE entry when prepared recovery fails to activate."""
+
+    def fail_activation(
+        runner: TradingRunner, *, snapshot: LiveRuntimeHealthSnapshot
+    ) -> None:
+        del runner, snapshot
+        raise RuntimeError("configured activation failure")
+
+    monkeypatch.setattr(TradingRunner, "_activate_recovered_runtime", fail_activation)
+    asyncio.run(_run_activation_failure_test())
+
+
+async def _run_activation_failure_test() -> None:
+    control = _active_recovered_control()
+    health = _HealthProvider(
+        control=control,
+        status=LiveRuntimeHealthStatus.DEGRADED,
+        reason=LiveRuntimeHealthReason.STREAM_FAILED,
+    )
+    executor = _GlobalExecutor(unsafe_failures_remaining=0)
+    recovery = _RecoveryProvider(
+        control=control,
+        outcomes=[True],
+        on_success=health.set_ready_while_paused,
+    )
+    runner = _runner(
+        executor=executor,
+        control=control,
+        recovery=recovery,
+        health=health,
+    )
+
+    await asyncio.wait_for(runner.run(), timeout=1.0)
+
+    assert recovery.calls == 1
+    assert executor.calls == 0
+    assert control.is_paused
+    assert not control.is_position_protection_ready
+
+
 async def _run_non_authoritative_rest_success_test() -> None:
     control = _active_recovered_control()
     health = _HealthProvider(

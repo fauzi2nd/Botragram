@@ -770,6 +770,39 @@ class SettingsManager:
             environment_provider=self._environment_provider,
         )
 
+    def _load_strategy_timeframe_override(
+        self, *, enabled: bool, raw_value: str
+    ) -> Interval | None:
+        """Resolve an optional strategy override without changing its validation."""
+        stripped_value = raw_value.strip()
+        if enabled and not stripped_value:
+            raise ValueError(
+                "Environment variable 'STRATEGY_TIMEFRAME_OVERRIDE' cannot "
+                "be empty when 'STRATEGY_TIMEFRAME_OVERRIDE_ENABLED' is true"
+            )
+        if not stripped_value:
+            return None
+        return self._parse_market_interval(
+            raw_value=stripped_value,
+            setting_name="STRATEGY_TIMEFRAME_OVERRIDE",
+        )
+
+    def _load_optional_strategy_decimal(
+        self, *, raw_value: str, setting_name: str, default: Decimal
+    ) -> Decimal:
+        """Parse an optional strategy decimal or preserve its existing default."""
+        if not raw_value:
+            return default
+        return self._parse_decimal(raw_value=raw_value, setting_name=setting_name)
+
+    def _load_optional_strategy_positive_int(
+        self, *, raw_value: str, setting_name: str, default: int
+    ) -> int:
+        """Parse an optional strategy integer or preserve its existing default."""
+        if not raw_value:
+            return default
+        return self._parse_positive_int(raw_value=raw_value, setting_name=setting_name)
+
     def load_strategy_settings(self) -> StrategySettings:
         """Load strategy settings with strict optional environment selection."""
         environment = self._environment_provider
@@ -789,23 +822,10 @@ class SettingsManager:
         strategy_override_enabled = (
             environment.get_strategy_timeframe_override_enabled()
         )
-        raw_strategy_override = environment.get_strategy_timeframe_override()
-        timeframe_override: Interval | None = None
-        if strategy_override_enabled:
-            if not raw_strategy_override or not raw_strategy_override.strip():
-                raise ValueError(
-                    "Environment variable 'STRATEGY_TIMEFRAME_OVERRIDE' cannot "
-                    "be empty when 'STRATEGY_TIMEFRAME_OVERRIDE_ENABLED' is true"
-                )
-            timeframe_override = self._parse_market_interval(
-                raw_value=raw_strategy_override.strip(),
-                setting_name="STRATEGY_TIMEFRAME_OVERRIDE",
-            )
-        elif raw_strategy_override and raw_strategy_override.strip():
-            timeframe_override = self._parse_market_interval(
-                raw_value=raw_strategy_override.strip(),
-                setting_name="STRATEGY_TIMEFRAME_OVERRIDE",
-            )
+        timeframe_override = self._load_strategy_timeframe_override(
+            enabled=strategy_override_enabled,
+            raw_value=environment.get_strategy_timeframe_override(),
+        )
         invert_signals = environment.get_invert_signals()
         min_signal_confidence = self._parse_decimal(
             raw_value=self._environment_provider.get_min_signal_confidence(),
@@ -1426,21 +1446,15 @@ class SettingsManager:
                 if environment.get_ny_range_rsi_short_min()
                 else Decimal("44.0")
             ),
-            origin_risk_reward_ratio=(
-                self._parse_decimal(
-                    raw_value=environment.get_origin_risk_reward_ratio(),
-                    setting_name="ORIGIN_RISK_REWARD_RATIO",
-                )
-                if environment.get_origin_risk_reward_ratio()
-                else Decimal("1.5")
+            origin_risk_reward_ratio=self._load_optional_strategy_decimal(
+                raw_value=environment.get_origin_risk_reward_ratio(),
+                setting_name="ORIGIN_RISK_REWARD_RATIO",
+                default=Decimal("1.5"),
             ),
-            origin_min_sl_pct=(
-                self._parse_decimal(
-                    raw_value=environment.get_origin_min_sl_pct(),
-                    setting_name="ORIGIN_MIN_SL_PCT",
-                )
-                if environment.get_origin_min_sl_pct()
-                else Decimal("0.010")
+            origin_min_sl_pct=self._load_optional_strategy_decimal(
+                raw_value=environment.get_origin_min_sl_pct(),
+                setting_name="ORIGIN_MIN_SL_PCT",
+                default=Decimal("0.010"),
             ),
             origin_max_sl_pct=(
                 self._parse_decimal(
@@ -1554,22 +1568,16 @@ class SettingsManager:
                 if environment.get_origin_macd_slow_period()
                 else 26
             ),
-            origin_macd_signal_period=(
-                self._parse_positive_int(
-                    raw_value=environment.get_origin_macd_signal_period(),
-                    setting_name="ORIGIN_MACD_SIGNAL_PERIOD",
-                )
-                if environment.get_origin_macd_signal_period()
-                else 9
+            origin_macd_signal_period=self._load_optional_strategy_positive_int(
+                raw_value=environment.get_origin_macd_signal_period(),
+                setting_name="ORIGIN_MACD_SIGNAL_PERIOD",
+                default=9,
             ),
             origin_use_psar_filter=environment.get_origin_use_psar_filter(),
-            origin_psar_max_proximity_pct=(
-                self._parse_decimal(
-                    raw_value=environment.get_origin_psar_max_proximity_pct(),
-                    setting_name="ORIGIN_PSAR_MAX_PROXIMITY_PCT",
-                )
-                if environment.get_origin_psar_max_proximity_pct()
-                else Decimal("0.008")
+            origin_psar_max_proximity_pct=self._load_optional_strategy_decimal(
+                raw_value=environment.get_origin_psar_max_proximity_pct(),
+                setting_name="ORIGIN_PSAR_MAX_PROXIMITY_PCT",
+                default=Decimal("0.008"),
             ),
         )
 

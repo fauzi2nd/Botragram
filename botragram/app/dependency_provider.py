@@ -545,6 +545,7 @@ class DependencyProvider:
 
             query_service = await self._build_operator_services()
             await self._sync_telegram_context(query_service=query_service)
+            telegram_reconnect_needed = False
             try:
                 await self.telegram_bot.start_with_retry(
                     max_attempts=3, delay_seconds=1.0
@@ -554,10 +555,12 @@ class DependencyProvider:
                     "Telegram startup failed; trading will continue while background "
                     "reconnection attempts run"
                 )
-                self._start_telegram_reconnect_task()
+                telegram_reconnect_needed = True
             if self._candle_retention_service is not None:
                 await self._candle_retention_service.start()
             self._initialized = True
+            if telegram_reconnect_needed:
+                self._start_telegram_reconnect_task()
             _LOGGER.info("Dependencies initialized")
         except BaseException:
             await self.close()
