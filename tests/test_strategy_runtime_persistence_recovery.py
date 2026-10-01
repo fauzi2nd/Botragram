@@ -149,8 +149,8 @@ async def test_persisted_strategy_updates_strategy_interval_on_boot(
     monkeypatch.setenv("STRATEGY_TYPE", "botragram_origin")
     monkeypatch.setenv("ORIGIN_INTERVAL", "3m")
     monkeypatch.setenv("PIER_INTERVAL", "15m")
-    from botragram.app.environment_provider import EnvironmentProvider
-    from botragram.app.settings_manager import SettingsManager
+    from botragram.app.settings.environment_provider import EnvironmentProvider
+    from botragram.app.settings.settings_manager import SettingsManager
 
     env_provider = EnvironmentProvider(env_path=str(test_env))
     settings = SettingsManager(environment_provider=env_provider).load()
@@ -198,8 +198,8 @@ async def test_runtime_strategy_selection_updates_interval(
     monkeypatch.setenv("STRATEGY_TYPE", "botragram_origin")
     monkeypatch.setenv("ORIGIN_INTERVAL", "3m")
     monkeypatch.setenv("PIER_INTERVAL", "15m")
-    from botragram.app.environment_provider import EnvironmentProvider
-    from botragram.app.settings_manager import SettingsManager
+    from botragram.app.settings.environment_provider import EnvironmentProvider
+    from botragram.app.settings.settings_manager import SettingsManager
 
     env_provider = EnvironmentProvider(env_path=str(test_env))
     settings = SettingsManager(environment_provider=env_provider).load()

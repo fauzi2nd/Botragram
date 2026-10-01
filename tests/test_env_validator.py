@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from botragram.app.env_validator import validate_env_file
+from botragram.app.settings.env_validator import validate_env_file
 from botragram.exceptions.config import ConfigValidationError
 
 # =============================================================================

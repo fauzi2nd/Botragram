@@ -17,33 +17,31 @@ from __future__ import annotations
 # Local Imports
 # =============================================================================
 from botragram.app.application import Application
-from botragram.app.backfill_command import (
+from botragram.app.cli.backfill_command import (
     format_backfill_report,
     is_backfill_command,
     parse_backfill_request,
     run_backfill_command,
 )
 from botragram.app.dependency_provider import DependencyProvider
-from botragram.app.global_discovery_telemetry import (
+from botragram.app.lifecycle import ApplicationLifecycle
+from botragram.app.runtime.global_discovery_telemetry import (
     GlobalDiscoveryCandidate,
     GlobalDiscoverySnapshot,
     GlobalDiscoveryTelemetry,
 )
-from botragram.app.lifecycle import ApplicationLifecycle
-from botragram.app.market_type_switch import (
+from botragram.app.runtime.market_type_switch import (
     MarketTypeSwitchService,
     RuntimeRestartCoordinator,
     prepare_restarted_runtime_session,
     run_until_restart,
 )
-from botragram.app.operator_terminal_monitor import TerminalMonitor
-from botragram.app.runtime_control import MarketStreamTelemetry, TradingRuntimeControl
-from botragram.app.runtime_instance_lock import RuntimeInstanceLock
-from botragram.app.settings_manager import SettingsManager
-from botragram.app.shutdown import shutdown_application
-from botragram.app.startup import startup_application
-from botragram.app.terminal_monitor import TerminalStatus
-from botragram.app.trading_runner import (
+from botragram.app.runtime.runtime_control import (
+    MarketStreamTelemetry,
+    TradingRuntimeControl,
+)
+from botragram.app.runtime.runtime_instance_lock import RuntimeInstanceLock
+from botragram.app.runtime.trading_runner import (
     AutonomousLiveCycleUnsafeError,
     AutonomousLiveTradingCycleExecutor,
     AutonomousPaperTradingCycleExecutor,
@@ -55,6 +53,11 @@ from botragram.app.trading_runner import (
     TradingRunner,
     calculate_seconds_until_next_candle_close,
 )
+from botragram.app.settings.settings_manager import SettingsManager
+from botragram.app.shutdown import shutdown_application
+from botragram.app.startup import startup_application
+from botragram.app.terminal.operator_terminal_monitor import TerminalMonitor
+from botragram.app.terminal.terminal_monitor import TerminalStatus
 
 __all__ = [
     "Application",

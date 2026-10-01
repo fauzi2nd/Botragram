@@ -12,11 +12,11 @@ from typing import Final, Protocol, runtime_checkable
 
 from botragram.enums import NotificationType, TradeMode
 from botragram.models import Account, Notification, Position, TradingResult
-from botragram.services.health_service import HealthService
 from botragram.services.notification_message_formatter import (
     NotificationMessageFormatter,
 )
-from botragram.services.paper_trading_service import NotificationPublisher
+from botragram.services.paper.paper_trading_service import NotificationPublisher
+from botragram.services.runtime.health_service import HealthService
 from botragram.utils.formatter import format_currency
 
 __all__ = ["RuntimeReporter"]

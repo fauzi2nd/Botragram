@@ -40,8 +40,8 @@ from botragram.app import (
     TradingRuntimeControl,
     calculate_seconds_until_next_candle_close,
 )
-from botragram.app.global_discovery_telemetry import GlobalDiscoveryTelemetry
-from botragram.app.trading_runner import GlobalDiscoveryCycleReport
+from botragram.app.runtime.global_discovery_telemetry import GlobalDiscoveryTelemetry
+from botragram.app.runtime.trading_runner import GlobalDiscoveryCycleReport
 from botragram.enums import (
     AuthorizationStatus,
     GlobalDiscoveryCycleOutcome,
@@ -1562,7 +1562,7 @@ def test_runner_logs_executed_position_reason_and_risk(
         interval=Interval.M1,
     )
 
-    with caplog.at_level(logging.INFO, logger="botragram.app.trading_runner"):
+    with caplog.at_level(logging.INFO, logger="botragram.app.runtime.trading_runner"):
         asyncio.run(runner.run_once())
 
     assert "position=LONG" in caplog.text
@@ -1634,7 +1634,7 @@ async def _run_non_overlapping_global_cadence_test(
         return monotonic_value
 
     monkeypatch.setattr(
-        "botragram.app.trading_runner.monotonic",
+        "botragram.app.runtime.trading_runner.monotonic",
         advancing_monotonic,
     )
     control = TradingRuntimeControl()
@@ -1857,7 +1857,7 @@ async def _run_heartbeat_test(
         runtime_control=_complete_startup_configuration(TradingRuntimeControl()),
     )
 
-    with caplog.at_level(logging.INFO, logger="botragram.app.trading_runner"):
+    with caplog.at_level(logging.INFO, logger="botragram.app.runtime.trading_runner"):
         task = asyncio.create_task(runner.run())
         await executor.execution_started.wait()
         await asyncio.sleep(0.03)

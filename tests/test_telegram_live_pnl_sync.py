@@ -44,10 +44,10 @@ from botragram.models import (
     Position,
     Ticker,
 )
-from botragram.services.live_futures_user_data_cache import (
+from botragram.services.account.live_futures_user_data_cache import (
     LiveFuturesUserDataSnapshot,
 )
-from botragram.services.live_market_stream_service import LiveMarketStreamService
+from botragram.services.market.live_market_stream_service import LiveMarketStreamService
 from botragram.storage.memory import (
     MemoryOrderRepository,
     MemoryPositionRepository,

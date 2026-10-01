@@ -412,7 +412,7 @@ def test_pier_strategy_signal_populates_numeric_sl_tp() -> None:
 async def test_paper_trading_service_adopts_explicit_signal_sl_tp() -> None:
     """Verify PaperTradingService creates Position using explicit SL/TP from signal."""
     from botragram.engine import PnLEngine, TradingEngine
-    from botragram.services.paper_trading_service import PaperTradingService
+    from botragram.services.paper.paper_trading_service import PaperTradingService
     from botragram.storage.memory import (
         MemoryOrderRepository,
         MemoryPositionRepository,

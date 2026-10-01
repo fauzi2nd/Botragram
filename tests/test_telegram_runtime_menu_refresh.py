@@ -9,7 +9,7 @@ import pytest
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-import botragram.telegram.runtime_menu_refresh as refresh_module
+import botragram.telegram.presentation.runtime_menu_refresh as refresh_module
 from botragram.app import TradingRuntimeControl
 from botragram.constants.telegram import MENU_PAUSE, MENU_RESUME
 from botragram.enums import ExecutionPolicy

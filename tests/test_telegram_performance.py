@@ -25,12 +25,15 @@ from botragram.models import (
     PendingClosedPositionLifecycle,
     Trade,
 )
-from botragram.services.live_market_stream_service import LiveMarketStreamService
-from botragram.services.live_trading_performance_service import (
+from botragram.services.account.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
+from botragram.services.market.live_market_stream_service import LiveMarketStreamService
 from botragram.telegram.callback_routes.callbacks import handle_callback_query
-from botragram.telegram.commands import menu_message_handler, performance_command
+from botragram.telegram.command_handlers.commands import (
+    menu_message_handler,
+    performance_command,
+)
 from botragram.telegram.context import (
     ALLOWED_CHAT_IDS_KEY,
     BOT_CONTEXT_KEY,

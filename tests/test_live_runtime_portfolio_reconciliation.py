@@ -10,7 +10,7 @@ from socket import gaierror
 
 import pytest
 
-from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.app.runtime.runtime_control import TradingRuntimeControl
 from botragram.enums import (
     Interval,
     LiveMarketStreamLifecycleStatus,

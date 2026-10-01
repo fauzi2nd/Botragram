@@ -66,12 +66,13 @@ from botragram.constants.telegram import (
 )
 from botragram.models import LiveRuntimeHealthSnapshot, Order, Trade
 from botragram.telegram.access import is_authorized_update
+from botragram.telegram.command_handlers.leverage_commands import leverage_command
+from botragram.telegram.command_handlers.risk_limit_commands import risk_limits_command
 from botragram.telegram.context import (
     BOT_CONTEXT_KEY,
     MARKET_SEARCH_PENDING_KEY,
     BotContext,
 )
-from botragram.telegram.leverage_commands import leverage_command
 from botragram.telegram.presentation.keyboards import (
     get_activity_menu_keyboard,
     get_configuration_menu_keyboard,
@@ -109,7 +110,6 @@ from botragram.telegram.presentation.messages import (
     get_test_message,
     get_welcome_message,
 )
-from botragram.telegram.risk_limit_commands import risk_limits_command
 
 logger: Final[logging.Logger] = logging.getLogger(__name__)
 

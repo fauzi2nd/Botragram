@@ -39,7 +39,7 @@ from botragram.app import (
     SettingsManager,
     SingleSymbolTradingCycleExecutor,
 )
-from botragram.app.live_futures_user_data_service import (
+from botragram.app.runtime.live_futures_user_data_service import (
     LiveFuturesUserDataService,
 )
 from botragram.config import Settings

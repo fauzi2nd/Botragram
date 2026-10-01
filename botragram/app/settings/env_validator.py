@@ -26,7 +26,9 @@ from typing import Final
 # =============================================================================
 __all__ = ["validate_env_file"]
 
-_LOGGER: Final[logging.Logger] = logging.getLogger("botragram.app.env_validator")
+_LOGGER: Final[logging.Logger] = logging.getLogger(
+    "botragram.app.settings.env_validator"
+)
 
 # Keys that are intentionally allowed to appear more than once.
 # Document *why* each exception exists; do not add keys speculatively.

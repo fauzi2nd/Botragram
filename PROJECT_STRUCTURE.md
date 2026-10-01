@@ -45,33 +45,36 @@ botragram/
 |-- __init__.py
 |-- app/
 |   |-- application.py
-|   |-- backfill_command.py  # Historical candle backfill CLI runner
-|   |-- backtest_command.py  # Isolated backtest CLI composition dan report
 |   |-- backtest_session_factory.py # Isolated PAPER replay composition
+|   |-- cli/
+|   |   |-- backfill_command.py # Historical candle backfill CLI runner
+|   |   `-- backtest_command.py # Isolated backtest CLI composition dan report
 |   |-- connectivity.py      # Backward-compatible classifier re-export
 |   |-- dependency_provider.py # Composition root dan manual wiring container
-|   |-- env_validator.py       # Startup validation for duplicate environment keys
-|   |-- environment_provider.py
-|   |-- global_discovery_telemetry.py # Read-only ranked discovery phase/outcome snapshot
 |   |-- lifecycle.py
-|   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
-|   |-- market_type_switch.py # Guarded MarketType/ExecutionPolicy in-process reconfiguration/soft restart
-|   |-- operator_terminal_monitor.py # Operator dashboard monitor adapter
-|   |-- responsive_terminal_monitor.py # Terminal monitor responsive layout
 |   |-- runtime/
 |   |   |-- autonomous_live_cycle_executor.py # Ranked LIVE protected entry
 |   |   |-- context_cycle_scheduler.py # Per-context cycle cadence
+|   |   |-- global_discovery_telemetry.py # Read-only ranked discovery snapshot
+|   |   |-- live_futures_user_data_service.py # Private Futures cache lifecycle
 |   |   |-- live_runtime_recovery_policy.py # Pure LIVE recovery health gates
+|   |   |-- market_type_switch.py # Guarded market-type soft restart
 |   |   |-- paper_cycle_executors.py # PAPER discovery cycle adapters
-|   |   `-- single_symbol_cycle_executor.py # Single-symbol runtime adapter
-|   |-- runtime_control.py
-|   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
-|   |-- runtime_limited_autonomous_live_executor.py # Dynamic durable capacity adapter
-|   |-- settings_manager.py
+|   |   |-- runtime_control.py
+|   |   |-- runtime_instance_lock.py # One runtime per database-scoped deployment
+|   |   |-- runtime_limited_autonomous_live_executor.py # Durable capacity adapter
+|   |   |-- single_symbol_cycle_executor.py # Single-symbol runtime adapter
+|   |   `-- trading_runner.py # Single-symbol and global cycle orchestration
+|   |-- settings/
+|   |   |-- env_validator.py # Duplicate environment-key validation
+|   |   |-- environment_provider.py
+|   |   `-- settings_manager.py
 |   |-- shutdown.py
 |   |-- startup.py
-|   |-- terminal_monitor.py    # Rich status/stream/log dashboard
-|   `-- trading_runner.py        # Single-symbol and global cycle orchestration
+|   `-- terminal/
+|       |-- operator_terminal_monitor.py # Operator dashboard adapter
+|       |-- responsive_terminal_monitor.py # Responsive layout
+|       `-- terminal_monitor.py # Rich status/stream/log dashboard
 |-- config/
 |   |-- ai_settings.py
 |   |-- app_settings.py
@@ -185,10 +188,13 @@ botragram/
 |   |-- runtime_settings_repository.py # Durable runtime configuration and strategy persistence
 |   `-- submission_attempt_repository.py # Incomplete entry attempt contract
 |-- services/
-|   |-- account_service.py
-|   |-- autonomous_live_recovery_observability_service.py # Read-only recovery view
-|   |-- autonomous_paper_execution_service.py # Ranked PAPER candidate execution
-|   |-- backtest_service.py   # Paginated historical candle orchestration
+|   |-- account/
+|   |   |-- account_service.py
+|   |   |-- live_account_drawdown_service.py # Account drawdown protection
+|   |   |-- live_futures_user_data_cache.py # Cached private Futures account state
+|   |   `-- live_trading_performance_service.py # Net lifecycle performance
+|   |-- backtest/
+|   |   `-- backtest_service.py # Paginated historical candle orchestration
 |   |-- discovery/
 |   |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
 |   |   |-- setup_stalking_service.py # Pre-entry setup tracking and confirmation
@@ -197,27 +203,26 @@ botragram/
 |   |   |-- autonomous_live_entry_execution_service.py # Fresh-risk protected entry adapter
 |   |   |-- autonomous_live_entry_intent_service.py # Network-scoped intent authorization
 |   |   |-- execution_authorization_service.py # PAPER human-approval boundary
+|   |   |-- live_entry_risk_evaluation_service.py # Portfolio/balance decision
+|   |   |-- live_executable_quote_service.py # Fresh quote provenance gate
 |   |   |-- live_futures_entry_service.py # Protected Futures MARKET entry workflow
-|   |   `-- order_service.py # Order submission and persistence
-|   |-- health_service.py
-|   |-- human_confirmed_paper_execution_service.py # Discovery-to-approval orchestration
-|   |-- live_account_drawdown_service.py # Account-level drawdown protection against peak equity
-|   |-- live_entry_risk_evaluation_service.py # Authoritative portfolio/balance decision
-|   |-- live_executable_quote_service.py # Shared fresh quote and signal provenance gate
-|   |-- live_futures_user_data_cache.py # Thread-safe cached private Futures account state
-|   |-- live_market_stream_service.py # Production 0/1/N LIVE stream ownership
-|   |-- live_trading_performance_service.py # One net outcome per completed lifecycle
+|   |   |-- order_service.py # Order submission and persistence
+|   |   `-- trading_service.py
 |   |-- market/
 |   |   |-- candle_retention_service.py # Stored candle retention
 |   |   |-- candle_sync_service.py # Bounded candle gap synchronization
+|   |   |-- live_market_stream_service.py # Production LIVE stream ownership
 |   |   |-- market_service.py # Exchange and persisted market data access
 |   |   `-- stored_resampled_candle_provider.py # Stored candle replay input
 |   |-- notification_message_formatter.py # Transport-neutral notification formatting contract
-|   |-- operator_exit_service.py # Guarded PAPER/LIVE close + flatten-and-switch orchestration
-|   |-- paper_trading_service.py
+|   |-- paper/
+|   |   |-- autonomous_paper_execution_service.py # Ranked PAPER execution
+|   |   |-- human_confirmed_paper_execution_service.py # Approval orchestration
+|   |   `-- paper_trading_service.py
 |   |-- position/
 |   |   |-- closed_position_lifecycle_service.py # Exact-order gross/fee/net enrichment
 |   |   |-- live_position_lifecycle_coordinator.py # Per-symbol lifecycle serialization
+|   |   |-- operator_exit_service.py # Guarded close and flatten orchestration
 |   |   |-- position_exit_service.py # In-flight position exit orchestration
 |   |   `-- position_service.py # Position sync and persistence
 |   |-- protection/
@@ -225,20 +230,21 @@ botragram/
 |   |   |-- live_protection_monitoring_service.py # Production 0/1/N protection monitor owner
 |   |   `-- position_protection_manager.py # Stream-driven stepped SL+
 |   |-- recovery/
+|   |   |-- autonomous_live_recovery_observability_service.py # Read-only recovery view
 |   |   |-- live_natural_exit_recovery_service.py # Natural SL/TP fill detection and ledgering
 |   |   |-- live_portfolio_recovery_service.py # LIVE portfolio safety recovery
 |   |   |-- live_post_entry_recovery_service.py # ACKNOWLEDGED entry recovery core
 |   |   |-- live_submission_recovery_service.py # GET-only incomplete entry recovery
 |   |   `-- runtime_recovery_service.py # Restart recovery dan live protection gate
 |   |-- runtime/
+|   |   |-- health_service.py
 |   |   |-- live_runtime_health_service.py # Derived recovered LIVE health aggregation
 |   |   |-- live_runtime_portfolio_reconciliation_service.py # Canonical 0/1/N management reconciliation
 |   |   |-- multi_context_activation.py # Immutable LIVE activation preconditions
 |   |   |-- runtime_control_contract.py # Service-facing runtime safety contract
 |   |   |-- runtime_reporter.py # Runtime status and portfolio reporting
 |   |   `-- runtime_risk_limit_service.py # Durable runtime canary-limit authority
-|   |-- strategy_service.py
-|   `-- trading_service.py
+|   `-- strategy_service.py
 |-- storage/
 |   |-- base/
 |   |-- memory/
@@ -271,21 +277,22 @@ botragram/
 |   |   |-- callbacks.py # Callback routing and remaining configuration controls
 |   |   |-- execution_policy.py # Guarded trading-mode switch callbacks
 |   |   `-- operator_exit.py # Guarded portfolio-exit callbacks
-|   |-- commands.py
+|   |-- command_handlers/
+|   |   |-- commands.py
+|   |   |-- leverage_commands.py
+|   |   |-- operator_exit_commands.py # Chat-bound portfolio exit controls
+|   |   |-- risk_limit_commands.py # Runtime-limit controls
+|   |   |-- strategy_flatten_switch.py # Flatten-and-strategy soft restart
+|   |   `-- strategy_switch.py # Interactive strategy selection
 |   |-- context.py
 |   |-- handlers.py
-|   |-- leverage_commands.py
-|   |-- operator_exit_commands.py # Explicit chat-bound portfolio exit controls
-|   |-- operator_exit_progress.py # Real-time progress updates during operator exit
 |   |-- presentation/
 |   |   |-- keyboards.py # Telegram reply and inline keyboard layouts
 |   |   |-- messages.py # Telegram HTML message templates
-|   |   `-- notification_message_formatter.py # Domain-fact to Telegram HTML adapter
-|   |-- query_service.py
-|   |-- risk_limit_commands.py # Paused durable runtime-limit controls
-|   |-- runtime_menu_refresh.py # Mode-aware home menu synchronization
-|   |-- strategy_flatten_switch.py # Guarded flatten-and-strategy soft restart
-|   `-- strategy_switch.py     # Interactive strategy selection and routing
+|   |   |-- notification_message_formatter.py # Telegram HTML adapter
+|   |   |-- operator_exit_progress.py # Real-time operator exit progress
+|   |   `-- runtime_menu_refresh.py # Mode-aware home menu synchronization
+|   `-- query_service.py
 `-- utils/
     |-- candle_aggregator.py
     |-- candle_resampler.py
@@ -320,9 +327,12 @@ boleh mengirim order tanpa intent eksplisit.
 
 ## Dependency Direction
 
-Modul hasil pengelompokan pada `app/runtime`, subpackage `engine` dan `services`,
-serta `telegram/callback_routes` dan `telegram/presentation` adalah lokasi import
-kanonis. Modul penerus import pada path datar lama telah dihapus.
+Modul hasil pengelompokan pada `app/cli`, `app/runtime`, `app/settings`,
+`app/terminal`, subpackage `engine` dan `services`, serta
+`telegram/callback_routes`, `telegram/command_handlers`, dan
+`telegram/presentation` adalah lokasi import kanonis. Modul penerus import
+pada path datar lama telah dihapus; pemanggil yang memakai import langsung
+v4.x harus memperbarui path modulnya pada v5.0.0.
 
 ```text
 main.py

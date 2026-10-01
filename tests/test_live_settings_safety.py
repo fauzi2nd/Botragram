@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from botragram.app import SettingsManager
-from botragram.app.environment_provider import EnvironmentProvider
+from botragram.app.settings.environment_provider import EnvironmentProvider
 from botragram.config.risk_settings import RiskSettings
 from botragram.enums import ExchangeEnvironment
 from botragram.models import AutonomousLiveEntryAuthorization

@@ -22,7 +22,7 @@ from typing import Final
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.environment_provider import EnvironmentProvider
+from botragram.app.settings.environment_provider import EnvironmentProvider
 from botragram.config.ai_settings import AISettings
 from botragram.config.app_settings import AppSettings
 from botragram.config.exchange_settings import ExchangeSettings
@@ -50,7 +50,9 @@ __all__ = [
     "SettingsManager",
 ]
 
-_LOGGER: Final[logging.Logger] = logging.getLogger("botragram.app.settings_manager")
+_LOGGER: Final[logging.Logger] = logging.getLogger(
+    "botragram.app.settings.settings_manager"
+)
 
 
 # =============================================================================

@@ -31,7 +31,7 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.backtest_command import (
+from botragram.app.cli.backtest_command import (
     parse_backtest_request,
     run_backtest_command,
 )
@@ -48,7 +48,7 @@ from botragram.enums import (
     TrailingMode,
 )
 from botragram.models import BacktestRequest, BacktestResult, Candle, Signal
-from botragram.services.backtest_service import BacktestService
+from botragram.services.backtest.backtest_service import BacktestService
 from botragram.services.discovery.setup_stalking_service import SetupStalkingService
 from botragram.services.strategy_service import StrategyService
 from botragram.storage import MemorySignalRepository

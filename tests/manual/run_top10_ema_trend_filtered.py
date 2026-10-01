@@ -35,7 +35,7 @@ from botragram.enums import ExchangeType, Interval, MarketType, SignalType, Stra
 from botragram.exchanges import ExchangeFactory
 from botragram.indicators import calculate_ema
 from botragram.models import BacktestRequest, BacktestResult, Candle, Signal
-from botragram.services.backtest_service import BacktestService
+from botragram.services.backtest.backtest_service import BacktestService
 from botragram.strategies.scalping.ema_scalping import EMAScalpingStrategy
 
 TOP_10_SYMBOLS: tuple[str, ...] = (

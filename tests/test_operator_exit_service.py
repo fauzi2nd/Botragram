@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import pytest
 
-from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.app.runtime.runtime_control import TradingRuntimeControl
 from botragram.enums import (
     ExchangeEnvironment,
     ExecutionPolicy,
@@ -21,7 +21,7 @@ from botragram.enums import (
 )
 from botragram.exceptions import OperatorExitConfirmationUnavailableError
 from botragram.models import OperatorExitOperation, Position, Ticker, TradingResult
-from botragram.services.operator_exit_service import OperatorExitService
+from botragram.services.position.operator_exit_service import OperatorExitService
 from botragram.storage.memory import (
     MemoryOperatorExitRepository,
     MemoryPositionRepository,

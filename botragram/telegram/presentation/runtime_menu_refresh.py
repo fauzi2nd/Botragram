@@ -17,7 +17,8 @@ from botragram.constants.telegram import (
     MENU_STRATEGY,
 )
 from botragram.telegram.access import is_authorized_update
-from botragram.telegram.commands import menu_message_handler
+from botragram.telegram.command_handlers.commands import menu_message_handler
+from botragram.telegram.command_handlers.strategy_switch import strategy_switch_command
 from botragram.telegram.context import (
     BOT_CONTEXT_KEY,
     MARKET_SEARCH_PENDING_KEY,
@@ -29,7 +30,6 @@ from botragram.telegram.presentation.messages import (
     get_runtime_pause_message,
     get_startup_configuration_message,
 )
-from botragram.telegram.strategy_switch import strategy_switch_command
 
 logger: Final[logging.Logger] = logging.getLogger(__name__)
 

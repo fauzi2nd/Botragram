@@ -15,10 +15,10 @@ from botragram.app import TerminalMonitor, TradingRuntimeControl
 from botragram.engine import PnLEngine
 from botragram.enums import LiveFuturesUserDataStatus, PositionSide, TradeMode
 from botragram.models import FuturesUserDataPositionUpdate, Position
-from botragram.services.live_futures_user_data_cache import (
+from botragram.services.account.live_futures_user_data_cache import (
     LiveFuturesUserDataSnapshot,
 )
-from botragram.services.paper_trading_service import PaperPortfolioSnapshot
+from botragram.services.paper.paper_trading_service import PaperPortfolioSnapshot
 
 
 @dataclass(slots=True, frozen=True)

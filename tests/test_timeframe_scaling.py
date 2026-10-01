@@ -26,8 +26,8 @@ from unittest.mock import AsyncMock, create_autospec
 # =============================================================================
 import pytest
 
-from botragram.app.environment_provider import EnvironmentProvider
-from botragram.app.settings_manager import SettingsManager
+from botragram.app.settings.environment_provider import EnvironmentProvider
+from botragram.app.settings.settings_manager import SettingsManager
 
 # =============================================================================
 # Local Imports

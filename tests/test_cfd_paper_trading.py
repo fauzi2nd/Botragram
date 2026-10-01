@@ -14,13 +14,13 @@ import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from botragram.app.global_discovery_telemetry import GlobalDiscoveryTelemetry
-from botragram.app.runtime_control import TradingRuntimeControl
-from botragram.app.terminal_monitor import TerminalMonitor
-from botragram.app.trading_runner import (
+from botragram.app.runtime.global_discovery_telemetry import GlobalDiscoveryTelemetry
+from botragram.app.runtime.runtime_control import TradingRuntimeControl
+from botragram.app.runtime.trading_runner import (
     AutonomousPaperTradingCycleExecutor,
     TradingRunner,
 )
+from botragram.app.terminal.terminal_monitor import TerminalMonitor
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine import (
     CfdFinancingEngine,

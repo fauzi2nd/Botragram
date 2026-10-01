@@ -22,7 +22,9 @@ __all__ = [
     "TradingRuntimeControl",
 ]
 
-_LOGGER: Final[logging.Logger] = logging.getLogger("botragram.app.runtime_control")
+_LOGGER: Final[logging.Logger] = logging.getLogger(
+    "botragram.app.runtime.runtime_control"
+)
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)

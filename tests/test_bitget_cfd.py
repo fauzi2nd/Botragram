@@ -1079,8 +1079,8 @@ def test_settings_manager_bitget_cfd_mode_pipeline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify settings manager pipeline parses BITGET_CFD_MODE from environment."""
-    from botragram.app.environment_provider import EnvironmentProvider
-    from botragram.app.settings_manager import SettingsManager
+    from botragram.app.settings.environment_provider import EnvironmentProvider
+    from botragram.app.settings.settings_manager import SettingsManager
 
     env_file = tmp_path / "test.env"
     env_file.write_text(

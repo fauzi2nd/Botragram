@@ -21,12 +21,12 @@ from botragram.constants.telegram import (
 )
 from botragram.enums import ExecutionPolicy
 from botragram.exceptions import OperatorExitConfirmationUnavailableError
-from botragram.telegram.context import BotContext
-from botragram.telegram.operator_exit_commands import (
+from botragram.telegram.command_handlers.operator_exit_commands import (
     format_operator_exit_confirmation,
     format_operator_exit_snapshot,
     get_operator_exit_requester,
 )
+from botragram.telegram.context import BotContext
 from botragram.telegram.presentation.keyboards import (
     get_operator_exit_confirmation_keyboard,
 )

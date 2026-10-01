@@ -10,7 +10,7 @@ from typing import Final
 
 import pytest
 
-from botragram.app.runtime_instance_lock import RuntimeInstanceLock
+from botragram.app.runtime.runtime_instance_lock import RuntimeInstanceLock
 
 _CHILD_READY_MESSAGE: Final[str] = "lock-acquired"
 _CHILD_EXIT_TIMEOUT_SECONDS: Final[float] = 10.0
@@ -19,7 +19,7 @@ import os
 import sys
 from pathlib import Path
 
-from botragram.app.runtime_instance_lock import RuntimeInstanceLock
+from botragram.app.runtime.runtime_instance_lock import RuntimeInstanceLock
 
 runtime_lock = RuntimeInstanceLock(lock_path=Path(sys.argv[1]))
 runtime_lock.acquire()

@@ -38,13 +38,13 @@ from botragram.models import (
     TradingDecision,
     TradingResult,
 )
-from botragram.services.live_executable_quote_service import (
+from botragram.services.execution.live_executable_quote_service import (
     LIVE_MARKET_REFERENCE_REJECTED_REASON,
     LIVE_STALE_SIGNAL_REASON,
     get_executable_entry_price,
     is_signal_stale,
 )
-from botragram.services.paper_trading_service import PaperTradingService
+from botragram.services.paper.paper_trading_service import PaperTradingService
 
 __all__ = [
     "TradingService",

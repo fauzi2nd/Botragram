@@ -22,7 +22,7 @@ from decimal import Decimal
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.app.runtime.runtime_control import TradingRuntimeControl
 from botragram.config.risk_settings import RiskSettings
 from botragram.config.strategy_settings import StrategySettings
 from botragram.constants.telegram import (

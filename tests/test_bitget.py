@@ -715,8 +715,8 @@ def test_settings_manager_loads_bitget_market_type(
     monkeypatch.setenv("BITGET_PASSPHRASE", "  test-passphrase  ")
     monkeypatch.setenv("BITGET_TESTNET", "false")
 
-    from botragram.app.environment_provider import EnvironmentProvider
-    from botragram.app.settings_manager import SettingsManager
+    from botragram.app.settings.environment_provider import EnvironmentProvider
+    from botragram.app.settings.settings_manager import SettingsManager
 
     env_provider = EnvironmentProvider(env_path=str(tmp_path / "missing.env"))
     settings = SettingsManager(

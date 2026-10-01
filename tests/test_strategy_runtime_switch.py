@@ -163,8 +163,8 @@ async def test_prepare_strategy_resolves_strategy_interval(
     monkeypatch.setenv("STRATEGY_TYPE", "botragram_origin")
     monkeypatch.setenv("ORIGIN_INTERVAL", "3m")
     monkeypatch.setenv("PIER_INTERVAL", "15m")
-    from botragram.app.environment_provider import EnvironmentProvider
-    from botragram.app.settings_manager import SettingsManager
+    from botragram.app.settings.environment_provider import EnvironmentProvider
+    from botragram.app.settings.settings_manager import SettingsManager
     from botragram.enums import Interval
 
     env_provider = EnvironmentProvider(env_path=str(test_env))

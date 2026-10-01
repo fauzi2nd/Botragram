@@ -18,7 +18,7 @@ from botragram.engine.backtest.backtest_engine import BacktestSession
 from botragram.engine.risk.risk_engine import RiskEngine
 from botragram.engine.trading.trading_engine import TradingEngine
 from botragram.models import BacktestRequest
-from botragram.services.paper_trading_service import PaperTradingService
+from botragram.services.paper.paper_trading_service import PaperTradingService
 from botragram.storage.memory import (
     MemoryOrderRepository,
     MemoryPositionRepository,

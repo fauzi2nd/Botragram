@@ -35,7 +35,7 @@ from rich.console import Console
 # Local Imports
 # =============================================================================
 from botragram.app import TerminalMonitor, TradingRuntimeControl
-from botragram.app.global_discovery_telemetry import GlobalDiscoveryTelemetry
+from botragram.app.runtime.global_discovery_telemetry import GlobalDiscoveryTelemetry
 from botragram.engine import PnLEngine
 from botragram.enums import (
     AutonomousLiveRecoveryReason,
@@ -69,10 +69,10 @@ from botragram.models import (
     TradingResult,
 )
 from botragram.services import PaperPortfolioSnapshot
-from botragram.services.live_futures_user_data_cache import (
+from botragram.services.account.live_futures_user_data_cache import (
     LiveFuturesUserDataSnapshot,
 )
-from botragram.services.live_trading_performance_service import (
+from botragram.services.account.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
 from tests.terminal_helpers import create_terminal_console

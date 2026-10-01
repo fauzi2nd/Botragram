@@ -217,8 +217,8 @@ def test_settings_manager_loads_bybit_settings(
     tmp_path: Path,
 ) -> None:
     """SettingsManager loads Bybit exchange settings and market type."""
-    from botragram.app.environment_provider import EnvironmentProvider
-    from botragram.app.settings_manager import SettingsManager
+    from botragram.app.settings.environment_provider import EnvironmentProvider
+    from botragram.app.settings.settings_manager import SettingsManager
 
     env_file = tmp_path / ".env"
     env_file.write_text(
