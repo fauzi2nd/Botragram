@@ -334,11 +334,23 @@ class StrategyService:
                 else:
                     side_str = "LONG"
 
-                registered = stalking_svc.register_candidate(
-                    signal=candidate_signal,
-                    setup_candle=latest_candle,
-                    htf_zone_label=f"HTF Extreme {side_str}",
-                )
+                try:
+                    registered = stalking_svc.register_candidate(
+                        signal=candidate_signal,
+                        setup_candle=latest_candle,
+                        htf_zone_label=f"HTF Extreme {side_str}",
+                    )
+                except ValueError as error:
+                    stalking_svc.record_rejection(reason=str(error))
+                    return Signal(
+                        symbol=symbol,
+                        signal_type=SignalType.HOLD,
+                        price=latest_candle.close_price,
+                        confidence=Decimal("0"),
+                        strategy_name=resolved_type.value,
+                        generated_at=latest_candle.close_time,
+                        reason=f"[STALKING_INVALID_ZONE_GEOMETRY] {error}",
+                    )
                 reason_header = (
                     f"[STALKING_REGISTERED] [STALKING_ZONE_{side_str}]"
                     if "[STALKING_ZONE" in reason_text

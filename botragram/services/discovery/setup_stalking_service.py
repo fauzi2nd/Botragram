@@ -419,6 +419,38 @@ class SetupStalkingService:
                 else:
                     target_retest = setup_candle.close_price
 
+            if is_zone_candidate:
+                stop_loss = signal.stop_loss
+                if stop_loss is not None:
+                    if side is PositionSide.SHORT and stop_loss <= max(
+                        invalidation_price, target_retest
+                    ):
+                        raise ValueError(
+                            "Zone SHORT stop loss must exceed retest target "
+                            "and setup high"
+                        )
+                    if side is PositionSide.LONG and stop_loss >= min(
+                        invalidation_price, target_retest
+                    ):
+                        raise ValueError(
+                            "Zone LONG stop loss must be below retest target "
+                            "and setup low"
+                        )
+                    if (
+                        side is PositionSide.SHORT
+                        and target_retest >= invalidation_price
+                    ) or (
+                        side is PositionSide.LONG
+                        and target_retest <= invalidation_price
+                    ):
+                        invalidation_price = stop_loss
+                elif (
+                    side is PositionSide.SHORT and target_retest >= invalidation_price
+                ) or (
+                    side is PositionSide.LONG and target_retest <= invalidation_price
+                ):
+                    raise ValueError("Zone retest target must be inside invalidation")
+
             setup = StalkingSetup(
                 symbol=signal.symbol,
                 side=side,
@@ -689,7 +721,10 @@ class SetupStalkingService:
                                 if body_size > _DECIMAL_ZERO
                                 else candle.close_price
                             )
-                    if setup.side is PositionSide.SHORT:
+                    if setup.pattern_name.startswith("ZONE"):
+                        invalidation_price = setup.invalidation_price
+                        stop_loss = setup.stop_loss
+                    elif setup.side is PositionSide.SHORT:
                         invalidation_price = candle.high_price
                         stop_loss = (
                             max(candle.high_price, setup.stop_loss)
