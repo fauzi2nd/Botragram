@@ -229,7 +229,19 @@ class LiveFuturesEntryService:
                     quantity=risk_result.position.quantity,
                 )
             )
+            if (
+                not normalized_quantity.is_finite()
+                or normalized_quantity <= _DECIMAL_ZERO
+                or normalized_quantity > risk_result.position.quantity
+            ):
+                raise LiveEntryRiskLimitError(
+                    "Venue-normalized quantity exceeds approved risk size"
+                )
             normalized_notional = normalized_quantity * risk_result.metrics.entry_price
+            if normalized_notional > risk_result.position.notional:
+                raise LiveEntryRiskLimitError(
+                    "Venue-normalized notional exceeds approved risk size"
+                )
             if (
                 limits is not None
                 and normalized_notional > limits.max_position_size_usdt
