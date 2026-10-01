@@ -31,7 +31,7 @@ import aiohttp
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.interval import Interval
+from botragram.enums.market.interval import Interval
 from botragram.exchanges.base import BaseStreamClient
 from botragram.exchanges.base.mapper import ExchangePayload
 from botragram.exchanges.bybit.client import BYBIT_INTERVAL_MAP

@@ -27,7 +27,9 @@ from typing import Final
 # Local Imports
 # =============================================================================
 from botragram.repositories import CandleRepository
-from botragram.repositories.candle_storage_optimizer import CandleStorageOptimizer
+from botragram.repositories.market.candle_storage_optimizer import (
+    CandleStorageOptimizer,
+)
 
 __all__ = [
     "CandleRetentionService",

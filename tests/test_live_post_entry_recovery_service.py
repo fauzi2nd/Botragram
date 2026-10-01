@@ -19,7 +19,9 @@ from botragram.enums import (
     SubmissionAttemptStatus,
 )
 from botragram.models import Order, Position, SubmissionAttempt
-from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
+from botragram.repositories.runtime.live_recovery_repository import (
+    LiveRecoveryRepository,
+)
 from botragram.services import (
     LivePostEntryRecoveryResult,
     LivePostEntryRecoveryService,

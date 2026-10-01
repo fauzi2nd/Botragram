@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.enums.interval import Interval
+from botragram.enums.market.interval import Interval
 from botragram.models import Candle, Ticker
 
 __all__ = [

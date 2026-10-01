@@ -37,7 +37,7 @@ from botragram.enums import (
 )
 from botragram.indicators import detect_engulfing, detect_pinbar
 from botragram.models import Candle, Signal
-from botragram.models.stalking import StalkingFunnelReport, StalkingSetup
+from botragram.models.strategy.stalking import StalkingFunnelReport, StalkingSetup
 
 __all__ = [
     "SetupStalkingService",

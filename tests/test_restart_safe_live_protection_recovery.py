@@ -39,7 +39,9 @@ from botragram.models import (
     SubmissionAttempt,
     Trade,
 )
-from botragram.repositories.live_recovery_repository import LiveRecoveryRepository
+from botragram.repositories.runtime.live_recovery_repository import (
+    LiveRecoveryRepository,
+)
 from botragram.services import (
     ClosedPositionLifecycleService,
     LivePositionProtectionService,

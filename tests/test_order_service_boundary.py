@@ -12,7 +12,7 @@ import pytest
 from botragram.engine.order.order_engine import OrderEngine
 from botragram.enums import OrderSide, OrderStatus, OrderType, SignalType
 from botragram.models import ExchangeSymbolRules, Order, RiskMetrics, RiskResult, Signal
-from botragram.models.risk import PositionSize
+from botragram.models.execution.risk import PositionSize
 from botragram.services.execution.order_service import OrderService
 from botragram.storage.memory.order_repository import MemoryOrderRepository
 

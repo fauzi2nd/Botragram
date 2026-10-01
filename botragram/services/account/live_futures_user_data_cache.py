@@ -29,7 +29,7 @@ from botragram.models import (
     FuturesUserDataStreamConnected,
     Position,
 )
-from botragram.models.order import Order
+from botragram.models.execution.order import Order
 
 __all__ = [
     "LiveFuturesUserDataCache",
