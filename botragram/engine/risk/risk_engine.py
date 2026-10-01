@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from decimal import ROUND_CEILING, Decimal
+from decimal import ROUND_CEILING, ROUND_DOWN, Decimal, localcontext
 from typing import Final
 
 from botragram.config.risk_settings import RiskSettings
@@ -529,6 +529,16 @@ class RiskEngine:
                 reason="Stop-loss distance must be greater than zero",
             )
 
+        effective_risk_pct = (
+            self.settings.pier_risk_per_trade_pct
+            if (is_pier and self.settings.pier_risk_per_trade_pct is not None)
+            else self.settings.risk_per_trade_pct
+        )
+        allowed_risk = account_balance * effective_risk_pct
+        with localcontext() as risk_context:
+            risk_context.rounding = ROUND_DOWN
+            max_risk_quantity = allowed_risk / risk_per_unit
+
         is_dynamic = (
             dynamic_leverage_enabled
             if dynamic_leverage_enabled is not None
@@ -636,12 +646,6 @@ class RiskEngine:
 
             quantity = notional / signal.price
         else:
-            effective_risk_pct = (
-                self.settings.pier_risk_per_trade_pct
-                if (is_pier and self.settings.pier_risk_per_trade_pct is not None)
-                else self.settings.risk_per_trade_pct
-            )
-            allowed_risk = account_balance * effective_risk_pct
             quantity = allowed_risk / risk_per_unit
             notional = quantity * signal.price
 
@@ -679,7 +683,23 @@ class RiskEngine:
             else:
                 quantity = notional / signal.price
 
+        # The final cap applies after every slot, volatility, confidence, and
+        # minimum-notional adjustment. Never enlarge the configured risk budget.
+        sized_notional = notional
+        with localcontext() as risk_context:
+            risk_context.rounding = ROUND_DOWN
+            quantity = min(sized_notional / signal.price, max_risk_quantity)
         risk_amount = quantity * risk_per_unit
+        notional = quantity * signal.price
+        while risk_amount > allowed_risk or notional > sized_notional:
+            quantity = quantity.next_minus()
+            risk_amount = quantity * risk_per_unit
+            notional = quantity * signal.price
+        if notional < self.settings.min_order_notional_usdt:
+            return self._rejected_result(
+                entry_price=signal.price,
+                reason="Minimum order notional exceeds final risk budget",
+            )
         reward_amount = quantity * abs(take_profit - signal.price)
         risk_reward_ratio = (
             reward_amount / risk_amount

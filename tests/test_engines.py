@@ -823,6 +823,7 @@ def test_risk_engine_slot_sizing_partitions_margin_across_remaining_slots() -> N
         slot_margin_buffer_pct=Decimal("0.05"),
         max_position_size_usdt=Decimal("50"),
         leverage=20,
+        stop_loss_pct=Decimal("0.001"),
     )
     engine = RiskEngine(settings=settings)
 
@@ -848,6 +849,7 @@ def test_risk_engine_slot_sizing_sequential_five_trades() -> None:
         slot_margin_buffer_pct=Decimal("0.05"),
         max_position_size_usdt=Decimal("50"),
         leverage=20,
+        stop_loss_pct=Decimal("0.001"),
     )
     engine = RiskEngine(settings=settings)
 
@@ -898,6 +900,7 @@ def test_risk_engine_slot_sizing_auto_boosts_leverage_for_min_notional() -> None
         leverage=2,
         min_leverage=1,
         max_leverage=10,
+        stop_loss_pct=Decimal("0.001"),
     )
     engine = RiskEngine(settings=settings)
 
@@ -922,6 +925,7 @@ def test_trading_engine_forwards_remaining_slots() -> None:
         max_open_positions=5,
         max_position_size_usdt=Decimal("50"),
         leverage=20,
+        stop_loss_pct=Decimal("0.001"),
     )
     risk_engine = RiskEngine(settings=settings)
     trading_engine = TradingEngine(

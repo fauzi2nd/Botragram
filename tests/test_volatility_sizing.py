@@ -119,14 +119,14 @@ def test_volatility_sizing_dynamic_scaling() -> None:
     assert res_high_vol.position is not None
     assert res_high_vol.position.notional == Decimal("500")
 
-    # 3. Calmer volatility (0.01 vs baseline 0.02): multiplier = 1.5x -> notional = 1500
+    # 3. Calmer volatility raises the candidate, but the risk budget caps it.
     res_low_vol = engine_unconstrained.evaluate(
         signal=signal,
         account_balance=Decimal("10000"),
         volatility_pct=Decimal("0.01"),
     )
     assert res_low_vol.position is not None
-    assert res_low_vol.position.notional == Decimal("1500")
+    assert res_low_vol.position.notional == Decimal("1000")
 
     # 4. Extremely high volatility (0.10): bounded by min clamp 0.5x -> notional = 500
     res_extreme_high = engine_unconstrained.evaluate(
@@ -137,14 +137,14 @@ def test_volatility_sizing_dynamic_scaling() -> None:
     assert res_extreme_high.position is not None
     assert res_extreme_high.position.notional == Decimal("500")
 
-    # 5. Extremely low volatility (0.005): bounded by max clamp 1.5x -> notional = 1500
+    # 5. Extremely low volatility remains bounded by the same risk budget.
     res_extreme_low = engine_unconstrained.evaluate(
         signal=signal,
         account_balance=Decimal("10000"),
         volatility_pct=Decimal("0.005"),
     )
     assert res_extreme_low.position is not None
-    assert res_extreme_low.position.notional == Decimal("1500")
+    assert res_extreme_low.position.notional == Decimal("1000")
 
 
 def test_volatility_sizing_invalid_input() -> None:
@@ -211,7 +211,7 @@ def test_dynamic_confidence_sizing_scaling() -> None:
     assert res_base.position is not None
     assert res_base.position.notional == Decimal("1000")
 
-    # 2. High confidence (0.91) -> multiplier = 0.91 / 0.70 = 1.30x -> 1300 USDT
+    # 2. High confidence raises the candidate, but cannot raise the risk budget.
     sig_high = Signal(
         symbol="BTCUSDT",
         signal_type=SignalType.BUY,
@@ -222,7 +222,7 @@ def test_dynamic_confidence_sizing_scaling() -> None:
     )
     res_high = engine.evaluate(signal=sig_high, account_balance=Decimal("10000"))
     assert res_high.position is not None
-    assert res_high.position.notional == Decimal("1300")
+    assert res_high.position.notional == Decimal("1000")
 
     # 3. Low confidence (0.50) -> 0.50 / 0.70 = 0.71 -> clamped to min 0.8x -> 800 USDT
     sig_low = Signal(
