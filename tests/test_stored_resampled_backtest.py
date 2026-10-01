@@ -37,7 +37,7 @@ from botragram.enums import (
     StrategyType,
 )
 from botragram.models import BacktestRequest, Candle, Signal
-from botragram.services.backtest_service import BacktestService
+from botragram.services.backtest.backtest_service import BacktestService
 from botragram.services.market.stored_resampled_candle_provider import (
     StoredResampledCandleProvider,
 )

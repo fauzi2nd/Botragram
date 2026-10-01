@@ -32,7 +32,7 @@ import pytest
 # =============================================================================
 from botragram.app import SettingsManager
 from botragram.app.dependency_provider import DependencyProvider
-from botragram.app.environment_provider import EnvironmentProvider
+from botragram.app.settings.environment_provider import EnvironmentProvider
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine import RiskEngine
 from botragram.enums import (

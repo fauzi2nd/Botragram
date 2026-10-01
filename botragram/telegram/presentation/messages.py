@@ -48,7 +48,7 @@ from botragram.models import (
     RuntimeRiskLimits,
     Trade,
 )
-from botragram.services.live_trading_performance_service import (
+from botragram.services.account.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
 from botragram.utils.formatter import format_currency, format_price

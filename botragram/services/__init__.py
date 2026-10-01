@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from botragram.services.account_service import AccountService
-from botragram.services.autonomous_live_recovery_observability_service import (
-    AutonomousLiveRecoveryObservabilityService,
+from botragram.services.account.account_service import AccountService
+from botragram.services.account.live_account_drawdown_service import (
+    LiveAccountDrawdownService,
 )
-from botragram.services.autonomous_paper_execution_service import (
-    AutonomousPaperExecutionService,
+from botragram.services.account.live_trading_performance_service import (
+    LiveTradingPerformanceService,
+    TradingPerformanceSnapshot,
 )
 from botragram.services.discovery.opportunity_discovery_service import (
     OpportunityDiscoveryService,
@@ -24,34 +25,31 @@ from botragram.services.execution import (
     LiveFuturesEntryService,
     OrderService,
 )
-from botragram.services.health_service import HealthReport, HealthService
-from botragram.services.human_confirmed_paper_execution_service import (
-    HumanConfirmedPaperExecutionService,
-)
-from botragram.services.live_account_drawdown_service import LiveAccountDrawdownService
-from botragram.services.live_entry_risk_evaluation_service import (
+from botragram.services.execution.live_entry_risk_evaluation_service import (
     LiveEntryRiskEvaluationService,
 )
-from botragram.services.live_executable_quote_service import (
+from botragram.services.execution.live_executable_quote_service import (
     get_executable_entry_price,
     is_signal_stale,
 )
-from botragram.services.live_market_stream_service import (
-    LiveMarketStreamService,
-    MarketTickListener,
-)
-from botragram.services.live_trading_performance_service import (
-    LiveTradingPerformanceService,
-    TradingPerformanceSnapshot,
-)
+from botragram.services.execution.trading_service import TradingService
 from botragram.services.market import (
     CandleRetentionService,
     CandleSyncService,
     MarketService,
     StoredResampledCandleProvider,
 )
-from botragram.services.operator_exit_service import OperatorExitService
-from botragram.services.paper_trading_service import (
+from botragram.services.market.live_market_stream_service import (
+    LiveMarketStreamService,
+    MarketTickListener,
+)
+from botragram.services.paper.autonomous_paper_execution_service import (
+    AutonomousPaperExecutionService,
+)
+from botragram.services.paper.human_confirmed_paper_execution_service import (
+    HumanConfirmedPaperExecutionService,
+)
+from botragram.services.paper.paper_trading_service import (
     NotificationPublisher,
     PaperPortfolioSnapshot,
     PaperTradingService,
@@ -62,6 +60,7 @@ from botragram.services.position import (
     PositionExitService,
     PositionService,
 )
+from botragram.services.position.operator_exit_service import OperatorExitService
 from botragram.services.protection.live_position_protection_service import (
     LivePositionProtectionService,
 )
@@ -70,6 +69,9 @@ from botragram.services.protection.live_protection_monitoring_service import (
 )
 from botragram.services.protection.position_protection_manager import (
     PositionProtectionManager,
+)
+from botragram.services.recovery.autonomous_live_recovery_observability_service import (
+    AutonomousLiveRecoveryObservabilityService,
 )
 from botragram.services.recovery.live_natural_exit_recovery_service import (
     LiveNaturalExitRecoveryService,
@@ -92,8 +94,8 @@ from botragram.services.runtime import (
     RuntimeReporter,
     RuntimeRiskLimitService,
 )
+from botragram.services.runtime.health_service import HealthReport, HealthService
 from botragram.services.strategy_service import StrategyService
-from botragram.services.trading_service import TradingService
 
 __all__ = [
     "CandleRetentionService",

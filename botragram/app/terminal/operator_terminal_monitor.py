@@ -6,7 +6,7 @@ import re
 from decimal import Decimal
 from typing import Final
 
-from botragram.app.responsive_terminal_monitor import (
+from botragram.app.terminal.responsive_terminal_monitor import (
     TerminalMonitor as ResponsiveTerminalMonitor,
 )
 

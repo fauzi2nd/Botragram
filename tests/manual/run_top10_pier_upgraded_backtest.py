@@ -41,7 +41,7 @@ from botragram.constants import BYBIT_REST_BASE_URL
 from botragram.enums import ExchangeType, Interval, MarketType, StrategyType
 from botragram.exchanges import ExchangeFactory
 from botragram.models import BacktestRequest
-from botragram.services.backtest_service import BacktestService
+from botragram.services.backtest.backtest_service import BacktestService
 from botragram.strategies.price_action import PinbarEngulfingEmaRsiStrategy
 
 TOP_10_SYMBOLS: tuple[str, ...] = (

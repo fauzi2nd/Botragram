@@ -33,7 +33,7 @@ from botragram.models import (
     Position,
 )
 from botragram.telegram.callback_routes.callbacks import handle_callback_query
-from botragram.telegram.commands import positions_command
+from botragram.telegram.command_handlers.commands import positions_command
 from botragram.telegram.context import (
     ALLOWED_CHAT_IDS_KEY,
     BOT_CONTEXT_KEY,
@@ -364,7 +364,7 @@ async def test_testnet_inline_confirm_uses_chat_bound_confirmation() -> None:
 
 @pytest.mark.asyncio
 async def test_operator_exit_confirm_callback_progress_handles_failed_status() -> None:
-    from botragram.telegram.operator_exit_progress import (
+    from botragram.telegram.presentation.operator_exit_progress import (
         operator_exit_confirm_callback_with_progress,
     )
 

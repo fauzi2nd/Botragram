@@ -12,7 +12,7 @@ from decimal import Decimal
 import pytest
 
 from botragram.app import AutonomousLiveCycleUnsafeError, TradingRunner
-from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.app.runtime.runtime_control import TradingRuntimeControl
 from botragram.enums import (
     Interval,
     LiveMarketStreamLifecycleStatus,
@@ -952,7 +952,7 @@ async def _run_rest_before_private_stream_test(
     *,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.WARNING, logger="botragram.app.trading_runner")
+    caplog.set_level(logging.WARNING, logger="botragram.app.runtime.trading_runner")
     control = _active_recovered_control()
     health = _HealthProvider(
         control=control,
@@ -1014,7 +1014,7 @@ async def _run_known_position_heartbeat_test(
     *,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.WARNING, logger="botragram.app.trading_runner")
+    caplog.set_level(logging.WARNING, logger="botragram.app.runtime.trading_runner")
     control = _active_recovered_control()
     health = _HealthProvider(
         control=control,

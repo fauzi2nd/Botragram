@@ -16,7 +16,7 @@ from botragram.models import (
     LiveRuntimePositionContext,
     Ticker,
 )
-from botragram.services.live_market_stream_service import LiveMarketStreamService
+from botragram.services.market.live_market_stream_service import LiveMarketStreamService
 from botragram.services.protection.live_protection_monitoring_service import (
     LiveProtectionMonitoringService,
     PositionProtectionTickHandler,

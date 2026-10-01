@@ -11,12 +11,12 @@ from io import StringIO
 import pytest
 
 from botragram.app import TerminalMonitor, TradingRuntimeControl
-from botragram.app.runtime_control import MarketStreamTelemetry
-from botragram.app.terminal_monitor import TerminalStatus
+from botragram.app.runtime.runtime_control import MarketStreamTelemetry
+from botragram.app.terminal.terminal_monitor import TerminalStatus
 from botragram.engine import PnLEngine
 from botragram.enums import PositionSide, TradeMode
 from botragram.models import Position
-from botragram.services.paper_trading_service import PaperPortfolioSnapshot
+from botragram.services.paper.paper_trading_service import PaperPortfolioSnapshot
 from tests.terminal_helpers import create_terminal_console
 
 
@@ -163,7 +163,7 @@ def test_compact_terminal_humanizes_discovery_rejection_events() -> None:
     """Hide internal snake-case diagnostics from the portrait operator view."""
     monitor = _monitor(width=72)
     record = logging.LogRecord(
-        name="botragram.app.trading_runner",
+        name="botragram.app.runtime.trading_runner",
         level=logging.INFO,
         pathname=__file__,
         lineno=1,
@@ -188,7 +188,7 @@ def test_compact_terminal_humanizes_runner_start_event() -> None:
     """Present startup telemetry without raw snake-case key/value syntax."""
     monitor = _monitor(width=72)
     record = logging.LogRecord(
-        name="botragram.app.trading_runner",
+        name="botragram.app.runtime.trading_runner",
         level=logging.INFO,
         pathname=__file__,
         lineno=1,

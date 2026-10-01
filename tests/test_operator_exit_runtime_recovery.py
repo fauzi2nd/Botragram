@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.app.runtime.runtime_control import TradingRuntimeControl
 from botragram.enums import MarketType, TradeMode
 from botragram.models import (
     LiveMarketStreamIdentity,

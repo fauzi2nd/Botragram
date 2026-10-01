@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import pytest
 
-from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.app.runtime.runtime_control import TradingRuntimeControl
 from botragram.config.risk_settings import RiskSettings
 from botragram.engine import PortfolioEngine, RiskEngine, TradingEngine
 from botragram.enums import (

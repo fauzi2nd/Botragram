@@ -36,7 +36,7 @@ from botragram.models import (
     Signal,
     TradingDecision,
 )
-from botragram.services.live_executable_quote_service import (
+from botragram.services.execution.live_executable_quote_service import (
     get_executable_entry_price,
     is_signal_stale,
 )

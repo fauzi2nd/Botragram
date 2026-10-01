@@ -8,7 +8,7 @@ from collections.abc import Coroutine
 import pytest
 
 import main as main_module
-from botragram.app.terminal_monitor import TerminalMonitor
+from botragram.app.terminal.terminal_monitor import TerminalMonitor
 
 type _MainCoroutine = Coroutine[object, object, None]
 
@@ -69,7 +69,7 @@ def test_autonomous_paper_auto_resumes_when_paused(
     """Auto-resume paper runtime when running in autonomous paper or headless mode."""
     from unittest.mock import AsyncMock, MagicMock
 
-    from botragram.app.runtime_control import TradingRuntimeControl
+    from botragram.app.runtime.runtime_control import TradingRuntimeControl
     from botragram.config import Settings
     from botragram.config.app_settings import AppSettings
     from botragram.config.exchange_settings import ExchangeSettings

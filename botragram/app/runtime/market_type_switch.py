@@ -7,8 +7,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
-from botragram.app.runtime_control import TradingRuntimeControl
-from botragram.app.settings_manager import SettingsManager
+from botragram.app.runtime.runtime_control import TradingRuntimeControl
+from botragram.app.settings.settings_manager import SettingsManager
 from botragram.config import Settings
 from botragram.enums import (
     ExchangeType,

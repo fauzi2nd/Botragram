@@ -28,7 +28,7 @@ from typing import Sequence
 # Local Imports
 # =============================================================================
 from botragram.app import TerminalMonitor, TradingRuntimeControl
-from botragram.app.responsive_terminal_monitor import (
+from botragram.app.terminal.responsive_terminal_monitor import (
     TerminalMonitor as ResponsiveTerminalMonitor,
 )
 from botragram.engine import PnLEngine
@@ -39,7 +39,7 @@ from botragram.enums import (
     TradeMode,
 )
 from botragram.models import Position, StalkingSetup
-from botragram.services.paper_trading_service import PaperPortfolioSnapshot
+from botragram.services.paper.paper_trading_service import PaperPortfolioSnapshot
 from tests.terminal_helpers import create_terminal_console
 
 _START_TIME = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)

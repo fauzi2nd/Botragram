@@ -18,7 +18,7 @@ from botragram.repositories import (
     PositionRepository,
     TradeRepository,
 )
-from botragram.services.live_market_stream_service import LiveMarketStreamService
+from botragram.services.market.live_market_stream_service import LiveMarketStreamService
 from botragram.telegram.query_service import TelegramQueryService
 
 

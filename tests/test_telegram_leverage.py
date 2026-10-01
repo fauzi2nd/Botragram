@@ -28,19 +28,21 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.runtime_control import TradingRuntimeControl
+from botragram.app.runtime.runtime_control import TradingRuntimeControl
 from botragram.models import RuntimeRiskLimits
 from botragram.telegram.callback_routes.callbacks import handle_callback_query
+from botragram.telegram.command_handlers.leverage_commands import (
+    leverage_command,
+    set_leverage_command,
+)
+from botragram.telegram.command_handlers.risk_limit_commands import (
+    set_risk_limits_command,
+)
 from botragram.telegram.context import (
     ALLOWED_CHAT_IDS_KEY,
     BOT_CONTEXT_KEY,
     BotContext,
 )
-from botragram.telegram.leverage_commands import (
-    leverage_command,
-    set_leverage_command,
-)
-from botragram.telegram.risk_limit_commands import set_risk_limits_command
 
 
 # =============================================================================

@@ -28,7 +28,7 @@ from botragram.constants.telegram import (
     CMD_STATUS,
 )
 from botragram.telegram.callback_routes.callbacks import handle_callback_query
-from botragram.telegram.commands import (
+from botragram.telegram.command_handlers.commands import (
     balance_command,
     exchange_command,
     history_command,
@@ -43,11 +43,11 @@ from botragram.telegram.commands import (
     stream_command,
     trading_mode_command,
 )
-from botragram.telegram.leverage_commands import (
+from botragram.telegram.command_handlers.leverage_commands import (
     leverage_command,
     set_leverage_command,
 )
-from botragram.telegram.operator_exit_commands import (
+from botragram.telegram.command_handlers.operator_exit_commands import (
     cancel_exit_command,
     close_all_and_switch_command,
     close_all_command,
@@ -55,25 +55,25 @@ from botragram.telegram.operator_exit_commands import (
     confirm_exit_command,
     exit_status_command,
 )
-from botragram.telegram.operator_exit_progress import (
-    operator_exit_confirm_callback_with_progress,
-)
-from botragram.telegram.risk_limit_commands import (
+from botragram.telegram.command_handlers.risk_limit_commands import (
     risk_limits_command,
     set_risk_limits_command,
 )
-from botragram.telegram.runtime_menu_refresh import (
-    menu_message_handler_with_runtime_refresh,
-    pause_bot_command_with_menu_refresh,
-    start_bot_command_with_menu_refresh,
-)
-from botragram.telegram.strategy_flatten_switch import (
+from botragram.telegram.command_handlers.strategy_flatten_switch import (
     strategy_flatten_confirm_callback,
     strategy_flatten_request_callback,
 )
-from botragram.telegram.strategy_switch import (
+from botragram.telegram.command_handlers.strategy_switch import (
     strategy_switch_callback,
     strategy_switch_command,
+)
+from botragram.telegram.presentation.operator_exit_progress import (
+    operator_exit_confirm_callback_with_progress,
+)
+from botragram.telegram.presentation.runtime_menu_refresh import (
+    menu_message_handler_with_runtime_refresh,
+    pause_bot_command_with_menu_refresh,
+    start_bot_command_with_menu_refresh,
 )
 
 __all__ = ["register_handlers"]

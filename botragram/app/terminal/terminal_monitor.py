@@ -40,8 +40,8 @@ from rich.text import Text
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.global_discovery_telemetry import GlobalDiscoverySnapshot
-from botragram.app.runtime_control import (
+from botragram.app.runtime.global_discovery_telemetry import GlobalDiscoverySnapshot
+from botragram.app.runtime.runtime_control import (
     MarketStreamTelemetry,
     TradingRuntimeControl,
 )
@@ -64,13 +64,13 @@ from botragram.models import (
     RuntimeRiskLimits,
     StalkingSetup,
 )
-from botragram.services.live_futures_user_data_cache import (
+from botragram.services.account.live_futures_user_data_cache import (
     LiveFuturesUserDataSnapshot,
 )
-from botragram.services.live_trading_performance_service import (
+from botragram.services.account.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
-from botragram.services.paper_trading_service import PaperPortfolioSnapshot
+from botragram.services.paper.paper_trading_service import PaperPortfolioSnapshot
 
 __all__ = [
     "DashboardLogEntry",

@@ -21,8 +21,10 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from botragram.app.terminal_monitor import TerminalMonitor as BaseTerminalMonitor
-from botragram.app.terminal_monitor import TerminalStatus
+from botragram.app.terminal.terminal_monitor import (
+    TerminalMonitor as BaseTerminalMonitor,
+)
+from botragram.app.terminal.terminal_monitor import TerminalStatus
 from botragram.enums import LiveFuturesUserDataStatus, TradeMode
 from botragram.models import Position
 

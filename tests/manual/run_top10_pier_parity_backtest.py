@@ -34,8 +34,8 @@ from botragram.app.dependency_provider import DependencyProvider
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.environment_provider import EnvironmentProvider
-from botragram.app.settings_manager import SettingsManager
+from botragram.app.settings.environment_provider import EnvironmentProvider
+from botragram.app.settings.settings_manager import SettingsManager
 from botragram.constants import BYBIT_REST_BASE_URL
 from botragram.enums import (
     ExchangeType,
@@ -46,7 +46,7 @@ from botragram.enums import (
 )
 from botragram.exchanges import ExchangeFactory
 from botragram.models import BacktestRequest, BacktestTrade
-from botragram.services.backtest_service import BacktestService
+from botragram.services.backtest.backtest_service import BacktestService
 from botragram.strategies.factory import StrategyFactory
 from botragram.strategies.price_action.pinbar_engulfing_ema_rsi import (
     PinbarEngulfingEmaRsiStrategy,

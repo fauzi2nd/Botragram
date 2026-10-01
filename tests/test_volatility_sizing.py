@@ -302,8 +302,8 @@ def test_settings_manager_loads_dynamic_sizing_env(
     tmp_path: Path,
 ) -> None:
     """Verify SettingsManager parses dynamic sizing environment variables."""
-    from botragram.app.environment_provider import EnvironmentProvider
-    from botragram.app.settings_manager import SettingsManager
+    from botragram.app.settings.environment_provider import EnvironmentProvider
+    from botragram.app.settings.settings_manager import SettingsManager
 
     monkeypatch.delenv("BOTRAGRAM_ENV_FILE", raising=False)
     monkeypatch.delenv("BOTRAGRAM_PROFILE", raising=False)

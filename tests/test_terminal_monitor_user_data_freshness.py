@@ -5,10 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from botragram.app.terminal_monitor import TerminalMonitor
+from botragram.app.terminal.terminal_monitor import TerminalMonitor
 from botragram.enums import Interval, LiveFuturesUserDataStatus, PositionSide
 from botragram.models import FuturesUserDataPositionUpdate, Position
-from botragram.services.live_futures_user_data_cache import LiveFuturesUserDataSnapshot
+from botragram.services.account.live_futures_user_data_cache import (
+    LiveFuturesUserDataSnapshot,
+)
 
 _NOW = datetime(2026, 8, 25, tzinfo=UTC)
 

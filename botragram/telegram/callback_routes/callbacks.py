@@ -47,7 +47,7 @@ from botragram.enums import (
     StrategyType,
 )
 from botragram.models import LiveRuntimeHealthSnapshot, Order, Trade
-from botragram.services.live_trading_performance_service import (
+from botragram.services.account.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
 from botragram.telegram.access import is_authorized_update

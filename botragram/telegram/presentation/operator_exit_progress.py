@@ -14,8 +14,10 @@ from botragram.constants.telegram import (
 from botragram.enums import OperatorExitStatus
 from botragram.exceptions import OperatorExitConfirmationUnavailableError
 from botragram.telegram.access import is_authorized_update
+from botragram.telegram.command_handlers.operator_exit_commands import (
+    get_operator_exit_requester,
+)
 from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
-from botragram.telegram.operator_exit_commands import get_operator_exit_requester
 
 __all__ = ["operator_exit_confirm_callback_with_progress"]
 

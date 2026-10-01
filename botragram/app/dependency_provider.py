@@ -17,22 +17,24 @@ from pathlib import Path
 from typing import Final
 
 from botragram.app.backtest_session_factory import InMemoryBacktestSessionFactory
-from botragram.app.live_futures_user_data_service import LiveFuturesUserDataService
-from botragram.app.market_type_switch import (
+from botragram.app.runtime.live_futures_user_data_service import (
+    LiveFuturesUserDataService,
+)
+from botragram.app.runtime.market_type_switch import (
     MarketTypeSwitchService,
     RuntimeRestartCoordinator,
 )
-from botragram.app.runtime_control import TradingRuntimeControl
-from botragram.app.runtime_limited_autonomous_live_executor import (
+from botragram.app.runtime.runtime_control import TradingRuntimeControl
+from botragram.app.runtime.runtime_limited_autonomous_live_executor import (
     RuntimeLimitedAutonomousLiveTradingCycleExecutor,
 )
-from botragram.app.settings_manager import SettingsManager
-from botragram.app.trading_runner import (
+from botragram.app.runtime.trading_runner import (
     AutonomousPaperTradingCycleExecutor,
     HumanConfirmedPaperTradingCycleExecutor,
     SingleSymbolTradingCycleExecutor,
     TradingCycleExecutor,
 )
+from botragram.app.settings.settings_manager import SettingsManager
 from botragram.config import Settings
 from botragram.config.exchange_settings import ExchangeSettings
 from botragram.config.risk_settings import RiskSettings
@@ -155,8 +157,8 @@ from botragram.services import (
     StrategyService,
     VolumeRankedDiscoveryUniverseService,
 )
-from botragram.services.live_market_stream_service import MarketTickListener
-from botragram.services.trading_service import TradingService
+from botragram.services.execution.trading_service import TradingService
+from botragram.services.market.live_market_stream_service import MarketTickListener
 from botragram.storage.memory import MemoryExecutionAuthorizationRepository
 from botragram.storage.sqlite import (
     SQLiteAutonomousLiveOpportunityClaimRepository,

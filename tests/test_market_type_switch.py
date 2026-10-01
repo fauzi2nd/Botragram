@@ -17,7 +17,7 @@ from botragram.app import (
     TradingRuntimeControl,
     run_until_restart,
 )
-from botragram.app.environment_provider import EnvironmentProvider
+from botragram.app.settings.environment_provider import EnvironmentProvider
 from botragram.config import Settings
 from botragram.config.app_settings import AppSettings
 from botragram.config.exchange_settings import ExchangeSettings

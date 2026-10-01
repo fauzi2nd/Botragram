@@ -27,8 +27,8 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.environment_provider import EnvironmentProvider
-from botragram.app.settings_manager import SettingsManager
+from botragram.app.settings.environment_provider import EnvironmentProvider
+from botragram.app.settings.settings_manager import SettingsManager
 from botragram.enums import Interval, StrategyType
 
 

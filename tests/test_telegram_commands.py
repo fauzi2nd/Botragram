@@ -55,12 +55,12 @@ from botragram.models import (
     TradingDecision,
     TradingResult,
 )
-from botragram.services.live_trading_performance_service import (
+from botragram.services.account.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
 from botragram.telegram.access import is_chat_allowed
 from botragram.telegram.callback_routes.callbacks import handle_callback_query
-from botragram.telegram.commands import (
+from botragram.telegram.command_handlers.commands import (
     balance_command,
     history_command,
     menu_message_handler,
@@ -70,12 +70,12 @@ from botragram.telegram.commands import (
     start_bot_command,
     status_command,
 )
+from botragram.telegram.command_handlers.strategy_switch import strategy_switch_callback
 from botragram.telegram.context import (
     ALLOWED_CHAT_IDS_KEY,
     BOT_CONTEXT_KEY,
     BotContext,
 )
-from botragram.telegram.strategy_switch import strategy_switch_callback
 
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _ALLOWED_CHAT_ID = 12345

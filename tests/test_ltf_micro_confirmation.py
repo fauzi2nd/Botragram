@@ -29,8 +29,8 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.environment_provider import EnvironmentProvider
-from botragram.app.settings_manager import SettingsManager
+from botragram.app.settings.environment_provider import EnvironmentProvider
+from botragram.app.settings.settings_manager import SettingsManager
 from botragram.enums import Interval, SignalType, StrategyType
 from botragram.indicators.trend.ltf_micro_filter import (
     LtfConfirmationMode,

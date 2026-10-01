@@ -10,7 +10,9 @@ from decimal import Decimal
 
 import pytest
 
-from botragram.app.live_futures_user_data_service import LiveFuturesUserDataService
+from botragram.app.runtime.live_futures_user_data_service import (
+    LiveFuturesUserDataService,
+)
 from botragram.enums import (
     FuturesAlgoOrderStatus,
     Interval,
@@ -32,7 +34,9 @@ from botragram.models import (
     Order,
     Position,
 )
-from botragram.services.live_futures_user_data_cache import LiveFuturesUserDataCache
+from botragram.services.account.live_futures_user_data_cache import (
+    LiveFuturesUserDataCache,
+)
 
 _NOW = datetime(2026, 8, 25, tzinfo=UTC)
 

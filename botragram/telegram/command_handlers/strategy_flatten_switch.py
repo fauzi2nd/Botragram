@@ -18,11 +18,11 @@ from botragram.exceptions import (
     OperatorExitConfirmationUnavailableError,
 )
 from botragram.telegram.access import is_authorized_update
-from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
-from botragram.telegram.operator_exit_commands import (
+from botragram.telegram.command_handlers.operator_exit_commands import (
     format_operator_exit_confirmation,
     get_operator_exit_requester,
 )
+from botragram.telegram.context import BOT_CONTEXT_KEY, BotContext
 
 __all__ = [
     "strategy_flatten_confirm_callback",

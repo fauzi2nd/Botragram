@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from botragram.app.operator_terminal_monitor import TerminalMonitor
+from botragram.app.terminal.operator_terminal_monitor import TerminalMonitor
 
 
 class _TestTerminalMonitor(TerminalMonitor):

@@ -17,7 +17,11 @@ from botragram.constants.telegram import (
     MENU_STRATEGY,
 )
 from botragram.enums import ExecutionPolicy, Interval, StrategyType
-from botragram.telegram.commands import strategy_command
+from botragram.telegram.command_handlers.commands import strategy_command
+from botragram.telegram.command_handlers.strategy_switch import (
+    strategy_switch_callback,
+    strategy_switch_command,
+)
 from botragram.telegram.context import (
     ALLOWED_CHAT_IDS_KEY,
     BOT_CONTEXT_KEY,
@@ -25,12 +29,8 @@ from botragram.telegram.context import (
     BotRuntimeControl,
 )
 from botragram.telegram.presentation.messages import get_strategy_message
-from botragram.telegram.runtime_menu_refresh import (
+from botragram.telegram.presentation.runtime_menu_refresh import (
     menu_message_handler_with_runtime_refresh,
-)
-from botragram.telegram.strategy_switch import (
-    strategy_switch_callback,
-    strategy_switch_command,
 )
 
 _CHAT_ID = 12345

@@ -749,35 +749,37 @@ Botragram/
 |   |-- app/
 |   |   |-- __init__.py
 |   |   |-- application.py
-|   |   |-- backfill_command.py       # Historical candle backfill CLI runner
-|   |   |-- backtest_command.py       # Backtest CLI composition dan report
 |   |   |-- backtest_session_factory.py # Isolated PAPER replay composition
+|   |   |-- cli/
+|   |   |   |-- backfill_command.py # Historical candle backfill CLI runner
+|   |   |   `-- backtest_command.py # Backtest CLI composition dan report
 |   |   |-- connectivity.py           # Backward-compatible classifier re-export
 |   |   |-- dependency_provider.py    # Composition root dan manual wiring container
-|   |   |-- env_validator.py          # Duplicate environment-key validation at startup
-|   |   |-- environment_provider.py
-|   |   |-- global_discovery_telemetry.py # Read-only ranked discovery snapshot
 |   |   |-- lifecycle.py
-|   |   |-- live_futures_user_data_service.py # Owned REST-seeded private Futures cache lifecycle
-|   |   |-- market_type_switch.py     # Guarded Spot/Futures soft restart
-|   |   |-- operator_terminal_monitor.py # Operator dashboard monitor adapter
-|   |   |-- responsive_terminal_monitor.py # Terminal monitor responsive layout
 |   |   |-- runtime/
 |   |   |   |-- __init__.py
 |   |   |   |-- autonomous_live_cycle_executor.py # Ranked LIVE protected entry
 |   |   |   |-- context_cycle_scheduler.py # Per-context cycle cadence
+|   |   |   |-- global_discovery_telemetry.py # Ranked discovery snapshot
+|   |   |   |-- live_futures_user_data_service.py # Private Futures cache lifecycle
 |   |   |   |-- live_runtime_recovery_policy.py # Pure LIVE recovery health gates
-|   |   |   |-- multi_context_activation.py # Immutable activation preconditions
+|   |   |   |-- market_type_switch.py # Guarded Spot/Futures soft restart
 |   |   |   |-- paper_cycle_executors.py # PAPER discovery cycle adapters
-|   |   |   `-- single_symbol_cycle_executor.py # Single-symbol runtime adapter
-|   |   |-- runtime_control.py
-|   |   |-- runtime_instance_lock.py  # One runtime per database-scoped deployment
-|   |   |-- runtime_limited_autonomous_live_executor.py # Dynamic capacity adapter
-|   |   |-- settings_manager.py
+|   |   |   |-- runtime_control.py
+|   |   |   |-- runtime_instance_lock.py # One runtime per database
+|   |   |   |-- runtime_limited_autonomous_live_executor.py # Dynamic capacity
+|   |   |   |-- single_symbol_cycle_executor.py # Single-symbol runtime adapter
+|   |   |   `-- trading_runner.py
+|   |   |-- settings/
+|   |   |   |-- env_validator.py # Duplicate environment-key validation
+|   |   |   |-- environment_provider.py
+|   |   |   `-- settings_manager.py
 |   |   |-- shutdown.py
 |   |   |-- startup.py
-|   |   |-- terminal_monitor.py       # Rich status/stream/log dashboard
-|   |   `-- trading_runner.py
+|   |   `-- terminal/
+|   |       |-- operator_terminal_monitor.py # Operator dashboard
+|   |       |-- responsive_terminal_monitor.py # Responsive layout
+|   |       `-- terminal_monitor.py # Rich status/stream/log dashboard
 |   |-- config/
 |   |   |-- __init__.py
 |   |   |-- ai_settings.py
@@ -932,10 +934,13 @@ Botragram/
 |   |   `-- trade_repository.py
 |   |-- services/
 |   |   |-- __init__.py
-|   |   |-- account_service.py
-|   |   |-- autonomous_live_recovery_observability_service.py
-|   |   |-- autonomous_paper_execution_service.py
-|   |   |-- backtest_service.py
+|   |   |-- account/
+|   |   |   |-- account_service.py
+|   |   |   |-- live_account_drawdown_service.py
+|   |   |   |-- live_futures_user_data_cache.py
+|   |   |   `-- live_trading_performance_service.py
+|   |   |-- backtest/
+|   |   |   `-- backtest_service.py
 |   |   |-- discovery/
 |   |   |   |-- __init__.py
 |   |   |   |-- opportunity_discovery_service.py # Bounded actionable signal discovery
@@ -946,29 +951,28 @@ Botragram/
 |   |   |   |-- autonomous_live_entry_execution_service.py
 |   |   |   |-- autonomous_live_entry_intent_service.py
 |   |   |   |-- execution_authorization_service.py
+|   |   |   |-- live_entry_risk_evaluation_service.py
+|   |   |   |-- live_executable_quote_service.py # Fresh LIVE quote gate
 |   |   |   |-- live_futures_entry_service.py
-|   |   |   `-- order_service.py
-|   |   |-- health_service.py
-|   |   |-- human_confirmed_paper_execution_service.py
-|   |   |-- live_account_drawdown_service.py
-|   |   |-- live_entry_risk_evaluation_service.py
-|   |   |-- live_executable_quote_service.py # Shared fresh LIVE quote/staleness gate
-|   |   |-- live_futures_user_data_cache.py
-|   |   |-- live_market_stream_service.py
-|   |   |-- live_trading_performance_service.py # Net lifecycle performance
+|   |   |   |-- order_service.py
+|   |   |   `-- trading_service.py
 |   |   |-- market/
 |   |   |   |-- __init__.py
 |   |   |   |-- candle_retention_service.py
 |   |   |   |-- candle_sync_service.py
+|   |   |   |-- live_market_stream_service.py
 |   |   |   |-- market_service.py
 |   |   |   `-- stored_resampled_candle_provider.py
 |   |   |-- notification_message_formatter.py # Notification formatting contract
-|   |   |-- operator_exit_service.py
-|   |   |-- paper_trading_service.py
+|   |   |-- paper/
+|   |   |   |-- autonomous_paper_execution_service.py
+|   |   |   |-- human_confirmed_paper_execution_service.py
+|   |   |   `-- paper_trading_service.py
 |   |   |-- position/
 |   |   |   |-- __init__.py
 |   |   |   |-- closed_position_lifecycle_service.py # Exact-order lifecycle enrichment
 |   |   |   |-- live_position_lifecycle_coordinator.py
+|   |   |   |-- operator_exit_service.py
 |   |   |   |-- position_exit_service.py
 |   |   |   `-- position_service.py
 |   |   |-- protection/
@@ -978,6 +982,7 @@ Botragram/
 |   |   |   `-- position_protection_manager.py
 |   |   |-- recovery/
 |   |   |   |-- __init__.py
+|   |   |   |-- autonomous_live_recovery_observability_service.py
 |   |   |   |-- live_natural_exit_recovery_service.py
 |   |   |   |-- live_portfolio_recovery_service.py
 |   |   |   |-- live_post_entry_recovery_service.py
@@ -985,12 +990,12 @@ Botragram/
 |   |   |   `-- runtime_recovery_service.py
 |   |   |-- runtime/
 |   |   |   |-- __init__.py
+|   |   |   |-- health_service.py
 |   |   |   |-- live_runtime_health_service.py
 |   |   |   |-- live_runtime_portfolio_reconciliation_service.py
 |   |   |   |-- runtime_reporter.py
 |   |   |   `-- runtime_risk_limit_service.py
-|   |   |-- strategy_service.py
-|   |   `-- trading_service.py
+|   |   `-- strategy_service.py
 |   |-- storage/
 |   |   |-- __init__.py
 |   |   |-- base/
@@ -1027,22 +1032,23 @@ Botragram/
 |   |   |   |-- callbacks.py # Callback router and configuration controls
 |   |   |   |-- execution_policy.py # Guarded trading-mode switch callbacks
 |   |   |   `-- operator_exit.py # Guarded portfolio-exit callbacks
-|   |   |-- commands.py
+|   |   |-- command_handlers/
+|   |   |   |-- commands.py
+|   |   |   |-- leverage_commands.py
+|   |   |   |-- operator_exit_commands.py
+|   |   |   |-- risk_limit_commands.py
+|   |   |   |-- strategy_flatten_switch.py
+|   |   |   `-- strategy_switch.py
 |   |   |-- context.py
 |   |   |-- handlers.py
-|   |   |-- leverage_commands.py
-|   |   |-- operator_exit_commands.py
-|   |   |-- operator_exit_progress.py
 |   |   |-- presentation/
 |   |   |   |-- __init__.py
 |   |   |   |-- keyboards.py # Telegram keyboard layouts
 |   |   |   |-- messages.py # Telegram HTML message templates
-|   |   |   `-- notification_message_formatter.py # Telegram notification adapter
-|   |   |-- query_service.py
-|   |   |-- risk_limit_commands.py
-|   |   |-- runtime_menu_refresh.py
-|   |   |-- strategy_flatten_switch.py
-|   |   `-- strategy_switch.py
+|   |   |   |-- notification_message_formatter.py # Telegram adapter
+|   |   |   |-- operator_exit_progress.py
+|   |   |   `-- runtime_menu_refresh.py
+|   |   `-- query_service.py
 |   `-- utils/
 |       |-- __init__.py
 |       |-- candle_aggregator.py

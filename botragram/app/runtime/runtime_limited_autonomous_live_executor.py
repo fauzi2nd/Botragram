@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from botragram.app.trading_runner import AutonomousLiveTradingCycleExecutor
+from botragram.app.runtime.trading_runner import AutonomousLiveTradingCycleExecutor
 from botragram.models import LiveRuntimePortfolioContext, RuntimeRiskLimits
 
 __all__ = ["RuntimeLimitedAutonomousLiveTradingCycleExecutor"]

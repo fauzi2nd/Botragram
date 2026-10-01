@@ -26,7 +26,7 @@ import pytest
 # =============================================================================
 # Local Imports
 # =============================================================================
-from botragram.app.backfill_command import (
+from botragram.app.cli.backfill_command import (
     format_backfill_report,
     is_backfill_command,
     parse_backfill_request,

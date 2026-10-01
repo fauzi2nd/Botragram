@@ -29,13 +29,13 @@ from botragram.app import (
     prepare_restarted_runtime_session,
     run_until_restart,
 )
-from botragram.app.backfill_command import (
+from botragram.app.cli.backfill_command import (
     format_backfill_report,
     is_backfill_command,
     parse_backfill_request,
     run_backfill_command,
 )
-from botragram.app.backtest_command import (
+from botragram.app.cli.backtest_command import (
     format_backtest_report,
     is_backtest_command,
     parse_backtest_request,
