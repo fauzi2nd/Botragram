@@ -882,6 +882,8 @@ class TradingRunner:
                 self._activate_recovered_runtime(snapshot=health_snapshot)
             except Exception:
                 _LOGGER.exception("Autonomous LIVE recovered runtime activation failed")
+                self.runtime_control.set_position_protection_ready(False)
+                self.runtime_control.pause()
                 return _RecoveryConvergence.UNSAFE
             health_snapshot = health_provider.get_snapshot()
 
