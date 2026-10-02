@@ -1054,6 +1054,45 @@ def test_pier_trigger_guards_bollinger_bands() -> None:
     assert "BB lower zone" in reason_short
 
 
+def test_pier_entry_zone_requires_directional_band_edge() -> None:
+    """Reject middle-band entries and allow prices near the matching edge."""
+    strategy = PinbarEngulfingEmaRsiStrategy(bb_period=20)
+    candles = _build_uptrend_candles(count=40)
+    from botragram.indicators import calculate_bollinger_bands
+
+    bands = calculate_bollinger_bands(
+        tuple(candle.close_price for candle in candles),
+        period=strategy.bb_period,
+        standard_deviation=strategy.bb_std_dev,
+    )
+    lower, upper = bands.lower[-1], bands.upper[-1]
+    width = upper - lower
+    assert width > 0
+
+    for side, edge_price, middle_price in (
+        (PositionSide.LONG, lower + width * Decimal("0.25"), lower + width / 2),
+        (PositionSide.SHORT, lower + width * Decimal("0.75"), lower + width / 2),
+    ):
+        accepted, _ = strategy.validate_entry_zone(
+            side=side, candles=candles, entry_price=edge_price
+        )
+        rejected, reason = strategy.validate_entry_zone(
+            side=side, candles=candles, entry_price=middle_price
+        )
+        assert accepted
+        assert not rejected
+        assert "BB zone" in reason
+
+    too_low, _ = strategy.validate_entry_zone(
+        side=PositionSide.LONG, candles=candles, entry_price=lower - Decimal("1")
+    )
+    too_high, _ = strategy.validate_entry_zone(
+        side=PositionSide.SHORT, candles=candles, entry_price=upper + Decimal("1")
+    )
+    assert not too_low
+    assert not too_high
+
+
 def test_pier_trigger_guards_macd_momentum() -> None:
     """MACD momentum guard rejects LONG on decaying histogram (bar kosong)."""
     strategy = PinbarEngulfingEmaRsiStrategy(
@@ -1309,9 +1348,9 @@ def test_pier_stalking_trigger_confluence_filters() -> None:
             open_time=now - timedelta(minutes=5 * (10 - i)),
             close_time=now - timedelta(minutes=5 * (9 - i)),
             open_price=Decimal("100.5"),
-            high_price=Decimal("101.0"),
+            high_price=Decimal("101.5"),
             low_price=Decimal("100.3"),
-            close_price=Decimal("100.9"),
+            close_price=Decimal("101.0") if i < 9 else Decimal("100.9"),
             volume=Decimal("100.0"),
             open_interest=Decimal("1000.0") - Decimal(str(i * 50)),
         )
@@ -1396,9 +1435,9 @@ def test_pier_stalking_trigger_structural_tp_clamp() -> None:
             high_price=Decimal("104.0") if i < 9 else Decimal("100.5"),
             low_price=Decimal("98.0") if i < 9 else Decimal("100.0"),
             close_price=(
-                Decimal("102.0")
+                Decimal("103.0")
                 if i % 2 == 0 and i < 9
-                else (Decimal("99.0") if i < 9 else Decimal("100.4"))
+                else (Decimal("101.0") if i < 9 else Decimal("100.4"))
             ),
             volume=Decimal("100.0"),
         )

@@ -199,6 +199,29 @@ class StrategyService:
                                 ),
                             )
 
+                        zone_valid, zone_reason = (
+                            self.signal_engine.validate_entry_zone(
+                                side=updated.side,
+                                candles=candles,
+                                entry_price=latest_candle.close_price,
+                                strategy_type=strategy_type,
+                            )
+                        )
+                        if not zone_valid:
+                            stalking_svc.invalidate_setup(
+                                symbol,
+                                reason=f"Entry zone rejected: {zone_reason}",
+                            )
+                            return Signal(
+                                symbol=symbol,
+                                signal_type=SignalType.HOLD,
+                                price=latest_candle.close_price,
+                                confidence=Decimal("0"),
+                                strategy_name=resolved_type.value,
+                                generated_at=latest_candle.close_time,
+                                reason=f"[STALKING_INVALIDATED] {zone_reason}",
+                            )
+
                         # 2. Build triggered entry signal
                         triggered_signal = stalking_svc.build_triggered_signal(
                             setup=updated,

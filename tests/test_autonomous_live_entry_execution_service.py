@@ -13,7 +13,7 @@ import pytest
 
 from botragram.app.runtime.runtime_control import TradingRuntimeControl
 from botragram.config.risk_settings import RiskSettings
-from botragram.engine import PortfolioEngine, RiskEngine, TradingEngine
+from botragram.engine import PortfolioEngine, RiskEngine, SignalEngine, TradingEngine
 from botragram.enums import (
     AutonomousLiveEntryExecutionStatus,
     ExchangeEnvironment,
@@ -38,6 +38,7 @@ from botragram.exceptions import (
 from botragram.models import (
     AutonomousLiveEntryAuthorization,
     AutonomousLiveEntryIntent,
+    Candle,
     ExecutableQuote,
     Order,
     Position,
@@ -50,6 +51,10 @@ from botragram.services import (
     AutonomousLiveEntryExecutionService,
     LiveEntryRiskEvaluationService,
     LiveFuturesEntryService,
+)
+from botragram.strategies.factory import StrategyResolver
+from botragram.strategies.price_action.pinbar_engulfing_ema_rsi import (
+    PinbarEngulfingEmaRsiStrategy,
 )
 
 _NOW = datetime(2026, 8, 18, tzinfo=timezone.utc)
@@ -102,6 +107,7 @@ class _FakeMarketService:
     quote: ExecutableQuote
     preserve_quote_symbol: bool = False
     calls: list[str] = field(default_factory=list[str])
+    candles: tuple[Candle, ...] = ()
 
     async def get_executable_quote(self, *, symbol: str) -> ExecutableQuote:
         """Return the configured quote after recording its requested symbol."""
@@ -111,6 +117,20 @@ class _FakeMarketService:
             if self.preserve_quote_symbol
             else replace(self.quote, symbol=symbol)
         )
+
+    async def get_candles(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        limit: int,
+        persist: bool = False,
+        prefer_stored: bool = True,
+        as_of: datetime | None = None,
+    ) -> Sequence[Candle]:
+        """Return deterministic closed candles for PIER zone revalidation."""
+        del symbol, interval, persist, prefer_stored, as_of
+        return self.candles[-limit:]
 
 
 @dataclass
@@ -401,6 +421,7 @@ def _create_service(
     market_service: _FakeMarketService | None = None,
     environment: ExchangeEnvironment = ExchangeEnvironment.TESTNET,
     setup_stalking_consumer: _SpyStalkingConsumer | None = None,
+    signal_engine: SignalEngine | None = None,
 ) -> AutonomousLiveEntryExecutionService:
     """Create the adapter around canonical fresh-risk dependencies."""
     return AutonomousLiveEntryExecutionService(
@@ -422,6 +443,7 @@ def _create_service(
         live_futures_entry_service=protected_entry_service,
         environment=environment,
         setup_stalking_consumer=setup_stalking_consumer,
+        signal_engine=signal_engine,
         max_executable_quote_age_ms=max_executable_quote_age_ms,
         max_spread_bps=max_spread_bps,
         utc_now=utc_now,
@@ -584,6 +606,99 @@ def test_buy_risk_uses_current_ask_while_preserving_signal_provenance() -> None:
     assert result.decision.risk_result.metrics.entry_price == Decimal("125")
     assert result.decision.risk_result.metrics.risk_amount <= Decimal("10")
     assert result.decision.risk_result.position.quantity != intent.quantity
+
+
+@pytest.mark.parametrize(
+    ("side", "bid_price", "ask_price", "expected_status"),
+    [
+        (
+            SignalType.BUY,
+            Decimal("99.9"),
+            Decimal("100.1"),
+            AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED,
+        ),
+        (
+            SignalType.SELL,
+            Decimal("99.9"),
+            Decimal("100.1"),
+            AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED,
+        ),
+        (
+            SignalType.BUY,
+            Decimal("98.1"),
+            Decimal("98.2"),
+            AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED,
+        ),
+        (
+            SignalType.SELL,
+            Decimal("101.8"),
+            Decimal("101.9"),
+            AutonomousLiveEntryExecutionStatus.EXECUTED_AND_PROTECTED,
+        ),
+    ],
+)
+def test_pier_live_quote_respects_directional_bb_zone(
+    side: SignalType,
+    bid_price: Decimal,
+    ask_price: Decimal,
+    expected_status: AutonomousLiveEntryExecutionStatus,
+) -> None:
+    """Reject mid-band quotes while allowing valid directional-edge quotes."""
+    initial = _create_intent()
+    signal = replace(
+        initial.signal,
+        signal_type=side,
+        strategy_name=StrategyType.PINBAR_ENGULFING_EMA_RSI.value,
+    )
+    intent = replace(
+        initial,
+        signal=signal,
+        strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    candles = tuple(
+        Candle(
+            symbol=intent.symbol,
+            interval=intent.interval,
+            open_time=_NOW - timedelta(minutes=15 * (21 - index)),
+            close_time=_NOW - timedelta(minutes=15 * (20 - index)),
+            open_price=Decimal("100"),
+            high_price=Decimal("102"),
+            low_price=Decimal("98"),
+            close_price=Decimal("99") if index % 2 else Decimal("101"),
+            volume=Decimal("100"),
+        )
+        for index in range(20)
+    )
+    strategy = PinbarEngulfingEmaRsiStrategy()
+    signal_engine = SignalEngine(
+        strategy_resolver=StrategyResolver(
+            strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: strategy}
+        ),
+        default_strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
+    )
+    protected_entry = _FakeProtectedEntryService()
+    result = asyncio.run(
+        _create_service(
+            account_service=_FakeAccountService(balances=[Decimal("500")]),
+            position_service=_FakePositionService(portfolios=[()]),
+            protected_entry_service=protected_entry,
+            market_service=_FakeMarketService(
+                quote=_create_executable_quote(
+                    bid_price=bid_price, ask_price=ask_price
+                ),
+                candles=candles,
+            ),
+            signal_engine=signal_engine,
+        ).execute(intent=intent, authorization=_create_authorization())
+    )
+
+    assert result.status is expected_status
+    if expected_status is AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED:
+        assert result.decision is not None
+        assert "BB zone" in result.decision.reason
+        assert protected_entry.calls == []
+    else:
+        assert len(protected_entry.calls) == 1
 
 
 def test_sell_risk_uses_current_bid() -> None:

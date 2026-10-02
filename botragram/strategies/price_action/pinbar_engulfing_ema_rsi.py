@@ -75,6 +75,8 @@ _STRONG_ENGULFING_BONUS_RATIO: Final[Decimal] = Decimal("1.25")
 _STRONG_STAR_BONUS_RATIO: Final[Decimal] = Decimal("0.80")
 _SAR_BONUS: Final[Decimal] = Decimal("0.05")
 _CONFIDENCE_STEP_BONUS: Final[Decimal] = Decimal("0.05")
+_LONG_ENTRY_MAX_BB_POSITION: Final[Decimal] = Decimal("0.25")
+_SHORT_ENTRY_MIN_BB_POSITION: Final[Decimal] = Decimal("0.75")
 
 
 # =============================================================================
@@ -1638,6 +1640,36 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                             " (no bearish momentum signal)",
                         )
 
+        return True, ""
+
+    def validate_entry_zone(
+        self,
+        *,
+        side: PositionSide,
+        candles: Sequence[Candle],
+        entry_price: Decimal,
+    ) -> tuple[bool, str]:
+        """Require an executable entry to remain near its directional BB edge."""
+        if len(candles) < self.bb_period or not entry_price.is_finite():
+            return False, "BB entry zone unavailable"
+        bands = calculate_bollinger_bands(
+            tuple(candle.close_price for candle in candles),
+            period=self.bb_period,
+            standard_deviation=self.bb_std_dev,
+        )
+        lower = bands.lower[-1]
+        width = bands.upper[-1] - lower
+        if width <= _DECIMAL_ZERO:
+            return False, "BB entry zone unavailable"
+        band_position = (entry_price - lower) / width
+        if side is PositionSide.LONG and not (
+            _DECIMAL_ZERO <= band_position <= _LONG_ENTRY_MAX_BB_POSITION
+        ):
+            return False, "LONG entry outside lower BB zone"
+        if side is PositionSide.SHORT and not (
+            _SHORT_ENTRY_MIN_BB_POSITION <= band_position <= _DECIMAL_ONE
+        ):
+            return False, "SHORT entry outside upper BB zone"
         return True, ""
 
     def clamp_structural_take_profit(

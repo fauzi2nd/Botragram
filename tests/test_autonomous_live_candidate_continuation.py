@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -24,6 +25,7 @@ from botragram.exceptions import (
 from botragram.models import (
     AutonomousLiveEntryAuthorization,
     AutonomousLiveEntryIntent,
+    Candle,
     ExecutableQuote,
     LiveEntryRiskEvaluation,
     Order,
@@ -101,6 +103,20 @@ class _Market:
             ask_price=Decimal("10"),
             timestamp=_NOW,
         )
+
+    async def get_candles(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        limit: int,
+        persist: bool = False,
+        prefer_stored: bool = True,
+        as_of: datetime | None = None,
+    ) -> Sequence[Candle]:
+        """Return no candles for non-PIER continuation tests."""
+        del symbol, interval, limit, persist, prefer_stored, as_of
+        return ()
 
 
 @dataclass(slots=True)
