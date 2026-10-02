@@ -5,15 +5,19 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Final, Protocol
 
+from botragram.engine import SignalEngine
 from botragram.enums import (
     AutonomousLiveEntryExecutionStatus,
     ExchangeEnvironment,
     Interval,
     OrderType,
+    PositionSide,
+    SignalType,
+    StrategyType,
 )
 from botragram.exceptions import (
     ExchangeOrderRejectedError,
@@ -29,6 +33,7 @@ from botragram.models import (
     AutonomousLiveEntryAuthorization,
     AutonomousLiveEntryExecutionResult,
     AutonomousLiveEntryIntent,
+    Candle,
     ExecutableQuote,
     LiveEntryRiskEvaluation,
     Order,
@@ -44,6 +49,7 @@ from botragram.services.execution.live_executable_quote_service import (
 __all__ = ["AutonomousLiveEntryExecutionService"]
 
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+_PIER_ENTRY_ZONE_CANDLE_LIMIT: Final[int] = 50
 
 
 def _utc_now() -> datetime:
@@ -65,6 +71,19 @@ class _LiveEntryRiskEvaluator(Protocol):
 class _LiveExecutableQuoteProvider(Protocol):
     async def get_executable_quote(self, *, symbol: str) -> ExecutableQuote:
         """Return the current executable quote for an exact trading symbol."""
+        ...
+
+    async def get_candles(
+        self,
+        *,
+        symbol: str,
+        interval: Interval,
+        limit: int,
+        persist: bool = False,
+        prefer_stored: bool = True,
+        as_of: datetime | None = None,
+    ) -> Sequence[Candle]:
+        """Return recent candles for entry-zone validation."""
         ...
 
 
@@ -101,6 +120,7 @@ class AutonomousLiveEntryExecutionService:
     live_futures_entry_service: _ProtectedLiveEntryExecutor
     environment: ExchangeEnvironment
     setup_stalking_consumer: _StalkingSetupConsumer | None = None
+    signal_engine: SignalEngine | None = None
     max_executable_quote_age_ms: int = 1_000
     max_spread_bps: Decimal = Decimal("20")
     utc_now: Callable[[], datetime] = _utc_now
@@ -135,6 +155,31 @@ class AutonomousLiveEntryExecutionService:
                 status=AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED,
                 decision=self._market_reference_rejected_decision(signal=intent.signal),
             )
+
+        if (
+            intent.strategy_type is StrategyType.PINBAR_ENGULFING_EMA_RSI
+            or intent.signal.strategy_name
+            == StrategyType.PINBAR_ENGULFING_EMA_RSI.value
+        ):
+            zone_valid, zone_reason = await self._validate_pier_entry_zone(
+                intent=intent,
+                entry_price=entry_price_override,
+            )
+            if not zone_valid:
+                _LOGGER.info(
+                    "Autonomous LIVE entry outside PIER BB zone: symbol=%s reason=%s",
+                    intent.symbol,
+                    zone_reason,
+                )
+                return AutonomousLiveEntryExecutionResult(
+                    status=AutonomousLiveEntryExecutionStatus.MARKET_REFERENCE_REJECTED,
+                    decision=TradingDecision(
+                        should_execute=False,
+                        signal=intent.signal,
+                        risk_result=None,
+                        reason=zone_reason,
+                    ),
+                )
 
         evaluation = await self.risk_evaluation_service.evaluate(
             signal=intent.signal,
@@ -285,6 +330,47 @@ class AutonomousLiveEntryExecutionService:
             as_of=self.utc_now(),
             max_quote_age_ms=self.max_executable_quote_age_ms,
             max_spread_bps=self.max_spread_bps,
+        )
+
+    async def _validate_pier_entry_zone(
+        self,
+        *,
+        intent: AutonomousLiveEntryIntent,
+        entry_price: Decimal,
+    ) -> tuple[bool, str]:
+        """Recheck PIER BB location using the current executable quote."""
+        if self.signal_engine is None:
+            return False, "PIER entry zone validator unavailable"
+        as_of = self.utc_now()
+        candles = await self.market_service.get_candles(
+            symbol=intent.symbol,
+            interval=intent.interval,
+            limit=_PIER_ENTRY_ZONE_CANDLE_LIMIT,
+            persist=False,
+            prefer_stored=True,
+            as_of=as_of,
+        )
+        closed_candles = tuple(
+            candle
+            for candle in candles
+            if candle.symbol == intent.symbol
+            and candle.interval is intent.interval
+            and candle.close_time <= as_of
+        )
+        if not closed_candles or as_of - closed_candles[-1].close_time > timedelta(
+            seconds=intent.interval.seconds * 2
+        ):
+            return False, "PIER BB entry candles unavailable or stale"
+        side = (
+            PositionSide.LONG
+            if intent.signal.signal_type is SignalType.BUY
+            else PositionSide.SHORT
+        )
+        return self.signal_engine.validate_entry_zone(
+            side=side,
+            candles=closed_candles,
+            entry_price=entry_price,
+            strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
         )
 
     @staticmethod

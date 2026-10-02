@@ -29,6 +29,7 @@ from botragram.models import Candle, Signal
 from botragram.strategies.factory import StrategyResolver
 
 __all__ = [
+    "EntryZoneValidator",
     "SignalEngine",
     "StructuralTargetValidator",
     "TriggerGuardsValidator",
@@ -71,6 +72,21 @@ class TriggerGuardsValidator(Protocol):
         candles: Sequence[Candle],
     ) -> tuple[bool, str]:
         """Validate whether trigger guards (e.g. BB, MACD) allow entry execution."""
+        ...
+
+
+@runtime_checkable
+class EntryZoneValidator(Protocol):
+    """Protocol for strategies enforcing executable entry location."""
+
+    def validate_entry_zone(
+        self,
+        *,
+        side: PositionSide,
+        candles: Sequence[Candle],
+        entry_price: Decimal,
+    ) -> tuple[bool, str]:
+        """Validate entry location against the strategy's current zone."""
         ...
 
 
@@ -335,6 +351,25 @@ class SignalEngine:
         )
         if isinstance(strategy, TriggerGuardsValidator):
             return strategy.validate_trigger_guards(side=side, candles=candles)
+        return True, ""
+
+    def validate_entry_zone(
+        self,
+        *,
+        side: PositionSide,
+        candles: Sequence[Candle],
+        entry_price: Decimal,
+        strategy_type: StrategyType | None = None,
+    ) -> tuple[bool, str]:
+        """Validate the live or trigger price against the strategy entry zone."""
+        resolved_type = strategy_type or self.default_strategy_type
+        strategy = self.strategy_resolver.resolve(strategy_type=resolved_type)
+        if isinstance(strategy, EntryZoneValidator):
+            return strategy.validate_entry_zone(
+                side=side,
+                candles=candles,
+                entry_price=entry_price,
+            )
         return True, ""
 
     def clamp_structural_take_profit(
