@@ -169,6 +169,7 @@ class HistoricalCandleStub:
 
     candles: tuple[Candle, ...]
     cursors: list[datetime]
+    latest_first: bool = False
 
     async def get_candles(
         self,
@@ -184,11 +185,12 @@ class HistoricalCandleStub:
         if start_time is None or end_time is None:
             raise AssertionError("Backtest pagination requires explicit boundaries")
         self.cursors.append(start_time)
-        return tuple(
+        eligible = tuple(
             candle
             for candle in self.candles
             if start_time <= candle.open_time <= end_time
-        )[:limit]
+        )
+        return eligible[-limit:] if self.latest_first else eligible[:limit]
 
 
 # =============================================================================
@@ -683,10 +685,27 @@ def test_backtest_service_paginates_ranges_larger_than_exchange_limit() -> None:
 
     assert result.candle_count == 1_001
     assert len(provider.cursors) == 2
-    assert provider.cursors[1] == _START_TIME + timedelta(minutes=1_000)
+    assert provider.cursors[1] == _START_TIME + timedelta(minutes=997)
 
 
-async def _run_paginated_backtest() -> tuple[BacktestResult, HistoricalCandleStub]:
+def test_backtest_service_paginates_latest_first_exchange() -> None:
+    """Retain the earliest candle when an exchange truncates from the front."""
+    result, _ = asyncio.run(_run_paginated_backtest(latest_first=True))
+    assert result.candle_count == 1_001
+
+
+@pytest.mark.parametrize("missing_minute", [0, 500, 1_000])
+def test_backtest_service_rejects_incomplete_exchange_history(
+    missing_minute: int,
+) -> None:
+    """Never report metrics from a range with missing candles."""
+    with pytest.raises(RuntimeError, match="complete|gap"):
+        asyncio.run(_run_paginated_backtest(missing_minute=missing_minute))
+
+
+async def _run_paginated_backtest(
+    *, latest_first: bool = False, missing_minute: int | None = None
+) -> tuple[BacktestResult, HistoricalCandleStub]:
     """Run a replay spanning two historical provider pages."""
     candles = tuple(
         _create_candle(
@@ -697,8 +716,11 @@ async def _run_paginated_backtest() -> tuple[BacktestResult, HistoricalCandleStu
             close_price="100",
         )
         for minute in range(1_001)
+        if minute != missing_minute
     )
-    provider = HistoricalCandleStub(candles=candles, cursors=[])
+    provider = HistoricalCandleStub(
+        candles=candles, cursors=[], latest_first=latest_first
+    )
     request = BacktestRequest(
         symbol="BTCUSDT",
         interval=Interval.M1,
@@ -716,6 +738,38 @@ async def _run_paginated_backtest() -> tuple[BacktestResult, HistoricalCandleStu
         ),
     )
     return await service.run(request=request), provider
+
+
+@pytest.mark.asyncio
+async def test_backtest_engine_validates_historical_candle_contract() -> None:
+    """Reject invalid replay input and surface gaps for direct engine callers."""
+    engine = DependencyProvider.create_backtest_engine(
+        strategy=BuyThenHoldStrategy(), risk_settings=RiskSettings(leverage=10)
+    )
+    first = _create_candle(
+        minute=0, open_price="100", high_price="101", low_price="99", close_price="100"
+    )
+    later = _create_candle(
+        minute=2, open_price="100", high_price="101", low_price="99", close_price="100"
+    )
+    request = _create_request()
+    invalid_cases = (
+        (request, (), "requires historical candles"),
+        (request, (replace(first, symbol="ETHUSDT"),), "match the requested symbol"),
+        (
+            request,
+            (replace(first, interval=Interval.M5),),
+            "match the requested interval",
+        ),
+        (request, (later, first), "strictly chronological"),
+        (replace(request, interval=Interval.MN1), (first,), "Monthly candle"),
+    )
+    for invalid_request, candles, message in invalid_cases:
+        with pytest.raises(ValueError, match=message):
+            await engine.run(request=invalid_request, candles=candles)
+
+    result = await engine.run(request=request, candles=(first, later))
+    assert any("1 candle gap" in warning for warning in result.warnings)
 
 
 def test_backtest_cli_parses_data_source_and_database_path() -> None:
@@ -916,7 +970,7 @@ async def test_backtest_engine_with_stalking_strategy_service() -> None:
             *,
             candles: Sequence[Candle],
         ) -> Signal | None:
-            if len(candles) == 1:
+            if len(candles) in (1, 5):
                 return anchor_signal
             return None
 
@@ -975,6 +1029,26 @@ async def test_backtest_engine_with_stalking_strategy_service() -> None:
         low_price="75",
         close_price="76",
     )
+    candle4 = _create_candle(
+        minute=4, open_price="100", high_price="105", low_price="98", close_price="99"
+    )
+    candle5 = _create_candle(
+        minute=5,
+        open_price="98.5",
+        high_price="102",
+        low_price="97.5",
+        close_price="98",
+    )
+    candle6 = _create_candle(
+        minute=6,
+        open_price="98.5",
+        high_price="99.5",
+        low_price="96.5",
+        close_price="98.5",
+    )
+    candle7 = _create_candle(
+        minute=7, open_price="97", high_price="97.5", low_price="75", close_price="76"
+    )
 
     request = BacktestRequest(
         symbol="BTCUSDT",
@@ -982,17 +1056,26 @@ async def test_backtest_engine_with_stalking_strategy_service() -> None:
         strategy_type=StrategyType.PINBAR_ENGULFING_EMA_RSI,
         market_type=MarketType.FUTURES,
         start_time=_START_TIME,
-        end_time=_START_TIME + timedelta(minutes=4),
+        end_time=_START_TIME + timedelta(minutes=8),
         initial_balance=Decimal("1000"),
     )
 
     result = await engine.run(
         request=request,
-        candles=(candle0, candle1, candle2, candle3),
+        candles=(
+            candle0,
+            candle1,
+            candle2,
+            candle3,
+            candle4,
+            candle5,
+            candle6,
+            candle7,
+        ),
     )
 
     # Trade was entered on bar 2 (TRIGGERED) and closed at TP on bar 3
-    assert result.metrics.total_trades == 1
+    assert result.metrics.total_trades == 2
     assert result.trades[0].side is PositionSide.SHORT
     assert result.trades[0].entry_price == Decimal("98.5") * (
         Decimal("1") - Decimal("0.0005")

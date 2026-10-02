@@ -99,23 +99,22 @@ class BacktestService:
                     "Historical range exceeds the configured backtest candle limit"
                 )
 
-            page_limit = min(_EXCHANGE_PAGE_LIMIT, remaining)
+            page_limit = min(_EXCHANGE_PAGE_LIMIT - 2, remaining)
+            page_end = min(request.end_time, cursor + step * (page_limit - 1))
             page = await self.exchange_client.get_candles(
                 symbol=request.symbol,
                 interval=request.interval,
-                limit=page_limit,
-                start_time=cursor,
-                end_time=request.end_time,
+                limit=min(_EXCHANGE_PAGE_LIMIT, page_limit + 2),
+                start_time=cursor - step,
+                end_time=page_end + step,
             )
             eligible = tuple(
-                candle
-                for candle in page
-                if request.start_time <= candle.open_time <= request.end_time
+                candle for candle in page if cursor <= candle.open_time <= page_end
             )
             for candle in eligible:
                 candles_by_time[candle.open_time] = candle
 
-            if not eligible or len(page) < page_limit:
+            if not eligible:
                 break
 
             next_cursor = eligible[-1].open_time + step
@@ -123,6 +122,24 @@ class BacktestService:
                 raise RuntimeError("Exchange candle pagination did not advance")
             cursor = next_cursor
 
-        return tuple(
-            candles_by_time[open_time] for open_time in sorted(candles_by_time)
-        )
+        ordered_times = sorted(candles_by_time)
+        if ordered_times:
+            expected_start = request.start_time
+            expected_end = request.start_time + step * (
+                (request.end_time - request.start_time) // step
+            )
+            if ordered_times[0] != expected_start or ordered_times[-1] != expected_end:
+                raise RuntimeError(
+                    "Exchange did not return the complete backtest candle range "
+                    f"({ordered_times[0]} to {ordered_times[-1]}, "
+                    f"expected {expected_start} to {expected_end})"
+                )
+            if any(
+                current - previous != step
+                for previous, current in zip(ordered_times, ordered_times[1:])
+            ):
+                raise RuntimeError(
+                    "Exchange returned a gap in the backtest candle range"
+                )
+
+        return tuple(candles_by_time[open_time] for open_time in ordered_times)
