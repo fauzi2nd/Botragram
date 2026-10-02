@@ -521,14 +521,22 @@ class TerminalMonitor:
 
     def render_dashboard(self, status: TerminalStatus) -> Layout:
         """Build a full-width managed-position dashboard for one snapshot."""
-        stalking_height = self._stalking_panel_height(status)
         managed_height = self._managed_positions_height(status)
-        summary_height = 17 if status.global_discovery is not None else 15
+        summary_height = self._wide_summary_height(status)
+        stalking_height = self._fit_stalking_height(
+            status=status,
+            fixed_height=summary_height + managed_height,
+        )
+        log_height = self.console.size.height - sum(
+            (summary_height, stalking_height, managed_height)
+        )
         layout = Layout(name="root")
         layout.split_column(
             Layout(name="summary", size=summary_height),
             Layout(
-                self._build_stalking_panel(status),
+                self._build_stalking_panel(
+                    status, max_rows=max(1, stalking_height - 4)
+                ),
                 name="active_stalking",
                 size=stalking_height,
             ),
@@ -544,8 +552,50 @@ class TerminalMonitor:
             Layout(self._build_performance_panel(status), name="performance"),
             Layout(self._build_discovery_panel(status), name="discovery"),
         )
-        layout["logs"].update(self._build_log_panel())
+        layout["logs"].update(self._build_log_panel(max_entries=max(1, log_height - 4)))
         return layout
+
+    def _wide_summary_height(self, status: TerminalStatus) -> int:
+        """Fit summary content without reserving unused desktop whitespace."""
+        return max(
+            self._status_panel_height(status),
+            self._discovery_panel_height(status),
+        )
+
+    @staticmethod
+    def _status_panel_height(status: TerminalStatus) -> int:
+        """Count safety rows including the panel border."""
+        health = status.live_runtime_health
+        if health is None:
+            status_rows = 8
+        else:
+            status_rows = 10
+            status_rows += int(health.reason is not None)
+            status_rows += int(status.position_count != len(health.contexts))
+            recovery = status.autonomous_live_recovery
+            status_rows += int(recovery is not None)
+            status_rows += int(recovery is not None and recovery.reason is not None)
+
+        return status_rows + 2
+
+    @staticmethod
+    def _discovery_panel_height(status: TerminalStatus) -> int:
+        """Count discovery rows including its border and candidate table."""
+        discovery = status.global_discovery
+        if discovery is None:
+            return 3
+        rows = 7
+        rows += int(discovery.last_outcome is not None)
+        rows += int(discovery.stopped_by_capacity)
+        rows += int(discovery.next_eligible_monotonic is not None)
+        if discovery.candidates:
+            rows += min(len(discovery.candidates), 5) + 2
+        return rows + 2
+
+    def _fit_stalking_height(self, *, status: TerminalStatus, fixed_height: int) -> int:
+        """Cap the radar to keep room for the latest runtime events."""
+        remaining = self.console.size.height - fixed_height - 10
+        return min(self._stalking_panel_height(status), max(5, remaining))
 
     def stop(self) -> None:
         """Request graceful terminal-monitor shutdown."""
@@ -1248,7 +1298,9 @@ class TerminalMonitor:
 
         return sorted(setups, key=_sort_key)
 
-    def _build_stalking_panel(self, status: TerminalStatus) -> Panel:
+    def _build_stalking_panel(
+        self, status: TerminalStatus, *, max_rows: int = 8
+    ) -> Panel:
         """Build dedicated panel displaying candidate setups being stalked."""
         table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False, pad_edge=False)
         table.add_column("Symbol", style="bright_cyan", no_wrap=True)
@@ -1284,7 +1336,7 @@ class TerminalMonitor:
             )
         else:
             sorted_setups = self.sort_stalking_setups(status.stalking_setups)
-            for setup in sorted_setups[:8]:
+            for setup in sorted_setups[:max_rows]:
                 side_style = "green" if setup.side is PositionSide.LONG else "red"
                 status_style = {
                     StalkingStatus.STALKING: "cyan",
@@ -1305,9 +1357,16 @@ class TerminalMonitor:
                     setup.htf_zone_label,
                 )
 
+        visible_count = min(len(status.stalking_setups), max_rows)
+        overflow_label = (
+            f" ({visible_count}/{len(status.stalking_setups)})"
+            if visible_count < len(status.stalking_setups)
+            else ""
+        )
         return Panel(
             table,
-            title="[bold]Active Setup Stalking (Pre-Entry Radar)[/bold]",
+            title=f"[bold]Active Setup Stalking (Pre-Entry Radar)[/bold]"
+            f"{overflow_label}",
             border_style="cyan",
         )
 
@@ -1530,7 +1589,7 @@ class TerminalMonitor:
         capacity = self.max_open_positions if self.max_open_positions is not None else 0
         return max(7, max(context_count, capacity, 1) + 5)
 
-    def _build_log_panel(self) -> Panel:
+    def _build_log_panel(self, *, max_entries: int = _DISPLAYED_LOG_COUNT) -> Panel:
         """Build the bounded application-log table."""
         table = Table(
             box=box.SIMPLE_HEAD,
@@ -1541,8 +1600,10 @@ class TerminalMonitor:
         table.add_column("Timestamp", width=12, no_wrap=True, style="bright_cyan")
         table.add_column("Level", width=9, no_wrap=True)
         table.add_column("Event", ratio=1, no_wrap=True)
-        table.add_column("Details", ratio=3, overflow="fold")
-        entries = self.log_handler.get_entries()[-_DISPLAYED_LOG_COUNT:]
+        table.add_column("Details", ratio=3, overflow="ellipsis", no_wrap=True)
+        entries = self.log_handler.get_entries()[
+            -min(max_entries, _DISPLAYED_LOG_COUNT) :
+        ]
 
         if not entries:
             table.add_row("-", "INFO", "dashboard", "Waiting for application logs...")
