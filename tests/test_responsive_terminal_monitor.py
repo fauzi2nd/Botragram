@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from io import StringIO
@@ -14,8 +14,14 @@ from botragram.app import TerminalMonitor, TradingRuntimeControl
 from botragram.app.runtime.runtime_control import MarketStreamTelemetry
 from botragram.app.terminal.terminal_monitor import TerminalStatus
 from botragram.engine import PnLEngine
-from botragram.enums import PositionSide, TradeMode
-from botragram.models import Position
+from botragram.enums import (
+    LiveRuntimeHealthReason,
+    LiveRuntimeHealthStatus,
+    PositionSide,
+    StalkingStatus,
+    TradeMode,
+)
+from botragram.models import LiveRuntimeHealthSnapshot, Position, StalkingSetup
 from botragram.services.paper.paper_trading_service import PaperPortfolioSnapshot
 from tests.terminal_helpers import create_terminal_console
 
@@ -265,6 +271,65 @@ def test_wide_terminal_keeps_existing_desktop_dashboard() -> None:
     assert "Trading Performance" in rendered
     assert "Global Discovery" in rendered
     assert "Managed LIVE Positions" in rendered
+
+
+@pytest.mark.parametrize(("height", "visible"), ((39, 5), (48, 8)))
+def test_wide_terminal_preserves_logs_when_stalking_grows(
+    height: int, visible: int
+) -> None:
+    """Keep latest events on screen while fitting as many setup rows as possible."""
+    monitor = _monitor(width=160, height=height)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    setups = tuple(
+        StalkingSetup(
+            symbol=f"PAIR{index}USDT",
+            side=PositionSide.LONG,
+            pattern_name="ZONE_LONG",
+            anchor_price=Decimal("100"),
+            invalidation_price=Decimal("98"),
+            target_retest_price=Decimal("99"),
+            htf_zone_label="HTF Extreme LONG",
+            current_bar=0,
+            max_bars=14,
+            started_at=now,
+            updated_at=now,
+            status=StalkingStatus.STALKING,
+        )
+        for index in range(8)
+    )
+    health = LiveRuntimeHealthSnapshot(
+        status=LiveRuntimeHealthStatus.INACTIVE,
+        reason=LiveRuntimeHealthReason.NO_POSITIONS,
+        contexts=(),
+        affected_contexts=(),
+        authorization_present=False,
+        authorization_exact=False,
+        runner_paused=False,
+        cycle_in_progress=False,
+        stream_states=(),
+        monitor_states=(),
+    )
+    status = replace(_status(), live_runtime_health=health, stalking_setups=setups)
+    monitor.log_handler.emit(
+        logging.LogRecord(
+            name="botragram.dashboard",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="Latest important event",
+            args=(),
+            exc_info=None,
+        )
+    )
+
+    rendered = _render(width=160, monitor=monitor, status=status)
+
+    assert "Runtime Events | Log Messages" in rendered
+    assert "Latest important event" in rendered
+    assert f"PAIR{visible - 1}USDT" in rendered
+    if visible < len(setups):
+        assert f"({visible}/{len(setups)})" in rendered
+        assert f"PAIR{visible}USDT" not in rendered
 
 
 @pytest.mark.parametrize("terminal", ("dumb", "xterm-256color"))

@@ -143,19 +143,28 @@ class TerminalMonitor(BaseTerminalMonitor):
 
     def _render_medium_dashboard(self, status: TerminalStatus) -> Layout:
         """Use two summary columns and a full-width discovery panel."""
-        stalking_height = self._stalking_panel_height(status)
+        summary_height = max(self._status_panel_height(status), 7)
         managed_height = self._managed_positions_height(status)
-        discovery_height = 15 if status.global_discovery is not None else 5
+        discovery_height = self._discovery_panel_height(status)
+        stalking_height = self._fit_stalking_height(
+            status=status,
+            fixed_height=summary_height + discovery_height + managed_height,
+        )
+        log_height = self.console.size.height - sum(
+            (summary_height, discovery_height, stalking_height, managed_height)
+        )
         layout = Layout(name="root")
         layout.split_column(
-            Layout(name="summary", size=15),
+            Layout(name="summary", size=summary_height),
             Layout(
                 self._build_discovery_panel(status),
                 name="discovery",
                 size=discovery_height,
             ),
             Layout(
-                self._build_stalking_panel(status),
+                self._build_stalking_panel(
+                    status, max_rows=max(1, stalking_height - 4)
+                ),
                 name="active_stalking",
                 size=stalking_height,
             ),
@@ -170,22 +179,29 @@ class TerminalMonitor(BaseTerminalMonitor):
             Layout(self._build_status_panel(status), name="status"),
             Layout(self._build_performance_panel(status), name="performance"),
         )
-        layout["logs"].update(self._build_log_panel())
+        layout["logs"].update(self._build_log_panel(max_entries=max(1, log_height - 4)))
         return layout
 
     def _render_compact_dashboard(self, status: TerminalStatus) -> Layout:
         """Prioritize safety, positions, and readable logs on portrait terminals."""
+        status_height = self._compact_status_height(status)
+        discovery_height = self._compact_discovery_height(status)
+        positions_height = self._compact_positions_height(status)
+        stalking_height = self._fit_stalking_height(
+            status=status,
+            fixed_height=status_height + discovery_height + 4 + positions_height,
+        )
         layout = Layout(name="root")
         layout.split_column(
             Layout(
                 self._build_compact_status_panel(status),
                 name="status",
-                size=self._compact_status_height(status),
+                size=status_height,
             ),
             Layout(
                 self._build_discovery_panel(status),
                 name="discovery",
-                size=self._compact_discovery_height(status),
+                size=discovery_height,
             ),
             Layout(
                 self._build_compact_performance_panel(status),
@@ -193,14 +209,16 @@ class TerminalMonitor(BaseTerminalMonitor):
                 size=4,
             ),
             Layout(
-                self._build_stalking_panel(status),
+                self._build_stalking_panel(
+                    status, max_rows=max(1, stalking_height - 4)
+                ),
                 name="active_stalking",
-                size=self._stalking_panel_height(status),
+                size=stalking_height,
             ),
             Layout(
                 self._build_compact_positions_panel(status),
                 name="managed_positions",
-                size=self._compact_positions_height(status),
+                size=positions_height,
             ),
             Layout(
                 self._build_compact_log_panel(status),
