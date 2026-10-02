@@ -70,6 +70,7 @@ _PROTECTION_WARNING: Final[str] = (
     "Stepped SL+ uses conservative next-candle activation because OHLC does not "
     "encode intrabar high/low order"
 )
+_STALKING_TRIGGER_PREFIX: Final[str] = "[STALKING_TRIGGERED]"
 
 
 # =============================================================================
@@ -122,6 +123,12 @@ class BacktestSignalProvider(Protocol):
         strategy_type: StrategyType | None = None,
     ) -> Signal:
         """Return the signal for a bounded historical candle window."""
+        ...
+
+    def consume_stalking_setup(
+        self, symbol: str, reason: str = "Order submitted/executed"
+    ) -> object:
+        """Release a triggered setup so later candidates can be evaluated."""
         ...
 
 
@@ -242,6 +249,20 @@ class BacktestEngine:
                 interval=request.interval,
                 volatility_pct=volatility_pct,
             )
+            if (
+                self.strategy_service is not None
+                and signal.signal_type in (SignalType.BUY, SignalType.SELL)
+                and signal.reason is not None
+                and signal.reason.startswith(_STALKING_TRIGGER_PREFIX)
+            ):
+                self.strategy_service.consume_stalking_setup(
+                    request.symbol,
+                    reason=(
+                        "Backtest PAPER entry executed"
+                        if execution.executed
+                        else "Backtest PAPER entry rejected"
+                    ),
+                )
 
             has_position = (
                 await position_repository.get_by_symbol(symbol=request.symbol)
