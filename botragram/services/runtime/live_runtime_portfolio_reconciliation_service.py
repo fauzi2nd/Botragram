@@ -200,10 +200,15 @@ class LiveRuntimePortfolioReconciliationService:
             await self._fail_closed()
             raise
         except Exception as error:
-            _LOGGER.exception("LIVE runtime portfolio reconciliation failed")
             await self._fail_closed()
             if is_transient_connectivity_error(error):
+                _LOGGER.warning(
+                    "LIVE runtime portfolio reconciliation deferred by connectivity "
+                    "loss; entry remains blocked: failure_type=%s",
+                    type(error).__name__,
+                )
                 raise
+            _LOGGER.exception("LIVE runtime portfolio reconciliation failed")
             return None
 
     async def _remove_stale_ownership(

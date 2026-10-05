@@ -71,6 +71,7 @@ from botragram.services.account.live_trading_performance_service import (
     TradingPerformanceSnapshot,
 )
 from botragram.services.paper.paper_trading_service import PaperPortfolioSnapshot
+from botragram.utils.connectivity import is_transient_connectivity_error
 
 __all__ = [
     "DashboardLogEntry",
@@ -86,6 +87,8 @@ __all__ = [
 # =============================================================================
 _DEFAULT_REFRESH_INTERVAL_SECONDS: Final[float] = 0.25
 _DEFAULT_LIVE_BALANCE_REFRESH_SECONDS: Final[float] = 10.0
+_LIVE_BALANCE_TIMEOUT_SECONDS: Final[float] = 2.0
+_LIVE_BALANCE_RETRY_SECONDS: Final[float] = 30.0
 _DEFAULT_LOG_CAPACITY: Final[int] = 200
 _DISPLAYED_LOG_COUNT: Final[int] = 10
 _STREAM_STALE_AFTER_MS: Final[int] = 3_000
@@ -203,6 +206,8 @@ class TerminalStatus:
     global_discovery: GlobalDiscoverySnapshot | None = None
     live_futures_user_data: LiveFuturesUserDataSnapshot | None = None
     stalking_setups: tuple[StalkingSetup, ...] = ()
+    balance_is_available: bool = True
+    balance_is_fresh: bool = True
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -294,6 +299,12 @@ class TerminalMonitor:
         repr=False,
     )
     _last_balance_refresh_monotonic: float = field(
+        default=0.0,
+        init=False,
+        repr=False,
+    )
+    _balance_is_fresh: bool = field(default=True, init=False, repr=False)
+    _next_balance_retry_monotonic: float = field(
         default=0.0,
         init=False,
         repr=False,
@@ -483,6 +494,13 @@ class TerminalMonitor:
             global_discovery=global_discovery,
             live_futures_user_data=live_futures_user_data,
             stalking_setups=stalking_setups,
+            balance_is_available=(
+                self.trade_mode is TradeMode.PAPER
+                or self._cached_live_balance is not None
+            ),
+            balance_is_fresh=(
+                self.trade_mode is TradeMode.PAPER or self._balance_is_fresh
+            ),
         )
 
     @staticmethod
@@ -612,6 +630,8 @@ class TerminalMonitor:
             return snapshot.available_balance, snapshot.realized_pnl
 
         cached_balance = self._cached_live_balance
+        if sample_time < self._next_balance_retry_monotonic:
+            return cached_balance if cached_balance is not None else _DECIMAL_ZERO, None
         cache_age = sample_time - self._last_balance_refresh_monotonic
 
         if (
@@ -621,11 +641,31 @@ class TerminalMonitor:
         ):
             return cached_balance, None
 
-        balance = await self.live_balance_provider.get_free_balance(
-            asset=self.quote_asset,
-        )
+        try:
+            async with asyncio.timeout(_LIVE_BALANCE_TIMEOUT_SECONDS):
+                balance = await self.live_balance_provider.get_free_balance(
+                    asset=self.quote_asset,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if not is_transient_connectivity_error(error):
+                raise
+            self._balance_is_fresh = False
+            self._next_balance_retry_monotonic = (
+                monotonic() + _LIVE_BALANCE_RETRY_SECONDS
+            )
+            _LOGGER.warning(
+                "Terminal balance unavailable; retaining last known telemetry: "
+                "failure_type=%s retry_seconds=%.1f",
+                type(error).__name__,
+                _LIVE_BALANCE_RETRY_SECONDS,
+            )
+            return cached_balance if cached_balance is not None else _DECIMAL_ZERO, None
         self._cached_live_balance = balance
-        self._last_balance_refresh_monotonic = sample_time
+        self._balance_is_fresh = True
+        self._next_balance_retry_monotonic = 0.0
+        self._last_balance_refresh_monotonic = monotonic()
         return balance, None
 
     def _refresh_positions_with_stream(
@@ -785,7 +825,7 @@ class TerminalMonitor:
             f"[{timestamp}Z] BOTRAGRAM | state={state}/{cycle} "
             f"mode={self.trade_mode.value} symbol={self.runtime_control.symbol} "
             f"strategy={self._resolve_display_strategy_type().lower()} | "
-            f"balance={status.balance:,.2f} {self.quote_asset} "
+            f"balance={self._format_balance(status)} "
             f"positions={status.position_count} "
             f"pnl={status.unrealized_pnl:+,.2f} {self.quote_asset} "
             f"realized={self._format_realized_pnl(status.realized_pnl)} | "
@@ -866,7 +906,7 @@ class TerminalMonitor:
     ) -> None:
         """Add aggregate balance and unrealized PnL safety metrics."""
         pnl_style = "green" if status.unrealized_pnl >= 0 else "red"
-        table.add_row("Balance", f"{status.balance:,.2f} {self.quote_asset}")
+        table.add_row("Balance", self._format_balance(status))
         table.add_row(
             "Unrealized PnL",
             Text(
@@ -874,6 +914,13 @@ class TerminalMonitor:
                 style=pnl_style,
             ),
         )
+
+    def _format_balance(self, status: TerminalStatus) -> str:
+        """Label unavailable and stale balances without inventing fresh funds."""
+        if not status.balance_is_available:
+            return "UNAVAILABLE"
+        value = f"{status.balance:,.2f} {self.quote_asset}"
+        return value if status.balance_is_fresh else f"{value} (STALE)"
 
     @staticmethod
     def _add_live_account_stream_row(
