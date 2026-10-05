@@ -23,7 +23,7 @@ import hmac
 import json
 import logging
 from time import time
-from typing import Final, cast
+from typing import Final, TypeIs
 from urllib.parse import urlencode
 
 # =============================================================================
@@ -41,6 +41,7 @@ from botragram.constants import (
 )
 from botragram.exceptions.exchange import (
     ExchangeAuthenticationError,
+    ExchangeOrderOutcomeUnknownError,
     ExchangeResponseError,
 )
 from botragram.exchanges.base.rest import (
@@ -69,9 +70,28 @@ _HEADER_PASSPHRASE: Final[str] = "ACCESS-PASSPHRASE"
 _RET_CODE_OK: Final[str] = "00000"
 _RET_CODE_TIMESTAMP_EXPIRED: Final[str] = "40008"
 _SERVER_TIME_PATH: Final[str] = "/api/v2/public/time"
-_RETRYABLE_RET_CODES: Final[frozenset[str]] = frozenset(
-    {"40014", "40015", "429", "40004"}
+_TRANSIENT_RET_CODES: Final[frozenset[str]] = frozenset(
+    {"429", "40010", "40015", "40725", "25004", "40500"}
 )
+_TRANSIENT_HTTP_STATUSES: Final[frozenset[int]] = frozenset({408, 429})
+_HTTP_ERROR_STATUS: Final[int] = 400
+_HTTP_SERVER_ERROR_STATUS: Final[int] = 500
+_HTTP_SUCCESS_STATUS: Final[int] = 200
+_HTTP_ERROR_CODE: Final[str] = "HTTP_ERROR"
+_PARSE_ERROR_CODE: Final[str] = "PARSE_ERROR"
+_TIMESTAMP_EXPIRED_CODES: Final[frozenset[str]] = frozenset(
+    {_RET_CODE_TIMESTAMP_EXPIRED, "40004"}
+)
+
+
+def _is_json_object(value: object) -> TypeIs[JsonObject]:
+    """Narrow a decoded JSON object whose keys are strings by JSON definition."""
+    return isinstance(value, dict)
+
+
+def _is_json_response(value: object) -> TypeIs[JsonResponse]:
+    """Narrow decoded JSON to the supported object or array response contract."""
+    return isinstance(value, (dict, list))
 
 
 # =============================================================================
@@ -96,6 +116,18 @@ class BitgetRestResponseError(ExchangeResponseError):
         self.message = message
         self.request_path = request_path
         self.http_status = http_status
+
+    @property
+    def is_transient(self) -> bool:
+        """Return whether dependency recovery may retry a failed read."""
+        return (
+            self.http_status in _TRANSIENT_HTTP_STATUSES
+            or self.http_status >= _HTTP_SERVER_ERROR_STATUS
+            or (
+                self.http_status in {_HTTP_SUCCESS_STATUS, _HTTP_ERROR_STATUS}
+                and self.code in _TRANSIENT_RET_CODES
+            )
+        )
 
 
 # =============================================================================
@@ -164,9 +196,8 @@ class BitgetRestClient(BaseRestClient):
 
         server_time_ms: int | None = None
         raw_data = response.get("data")
-        if isinstance(raw_data, dict):
-            data_dict = cast(JsonObject, raw_data)
-            raw_time = data_dict.get("serverTime")
+        if _is_json_object(raw_data):
+            raw_time = raw_data.get("serverTime")
             if isinstance(raw_time, (int, float, str)):
                 server_time_ms = int(raw_time)
         if server_time_ms is None:
@@ -301,6 +332,17 @@ class BitgetRestClient(BaseRestClient):
         http_status: int = 200,
     ) -> JsonResponse:
         """Validate Bitget V2 response envelope and return payload."""
+        if http_status >= _HTTP_ERROR_STATUS:
+            raw_code = payload.get("code") if isinstance(payload, dict) else None
+            code = str(raw_code) if raw_code is not None else _HTTP_ERROR_CODE
+            if code == _RET_CODE_OK:
+                code = _HTTP_ERROR_CODE
+            raise BitgetRestResponseError(
+                code=code,
+                message="Unsuccessful HTTP response",
+                request_path=request_path,
+                http_status=http_status,
+            )
         if not isinstance(payload, dict):
             return payload
 
@@ -328,16 +370,16 @@ class BitgetRestClient(BaseRestClient):
         headers: RequestHeaders | None = None,
         authenticated: bool = False,
     ) -> JsonResponse:
-        """Execute a Bitget REST request with bounded retries."""
+        """Retry transient reads; surface ambiguous mutations for reconciliation."""
         endpoint_path = path if path.startswith("/") else f"/{path}"
         url = f"{self._base_url}{endpoint_path}"
         query_string = self._encode_params(params)
         body_string = json.dumps(data, separators=(",", ":")) if data else ""
 
         session = await self._get_session()
-        last_error: Exception | None = None
+        retry_limit = self._max_retries if method == "GET" else 0
 
-        for attempt in range(self._max_retries + 1):
+        for attempt in range(retry_limit + 1):
             request_headers = self._prepare_headers(
                 authenticated=authenticated,
                 method=method,
@@ -346,78 +388,99 @@ class BitgetRestClient(BaseRestClient):
                 body=body_string,
                 custom_headers=headers,
             )
+            request_url = (
+                f"{url}?{query_string}"
+                if query_string and method in ("GET", "DELETE")
+                else url
+            )
+            req_data = body_string if method in ("POST", "PUT") else None
             try:
-                request_url = (
-                    f"{url}?{query_string}"
-                    if (query_string and method in ("GET", "DELETE"))
-                    else url
-                )
-                req_data = body_string if method in ("POST", "PUT") else None
-
                 async with session.request(
                     method=method,
                     url=request_url,
                     data=req_data,
                     headers=request_headers,
                 ) as response:
-                    raw_text = await response.text()
-                    try:
-                        payload = json.loads(raw_text)
-                    except json.JSONDecodeError as json_err:
-                        raise BitgetRestResponseError(
-                            code="PARSE_ERROR",
-                            message=f"Invalid JSON response: {raw_text[:200]}",
-                            request_path=endpoint_path,
-                            http_status=response.status,
-                        ) from json_err
-
-                    try:
-                        return self._validate_response_envelope(
-                            cast(JsonResponse, payload),
-                            request_path=endpoint_path,
-                            http_status=response.status,
-                        )
-                    except BitgetRestResponseError as err:
-                        if (
-                            err.code == _RET_CODE_TIMESTAMP_EXPIRED
-                            and attempt < self._max_retries
-                        ):
-                            _LOGGER.warning(
-                                "Bitget timestamp expired (40008); "
-                                "resynchronizing server clock..."
-                            )
-                            try:
-                                await self.synchronize_time()
-                            except Exception as sync_err:
-                                _LOGGER.warning(
-                                    "Failed to resync Bitget server time: %s",
-                                    sync_err,
-                                )
-                            await asyncio.sleep(self._retry_delay_seconds)
-                            continue
-                        if (
-                            err.code in _RETRYABLE_RET_CODES
-                            and attempt < self._max_retries
-                        ):
-                            await asyncio.sleep(
-                                self._retry_delay_seconds * (2**attempt)
-                            )
-                            continue
-                        raise
-
+                    payload = await self._read_response(
+                        response=response,
+                        request_path=endpoint_path,
+                    )
+                    return self._validate_response_envelope(
+                        payload,
+                        request_path=endpoint_path,
+                        http_status=response.status,
+                    )
+            except BitgetRestResponseError as error:
+                await self._handle_response_failure(
+                    error=error,
+                    method=method,
+                    request_path=endpoint_path,
+                    can_retry=attempt < retry_limit,
+                )
             except (
-                aiohttp.ClientError,
-                asyncio.TimeoutError,
-            ) as transport_error:
-                last_error = transport_error
-                if attempt < self._max_retries:
-                    await asyncio.sleep(self._retry_delay_seconds * (2**attempt))
-                    continue
-                raise
+                aiohttp.ClientConnectionError,
+                aiohttp.ClientPayloadError,
+                TimeoutError,
+            ) as error:
+                if method != "GET":
+                    raise ExchangeOrderOutcomeUnknownError(
+                        "Bitget mutation response was lost; reconciliation required: "
+                        f"method={method} request_path={endpoint_path}"
+                    ) from error
+                if attempt >= retry_limit:
+                    raise
+            await asyncio.sleep(self._retry_delay_seconds * (2**attempt))
 
-        if last_error is not None:
-            raise last_error
         raise RuntimeError(f"Request failed without error for {path}")
+
+    async def _handle_response_failure(
+        self,
+        *,
+        error: BitgetRestResponseError,
+        method: str,
+        request_path: str,
+        can_retry: bool,
+    ) -> None:
+        """Reject unsafe replay and recover an expired clock only for safe reads."""
+        if method != "GET" and (error.is_transient or error.code == _PARSE_ERROR_CODE):
+            raise ExchangeOrderOutcomeUnknownError(
+                "Bitget mutation outcome requires reconciliation: "
+                f"method={method} request_path={request_path}"
+            ) from error
+        if not can_retry:
+            raise error
+        if error.code in _TIMESTAMP_EXPIRED_CODES:
+            if request_path == _SERVER_TIME_PATH:
+                raise error
+            await self.synchronize_time()
+        elif not error.is_transient:
+            raise error
+
+    @staticmethod
+    async def _read_response(
+        *,
+        response: aiohttp.ClientResponse,
+        request_path: str,
+    ) -> JsonResponse:
+        """Decode a bounded error description without exposing raw response data."""
+        raw_text = await response.text()
+        try:
+            payload: object = json.loads(raw_text)
+        except json.JSONDecodeError as error:
+            raise BitgetRestResponseError(
+                code=_PARSE_ERROR_CODE,
+                message="Invalid JSON response",
+                request_path=request_path,
+                http_status=response.status,
+            ) from error
+        if not _is_json_response(payload):
+            raise BitgetRestResponseError(
+                code=_PARSE_ERROR_CODE,
+                message="Expected JSON object or array response",
+                request_path=request_path,
+                http_status=response.status,
+            )
+        return payload
 
     def _generate_signature(
         self,

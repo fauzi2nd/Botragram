@@ -399,7 +399,9 @@ def test_unsafe_recovery_does_not_adopt_anything() -> None:
 
 
 @pytest.mark.parametrize("source", ["natural_exit", "portfolio"])
-def test_transient_failure_fails_closed_and_preserves_exception(source: str) -> None:
+def test_transient_failure_fails_closed_and_preserves_exception(
+    source: str, caplog: pytest.LogCaptureFixture
+) -> None:
     service, control, streams, monitors = _service([_safe(_position("BTCUSDT"))])
     error = gaierror(11001, "configured DNS failure")
     if source == "natural_exit":
@@ -417,6 +419,15 @@ def test_transient_failure_fails_closed_and_preserves_exception(source: str) -> 
         asyncio.run(service.reconcile_context())
 
     assert raised.value is error
+    records = [
+        record
+        for record in caplog.records
+        if record.name.endswith("live_runtime_portfolio_reconciliation_service")
+    ]
+    assert len(records) == 1
+    assert records[0].levelname == "WARNING"
+    assert records[0].exc_info is None
+    assert "entry remains blocked" in records[0].getMessage()
     _closed(control)
     assert streams.stream_states == ()
     assert monitors.monitor_states == ()
