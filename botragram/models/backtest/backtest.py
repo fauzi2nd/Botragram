@@ -96,6 +96,13 @@ class BacktestTrade:
     fees: Decimal
     realized_pnl: Decimal
     reason: str
+    initial_stop_loss: Decimal | None = None
+    stop_loss_at_exit: Decimal | None = None
+    initial_take_profit: Decimal | None = None
+    entry_bb_position: Decimal | None = None
+    realized_r: Decimal | None = None
+    mfe_r: Decimal | None = None
+    mae_r: Decimal | None = None
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)

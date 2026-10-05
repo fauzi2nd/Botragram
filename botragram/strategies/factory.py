@@ -102,6 +102,7 @@ class StrategyFactory:
             stoch_rsi_overbought=settings.pier_stoch_rsi_overbought,
             stoch_rsi_oversold=settings.pier_stoch_rsi_oversold,
             use_structural_tp=settings.pier_use_structural_tp,
+            scoring_confluence_mode=settings.pier_scoring_confluence_mode,
             use_htf_structural_tp=settings.pier_use_htf_structural_tp,
             structural_tp_buffer_pct=settings.pier_structural_tp_buffer_pct,
             min_structural_rr=settings.pier_min_structural_rr,
@@ -109,6 +110,11 @@ class StrategyFactory:
             bb_std_dev=settings.pier_bb_std_dev,
             htf_bb_period=settings.pier_htf_bb_period,
             htf_bb_std_dev=settings.pier_htf_bb_std_dev,
+            use_adx_regime_filter=settings.pier_use_adx_regime_filter,
+            adx_period=settings.pier_adx_period,
+            adx_strong_trend_threshold=settings.pier_adx_strong_trend_threshold,
+            adx_consolidation_threshold=settings.pier_adx_consolidation_threshold,
+            min_tp_distance_atr=settings.pier_min_tp_distance_atr,
         )
 
     @staticmethod

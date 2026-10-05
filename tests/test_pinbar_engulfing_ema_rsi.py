@@ -672,14 +672,24 @@ def test_factory_creates_strategy_with_custom_macd_and_stoch_rsi() -> None:
 
 
 def test_stoch_rsi_guard_suppresses_long_signal_when_overbought() -> None:
-    """Verify BUY setup is rejected if Stoch RSI is above overbought limit."""
-    base_strategy = PinbarEngulfingEmaRsiStrategy(
+    """Verify BUY setup is rejected in legacy mode or penalized when overbought."""
+    legacy_strategy = PinbarEngulfingEmaRsiStrategy(
         trend_period=50,
         pullback_period=10,
         rsi_period=14,
         volume_period=10,
         stoch_rsi_oversold=Decimal("0.5"),
         stoch_rsi_overbought=Decimal("1.0"),
+        scoring_confluence_mode=False,
+    )
+    scoring_strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        stoch_rsi_oversold=Decimal("0.5"),
+        stoch_rsi_overbought=Decimal("1.0"),
+        scoring_confluence_mode=True,
     )
 
     candles: list[Candle] = []
@@ -722,8 +732,14 @@ def test_stoch_rsi_guard_suppresses_long_signal_when_overbought() -> None:
         )
     )
 
-    signal = base_strategy.generate_signal(candles=candles)
-    assert signal.signal_type is SignalType.HOLD
+    # Legacy hard-gate mode rejects completely
+    sig_legacy = legacy_strategy.generate_signal(candles=candles)
+    assert sig_legacy.signal_type is SignalType.HOLD
+
+    # Scoring mode allows valid price action but applies penalty
+    sig_scoring = scoring_strategy.generate_signal(candles=candles)
+    assert sig_scoring.signal_type is SignalType.BUY
+    assert sig_scoring.confidence < Decimal("0.85")
 
 
 def test_macd_guard_allows_valid_bounce_and_includes_context() -> None:
@@ -1094,6 +1110,7 @@ def test_confirmation_mode_trigger_flow() -> None:
         rsi_period=14,
         volume_period=10,
         require_confirmation=True,
+        min_structural_rr=Decimal("1.0"),
     )
 
     candles: list[Candle] = []
@@ -1292,3 +1309,284 @@ def test_pier_structural_tp_trimming_and_rejection() -> None:
     sig_rejected = strat_rejected.generate_signal(candles=candles)
     assert sig_rejected.signal_type is SignalType.HOLD
     assert "Structural resistance" in (sig_rejected.reason or "")
+
+
+def test_scoring_confluence_mode_allows_entry_with_soft_penalties() -> None:
+    """Verify scoring mode accepts valid setups even if volume is sub-threshold."""
+    candles: list[Candle] = []
+    base = Decimal("100.0")
+    for i in range(45):
+        price = base + Decimal(str(i * 1.0))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=price,
+                high_price=price + Decimal("1.5"),
+                low_price=price - Decimal("0.5"),
+                close_price=price + Decimal("0.8"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    for i in range(45, 55):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("0.2"),
+                low_price=prev_close - Decimal("1.5"),
+                close_price=prev_close - Decimal("1.2"),
+                volume=Decimal("100.0"),
+            )
+        )
+
+    # Low volume pinbar (80 volume vs 100 avg), fails 1.1x volume gate in legacy mode
+    last_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=55,
+            open_price=last_close,
+            high_price=last_close + Decimal("0.8"),
+            low_price=last_close - Decimal("8.0"),
+            close_price=last_close + Decimal("0.5"),
+            volume=Decimal("80.0"),
+        )
+    )
+
+    strat_legacy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        scoring_confluence_mode=False,
+    )
+    sig_legacy = strat_legacy.generate_signal(candles=candles)
+    assert sig_legacy.signal_type is SignalType.HOLD
+
+    strat_scoring = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        scoring_confluence_mode=True,
+    )
+    sig_scoring = strat_scoring.generate_signal(candles=candles)
+    assert sig_scoring.signal_type is SignalType.BUY
+    assert sig_scoring.confidence >= Decimal("0.65")
+
+
+def test_fee_hurdle_minimum_tp_distance_rejection() -> None:
+    """Ensure setup is rejected when TP distance from entry is below fee hurdle ATR."""
+    candles: list[Candle] = []
+    base_price = Decimal("100.0")
+
+    # Generate uptrend
+    for i in range(50):
+        p = base_price + Decimal(str(i * 1.5))
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=p,
+                high_price=p + Decimal("2.0"),
+                low_price=p - Decimal("0.5"),
+                close_price=p + Decimal("1.0"),
+            )
+        )
+
+    # Pullback candles
+    for i in range(50, 58):
+        prev_close = candles[-1].close_price
+        candles.append(
+            _make_candle(
+                index=i,
+                open_price=prev_close,
+                high_price=prev_close + Decimal("0.2"),
+                low_price=prev_close - Decimal("1.2"),
+                close_price=prev_close - Decimal("1.0"),
+            )
+        )
+
+    # Bullish pinbar
+    last_close = candles[-1].close_price
+    candles.append(
+        _make_candle(
+            index=58,
+            open_price=last_close,
+            high_price=last_close + Decimal("0.5"),
+            low_price=last_close - Decimal("6.0"),
+            close_price=last_close + Decimal("0.3"),
+            volume=Decimal("150.0"),
+        )
+    )
+
+    # Strategy with an impossibly high min_tp_distance_atr hurdle
+    strat_fee_hurdle = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        scoring_confluence_mode=True,
+        min_tp_distance_atr=Decimal("10.0"),  # Hurdle exceeds standard 2R TP distance
+    )
+    sig = strat_fee_hurdle.generate_signal(candles=candles)
+    assert sig.signal_type is SignalType.HOLD
+    assert sig.reason is not None and "below fee hurdle" in sig.reason
+
+
+def test_adx_regime_filter_strong_trend_and_consolidation() -> None:
+    """Ensure ADX regime filter initializes correctly and validates parameters."""
+    strat = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        use_adx_regime_filter=True,
+        adx_period=14,
+        adx_strong_trend_threshold=Decimal("25.0"),
+        adx_consolidation_threshold=Decimal("20.0"),
+        min_tp_distance_atr=Decimal("1.2"),
+    )
+    assert strat.use_adx_regime_filter is True
+    assert strat.adx_period == 14
+    assert strat.adx_strong_trend_threshold == Decimal("25.0")
+    assert strat.adx_consolidation_threshold == Decimal("20.0")
+    assert strat.min_tp_distance_atr == Decimal("1.2")
+
+    with pytest.raises(ValueError, match="ADX thresholds"):
+        PinbarEngulfingEmaRsiStrategy(
+            trend_period=50,
+            pullback_period=10,
+            adx_consolidation_threshold=Decimal("30.0"),
+            adx_strong_trend_threshold=Decimal("20.0"),
+        )
+
+    with pytest.raises(ValueError, match="Minimum TP distance ATR multiplier"):
+        PinbarEngulfingEmaRsiStrategy(
+            trend_period=50,
+            pullback_period=10,
+            min_tp_distance_atr=Decimal("0.0"),
+        )
+
+
+def test_bb_lower_band_bounce_generates_buy_signal() -> None:
+    """Verify a bullish pinbar at the BB Lower Band generates BUY
+
+    Uses scoring/range mode with require_trend_filter=False.
+    """
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        require_trend_filter=False,
+        scoring_confluence_mode=True,
+    )
+
+    candles: list[Candle] = []
+    # Build realistic oscillating candles around 100 to keep RSI ~50, MACD neutral,
+    # and Stoch RSI in the mid-range — representative of a ranging sideways market.
+    # The 2-point natural range ensures Bollinger Bands are non-degenerate.
+    base_prices = [
+        ("100.2", "101.0", "99.5", "100.0"),
+        ("100.0", "101.2", "99.3", "100.5"),
+        ("100.5", "101.5", "99.8", "100.1"),
+        ("100.1", "100.8", "99.0", "99.8"),
+        ("99.8", "100.9", "99.2", "100.3"),
+        ("100.3", "101.1", "99.6", "100.0"),
+        ("100.0", "101.0", "99.4", "100.2"),
+        ("100.2", "101.3", "99.7", "99.9"),
+        ("99.9", "100.7", "99.1", "100.4"),
+        ("100.4", "101.2", "99.5", "100.1"),
+    ]
+    for rep in range(6):
+        for i, (o, h, lo, c) in enumerate(base_prices):
+            candles.append(
+                _make_candle(
+                    index=rep * 10 + i,
+                    open_price=Decimal(o),
+                    high_price=Decimal(h),
+                    low_price=Decimal(lo),
+                    close_price=Decimal(c),
+                    volume=Decimal("100.0"),
+                )
+            )
+
+    # Bullish pinbar: low pierces the BB Lower Band (~98.5-99), small body,
+    # strong lower wick — price rejects downward move back toward the midline.
+    candles.append(
+        _make_candle(
+            index=60,
+            open_price=Decimal("99.2"),
+            high_price=Decimal("99.6"),
+            low_price=Decimal("97.5"),
+            close_price=Decimal("99.3"),
+            volume=Decimal("300.0"),
+        )
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.BUY
+    assert signal.confidence >= strategy.min_confidence
+    assert signal.stop_loss is not None
+    assert signal.take_profit is not None
+
+
+def test_bb_upper_band_bounce_generates_sell_signal() -> None:
+    """Verify a bearish pinbar at the BB Upper Band generates SELL
+
+    Uses scoring/range mode with require_trend_filter=False.
+    """
+    strategy = PinbarEngulfingEmaRsiStrategy(
+        trend_period=50,
+        pullback_period=10,
+        rsi_period=14,
+        volume_period=10,
+        require_trend_filter=False,
+        scoring_confluence_mode=True,
+    )
+
+    candles: list[Candle] = []
+    # Build realistic oscillating candles around 100 to keep RSI ~50, MACD neutral,
+    # and Stoch RSI in the mid-range — representative of a ranging sideways market.
+    base_prices = [
+        ("100.2", "101.0", "99.5", "100.0"),
+        ("100.0", "101.2", "99.3", "100.5"),
+        ("100.5", "101.5", "99.8", "100.1"),
+        ("100.1", "100.8", "99.0", "99.8"),
+        ("99.8", "100.9", "99.2", "100.3"),
+        ("100.3", "101.1", "99.6", "100.0"),
+        ("100.0", "101.0", "99.4", "100.2"),
+        ("100.2", "101.3", "99.7", "99.9"),
+        ("99.9", "100.7", "99.1", "100.4"),
+        ("100.4", "101.2", "99.5", "100.1"),
+    ]
+    for rep in range(6):
+        for i, (o, h, lo, c) in enumerate(base_prices):
+            candles.append(
+                _make_candle(
+                    index=rep * 10 + i,
+                    open_price=Decimal(o),
+                    high_price=Decimal(h),
+                    low_price=Decimal(lo),
+                    close_price=Decimal(c),
+                    volume=Decimal("100.0"),
+                )
+            )
+
+    # Bearish pinbar: high pierces the BB Upper Band (~101-102), small body,
+    # strong upper wick — price rejects the upward move back toward the midline.
+    candles.append(
+        _make_candle(
+            index=60,
+            open_price=Decimal("100.8"),
+            high_price=Decimal("102.5"),
+            low_price=Decimal("100.4"),
+            close_price=Decimal("100.7"),
+            volume=Decimal("300.0"),
+        )
+    )
+
+    signal = strategy.generate_signal(candles=candles)
+    assert signal.signal_type is SignalType.SELL
+    assert signal.confidence >= strategy.min_confidence
+    assert signal.stop_loss is not None
+    assert signal.take_profit is not None

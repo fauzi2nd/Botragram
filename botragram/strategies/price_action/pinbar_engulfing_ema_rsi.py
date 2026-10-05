@@ -31,6 +31,7 @@ from botragram.indicators import (
     CandlestickMatch,
     MACDResult,
     StochRSIResult,
+    calculate_adx,
     calculate_atr,
     calculate_bollinger_bands,
     calculate_ema,
@@ -75,6 +76,7 @@ _STRONG_ENGULFING_BONUS_RATIO: Final[Decimal] = Decimal("1.25")
 _STRONG_STAR_BONUS_RATIO: Final[Decimal] = Decimal("0.80")
 _SAR_BONUS: Final[Decimal] = Decimal("0.05")
 _CONFIDENCE_STEP_BONUS: Final[Decimal] = Decimal("0.05")
+_CONFIDENCE_PENALTY_STEP: Final[Decimal] = Decimal("0.08")
 _LONG_ENTRY_MAX_BB_POSITION: Final[Decimal] = Decimal("0.25")
 _SHORT_ENTRY_MIN_BB_POSITION: Final[Decimal] = Decimal("0.75")
 
@@ -202,13 +204,21 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
 
     # Dynamic Structural Target (Bollinger Bands & Resistance/Support Clearance)
     use_structural_tp: bool = True
+    scoring_confluence_mode: bool = True
     structural_tp_buffer_pct: Decimal = Decimal("0.002")
-    min_structural_rr: Decimal = Decimal("1.0")
+    min_structural_rr: Decimal = Decimal("1.2")
     bb_period: int = 20
     bb_std_dev: Decimal = Decimal("2.0")
     use_htf_structural_tp: bool = False
     htf_bb_period: int = 20
     htf_bb_std_dev: Decimal = Decimal("2.0")
+    min_tp_distance_atr: Decimal = Decimal("1.2")
+
+    # Market Regime / Volatility Squeeze (ADX Adaptation)
+    use_adx_regime_filter: bool = True
+    adx_period: int = 14
+    adx_strong_trend_threshold: Decimal = Decimal("25.0")
+    adx_consolidation_threshold: Decimal = Decimal("20.0")
 
     def __post_init__(self) -> None:
         """Validate invariant strategy configuration parameters."""
@@ -303,6 +313,17 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             raise ValueError("Bollinger Bands parameters must be positive")
         if self.htf_bb_period <= 0 or self.htf_bb_std_dev <= _DECIMAL_ZERO:
             raise ValueError("HTF Bollinger Bands parameters must be positive")
+        if self.min_tp_distance_atr <= _DECIMAL_ZERO:
+            raise ValueError("Minimum TP distance ATR multiplier must be positive")
+        if self.adx_period <= 0:
+            raise ValueError("ADX period must be positive")
+        if not (
+            _DECIMAL_ZERO
+            <= self.adx_consolidation_threshold
+            <= self.adx_strong_trend_threshold
+            <= Decimal("100.0")
+        ):
+            raise ValueError("ADX thresholds must be bounded within [0, 100]")
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -334,6 +355,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             )
         if self.use_structural_tp:
             min_candles = max(min_candles, self.bb_period + 2)
+        if self.use_adx_regime_filter:
+            min_candles = max(min_candles, self.adx_period * 2 + 1)
         if self.require_confirmation:
             min_candles += 1
         return min_candles
@@ -423,6 +446,23 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 period=self.bb_period,
                 standard_deviation=self.bb_std_dev,
             )
+
+        current_adx: Decimal | None = None
+        is_strong_trend: bool = False
+        is_consolidation: bool = False
+        if self.use_adx_regime_filter and len(close_prices) >= (
+            self.adx_period * 2 - 1
+        ):
+            adx_res = calculate_adx(
+                high_prices,
+                low_prices,
+                close_prices,
+                period=self.adx_period,
+            )
+            if adx_res.adx:
+                current_adx = adx_res.adx[-1]
+                is_strong_trend = current_adx >= self.adx_strong_trend_threshold
+                is_consolidation = current_adx <= self.adx_consolidation_threshold
 
         htf_upper_bb: Decimal | None = None
         htf_lower_bb: Decimal | None = None
@@ -539,9 +579,21 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         volume_ok = curr_candle.volume >= (self.volume_multiplier * current_vol_sma)
 
         # HARD GATE: Candlestick pattern detection on setup candle
+        # In consolidation regime (ADX < threshold), tighten pattern geometry
+        eff_min_wick_ratio = (
+            min(_DECIMAL_ONE, self.min_wick_ratio + Decimal("0.05"))
+            if is_consolidation
+            else self.min_wick_ratio
+        )
+        eff_min_engulfing_body_ratio = (
+            self.min_engulfing_body_ratio + Decimal("0.10")
+            if is_consolidation
+            else self.min_engulfing_body_ratio
+        )
+
         pinbar = detect_pinbar(
             candle=setup_candle,
-            min_wick_ratio=self.min_wick_ratio,
+            min_wick_ratio=eff_min_wick_ratio,
             max_opposite_wick_ratio=self.max_opposite_wick_ratio,
             min_range_atr=self.pinbar_min_range_atr,
             atr=current_atr,
@@ -549,7 +601,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         engulfing = detect_engulfing(
             prev_candle=setup_prev_candle,
             curr_candle=setup_candle,
-            min_body_ratio=self.min_engulfing_body_ratio,
+            min_body_ratio=eff_min_engulfing_body_ratio,
             min_body_atr=self.engulfing_min_body_atr,
             atr=current_atr,
         )
@@ -596,20 +648,39 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             if current_trend > _DECIMAL_ZERO
             else _DECIMAL_ZERO
         )
-        uptrend_aligned = (
+        # Support Bollinger Bands Lower Band bounce as valid location &
+        # mean-reversion setup
+        at_bb_support = bb_result is not None and check_candle_intersects_zone(
+            low=setup_candle.low_price,
+            high=setup_candle.high_price,
+            level=bb_result.lower[-1],
+            tolerance=location_tolerance,
+        )
+        bb_bounce_long = (
+            at_bb_support
+            and not self.require_trend_filter
+            and (is_consolidation or self.scoring_confluence_mode)
+            and (bb_result is None or current_close < bb_result.middle[-1])
+        )
+
+        uptrend_aligned = bb_bounce_long or (
             current_close > current_trend
             and trend_dist_long >= eff_min_trend_pct
             and (not self.require_trend_filter or current_pullback >= current_trend)
         )
         if uptrend_aligned:
             # HARD GATE: Two-sided pullback intersection with EMA21 zone
+            # (or BB Lower Band bounce if bb_bounce_long)
             long_pullback_upper = current_pullback + pullback_tolerance
             long_pullback_lower = current_pullback - location_tolerance
-            near_pullback = check_candle_intersects_zone(
-                low=setup_candle.low_price,
-                high=setup_candle.high_price,
-                lower_bound=long_pullback_lower,
-                upper_bound=long_pullback_upper,
+            near_pullback = (
+                check_candle_intersects_zone(
+                    low=setup_candle.low_price,
+                    high=setup_candle.high_price,
+                    lower_bound=long_pullback_lower,
+                    upper_bound=long_pullback_upper,
+                )
+                or bb_bounce_long
             )
 
             # SOFT CONFIRMATION: RSI in pullback range
@@ -630,7 +701,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             else:
                 candle_trigger = pattern_matched_buy
 
-            # HARD GATE: Key level location check (Dynamic EMA Support or Swing Low)
+            # HARD GATE: Key level location check
+            # (Dynamic EMA Support, Swing Low, or BB Lower Band)
             at_ema_support = check_candle_intersects_zone(
                 low=setup_candle.low_price,
                 high=setup_candle.high_price,
@@ -650,6 +722,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 not self.require_key_level_location
                 or at_ema_support
                 or at_swing_support
+                or at_bb_support
             )
 
             # SOFT CONFIRMATION: Stoch RSI Guard
@@ -719,18 +792,33 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             else:
                 htf_extreme_long_ok = True
 
-            if (
-                near_pullback
-                and rsi_in_zone
-                and volume_ok
-                and candle_trigger
-                and location_ok
-                and ema_side_long_ok
-                and htf_extreme_long_ok
-                and stoch_rsi_long_ok
-                and macd_long_ok
-                and bb_long_ok
-            ):
+            # In scoring mode, primary structure, trigger, and explicitly required
+            # HTF extreme gate remain hard invariants, while secondary indicators
+            # (RSI in-zone, volume expansion, Stoch RSI, MACD) are soft confluence.
+            if self.scoring_confluence_mode:
+                primary_gates_ok = (
+                    near_pullback
+                    and candle_trigger
+                    and location_ok
+                    and ema_side_long_ok
+                    and bb_long_ok
+                    and (not self.require_htf_extreme_zone or htf_extreme_long_ok)
+                )
+            else:
+                primary_gates_ok = (
+                    near_pullback
+                    and rsi_in_zone
+                    and volume_ok
+                    and candle_trigger
+                    and location_ok
+                    and ema_side_long_ok
+                    and htf_extreme_long_ok
+                    and stoch_rsi_long_ok
+                    and macd_long_ok
+                    and bb_long_ok
+                )
+
+            if primary_gates_ok:
                 if star_matched_buy:
                     pattern_label = "Morning Star"
                     pattern_low = min(
@@ -768,6 +856,15 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     stoch_rsi_aligned=stoch_rsi_long_aligned,
                     volume=curr_candle.volume,
                     volume_sma=current_vol_sma,
+                    rsi_in_zone=rsi_in_zone,
+                    volume_ok=volume_ok,
+                    stoch_rsi_ok=stoch_rsi_long_ok,
+                    macd_ok=macd_long_ok,
+                    htf_extreme_ok=htf_extreme_long_ok,
+                    at_ema=at_ema_support,
+                    at_swing=at_swing_support,
+                    at_bb=at_bb_support,
+                    is_strong_trend=is_strong_trend,
                 )
                 stop_loss = pattern_low - (self.atr_multiplier_sl * current_atr)
                 risk_dist = current_close - stop_loss
@@ -785,7 +882,9 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
 
                 if self.use_structural_tp:
                     walls: list[tuple[Decimal, str]] = []
-                    if bb_result is not None:
+                    if bb_result is not None and not bb_bounce_long:
+                        # When entry is a BB Lower Band bounce, the Upper BB is the
+                        # natural mean-reversion target, not a structural wall.
                         curr_upper_bb = bb_result.upper[-1]
                         if curr_upper_bb > current_close:
                             int_label = curr_candle.interval.value
@@ -795,6 +894,19 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                                     f"{int_label} Upper BB={curr_upper_bb:.4f}",
                                 )
                             )
+                    if (
+                        last_swing_high is not None
+                        and last_swing_high > current_close
+                        and not bb_bounce_long
+                    ):
+                        # In a BB bounce mean-reversion setup, swing highs within the
+                        # band range are part of normal oscillation, not blocking walls.
+                        walls.append(
+                            (
+                                last_swing_high,
+                                f"Swing High={last_swing_high:.4f}",
+                            )
+                        )
                     if htf_upper_bb is not None and htf_upper_bb > current_close:
                         htf_lbl = f"{htf_target_interval.value} Upper BB"
                         walls.append((htf_upper_bb, f"{htf_lbl}={htf_upper_bb:.4f}"))
@@ -833,6 +945,21 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 else:
                     reason_extra = ""
 
+                # Enforce Fee Hurdle / Minimum TP distance
+                if signal_type is not SignalType.HOLD and take_profit is not None:
+                    min_tp_dist = self.min_tp_distance_atr * current_atr
+                    tp_dist = take_profit - current_close
+                    if tp_dist < min_tp_dist:
+                        signal_type = SignalType.HOLD
+                        confidence = _DECIMAL_ZERO
+                        stop_loss = None
+                        take_profit = None
+                        reason = (
+                            f"BUY setup rejected: TP distance "
+                            f"({tp_dist:.5f}) below fee hurdle "
+                            f"min ATR distance ({min_tp_dist:.5f})"
+                        )
+
                 if signal_type is not SignalType.HOLD:
                     stoch_str = (
                         f", StochK={curr_stoch_k:.1f}"
@@ -859,20 +986,39 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             if current_trend > _DECIMAL_ZERO
             else _DECIMAL_ZERO
         )
-        downtrend_aligned = (
+        # Support Bollinger Bands Upper Band bounce as valid location &
+        # mean-reversion setup
+        at_bb_resistance = bb_result is not None and check_candle_intersects_zone(
+            low=setup_candle.low_price,
+            high=setup_candle.high_price,
+            level=bb_result.upper[-1],
+            tolerance=location_tolerance,
+        )
+        bb_bounce_short = (
+            at_bb_resistance
+            and not self.require_trend_filter
+            and (is_consolidation or self.scoring_confluence_mode)
+            and (bb_result is None or current_close > bb_result.middle[-1])
+        )
+
+        downtrend_aligned = bb_bounce_short or (
             current_close < current_trend
             and trend_dist_short >= eff_min_trend_pct
             and (not self.require_trend_filter or current_pullback <= current_trend)
         )
         if signal_type is SignalType.HOLD and downtrend_aligned:
             # HARD GATE: Two-sided pullback intersection with EMA21 zone
+            # or BB Upper Band bounce
             short_pullback_lower = current_pullback - pullback_tolerance
             short_pullback_upper = current_pullback + location_tolerance
-            near_pullback = check_candle_intersects_zone(
-                low=setup_candle.low_price,
-                high=setup_candle.high_price,
-                lower_bound=short_pullback_lower,
-                upper_bound=short_pullback_upper,
+            near_pullback = (
+                check_candle_intersects_zone(
+                    low=setup_candle.low_price,
+                    high=setup_candle.high_price,
+                    lower_bound=short_pullback_lower,
+                    upper_bound=short_pullback_upper,
+                )
+                or bb_bounce_short
             )
 
             # SOFT CONFIRMATION: RSI in pullback range
@@ -893,7 +1039,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             else:
                 candle_trigger = pattern_matched_sell
 
-            # HARD GATE: Key level location check (Dynamic EMA Resistance or Swing High)
+            # HARD GATE: Key level location check
+            # (Dynamic EMA Resistance, Swing High, or BB Upper Band)
             at_ema_resistance = check_candle_intersects_zone(
                 low=setup_candle.low_price,
                 high=setup_candle.high_price,
@@ -913,6 +1060,7 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 not self.require_key_level_location
                 or at_ema_resistance
                 or at_swing_resistance
+                or at_bb_resistance
             )
 
             # SOFT CONFIRMATION: Stoch RSI Guard
@@ -982,18 +1130,32 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             else:
                 htf_extreme_short_ok = True
 
-            if (
-                near_pullback
-                and rsi_in_zone
-                and volume_ok
-                and candle_trigger
-                and location_ok
-                and ema_side_short_ok
-                and htf_extreme_short_ok
-                and stoch_rsi_short_ok
-                and macd_short_ok
-                and bb_short_ok
-            ):
+            # In scoring mode, primary structure and trigger are hard gates,
+            # while secondary indicators (RSI, vol, Stoch, MACD, HTF) are soft.
+            if self.scoring_confluence_mode:
+                primary_gates_ok = (
+                    near_pullback
+                    and candle_trigger
+                    and location_ok
+                    and ema_side_short_ok
+                    and bb_short_ok
+                    and (not self.require_htf_extreme_zone or htf_extreme_short_ok)
+                )
+            else:
+                primary_gates_ok = (
+                    near_pullback
+                    and rsi_in_zone
+                    and volume_ok
+                    and candle_trigger
+                    and location_ok
+                    and ema_side_short_ok
+                    and htf_extreme_short_ok
+                    and stoch_rsi_short_ok
+                    and macd_short_ok
+                    and bb_short_ok
+                )
+
+            if primary_gates_ok:
                 if star_matched_sell:
                     pattern_label = "Evening Star"
                     pattern_high = max(
@@ -1031,6 +1193,15 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     stoch_rsi_aligned=stoch_rsi_short_aligned,
                     volume=curr_candle.volume,
                     volume_sma=current_vol_sma,
+                    rsi_in_zone=rsi_in_zone,
+                    volume_ok=volume_ok,
+                    stoch_rsi_ok=stoch_rsi_short_ok,
+                    macd_ok=macd_short_ok,
+                    htf_extreme_ok=htf_extreme_short_ok,
+                    at_ema=at_ema_resistance,
+                    at_swing=at_swing_resistance,
+                    at_bb=at_bb_resistance,
+                    is_strong_trend=is_strong_trend,
                 )
                 stop_loss = pattern_high + (self.atr_multiplier_sl * current_atr)
                 risk_dist = stop_loss - current_close
@@ -1048,7 +1219,9 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
 
                 if self.use_structural_tp:
                     floors: list[tuple[Decimal, str]] = []
-                    if bb_result is not None:
+                    if bb_result is not None and not bb_bounce_short:
+                        # When entry is a BB Upper Band bounce, the Lower BB is the
+                        # natural mean-reversion target, not a structural floor.
                         curr_lower_bb = bb_result.lower[-1]
                         if curr_lower_bb < current_close:
                             int_label = curr_candle.interval.value
@@ -1058,6 +1231,20 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                                     f"{int_label} Lower BB={curr_lower_bb:.4f}",
                                 )
                             )
+                    if (
+                        last_swing_low is not None
+                        and last_swing_low < current_close
+                        and not bb_bounce_short
+                    ):
+                        # In a BB bounce mean-reversion setup, swing lows within the
+                        # In a BB bounce mean-reversion setup, swing lows within
+                        # the band range are part of normal oscillation, not floors.
+                        floors.append(
+                            (
+                                last_swing_low,
+                                f"Swing Low={last_swing_low:.4f}",
+                            )
+                        )
                     if htf_lower_bb is not None and htf_lower_bb < current_close:
                         htf_lbl = f"{htf_target_interval.value} Lower BB"
                         floors.append((htf_lower_bb, f"{htf_lbl}={htf_lower_bb:.4f}"))
@@ -1093,6 +1280,21 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                         reason_extra = ""
                 else:
                     reason_extra = ""
+
+                # Enforce Fee Hurdle / Minimum TP distance
+                if signal_type is not SignalType.HOLD and take_profit is not None:
+                    min_tp_dist = self.min_tp_distance_atr * current_atr
+                    tp_dist = current_close - take_profit
+                    if tp_dist < min_tp_dist:
+                        signal_type = SignalType.HOLD
+                        confidence = _DECIMAL_ZERO
+                        stop_loss = None
+                        take_profit = None
+                        reason = (
+                            f"SELL setup rejected: TP distance "
+                            f"({tp_dist:.5f}) below fee hurdle "
+                            f"min ATR distance ({min_tp_dist:.5f})"
+                        )
 
                 if signal_type is not SignalType.HOLD:
                     stoch_str = (
@@ -1341,8 +1543,17 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 tolerance=location_tolerance,
             )
         )
+        at_bb_resistance = local_bb is not None and check_candle_intersects_zone(
+            low=curr_candle.low_price,
+            high=curr_candle.high_price,
+            level=local_bb.upper[-1],
+            tolerance=location_tolerance,
+        )
         structural_upper_ok = (
-            near_short_pullback or at_ema_resistance or at_swing_resistance
+            near_short_pullback
+            or at_ema_resistance
+            or at_swing_resistance
+            or at_bb_resistance
         )
 
         if (
@@ -1386,6 +1597,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             short_zone_prices = [short_pullback_upper]
             if at_swing_resistance and last_swing_high is not None:
                 short_zone_prices.append(last_swing_high)
+            if at_bb_resistance and local_bb is not None:
+                short_zone_prices.append(local_bb.upper[-1])
             if htf_upper_bb is not None and curr_candle.high_price >= htf_upper_bb:
                 short_zone_prices.append(htf_upper_bb)
             short_zone_price = max(short_zone_prices)
@@ -1451,7 +1664,15 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             level=last_swing_low,
             tolerance=location_tolerance,
         )
-        structural_lower_ok = near_long_pullback or at_ema_support or at_swing_support
+        at_bb_support = local_bb is not None and check_candle_intersects_zone(
+            low=curr_candle.low_price,
+            high=curr_candle.high_price,
+            level=local_bb.lower[-1],
+            tolerance=location_tolerance,
+        )
+        structural_lower_ok = (
+            near_long_pullback or at_ema_support or at_swing_support or at_bb_support
+        )
 
         if (
             uptrend_aligned
@@ -1494,6 +1715,8 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
             long_zone_prices = [long_pullback_lower]
             if at_swing_support and last_swing_low is not None:
                 long_zone_prices.append(last_swing_low)
+            if at_bb_support and local_bb is not None:
+                long_zone_prices.append(local_bb.lower[-1])
             if htf_lower_bb is not None and curr_candle.low_price <= htf_lower_bb:
                 long_zone_prices.append(htf_lower_bb)
             long_zone_price = min(long_zone_prices)
@@ -1624,7 +1847,13 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 if side is PositionSide.LONG:
                     hist_positive = curr_hist > Decimal("0")
                     hist_rising = prev_hist is not None and curr_hist > prev_hist
-                    if not (hist_positive or hist_rising):
+                    # Also permit bottoming-out curl: histogram stopped
+                    # expanding downward
+                    hist_turning = (
+                        len(macd_result.histogram) >= 3
+                        and macd_result.histogram[-1] > macd_result.histogram[-2]
+                    )
+                    if not (hist_positive or hist_rising or hist_turning):
                         return (
                             False,
                             "MACD histogram not positive and not rising"
@@ -1633,7 +1862,12 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 else:
                     hist_negative = curr_hist < Decimal("0")
                     hist_falling = prev_hist is not None and curr_hist < prev_hist
-                    if not (hist_negative or hist_falling):
+                    # Also permit topping-out curl: histogram stopped expanding upward
+                    hist_turning = (
+                        len(macd_result.histogram) >= 3
+                        and macd_result.histogram[-1] < macd_result.histogram[-2]
+                    )
+                    if not (hist_negative or hist_falling or hist_turning):
                         return (
                             False,
                             "MACD histogram not negative and not falling"
@@ -1733,6 +1967,15 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                     exc,
                 )
 
+        if self.require_key_level_location:
+            last_swing_high, last_swing_low = find_swing_levels(
+                high_prices=tuple(c.high_price for c in candles[:-1]),
+                low_prices=tuple(c.low_price for c in candles[:-1]),
+                swing_window=self.swing_lookback,
+            )
+        else:
+            last_swing_high, last_swing_low = None, None
+
         scale_factor = resolve_timeframe_scale_factor(curr_candle.interval)
         eff_structural_tp_buffer_pct = self.structural_tp_buffer_pct * scale_factor
         risk_dist = abs(entry_price - stop_loss)
@@ -1744,6 +1987,13 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 int_label = curr_candle.interval.value
                 walls.append(
                     (curr_upper_bb, f"{int_label} Upper BB={curr_upper_bb:.4f}")
+                )
+            if last_swing_high is not None and last_swing_high > entry_price:
+                walls.append(
+                    (
+                        last_swing_high,
+                        f"Swing High={last_swing_high:.4f}",
+                    )
                 )
             if htf_upper_bb is not None and htf_upper_bb > entry_price:
                 htf_lbl = f"{htf_target_interval.value} Upper BB"
@@ -1769,11 +2019,34 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                             f"Structural resistance ({wall_name}) restricts TP "
                             f"(trimmed RR={eff_rr:.2f} < {self.min_structural_rr:.2f})",
                         )
-                    return (
-                        trimmed_tp,
+                    final_tp = trimmed_tp
+                    note = (
                         f"Structural TP trimmed to {trimmed_tp:.5f} "
-                        f"({wall_name}, RR: {eff_rr:.2f})",
+                        f"({wall_name}, RR: {eff_rr:.2f})"
                     )
+                else:
+                    final_tp = take_profit
+                    note = ""
+            else:
+                final_tp = take_profit
+                note = ""
+
+            atr_res = calculate_atr(
+                tuple(c.high_price for c in candles),
+                tuple(c.low_price for c in candles),
+                tuple(c.close_price for c in candles),
+                period=self.atr_period,
+            )
+            if atr_res:
+                curr_atr = atr_res[-1]
+                min_tp_dist = self.min_tp_distance_atr * curr_atr
+                if (final_tp - entry_price) < min_tp_dist:
+                    return (
+                        None,
+                        f"TP distance ({final_tp - entry_price:.5f}) below fee hurdle "
+                        f"min ATR distance ({min_tp_dist:.5f})",
+                    )
+            return final_tp, note
         else:
             floors: list[tuple[Decimal, str]] = []
             curr_lower_bb = bb_result.lower[-1]
@@ -1781,6 +2054,13 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                 int_label = curr_candle.interval.value
                 floors.append(
                     (curr_lower_bb, f"{int_label} Lower BB={curr_lower_bb:.4f}")
+                )
+            if last_swing_low is not None and last_swing_low < entry_price:
+                floors.append(
+                    (
+                        last_swing_low,
+                        f"Swing Low={last_swing_low:.4f}",
+                    )
                 )
             if htf_lower_bb is not None and htf_lower_bb < entry_price:
                 htf_lbl = f"{htf_target_interval.value} Lower BB"
@@ -1806,13 +2086,34 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
                             f"Structural support ({floor_name}) restricts TP "
                             f"(trimmed RR={eff_rr:.2f} < {self.min_structural_rr:.2f})",
                         )
-                    return (
-                        trimmed_tp,
+                    final_tp = trimmed_tp
+                    note = (
                         f"Structural TP trimmed to {trimmed_tp:.5f} "
-                        f"({floor_name}, RR: {eff_rr:.2f})",
+                        f"({floor_name}, RR: {eff_rr:.2f})"
                     )
+                else:
+                    final_tp = take_profit
+                    note = ""
+            else:
+                final_tp = take_profit
+                note = ""
 
-        return take_profit, ""
+            atr_res = calculate_atr(
+                tuple(c.high_price for c in candles),
+                tuple(c.low_price for c in candles),
+                tuple(c.close_price for c in candles),
+                period=self.atr_period,
+            )
+            if atr_res:
+                curr_atr = atr_res[-1]
+                min_tp_dist = self.min_tp_distance_atr * curr_atr
+                if (entry_price - final_tp) < min_tp_dist:
+                    return (
+                        None,
+                        f"TP distance ({entry_price - final_tp:.5f}) below fee hurdle "
+                        f"min ATR distance ({min_tp_dist:.5f})",
+                    )
+            return final_tp, note
 
     def compute_zone_confidence(
         self,
@@ -1885,13 +2186,22 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         stoch_rsi_aligned: bool = False,
         volume: Decimal,
         volume_sma: Decimal,
+        rsi_in_zone: bool = True,
+        volume_ok: bool = True,
+        stoch_rsi_ok: bool = True,
+        macd_ok: bool = True,
+        htf_extreme_ok: bool = True,
+        at_ema: bool = False,
+        at_swing: bool = False,
+        at_bb: bool = False,
+        is_strong_trend: bool = False,
     ) -> Decimal:
         """Compute composite deterministic signal confluence score (signal_score).
 
         Note:
             This metric is a deterministic, bounded heuristic confluence score
-            combining candlestick geometry, momentum, and volume confirmations.
-            It is NOT an empirical win rate probability.
+            combining candlestick geometry, structural location, momentum,
+            and volume confirmations. It is NOT an empirical win rate probability.
         """
         score = _BASE_CONFLUENCE_SCORE
 
@@ -1918,4 +2228,22 @@ class PinbarEngulfingEmaRsiStrategy(BaseStrategy):
         ):
             score += _CONFIDENCE_STEP_BONUS
 
-        return min(_MAX_CONFIDENCE, score)
+        # Additional confluence bonuses in scoring mode
+        if self.scoring_confluence_mode:
+            if at_ema and at_swing:
+                score += _CONFIDENCE_STEP_BONUS
+            if htf_extreme_ok:
+                score += Decimal("0.03")
+
+            # Soft deductions if secondary indicators are non-confirming
+            # In strong trend regime (ADX >= threshold), relax oscillator deductions
+            if not rsi_in_zone and not is_strong_trend:
+                score -= _CONFIDENCE_PENALTY_STEP
+            if not volume_ok:
+                score -= Decimal("0.05")
+            if not stoch_rsi_ok and not is_strong_trend:
+                score -= _CONFIDENCE_PENALTY_STEP
+            if not macd_ok:
+                score -= _CONFIDENCE_PENALTY_STEP
+
+        return max(_DECIMAL_ZERO, min(_MAX_CONFIDENCE, score))

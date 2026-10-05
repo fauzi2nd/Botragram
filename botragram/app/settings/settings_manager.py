@@ -1287,6 +1287,42 @@ class SettingsManager:
                 else Decimal("20.0")
             ),
             pier_use_structural_tp=environment.get_pier_use_structural_tp(),
+            pier_scoring_confluence_mode=(
+                environment.get_pier_scoring_confluence_mode()
+            ),
+            pier_use_adx_regime_filter=(environment.get_pier_use_adx_regime_filter()),
+            pier_adx_period=(
+                self._parse_positive_int(
+                    raw_value=environment.get_pier_adx_period(),
+                    setting_name="PIER_ADX_PERIOD",
+                )
+                if environment.get_pier_adx_period()
+                else 14
+            ),
+            pier_adx_strong_trend_threshold=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_adx_strong_trend_threshold(),
+                    setting_name="PIER_ADX_STRONG_TREND_THRESHOLD",
+                )
+                if environment.get_pier_adx_strong_trend_threshold()
+                else Decimal("25.0")
+            ),
+            pier_adx_consolidation_threshold=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_adx_consolidation_threshold(),
+                    setting_name="PIER_ADX_CONSOLIDATION_THRESHOLD",
+                )
+                if environment.get_pier_adx_consolidation_threshold()
+                else Decimal("20.0")
+            ),
+            pier_min_tp_distance_atr=(
+                self._parse_decimal(
+                    raw_value=environment.get_pier_min_tp_distance_atr(),
+                    setting_name="PIER_MIN_TP_DISTANCE_ATR",
+                )
+                if environment.get_pier_min_tp_distance_atr()
+                else Decimal("1.2")
+            ),
             pier_structural_tp_buffer_pct=self._parse_decimal(
                 raw_value=environment.get_pier_structural_tp_buffer_pct(),
                 setting_name="PIER_STRUCTURAL_TP_BUFFER_PCT",

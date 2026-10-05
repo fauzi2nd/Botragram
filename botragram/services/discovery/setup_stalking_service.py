@@ -226,7 +226,7 @@ class SetupStalkingService:
         )
         reason_str = f"  reason={reason}" if reason else ""
         _LOGGER.info(
-            "[STALKING] %s %s: %s\u2192%s%s%s",
+            "[STALKING] %s %s: %s->%s%s%s",
             setup.symbol,
             setup.side.value,
             setup.status.value,
@@ -947,6 +947,56 @@ class SetupStalkingService:
             self._log_transition(
                 setup,
                 StalkingStatus.INVALIDATED,
+                reason=reason,
+            )
+            return updated
+
+    def reset_triggered_to_stalking(
+        self,
+        symbol: str,
+        reason: str = "Trigger guards not ready, continuing stalking",
+    ) -> StalkingSetup | None:
+        """Reset a TRIGGERED setup back to STALKING if guards rejected
+        entry on this bar.
+        """
+        now = datetime.now(UTC)
+        with self._lock:
+            setup = self._setups.get(symbol)
+            if setup is None or setup.status is not StalkingStatus.TRIGGERED:
+                return None
+            # If bar count reached max_bars, expire instead of stalking
+            if setup.current_bar >= setup.max_bars:
+                self._funnel_expired += 1
+                updated = replace(
+                    setup,
+                    status=StalkingStatus.EXPIRED,
+                    updated_at=now,
+                )
+                self._setups[symbol] = updated
+                self._log_transition(
+                    setup,
+                    StalkingStatus.EXPIRED,
+                    bar=setup.current_bar,
+                    reason=f"{reason} (max_bars reached)",
+                )
+                return updated
+
+            # Revert from TRIGGERED back to STALKING
+            if self._funnel_triggered > 0:
+                self._funnel_triggered -= 1
+            if self._completed_stalking_bars:
+                self._completed_stalking_bars.pop()
+
+            updated = replace(
+                setup,
+                status=StalkingStatus.STALKING,
+                updated_at=now,
+            )
+            self._setups[symbol] = updated
+            self._log_transition(
+                setup,
+                StalkingStatus.STALKING,
+                bar=setup.current_bar,
                 reason=reason,
             )
             return updated

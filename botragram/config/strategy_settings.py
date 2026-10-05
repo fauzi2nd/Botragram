@@ -318,8 +318,14 @@ class StrategySettings:
     pier_stoch_rsi_overbought: Decimal = Decimal("80.0")
     pier_stoch_rsi_oversold: Decimal = Decimal("20.0")
     pier_use_structural_tp: bool = True
+    pier_scoring_confluence_mode: bool = True
+    pier_use_adx_regime_filter: bool = True
+    pier_adx_period: int = 14
+    pier_adx_strong_trend_threshold: Decimal = Decimal("25.0")
+    pier_adx_consolidation_threshold: Decimal = Decimal("20.0")
+    pier_min_tp_distance_atr: Decimal = Decimal("1.2")
     pier_structural_tp_buffer_pct: Decimal = Decimal("0.002")
-    pier_min_structural_rr: Decimal = Decimal("1.0")
+    pier_min_structural_rr: Decimal = Decimal("1.2")
     pier_bb_period: int = 20
     pier_bb_std_dev: Decimal = Decimal("2.0")
     pier_use_htf_structural_tp: bool = True
@@ -690,6 +696,20 @@ class StrategySettings:
             raise ValueError("pier_structural_tp_buffer_pct must not be negative")
         if self.pier_min_structural_rr <= Decimal("0"):
             raise ValueError("pier_min_structural_rr must be positive")
+        if self.pier_adx_period <= 0:
+            raise ValueError("PIER ADX period must be positive")
+        if not (
+            Decimal("0")
+            <= self.pier_adx_consolidation_threshold
+            < self.pier_adx_strong_trend_threshold
+            <= Decimal("100")
+        ):
+            raise ValueError(
+                "PIER ADX consolidation and strong trend thresholds must be ordered "
+                "within [0, 100]"
+            )
+        if self.pier_min_tp_distance_atr <= Decimal("0"):
+            raise ValueError("PIER min TP distance ATR multiplier must be positive")
         if self.pier_bb_period <= 0 or self.pier_bb_std_dev <= Decimal("0"):
             raise ValueError("PIER Bollinger Bands parameters must be positive")
         if self.pier_htf_bb_period <= 0 or self.pier_htf_bb_std_dev <= Decimal("0"):

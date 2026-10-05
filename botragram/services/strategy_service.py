@@ -109,6 +109,14 @@ class StrategyStalkingProvider(Protocol):
         """Mark a triggered setup as CONSUMED (transactionally completed)."""
         ...
 
+    def reset_triggered_to_stalking(
+        self,
+        symbol: str,
+        reason: str = "Trigger guards not ready, continuing stalking",
+    ) -> StalkingSetup | None:
+        """Reset a TRIGGERED setup back to STALKING if guards rejected entry."""
+        ...
+
 
 # =============================================================================
 # Service Classes
@@ -182,9 +190,37 @@ class StrategyService:
                             )
                         )
                         if not guards_valid:
-                            stalking_svc.invalidate_setup(
+                            is_structural_rejection = (
+                                "Bollinger Band" in guards_reason
+                                or "anti-pucuk" in guards_reason
+                                or "anti-lembah" in guards_reason
+                            )
+                            if is_structural_rejection:
+                                stalking_svc.invalidate_setup(
+                                    symbol,
+                                    reason=f"Trigger guards rejected: {guards_reason}",
+                                )
+                                return Signal(
+                                    symbol=symbol,
+                                    signal_type=SignalType.HOLD,
+                                    price=latest_candle.close_price,
+                                    confidence=Decimal("0"),
+                                    strategy_name=resolved_type.value,
+                                    generated_at=latest_candle.close_time,
+                                    reason=(
+                                        "[STALKING_INVALIDATED] Trigger guards "
+                                        f"rejected entry: {guards_reason}"
+                                    ),
+                                )
+                            reverted = stalking_svc.reset_triggered_to_stalking(
                                 symbol,
-                                reason=f"Trigger guards rejected: {guards_reason}",
+                                reason=f"Trigger guards not ready: {guards_reason}",
+                            )
+                            st_desc = (
+                                "STALKING"
+                                if reverted is not None
+                                and reverted.status is StalkingStatus.STALKING
+                                else "STALKING_EXPIRED"
                             )
                             return Signal(
                                 symbol=symbol,
@@ -194,8 +230,8 @@ class StrategyService:
                                 strategy_name=resolved_type.value,
                                 generated_at=latest_candle.close_time,
                                 reason=(
-                                    "[STALKING_INVALIDATED] Trigger guards rejected "
-                                    f"entry: {guards_reason}"
+                                    f"[{st_desc}] Trigger guards not ready: "
+                                    f"{guards_reason}"
                                 ),
                             )
 
@@ -208,9 +244,15 @@ class StrategyService:
                             )
                         )
                         if not zone_valid:
-                            stalking_svc.invalidate_setup(
+                            reverted = stalking_svc.reset_triggered_to_stalking(
                                 symbol,
-                                reason=f"Entry zone rejected: {zone_reason}",
+                                reason=f"Entry zone not ready: {zone_reason}",
+                            )
+                            st_desc = (
+                                "STALKING"
+                                if reverted is not None
+                                and reverted.status is StalkingStatus.STALKING
+                                else "STALKING_EXPIRED"
                             )
                             return Signal(
                                 symbol=symbol,
@@ -219,7 +261,7 @@ class StrategyService:
                                 confidence=Decimal("0"),
                                 strategy_name=resolved_type.value,
                                 generated_at=latest_candle.close_time,
-                                reason=f"[STALKING_INVALIDATED] {zone_reason}",
+                                reason=f"[{st_desc}] {zone_reason}",
                             )
 
                         # 2. Build triggered entry signal
