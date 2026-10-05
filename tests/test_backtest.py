@@ -32,6 +32,7 @@ import pytest
 # Local Imports
 # =============================================================================
 from botragram.app.cli.backtest_command import (
+    format_backtest_report,
     parse_backtest_request,
     run_backtest_command,
 )
@@ -268,6 +269,13 @@ def test_backtest_uses_stop_loss_first_when_one_candle_hits_both_exits() -> None
     assert result.metrics.net_pnl < 0
     assert result.trades[0].side is PositionSide.LONG
     assert result.trades[0].reason == "Paper stop-loss triggered"
+    assert result.trades[0].initial_stop_loss == result.trades[0].stop_loss_at_exit
+    assert result.trades[0].realized_r is not None
+    assert result.trades[0].realized_r < Decimal("0")
+    assert result.trades[0].mfe_r is None
+    report = format_backtest_report(result=result)
+    assert "Stop exits   : initial=1, moved=0" in report
+    assert "Gross PnL" in report
 
 
 async def _run_ambiguous_candle_backtest() -> BacktestResult:
@@ -304,6 +312,11 @@ def test_backtest_arms_stepped_stop_for_the_next_candle_only() -> None:
     assert result.metrics.winning_trades == 1
     assert result.trades[0].reason == "Paper stop-loss triggered"
     assert result.trades[0].exit_price > result.trades[0].entry_price
+    assert result.trades[0].initial_stop_loss != result.trades[0].stop_loss_at_exit
+    assert result.trades[0].mfe_r is not None
+    assert result.trades[0].mae_r is not None
+    assert result.trades[0].mfe_r > result.trades[0].mae_r
+    assert "Stop exits   : initial=0, moved=1" in format_backtest_report(result=result)
     assert any("next-candle activation" in warning for warning in result.warnings)
 
 
@@ -357,6 +370,67 @@ def test_backtest_arms_breakeven_stop_when_target_roi_reached() -> None:
     assert result.trades[0].reason == "Paper stop-loss triggered"
     assert result.trades[0].exit_price >= Decimal("100.09")
     assert result.trades[0].exit_price > result.trades[0].entry_price
+
+
+@pytest.mark.asyncio
+async def test_backtest_reports_configured_entry_bb_position() -> None:
+    """Report BB location from pre-entry candles without using future bars."""
+
+    class _BollingerBuyStrategy(BuyThenHoldStrategy):
+        bb_period = 2
+        bb_std_dev = Decimal("2")
+
+        @property
+        def minimum_candles(self) -> int:
+            return 2
+
+        def generate_signal(self, *, candles: Sequence[Candle]) -> Signal:
+            candle = candles[-1]
+            return Signal(
+                symbol=candle.symbol,
+                signal_type=(SignalType.BUY if len(candles) == 2 else SignalType.HOLD),
+                price=candle.close_price,
+                confidence=Decimal("1"),
+                strategy_name=self.strategy_type.value,
+                generated_at=candle.close_time,
+                reason="Bollinger diagnostic fixture",
+            )
+
+    engine = DependencyProvider.create_backtest_engine(
+        strategy=_BollingerBuyStrategy(),
+        risk_settings=RiskSettings(leverage=10),
+    )
+    candles = (
+        _create_candle(
+            minute=0,
+            open_price="100",
+            high_price="101",
+            low_price="99",
+            close_price="100",
+        ),
+        _create_candle(
+            minute=1,
+            open_price="101",
+            high_price="102",
+            low_price="100",
+            close_price="101",
+        ),
+        _create_candle(
+            minute=2,
+            open_price="101",
+            high_price="102",
+            low_price="100",
+            close_price="101",
+        ),
+    )
+    result = await engine.run(
+        request=replace(_create_request(), end_time=_START_TIME + timedelta(minutes=3)),
+        candles=candles,
+    )
+    trade = result.trades[0]
+    assert trade.entry_bb_position is not None
+    assert Decimal("0") < trade.entry_bb_position < Decimal("1")
+    assert "entry-BB=" in format_backtest_report(result=result)
 
 
 async def _run_breakeven_protection_backtest() -> BacktestResult:
@@ -463,6 +537,11 @@ async def test_backtest_simulates_partial_tp_with_live_parity() -> None:
     assert res_enabled.trades[0].exit_price >= Decimal("102.99")
     assert res_enabled.trades[0].realized_pnl > Decimal("0")
     assert res_enabled.trades[1].reason == "Paper stop-loss triggered"
+    assert res_enabled.trades[0].initial_stop_loss == (
+        res_enabled.trades[1].initial_stop_loss
+    )
+    assert res_enabled.trades[0].realized_r is not None
+    assert res_enabled.trades[1].realized_r is not None
     # Remaining quantity was half of original
     assert res_enabled.trades[0].quantity == res_enabled.trades[1].quantity
     assert res_enabled.metrics.winning_trades == 2

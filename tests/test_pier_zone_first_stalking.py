@@ -1407,6 +1407,7 @@ def test_pier_stalking_trigger_structural_tp_clamp() -> None:
         use_structural_tp=True,
         structural_tp_buffer_pct=Decimal("0.01"),
         min_structural_rr=Decimal("1.5"),
+        min_tp_distance_atr=Decimal("0.5"),
     )
     resolver = StrategyResolver(
         strategies={StrategyType.PINBAR_ENGULFING_EMA_RSI: strategy}

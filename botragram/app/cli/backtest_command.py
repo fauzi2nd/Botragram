@@ -225,11 +225,25 @@ async def run_backtest_command(
         await database.connect()
         try:
             repo = SQLiteCandleRepository(database=database)
-            count = await repo.count(symbol=request.symbol)
-            if count > 0:
+            # Check if requested interval or 1m source interval exists
+            native_count = await repo.count(
+                symbol=request.symbol,
+                interval=request.interval,
+            )
+            m1_count = await repo.count(
+                symbol=request.symbol,
+                interval=Interval.M1,
+            )
+            source_interval: Interval | None = None
+            if native_count > 0:
+                source_interval = request.interval
+            elif m1_count > 0:
+                source_interval = Interval.M1
+
+            if source_interval is not None:
                 provider = StoredResampledCandleProvider(
                     candle_repository=repo,
-                    source_interval=Interval.M1,
+                    source_interval=source_interval,
                 )
                 service = BacktestService(
                     exchange_client=provider,
@@ -238,12 +252,15 @@ async def run_backtest_command(
                 result = await service.run(request=request)
                 venue_title = settings.exchange.exchange.value.title()
                 net_type = "Testnet" if settings.exchange.testnet else "Mainnet"
-                source_desc = (
-                    f"Local SQLite Resampled (1m -> {request.interval.value}) "
-                    f"[{db_path.name}]"
-                    if request.interval is not Interval.M1
-                    else f"Local SQLite 1m [{db_path.name}]"
-                )
+                if request.interval is not source_interval:
+                    source_desc = (
+                        f"Local SQLite Resampled ({source_interval.value} -> "
+                        f"{request.interval.value}) [{db_path.name}]"
+                    )
+                else:
+                    source_desc = (
+                        f"Local SQLite {request.interval.value} [{db_path.name}]"
+                    )
                 return replace(
                     result,
                     venue_name=f"{venue_title} {net_type}",
@@ -328,12 +345,32 @@ def format_backtest_report(*, result: BacktestResult) -> str:
         f"Net PnL      : {metrics.net_pnl:+.4f} USDT ({metrics.return_pct:+.2f}%)",
         f"Max Drawdown : {metrics.max_drawdown_pct:.2f}%",
         f"Fees         : {metrics.total_fees:.4f} USDT",
+        f"Gross PnL    : {metrics.net_pnl + metrics.total_fees:+.4f} USDT",
         f"Trades       : {metrics.total_trades} "
         f"(long={metrics.long_trades}, short={metrics.short_trades})",
         f"Win Rate     : {metrics.win_rate_pct:.2f}% "
         f"({metrics.winning_trades}W/{metrics.losing_trades}L)",
         f"Profit Factor: {profit_factor}",
+        "Entry BB     : 0=lower band, 1=upper band (when available)",
     ]
+    initial_stop_count = sum(
+        1
+        for trade in result.trades
+        if trade.reason == "Paper stop-loss triggered"
+        and trade.initial_stop_loss is not None
+        and trade.stop_loss_at_exit == trade.initial_stop_loss
+    )
+    moved_stop_count = sum(
+        1
+        for trade in result.trades
+        if trade.reason == "Paper stop-loss triggered"
+        and trade.initial_stop_loss is not None
+        and trade.stop_loss_at_exit is not None
+        and trade.stop_loss_at_exit != trade.initial_stop_loss
+    )
+    lines.append(
+        f"Stop exits   : initial={initial_stop_count}, moved={moved_stop_count}"
+    )
     for warning in result.warnings:
         lines.append(f"WARNING      : {warning}")
 
@@ -347,6 +384,38 @@ def format_backtest_report(*, result: BacktestResult) -> str:
                 f"{trade.entry_price:.6f} -> {trade.exit_price:.6f} | "
                 f"PnL {trade.realized_pnl:+.4f} | {trade.reason}"
             )
+            diagnostics: list[str] = [f"fees={trade.fees:.4f}"]
+            if trade.reason == "Paper stop-loss triggered":
+                if (
+                    trade.initial_stop_loss is not None
+                    and trade.stop_loss_at_exit is not None
+                ):
+                    stop_kind = (
+                        "initial"
+                        if trade.initial_stop_loss == trade.stop_loss_at_exit
+                        else "moved"
+                    )
+                    diagnostics.append(f"stop={stop_kind}")
+            if trade.realized_r is not None:
+                diagnostics.append(f"netR={trade.realized_r:+.2f}")
+            if (
+                trade.initial_stop_loss is not None
+                and trade.initial_take_profit is not None
+            ):
+                initial_risk = abs(trade.entry_price - trade.initial_stop_loss)
+                if initial_risk > Decimal("0"):
+                    planned_rr = (
+                        abs(trade.initial_take_profit - trade.entry_price)
+                        / initial_risk
+                    )
+                    diagnostics.append(f"plannedRR={planned_rr:.2f}")
+            if trade.mfe_r is not None and trade.mae_r is not None:
+                diagnostics.append(
+                    f"held-bars MFE/MAE={trade.mfe_r:.2f}R/{trade.mae_r:.2f}R"
+                )
+            if trade.entry_bb_position is not None:
+                diagnostics.append(f"entry-BB={trade.entry_bb_position:.2f}")
+            lines.append(f"     {' | '.join(diagnostics)}")
     if len(result.trades) > len(displayed):
         lines.append(
             f"Showing the latest {len(displayed)} of {len(result.trades)} trades."

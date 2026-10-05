@@ -17,6 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 import logging
+from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -36,6 +37,7 @@ from botragram.enums import (
     StrategyType,
     TrailingMode,
 )
+from botragram.indicators.volatility.bollinger_bands import calculate_bollinger_bands
 from botragram.models import (
     BacktestMetrics,
     BacktestRequest,
@@ -71,6 +73,15 @@ _PROTECTION_WARNING: Final[str] = (
     "encode intrabar high/low order"
 )
 _STALKING_TRIGGER_PREFIX: Final[str] = "[STALKING_TRIGGERED]"
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class _EntryDiagnostics:
+    """Capture entry-time risk and location without future candle access."""
+
+    stop_loss: Decimal | None
+    take_profit: Decimal | None
+    bb_position: Decimal | None
 
 
 # =============================================================================
@@ -185,10 +196,15 @@ class BacktestEngine:
         position_repository = session.position_repository
         trade_repository = session.trade_repository
         exit_reasons: list[str] = []
+        exit_stops: list[Decimal | None] = []
+        entries: list[_EntryDiagnostics] = []
         peak_equity = request.initial_balance
         current_drawdown = _DECIMAL_ZERO
 
         for index, candle in enumerate(ordered_candles):
+            position_at_open = await position_repository.get_by_symbol(
+                symbol=candle.symbol
+            )
             close_reason = await self._apply_intrabar_protection(
                 candle=candle,
                 paper_service=paper_service,
@@ -196,6 +212,9 @@ class BacktestEngine:
             )
             if close_reason is not None:
                 exit_reasons.append(close_reason)
+                exit_stops.append(
+                    position_at_open.stop_loss if position_at_open is not None else None
+                )
                 peak_equity, current_drawdown = await self._equity_state(
                     paper_service=paper_service,
                     initial_balance=request.initial_balance,
@@ -209,6 +228,11 @@ class BacktestEngine:
                 )
                 if ptp_reason is not None:
                     exit_reasons.append(ptp_reason)
+                    exit_stops.append(
+                        position_at_open.stop_loss
+                        if position_at_open is not None
+                        else None
+                    )
                     peak_equity, current_drawdown = await self._equity_state(
                         paper_service=paper_service,
                         initial_balance=request.initial_balance,
@@ -234,10 +258,10 @@ class BacktestEngine:
                 signal = self.strategy.generate_signal(
                     candles=ordered_candles[window_start : index + 1],
                 )
-            had_position = (
-                await position_repository.get_by_symbol(symbol=request.symbol)
-                is not None
+            position_before_signal = await position_repository.get_by_symbol(
+                symbol=request.symbol
             )
+            had_position = position_before_signal is not None
             volatility_pct = (
                 (candle.high_price - candle.low_price) / candle.close_price
                 if candle.close_price > _DECIMAL_ZERO
@@ -264,12 +288,28 @@ class BacktestEngine:
                     ),
                 )
 
-            has_position = (
-                await position_repository.get_by_symbol(symbol=request.symbol)
-                is not None
+            position_after_signal = await position_repository.get_by_symbol(
+                symbol=request.symbol
             )
-            if had_position and not has_position and execution.executed:
+            has_position = position_after_signal is not None
+            if not had_position and position_after_signal is not None:
+                entries.append(
+                    _EntryDiagnostics(
+                        stop_loss=position_after_signal.stop_loss,
+                        take_profit=position_after_signal.take_profit,
+                        bb_position=self._entry_bb_position(
+                            candles=ordered_candles[window_start : index + 1],
+                            entry_price=position_after_signal.entry_price,
+                        ),
+                    )
+                )
+            if (
+                position_before_signal is not None
+                and not has_position
+                and execution.executed
+            ):
                 exit_reasons.append(execution.reason or "Position closed by signal")
+                exit_stops.append(position_before_signal.stop_loss)
                 peak_equity, current_drawdown = await self._equity_state(
                     paper_service=paper_service,
                     initial_balance=request.initial_balance,
@@ -297,6 +337,7 @@ class BacktestEngine:
             execution = await paper_service.execute(signal=close_signal)
             if execution.executed:
                 exit_reasons.append("End of backtest range")
+                exit_stops.append(position.stop_loss)
 
         trade_count = await trade_repository.count(symbol=request.symbol)
         fills = await trade_repository.get_latest(
@@ -306,6 +347,12 @@ class BacktestEngine:
         completed_trades = self._build_completed_trades(
             fills=fills,
             exit_reasons=exit_reasons,
+            exit_stops=exit_stops,
+            entries=entries,
+        )
+        completed_trades = self._attach_excursions(
+            trades=completed_trades,
+            candles=ordered_candles,
         )
         metrics = self._calculate_metrics(
             request=request,
@@ -319,6 +366,29 @@ class BacktestEngine:
             metrics=metrics,
             warnings=warnings,
         )
+
+    def _entry_bb_position(
+        self, *, candles: Sequence[Candle], entry_price: Decimal
+    ) -> Decimal | None:
+        """Locate a fill within configured strategy bands when available."""
+        period: object = getattr(self.strategy, "bb_period", None)
+        deviation: object = getattr(self.strategy, "bb_std_dev", None)
+        if (
+            not isinstance(period, int)
+            or isinstance(period, bool)
+            or not isinstance(deviation, Decimal)
+            or period <= 0
+            or len(candles) < period
+        ):
+            return None
+        bands = calculate_bollinger_bands(
+            tuple(candle.close_price for candle in candles),
+            period=period,
+            standard_deviation=deviation,
+        )
+        lower = bands.lower[-1]
+        width = bands.upper[-1] - lower
+        return (entry_price - lower) / width if width > _DECIMAL_ZERO else None
 
     @staticmethod
     async def _apply_intrabar_protection(
@@ -646,19 +716,31 @@ class BacktestEngine:
         *,
         fills: Sequence[Trade],
         exit_reasons: Sequence[str],
+        exit_stops: Sequence[Decimal | None],
+        entries: Sequence[_EntryDiagnostics],
     ) -> tuple[BacktestTrade, ...]:
         """Pair entry and exit fills into completed position records."""
         completed: list[BacktestTrade] = []
         entry: Trade | None = None
         entry_remaining_qty = _DECIMAL_ZERO
         entry_original_qty = _DECIMAL_ZERO
+        entry_index = 0
         reason_index = 0
+        entry_diagnostics = _EntryDiagnostics(
+            stop_loss=None, take_profit=None, bb_position=None
+        )
 
         for fill in fills:
             if fill.realized_pnl is None:
                 entry = fill
                 entry_original_qty = fill.quantity
                 entry_remaining_qty = fill.quantity
+                entry_diagnostics = _EntryDiagnostics(
+                    stop_loss=None, take_profit=None, bb_position=None
+                )
+                if entry_index < len(entries):
+                    entry_diagnostics = entries[entry_index]
+                entry_index += 1
                 continue
             if entry is None:
                 raise RuntimeError("Backtest exit fill has no matching entry fill")
@@ -674,6 +756,12 @@ class BacktestEngine:
                 else _DECIMAL_ZERO
             )
             allocated_entry_fee = entry.fee * fee_fraction
+            risk_per_unit = (
+                abs(entry.price - entry_diagnostics.stop_loss)
+                if entry_diagnostics.stop_loss is not None
+                else _DECIMAL_ZERO
+            )
+            risk_amount = risk_per_unit * fill.quantity
 
             completed.append(
                 BacktestTrade(
@@ -690,6 +778,19 @@ class BacktestEngine:
                     fees=allocated_entry_fee + fill.fee,
                     realized_pnl=fill.realized_pnl,
                     reason=reason,
+                    initial_stop_loss=entry_diagnostics.stop_loss,
+                    stop_loss_at_exit=(
+                        exit_stops[reason_index]
+                        if reason_index < len(exit_stops)
+                        else None
+                    ),
+                    initial_take_profit=entry_diagnostics.take_profit,
+                    entry_bb_position=entry_diagnostics.bb_position,
+                    realized_r=(
+                        fill.realized_pnl / risk_amount
+                        if risk_amount > _DECIMAL_ZERO
+                        else None
+                    ),
                 )
             )
             entry_remaining_qty -= fill.quantity
@@ -700,6 +801,45 @@ class BacktestEngine:
         if entry is not None:
             raise RuntimeError("Backtest finished with an unmatched entry fill")
         return tuple(completed)
+
+    @staticmethod
+    def _attach_excursions(
+        *, trades: Sequence[BacktestTrade], candles: Sequence[Candle]
+    ) -> tuple[BacktestTrade, ...]:
+        """Measure R excursions on fully held candles before each exit."""
+        open_times = tuple(candle.open_time for candle in candles)
+        close_times = tuple(candle.close_time for candle in candles)
+        enriched: list[BacktestTrade] = []
+        for trade in trades:
+            stop = trade.initial_stop_loss
+            risk_per_unit = (
+                abs(trade.entry_price - stop) if stop is not None else _DECIMAL_ZERO
+            )
+            if risk_per_unit <= _DECIMAL_ZERO:
+                enriched.append(trade)
+                continue
+            start = bisect_left(open_times, trade.entry_time)
+            end = bisect_right(close_times, trade.exit_time)
+            held = candles[start:end]
+            if not held:
+                enriched.append(trade)
+                continue
+            highest = max(candle.high_price for candle in held)
+            lowest = min(candle.low_price for candle in held)
+            if trade.side is PositionSide.LONG:
+                favorable = max(_DECIMAL_ZERO, highest - trade.entry_price)
+                adverse = max(_DECIMAL_ZERO, trade.entry_price - lowest)
+            else:
+                favorable = max(_DECIMAL_ZERO, trade.entry_price - lowest)
+                adverse = max(_DECIMAL_ZERO, highest - trade.entry_price)
+            enriched.append(
+                replace(
+                    trade,
+                    mfe_r=favorable / risk_per_unit,
+                    mae_r=adverse / risk_per_unit,
+                )
+            )
+        return tuple(enriched)
 
     @staticmethod
     def _calculate_metrics(

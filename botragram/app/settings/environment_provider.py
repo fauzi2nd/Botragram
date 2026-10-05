@@ -181,6 +181,9 @@ from botragram.constants.env import (
     ENV_PARTIAL_TP_ENABLED,
     ENV_PARTIAL_TP_RATIO,
     ENV_PARTIAL_TP_TRIGGER_PROGRESS,
+    ENV_PIER_ADX_CONSOLIDATION_THRESHOLD,
+    ENV_PIER_ADX_PERIOD,
+    ENV_PIER_ADX_STRONG_TREND_THRESHOLD,
     ENV_PIER_ATR_PERIOD,
     ENV_PIER_ATR_SL_MULTIPLIER,
     ENV_PIER_BB_PERIOD,
@@ -208,6 +211,7 @@ from botragram.constants.env import (
     ENV_PIER_MIN_NATR_THRESHOLD,
     ENV_PIER_MIN_SL_DISTANCE_PCT,
     ENV_PIER_MIN_STRUCTURAL_RR,
+    ENV_PIER_MIN_TP_DISTANCE_ATR,
     ENV_PIER_MIN_WICK_RATIO,
     ENV_PIER_PARTIAL_TP_ENABLED,
     ENV_PIER_PARTIAL_TP_RATIO,
@@ -227,6 +231,7 @@ from botragram.constants.env import (
     ENV_PIER_RSI_PERIOD,
     ENV_PIER_RSI_SHORT_MAX,
     ENV_PIER_RSI_SHORT_MIN,
+    ENV_PIER_SCORING_CONFLUENCE_MODE,
     ENV_PIER_STALKING_ENABLED,
     ENV_PIER_STALKING_MAX_BARS,
     ENV_PIER_STALKING_MAX_CANDIDATES,
@@ -245,6 +250,7 @@ from botragram.constants.env import (
     ENV_PIER_TRAILING_MODE,
     ENV_PIER_TRAILING_SWING_WINDOW,
     ENV_PIER_TREND_PERIOD,
+    ENV_PIER_USE_ADX_REGIME_FILTER,
     ENV_PIER_USE_HTF_STRUCTURAL_TP,
     ENV_PIER_USE_MACD,
     ENV_PIER_USE_PARABOLIC_SAR,
@@ -1205,13 +1211,37 @@ class EnvironmentProvider:
         """Return whether PIER uses dynamic structural target trimming."""
         return self._get_bool(ENV_PIER_USE_STRUCTURAL_TP, default=True)
 
+    def get_pier_scoring_confluence_mode(self) -> bool:
+        """Return whether PIER uses weighted scoring confluence."""
+        return self._get_bool(ENV_PIER_SCORING_CONFLUENCE_MODE, default=True)
+
+    def get_pier_use_adx_regime_filter(self) -> bool:
+        """Return whether PIER enables adaptive ADX market regime filtering."""
+        return self._get_bool(ENV_PIER_USE_ADX_REGIME_FILTER, default=True)
+
+    def get_pier_adx_period(self) -> str:
+        """Return the ADX calculation period for PIER."""
+        return self._get_var(ENV_PIER_ADX_PERIOD, default="14")
+
+    def get_pier_adx_strong_trend_threshold(self) -> str:
+        """Return the ADX threshold above which trending regime is active."""
+        return self._get_var(ENV_PIER_ADX_STRONG_TREND_THRESHOLD, default="25.0")
+
+    def get_pier_adx_consolidation_threshold(self) -> str:
+        """Return the ADX threshold below which market is consolidating."""
+        return self._get_var(ENV_PIER_ADX_CONSOLIDATION_THRESHOLD, default="20.0")
+
+    def get_pier_min_tp_distance_atr(self) -> str:
+        """Return the minimum acceptable TP distance in multiples of ATR."""
+        return self._get_var(ENV_PIER_MIN_TP_DISTANCE_ATR, default="1.2")
+
     def get_pier_structural_tp_buffer_pct(self) -> str:
         """Return the buffer fraction subtracted from structural barrier."""
         return self._get_var(ENV_PIER_STRUCTURAL_TP_BUFFER_PCT, default="0.002")
 
     def get_pier_min_structural_rr(self) -> str:
         """Return the minimum acceptable reward-to-risk ratio after trimming."""
-        return self._get_var(ENV_PIER_MIN_STRUCTURAL_RR, default="1.0")
+        return self._get_var(ENV_PIER_MIN_STRUCTURAL_RR, default="1.2")
 
     def get_pier_bb_period(self) -> str:
         """Return the Bollinger Bands period for structural target calculation."""
