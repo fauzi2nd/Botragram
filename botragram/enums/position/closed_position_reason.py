@@ -17,6 +17,7 @@ class ClosedPositionReason(BaseEnum):
     STOP_LOSS = "stop_loss"
     STEPPED_STOP = "stepped_stop"
     MANUAL_CLOSE = "manual_close"
+    UNKNOWN_CLOSE = "unknown_close"
     EMERGENCY_CLOSE = "emergency_close"
     RECOVERY_CLOSE = "recovery_close"
     OPERATOR_EXIT = "operator_exit"

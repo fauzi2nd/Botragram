@@ -260,6 +260,41 @@ class ClosedPositionLifecycleService:
             closed_at=max(fill.executed_at for fill in exit_fills),
         )
         await self.repository.complete(lifecycle=completed)
+        if total_entry_qty > _DECIMAL_ZERO and total_exit_qty > _DECIMAL_ZERO:
+            entry_average = (
+                sum(
+                    (fill.price * fill.quantity for fill in entry_fills),
+                    start=_DECIMAL_ZERO,
+                )
+                / total_entry_qty
+            )
+            exit_average = (
+                sum(
+                    (fill.price * fill.quantity for fill in exit_fills),
+                    start=_DECIMAL_ZERO,
+                )
+                / total_exit_qty
+            )
+            _LOGGER.info(
+                "Closed LIVE lifecycle execution evidence: symbol=%s "
+                "entry_order_id=%s exit_order_id=%s entry_average=%s "
+                "exit_average=%s entry_quantity=%s exit_quantity=%s "
+                "close_reason=%s provenance=%s gross_pnl=%s fee=%s net_pnl=%s "
+                "pnl_asset=%s",
+                record.symbol,
+                record.entry_order_id,
+                record.exit_order_id,
+                entry_average,
+                exit_average,
+                total_entry_qty,
+                total_exit_qty,
+                record.close_reason.value,
+                record.provenance.value,
+                completed.gross_realized_pnl,
+                completed.fee,
+                completed.net_pnl,
+                fee_asset,
+            )
 
         publisher = self.notification_publisher
         if publisher is not None:

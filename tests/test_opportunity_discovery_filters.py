@@ -17,7 +17,7 @@ from __future__ import annotations
 # Standard Library Imports
 # =============================================================================
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -106,6 +106,22 @@ class FakeStrategyService:
             candles=candles,
             strategy_type=strategy_type,
         )
+
+
+@dataclass(slots=True)
+class FakeStalkingService:
+    """Expose active setups and record invalidations at the discovery boundary."""
+
+    symbols: tuple[str, ...]
+    invalidations: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+
+    def get_active_stalking_symbols(self) -> tuple[str, ...]:
+        """Return setups that must receive candle updates."""
+        return self.symbols
+
+    def invalidate_setup(self, symbol: str, reason: str = "") -> None:
+        """Record rejection of one triggered setup."""
+        self.invalidations.append((symbol, reason))
 
 
 def _make_candle(
@@ -526,10 +542,200 @@ async def test_opportunity_discovery_dynamic_volume_accepts_momentary_dip() -> N
     assert symbol in strategy.evaluated_symbols
 
 
+@pytest.mark.parametrize(
+    ("volume", "high_price", "dynamic", "expected_filter"),
+    (
+        (Decimal("1"), Decimal("100"), False, "liquidity"),
+        (Decimal("50"), Decimal("100"), True, "liquidity"),
+        (Decimal("100"), Decimal("120"), False, "extreme volatility"),
+    ),
+)
 @pytest.mark.asyncio
-async def test_discovery_bypasses_liquidity_for_zero_volume_tradfi_candles() -> None:
+async def test_active_stalking_rechecks_market_limits_before_entry(
+    volume: Decimal,
+    high_price: Decimal,
+    dynamic: bool,
+    expected_filter: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Advance an active setup but reject its entry after market deterioration."""
+    caplog.set_level("INFO")
+    symbol = "RUNEUSDT"
+    candle = _make_candle(symbol=symbol, volume=volume, high_price=high_price)
+    market = FakeMarketService(symbols=(), candles_by_symbol={symbol: (candle,)})
+    strategy = FakeStrategyService(
+        signals={
+            symbol: replace(
+                _make_signal(symbol=symbol),
+                reason="[STALKING_TRIGGERED] retest confirmed",
+            )
+        }
+    )
+    stalking = FakeStalkingService(symbols=(symbol,))
+    service = OpportunityDiscoveryService(
+        market_service=market,
+        strategy_service=strategy,
+        setup_stalking_service=stalking,
+        setup_stalking_invalidator=stalking,
+        candle_request_delay_seconds=0,
+        utc_now=lambda: _NOW + timedelta(seconds=1),
+        filter_min_liquidity=True,
+        min_quote_volume_usdt=Decimal("1000"),
+        use_dynamic_volume=dynamic,
+        min_24h_turnover_usdt=Decimal("864000"),
+        filter_extreme_volatility=True,
+    )
+
+    signals = await service.discover_symbols(
+        symbols=(symbol,),
+        interval=Interval.M15,
+        candle_limit=1,
+        top_n=1,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    assert signals == ()
+    assert strategy.evaluated_symbols == [symbol]
+    assert len(stalking.invalidations) == 1
+    assert stalking.invalidations[0][0] == symbol
+    assert expected_filter in stalking.invalidations[0][1]
+    assert f"Discovery {expected_filter} filter rejected {symbol}" in caplog.text
+    assert "actionable opportunity found" not in caplog.text
+
+
+@pytest.mark.parametrize("signal_type", (SignalType.HOLD, SignalType.BUY))
+@pytest.mark.asyncio
+async def test_active_stalking_advances_with_disabled_entry_filters(
+    signal_type: SignalType,
+) -> None:
+    """Keep HOLD updates and configured filter opt-outs compatible."""
+    symbol = "RUNEUSDT"
+    candle = _make_candle(symbol=symbol, volume=Decimal("1"))
+    signal = replace(
+        _make_signal(symbol=symbol),
+        signal_type=signal_type,
+        reason="[STALKING_TRIGGERED] retest confirmed",
+    )
+    strategy = FakeStrategyService(signals={symbol: signal})
+    stalking = FakeStalkingService(symbols=(symbol,))
+    service = OpportunityDiscoveryService(
+        market_service=FakeMarketService(
+            symbols=(symbol,), candles_by_symbol={symbol: (candle,)}
+        ),
+        strategy_service=strategy,
+        setup_stalking_service=stalking,
+        setup_stalking_invalidator=stalking,
+        candle_request_delay_seconds=0,
+        utc_now=lambda: _NOW + timedelta(seconds=1),
+    )
+
+    signals = await service.discover(
+        quote_asset="USDT",
+        interval=Interval.M15,
+        candle_limit=1,
+        max_symbols=1,
+        top_n=1,
+    )
+
+    assert signals == ((signal,) if signal_type is SignalType.BUY else ())
+    assert strategy.evaluated_symbols == [symbol]
+    assert stalking.invalidations == []
+
+
+@pytest.mark.parametrize("confidence", (Decimal("0.5"), Decimal("0.9")))
+@pytest.mark.asyncio
+async def test_stalking_entry_requires_confidence_and_current_market_limits(
+    confidence: Decimal,
+) -> None:
+    """Allow healthy triggers and invalidate triggers below minimum confidence."""
+    symbol = "RUNEUSDT"
+    candle = _make_candle(symbol=symbol)
+    signal = replace(
+        _make_signal(symbol=symbol),
+        confidence=confidence,
+        reason="[STALKING_TRIGGERED] retest confirmed",
+    )
+    strategy = FakeStrategyService(signals={symbol: signal})
+    stalking = FakeStalkingService(symbols=(symbol,))
+    service = OpportunityDiscoveryService(
+        market_service=FakeMarketService(
+            symbols=(symbol,), candles_by_symbol={symbol: (candle,)}
+        ),
+        strategy_service=strategy,
+        setup_stalking_service=stalking,
+        setup_stalking_invalidator=stalking,
+        candle_request_delay_seconds=0,
+        utc_now=lambda: _NOW + timedelta(seconds=1),
+        min_confidence=Decimal("0.6"),
+        filter_min_liquidity=True,
+        use_dynamic_volume=True,
+        min_quote_volume_usdt=Decimal("1000"),
+        min_24h_turnover_usdt=Decimal("864000"),
+        filter_extreme_volatility=True,
+    )
+
+    signals = await service.discover_symbols(
+        symbols=(symbol,),
+        interval=Interval.M15,
+        candle_limit=1,
+        top_n=1,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    assert strategy.evaluated_symbols == [symbol]
+    if confidence < service.min_confidence:
+        assert signals == ()
+        assert len(stalking.invalidations) == 1
+        assert "confidence" in stalking.invalidations[0][1]
+    else:
+        assert signals == (signal,)
+        assert stalking.invalidations == []
+
+
+@pytest.mark.asyncio
+async def test_illiquid_stalking_hold_still_receives_candle_update() -> None:
+    """Enabled entry filters must not strand a non-actionable active setup."""
+    symbol = "RUNEUSDT"
+    candle = _make_candle(symbol=symbol, volume=Decimal("1"))
+    strategy = FakeStrategyService(
+        signals={
+            symbol: replace(_make_signal(symbol=symbol), signal_type=SignalType.HOLD)
+        }
+    )
+    stalking = FakeStalkingService(symbols=(symbol,))
+    service = OpportunityDiscoveryService(
+        market_service=FakeMarketService(
+            symbols=(symbol,), candles_by_symbol={symbol: (candle,)}
+        ),
+        strategy_service=strategy,
+        setup_stalking_service=stalking,
+        setup_stalking_invalidator=stalking,
+        candle_request_delay_seconds=0,
+        utc_now=lambda: _NOW + timedelta(seconds=1),
+        filter_min_liquidity=True,
+        min_quote_volume_usdt=Decimal("1000"),
+    )
+
+    assert (
+        await service.discover(
+            quote_asset="USDT",
+            interval=Interval.M15,
+            candle_limit=1,
+            max_symbols=1,
+            top_n=1,
+        )
+        == ()
+    )
+    assert strategy.evaluated_symbols == [symbol]
+    assert stalking.invalidations == []
+
+
+@pytest.mark.parametrize("symbol", ("XAUUSD", "EURUSD", "US500"))
+@pytest.mark.asyncio
+async def test_discovery_bypasses_liquidity_for_zero_volume_tradfi_candles(
+    symbol: str,
+) -> None:
     """Verify TradFi symbols with zero volume bypass liquidity rejection."""
-    symbol = "XAUUSD"
     base_time = _NOW - timedelta(minutes=15 * 20)
     candles = [
         _make_candle(
@@ -575,3 +781,55 @@ async def test_discovery_bypasses_liquidity_for_zero_volume_tradfi_candles() -> 
     assert len(signals) == 1
     assert signals[0].symbol == symbol
     assert symbol in strategy.evaluated_symbols
+
+
+@pytest.mark.parametrize("dynamic", (False, True))
+@pytest.mark.parametrize("active_stalking", (False, True))
+@pytest.mark.asyncio
+async def test_zero_volume_crypto_cannot_bypass_liquidity_filter(
+    dynamic: bool,
+    active_stalking: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Reject zero-volume crypto in both ordinary and stalking entry discovery."""
+    caplog.set_level("INFO")
+    symbol = "RUNEUSDT"
+    candle = _make_candle(symbol=symbol, volume=Decimal("0"))
+    strategy = FakeStrategyService(
+        signals={
+            symbol: replace(
+                _make_signal(symbol=symbol),
+                reason="[STALKING_TRIGGERED] retest confirmed",
+            )
+        }
+    )
+    stalking = FakeStalkingService(symbols=(symbol,))
+    service = OpportunityDiscoveryService(
+        market_service=FakeMarketService(
+            symbols=(symbol,), candles_by_symbol={symbol: (candle,)}
+        ),
+        strategy_service=strategy,
+        setup_stalking_service=stalking if active_stalking else None,
+        setup_stalking_invalidator=stalking if active_stalking else None,
+        candle_request_delay_seconds=0,
+        utc_now=lambda: _NOW + timedelta(seconds=1),
+        filter_min_liquidity=True,
+        use_dynamic_volume=dynamic,
+    )
+
+    signals = await service.discover_symbols(
+        symbols=(symbol,),
+        interval=Interval.M15,
+        candle_limit=1,
+        top_n=1,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    assert signals == ()
+    assert "zero reported volume for crypto symbol" in caplog.text
+    if active_stalking:
+        assert strategy.evaluated_symbols == [symbol]
+        assert len(stalking.invalidations) == 1
+    else:
+        assert strategy.evaluated_symbols == []
+        assert stalking.invalidations == []

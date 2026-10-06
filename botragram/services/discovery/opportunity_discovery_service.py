@@ -456,42 +456,17 @@ class OpportunityDiscoveryService:
                     as_of=as_of,
                 )
 
-            latest_closed_candle = closed_candles[-1]
-
-            # Active stalking setups bypass entry filters: the setup was already
-            # accepted at registration time. Filters must not block on_candle_update
-            # from being called — otherwise bars cannot advance and the setup will
-            # never expire or invalidate naturally.
+            # Advance active setups even when market conditions deteriorate.
+            # Reapply entry filters after an actionable stalking signal is generated.
             symbol_has_active_stalking = symbol in active_stalking_set
 
-            if self.filter_min_liquidity and not symbol_has_active_stalking:
-                is_liquid, reject_reason = self._evaluate_liquidity(
+            if not symbol_has_active_stalking:
+                market_filter = self._evaluate_entry_market_filters(
                     closed_candles=closed_candles,
                     interval=interval,
                 )
-                if not is_liquid:
-                    _LOGGER.info(
-                        "Discovery liquidity filter rejected %s: %s",
-                        symbol,
-                        reject_reason,
-                    )
+                if not market_filter.passed:
                     continue
-
-            if self.filter_extreme_volatility and not symbol_has_active_stalking:
-                candle_range = (
-                    latest_closed_candle.high_price - latest_closed_candle.low_price
-                )
-                if latest_closed_candle.close_price > Decimal("0"):
-                    volatility_pct = candle_range / latest_closed_candle.close_price
-                    if volatility_pct > self.max_candle_volatility_pct:
-                        _LOGGER.info(
-                            "Discovery extreme volatility filter rejected %s: "
-                            "candle volatility %s > max %s",
-                            symbol,
-                            volatility_pct,
-                            self.max_candle_volatility_pct,
-                        )
-                        continue
 
             eval_candles: Sequence[Candle] = closed_candles
             market_service = self.market_service
@@ -571,7 +546,23 @@ class OpportunityDiscoveryService:
                     signal.confidence,
                     self.min_confidence,
                 )
+                self._invalidate_triggered_setup(
+                    signal=signal,
+                    reason="confidence below discovery minimum",
+                )
                 continue
+
+            if symbol_has_active_stalking:
+                market_filter = self._evaluate_entry_market_filters(
+                    closed_candles=closed_candles,
+                    interval=interval,
+                )
+                if not market_filter.passed:
+                    self._invalidate_triggered_setup(
+                        signal=signal,
+                        reason=market_filter.as_label(),
+                    )
+                    continue
 
             if self.mtf_confirmation_enabled:
                 mtf_candles = await self.market_service.get_candles(
@@ -804,6 +795,48 @@ class OpportunityDiscoveryService:
     # -------------------------------------------------------------------------
     # Internal: Downstream Signal Filters
     # -------------------------------------------------------------------------
+    def _evaluate_entry_market_filters(
+        self,
+        *,
+        closed_candles: Sequence[Candle],
+        interval: Interval,
+    ) -> SignalFilterResult:
+        """Apply current liquidity and volatility limits before allowing entry."""
+        latest_candle = closed_candles[-1]
+        result = _FILTER_SKIPPED
+        if self.filter_min_liquidity:
+            is_liquid, detail = self._evaluate_liquidity(
+                closed_candles=closed_candles,
+                interval=interval,
+            )
+            if not is_liquid:
+                result = SignalFilterResult(
+                    passed=False,
+                    filter_name="liquidity",
+                    detail=detail,
+                )
+        if result.passed and self.filter_extreme_volatility:
+            candle_range = latest_candle.high_price - latest_candle.low_price
+            if latest_candle.close_price > Decimal("0"):
+                volatility_pct = candle_range / latest_candle.close_price
+                if volatility_pct > self.max_candle_volatility_pct:
+                    result = SignalFilterResult(
+                        passed=False,
+                        filter_name="extreme volatility",
+                        detail=(
+                            f"candle volatility {volatility_pct} > "
+                            f"max {self.max_candle_volatility_pct}"
+                        ),
+                    )
+        if not result.passed:
+            _LOGGER.info(
+                "Discovery %s filter rejected %s: %s",
+                result.filter_name,
+                latest_candle.symbol,
+                result.detail,
+            )
+        return result
+
     def _apply_mtf_filter(
         self,
         *,
@@ -931,7 +964,7 @@ class OpportunityDiscoveryService:
 
         A signal originating from a TRIGGERED setup carries the
         ``[STALKING_TRIGGERED]`` prefix in its reason field.  When a downstream
-        filter (MTF, LTF, BTC benchmark) rejects such a signal via ``continue``,
+        entry filter rejects such a signal via ``continue``,
         the stalking setup is left stranded in TRIGGERED status and never
         auto-expired.  This helper detects that case and calls
         ``invalidate_setup`` so the setup transitions to INVALIDATED and is
@@ -1047,8 +1080,10 @@ class OpportunityDiscoveryService:
         if not closed_candles:
             return False, "no closed candles available"
 
-        # TradFi / zero-volume feeds (e.g. CFDs) do not report trading volume
+        # Only TradFi feeds may omit trading volume; crypto must prove liquidity.
         if all(c.volume == Decimal("0") for c in closed_candles):
+            if resolve_asset_class(closed_candles[-1].symbol) is AssetClass.CRYPTO:
+                return False, "zero reported volume for crypto symbol"
             return True, ""
 
         latest_closed_candle = closed_candles[-1]

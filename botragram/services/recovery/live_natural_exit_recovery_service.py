@@ -416,7 +416,7 @@ class LiveNaturalExitRecoveryService:
                 exit_order=exit_order,
             )
         else:
-            recovered_exit = await self._recover_filled_stepped_stop_from_history(
+            recovered_exit = await self._recover_filled_protection_from_history(
                 position=position,
                 threshold_time=threshold_time,
             )
@@ -432,8 +432,8 @@ class LiveNaturalExitRecoveryService:
                     close_reason = ClosedPositionReason.LIQUIDATION
                     provenance = ClosedPositionProvenance.LIQUIDATION_ORDER
                 else:
-                    close_reason = ClosedPositionReason.MANUAL_CLOSE
-                    provenance = ClosedPositionProvenance.MANUAL_ORDER
+                    close_reason = ClosedPositionReason.UNKNOWN_CLOSE
+                    provenance = ClosedPositionProvenance.ACCOUNT_ORDER
             else:
                 exit_order = recovered_exit
                 close_reason = self._close_reason(
@@ -449,13 +449,13 @@ class LiveNaturalExitRecoveryService:
         )
         return entry_identity
 
-    async def _recover_filled_stepped_stop_from_history(
+    async def _recover_filled_protection_from_history(
         self,
         *,
         position: Position,
         threshold_time: datetime | None = None,
     ) -> Order | None:
-        """Recover one lost durable stepped-STOP identity through bounded GETs."""
+        """Recover a persisted protection or lost stepped STOP through bounded GETs."""
         effective_threshold = (
             threshold_time if threshold_time is not None else position.opened_at
         )
@@ -468,30 +468,22 @@ class LiveNaturalExitRecoveryService:
             )
         except NotImplementedError:
             return None
-        persisted_ids = {
-            position.stop_loss_client_algo_id,
-            position.take_profit_client_algo_id,
-            position.pending_stop_loss_client_algo_id,
-        }
         closing_side = (
             OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
         candidates = tuple(
             order
             for order in history
-            if order.client_order_id not in persisted_ids
-            and Position.is_generated_stop_loss_client_algo_id(order.client_order_id)
-            and order.symbol.upper() == position.symbol.upper()
+            if order.symbol.upper() == position.symbol.upper()
             and order.created_at >= effective_threshold
             and order.side is closing_side
-            and order.order_type in {OrderType.STOP_MARKET, OrderType.STOP}
             and order.status is OrderStatus.FILLED
             and order.quantity == position.quantity
             and order.executed_quantity == position.quantity
             and (order.execution_order_id is not None or bool(order.order_id))
-            and self._is_tighter_stepped_stop(
+            and self._is_owned_history_protection(
                 position=position,
-                stop_price=order.stop_price,
+                order=order,
             )
         )
         if len(candidates) > 1:
@@ -502,7 +494,7 @@ class LiveNaturalExitRecoveryService:
             return None
         recovered = candidates[0]
         _LOGGER.warning(
-            "Natural LIVE exit recovered a lost stepped STOP identity from "
+            "Natural LIVE exit recovered a filled protection identity from "
             "authoritative history: symbol=%s old_client_id=%s "
             "exit_client_id=%s execution_order_id=%s",
             position.symbol,
@@ -512,13 +504,41 @@ class LiveNaturalExitRecoveryService:
         )
         return recovered
 
+    @classmethod
+    def _is_owned_history_protection(cls, *, position: Position, order: Order) -> bool:
+        """Match durable legs or a tighter generated replacement STOP identity."""
+        client_id = order.client_order_id
+        if client_id is None or order.stop_price is None:
+            return False
+        if client_id == position.take_profit_client_algo_id:
+            return (
+                order.order_type
+                in {
+                    OrderType.TAKE_PROFIT_MARKET,
+                    OrderType.TAKE_PROFIT,
+                }
+                and order.stop_price == position.take_profit
+            )
+        if order.order_type not in {OrderType.STOP_MARKET, OrderType.STOP}:
+            return False
+        if client_id == position.stop_loss_client_algo_id:
+            return order.stop_price == position.stop_loss
+        if client_id == position.pending_stop_loss_client_algo_id:
+            return order.stop_price == position.pending_stop_loss
+        return Position.is_generated_stop_loss_client_algo_id(
+            client_id,
+        ) and cls._is_tighter_stepped_stop(
+            position=position,
+            stop_price=order.stop_price,
+        )
+
     async def _recover_filled_manual_close_from_history(
         self,
         *,
         position: Position,
         threshold_time: datetime | None = None,
     ) -> tuple[Order, bool]:
-        """Recover one full manual close or liquidation from account fills."""
+        """Prove a full close from account fills without assuming its origin."""
         closing_side = (
             OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
         )
@@ -582,8 +602,9 @@ class LiveNaturalExitRecoveryService:
                 )
             else:
                 _LOGGER.warning(
-                    "Natural LIVE exit recovered a manual close from authoritative "
-                    "account history: symbol=%s exit_client_id=%s order_id=%s",
+                    "Natural LIVE exit recovered a close of unknown origin from "
+                    "authoritative account history: symbol=%s "
+                    "exit_client_id=%s order_id=%s",
                     position.symbol,
                     recovered.client_order_id,
                     recovered.order_id,
@@ -639,7 +660,7 @@ class LiveNaturalExitRecoveryService:
                     )
                 else:
                     _LOGGER.warning(
-                        "Natural LIVE exit recovered a manual close from "
+                        "Natural LIVE exit recovered a close of unknown origin from "
                         "authoritative account history (disambiguated via "
                         "reduce_only): symbol=%s exit_client_id=%s order_id=%s",
                         position.symbol,
@@ -810,7 +831,8 @@ class LiveNaturalExitRecoveryService:
 
         order_a, order_b, excess_quantity = valid_sequences[0]
         _LOGGER.warning(
-            "Natural LIVE exit recovered manual reversal sequence: symbol=%s "
+            "Natural LIVE exit recovered reversal sequence of unknown origin: "
+            "symbol=%s "
             "stored_side=%s stored_qty=%s reverse_order_id=%s "
             "reverse_executed_qty=%s inferred_opposite_qty=%s "
             "subsequent_close_order_id=%s result=RECOVERED",
