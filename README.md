@@ -219,6 +219,8 @@ Setup stalking aktif tetap menerima pembaruan candle agar dapat kedaluwarsa atau
 diinvalidasi. Ketika menghasilkan sinyal entry, discovery memeriksa kembali
 likuiditas dan volatilitas menggunakan candle tertutup terbaru. Sinyal yang gagal
 filter atau batas confidence ditolak dan setup terpicu diinvalidasi.
+Pengecualian candle tanpa volume hanya berlaku untuk aset TradFi. Ketika filter
+likuiditas aktif, simbol kripto dengan seluruh candle volume nol ditolak.
 
 ---
 

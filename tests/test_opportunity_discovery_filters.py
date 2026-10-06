@@ -730,10 +730,12 @@ async def test_illiquid_stalking_hold_still_receives_candle_update() -> None:
     assert stalking.invalidations == []
 
 
+@pytest.mark.parametrize("symbol", ("XAUUSD", "EURUSD", "US500"))
 @pytest.mark.asyncio
-async def test_discovery_bypasses_liquidity_for_zero_volume_tradfi_candles() -> None:
+async def test_discovery_bypasses_liquidity_for_zero_volume_tradfi_candles(
+    symbol: str,
+) -> None:
     """Verify TradFi symbols with zero volume bypass liquidity rejection."""
-    symbol = "XAUUSD"
     base_time = _NOW - timedelta(minutes=15 * 20)
     candles = [
         _make_candle(
@@ -779,3 +781,55 @@ async def test_discovery_bypasses_liquidity_for_zero_volume_tradfi_candles() -> 
     assert len(signals) == 1
     assert signals[0].symbol == symbol
     assert symbol in strategy.evaluated_symbols
+
+
+@pytest.mark.parametrize("dynamic", (False, True))
+@pytest.mark.parametrize("active_stalking", (False, True))
+@pytest.mark.asyncio
+async def test_zero_volume_crypto_cannot_bypass_liquidity_filter(
+    dynamic: bool,
+    active_stalking: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Reject zero-volume crypto in both ordinary and stalking entry discovery."""
+    caplog.set_level("INFO")
+    symbol = "RUNEUSDT"
+    candle = _make_candle(symbol=symbol, volume=Decimal("0"))
+    strategy = FakeStrategyService(
+        signals={
+            symbol: replace(
+                _make_signal(symbol=symbol),
+                reason="[STALKING_TRIGGERED] retest confirmed",
+            )
+        }
+    )
+    stalking = FakeStalkingService(symbols=(symbol,))
+    service = OpportunityDiscoveryService(
+        market_service=FakeMarketService(
+            symbols=(symbol,), candles_by_symbol={symbol: (candle,)}
+        ),
+        strategy_service=strategy,
+        setup_stalking_service=stalking if active_stalking else None,
+        setup_stalking_invalidator=stalking if active_stalking else None,
+        candle_request_delay_seconds=0,
+        utc_now=lambda: _NOW + timedelta(seconds=1),
+        filter_min_liquidity=True,
+        use_dynamic_volume=dynamic,
+    )
+
+    signals = await service.discover_symbols(
+        symbols=(symbol,),
+        interval=Interval.M15,
+        candle_limit=1,
+        top_n=1,
+        strategy_type=StrategyType.EMA_CROSS,
+    )
+
+    assert signals == ()
+    assert "zero reported volume for crypto symbol" in caplog.text
+    if active_stalking:
+        assert strategy.evaluated_symbols == [symbol]
+        assert len(stalking.invalidations) == 1
+    else:
+        assert strategy.evaluated_symbols == []
+        assert stalking.invalidations == []

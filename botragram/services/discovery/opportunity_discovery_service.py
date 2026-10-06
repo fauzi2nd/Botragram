@@ -1080,8 +1080,10 @@ class OpportunityDiscoveryService:
         if not closed_candles:
             return False, "no closed candles available"
 
-        # TradFi / zero-volume feeds (e.g. CFDs) do not report trading volume
+        # Only TradFi feeds may omit trading volume; crypto must prove liquidity.
         if all(c.volume == Decimal("0") for c in closed_candles):
+            if resolve_asset_class(closed_candles[-1].symbol) is AssetClass.CRYPTO:
+                return False, "zero reported volume for crypto symbol"
             return True, ""
 
         latest_closed_candle = closed_candles[-1]
