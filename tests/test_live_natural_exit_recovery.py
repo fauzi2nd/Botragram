@@ -1278,8 +1278,8 @@ async def test_manual_close_recovers_one_full_order_with_multiple_fills() -> Non
     assert exchange.trade_calls == [(_SYMBOL, 1000)]
     assert exchange.order_calls == [(_SYMBOL, manual_order.order_id)]
     assert len(completed) == 1
-    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
-    assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+    assert completed[0].ownership.close_reason is ClosedPositionReason.UNKNOWN_CLOSE
+    assert completed[0].ownership.provenance is ClosedPositionProvenance.ACCOUNT_ORDER
 
 
 @pytest.mark.asyncio
@@ -1341,8 +1341,8 @@ async def test_manual_close_recovers_when_protection_history_not_implemented() -
     assert exchange.trade_calls == [(_SYMBOL, 1000)]
     assert exchange.order_calls == [(_SYMBOL, manual_order.order_id)]
     assert len(completed) == 1
-    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
-    assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+    assert completed[0].ownership.close_reason is ClosedPositionReason.UNKNOWN_CLOSE
+    assert completed[0].ownership.provenance is ClosedPositionProvenance.ACCOUNT_ORDER
 
 
 @pytest.mark.asyncio
@@ -1416,8 +1416,8 @@ async def test_manual_close_recovers_when_trade_precedes_position_opened_at() ->
     assert exchange.trade_calls == [(_SYMBOL, 1000)]
     assert exchange.order_calls == [(_SYMBOL, manual_order.order_id)]
     assert len(completed) == 1
-    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
-    assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+    assert completed[0].ownership.close_reason is ClosedPositionReason.UNKNOWN_CLOSE
+    assert completed[0].ownership.provenance is ClosedPositionProvenance.ACCOUNT_ORDER
 
 
 @pytest.mark.asyncio
@@ -1972,8 +1972,8 @@ async def test_reversal_scenario_1_manual_full_close_existing_passes() -> None:
 
     assert await positions.get_by_symbol(symbol=_SYMBOL) is None
     assert len(completed) == 1
-    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
-    assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+    assert completed[0].ownership.close_reason is ClosedPositionReason.UNKNOWN_CLOSE
+    assert completed[0].ownership.provenance is ClosedPositionProvenance.ACCOUNT_ORDER
     assert completed[0].gross_realized_pnl == Decimal("2")
 
 
@@ -2080,8 +2080,8 @@ async def test_reversal_scenario_2_long_to_short_then_flat_recovers() -> None:
 
     assert await positions.get_by_symbol(symbol=_SYMBOL) is None
     assert len(completed) == 1
-    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
-    assert completed[0].ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+    assert completed[0].ownership.close_reason is ClosedPositionReason.UNKNOWN_CLOSE
+    assert completed[0].ownership.provenance is ClosedPositionProvenance.ACCOUNT_ORDER
     # Gross realized PnL was 2 on trade of qty 2, allocated for 1 unit = 1
     assert completed[0].gross_realized_pnl == Decimal("1")
     # Fee: entry 0.1 + allocated exit 0.1 (half of 0.2) = 0.2
@@ -2190,7 +2190,7 @@ async def test_reversal_scenario_3_short_to_long_then_flat_recovers() -> None:
 
     assert await positions.get_by_symbol(symbol=_SYMBOL) is None
     assert len(completed) == 1
-    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
+    assert completed[0].ownership.close_reason is ClosedPositionReason.UNKNOWN_CLOSE
     assert completed[0].gross_realized_pnl == Decimal("2")
     assert completed[0].fee == Decimal("0.2")
     assert completed[0].net_pnl == Decimal("1.8")
@@ -3242,8 +3242,8 @@ async def test_mrvl_production_scenario_reverse_disambiguation() -> None:
     # 4. Exit identity must be reverse-close order
     assert record.ownership.exit_order_id == order_rev_close.order_id
     assert record.ownership.exit_client_order_id == order_rev_close.client_order_id
-    assert record.ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
-    assert record.ownership.provenance is ClosedPositionProvenance.MANUAL_ORDER
+    assert record.ownership.close_reason is ClosedPositionReason.UNKNOWN_CLOSE
+    assert record.ownership.provenance is ClosedPositionProvenance.ACCOUNT_ORDER
 
     # 5. Financial accounting matches old SHORT entry + reverse-close fill
     assert record.gross_realized_pnl == Decimal("-0.1413")
@@ -3684,7 +3684,7 @@ async def test_normal_manual_close_existing() -> None:
     completed = await lifecycles.get_completed()
     assert len(completed) == 1
     assert completed[0].ownership.exit_order_id == order.order_id
-    assert completed[0].ownership.close_reason is ClosedPositionReason.MANUAL_CLOSE
+    assert completed[0].ownership.close_reason is ClosedPositionReason.UNKNOWN_CLOSE
 
 
 @pytest.mark.asyncio
@@ -4250,3 +4250,175 @@ async def test_protection_exit_prioritized() -> None:
     assert len(completed) == 1
     assert completed[0].ownership.exit_order_id == filled_tp.order_id
     assert completed[0].ownership.close_reason is ClosedPositionReason.TAKE_PROFIT
+
+
+@pytest.mark.parametrize(
+    ("order_type", "client_id", "trigger", "expected_reason"),
+    (
+        (OrderType.STOP_MARKET, _STOP_ID, "0.01151", ClosedPositionReason.STOP_LOSS),
+        (
+            OrderType.TAKE_PROFIT_MARKET,
+            _TP_ID,
+            "0.01084",
+            ClosedPositionReason.TAKE_PROFIT,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_missing_exact_lookup_recovers_persisted_protection_from_history(
+    order_type: OrderType,
+    client_id: str,
+    trigger: str,
+    expected_reason: ClosedPositionReason,
+) -> None:
+    """Do not misclassify an initial SL/TP when only history retains its identity."""
+    position = _position()
+    positions = await _repository()
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    exit_order = replace(
+        _protection(order_type=order_type, client_id=client_id, trigger=trigger),
+        status=OrderStatus.FILLED,
+        executed_quantity=position.quantity,
+        execution_order_id="execution-1",
+    )
+    exchange = FakeNaturalExitExchange(
+        protection_history=(exit_order,),
+        trades=(
+            _fill(
+                trade_id="entry-fill",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+            ),
+            _fill(
+                trade_id="exit-fill",
+                order_id="execution-1",
+                side=OrderSide.BUY,
+                realized_pnl="-0.06944",
+            ),
+        ),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles, trade_history=exchange
+        ),
+    )
+
+    await service.reconcile()
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert await positions.get_all() == ()
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason is expected_reason
+    assert (
+        completed[0].ownership.provenance is ClosedPositionProvenance.PROTECTION_ORDER
+    )
+    assert completed[0].ownership.exit_order_id == "execution-1"
+    assert exchange.trade_calls == []
+    assert exchange.order_calls == []
+
+
+@pytest.mark.parametrize(
+    "invalid_history",
+    (
+        "status",
+        "executed_quantity",
+        "side",
+        "created_at",
+        "client_order_id",
+        "stop_price",
+        "order_type",
+    ),
+)
+@pytest.mark.asyncio
+async def test_unproven_history_does_not_assign_stop_loss(
+    invalid_history: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Classify an exact account close as unknown when protection proof is invalid."""
+    caplog.set_level("INFO")
+    position = _position()
+    positions = await _repository()
+    attempts = MemorySubmissionAttemptRepository()
+    await attempts.save(attempt=_completed_attempt(position=position))
+    lifecycles = MemoryClosedPositionLifecycleRepository()
+    protection = replace(
+        _protection(
+            order_type=OrderType.STOP_MARKET, client_id=_STOP_ID, trigger="0.01151"
+        ),
+        status=OrderStatus.FILLED,
+        executed_quantity=position.quantity,
+    )
+    match invalid_history:
+        case "status":
+            protection = replace(protection, status=OrderStatus.CANCELED)
+        case "executed_quantity":
+            protection = replace(protection, executed_quantity=Decimal("0"))
+        case "side":
+            protection = replace(protection, side=OrderSide.SELL)
+        case "created_at":
+            protection = replace(protection, created_at=_NOW - timedelta(seconds=1))
+        case "client_order_id":
+            protection = replace(protection, client_order_id="external-stop")
+        case "stop_price":
+            protection = replace(protection, stop_price=Decimal("0.01200"))
+        case "order_type":
+            protection = replace(protection, order_type=OrderType.TAKE_PROFIT_MARKET)
+        case _:
+            raise AssertionError(f"Unknown history test case: {invalid_history}")
+    account_exit = Order(
+        order_id="account-exit",
+        client_order_id="exchange-generated",
+        symbol=_SYMBOL,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        status=OrderStatus.FILLED,
+        quantity=position.quantity,
+        executed_quantity=position.quantity,
+        created_at=_NOW,
+        updated_at=_NOW,
+        reduce_only=True,
+    )
+    exchange = FakeNaturalExitExchange(
+        protection_history=(protection,),
+        standard_orders=(account_exit,),
+        trades=(
+            _fill(
+                trade_id="entry",
+                order_id="entry-1",
+                side=OrderSide.SELL,
+                realized_pnl="0",
+            ),
+            _fill(
+                trade_id="exit",
+                order_id="account-exit",
+                side=OrderSide.BUY,
+                realized_pnl="-1",
+            ),
+        ),
+    )
+    service = LiveNaturalExitRecoveryService(
+        exchange_client=exchange,
+        position_repository=positions,
+        submission_attempt_repository=attempts,
+        closed_lifecycle_service=ClosedPositionLifecycleService(
+            repository=lifecycles, trade_history=exchange
+        ),
+    )
+
+    await service.reconcile()
+    completed = await lifecycles.get_completed()
+
+    assert len(completed) == 1
+    assert completed[0].ownership.close_reason.value == "unknown_close"
+    assert completed[0].ownership.provenance.value == "account_order"
+    assert completed[0].ownership.exit_order_id == "account-exit"
+    assert "entry_average=0.011 exit_average=0.011" in caplog.text
+    assert "close_reason=unknown_close provenance=account_order" in caplog.text
+    assert "gross_pnl=-1 fee=0.2 net_pnl=-1.2 pnl_asset=USDT" in caplog.text

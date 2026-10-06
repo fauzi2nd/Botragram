@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -127,3 +128,32 @@ async def test_lifecycle_identity_is_durable_and_idempotent_after_reopen() -> No
             assert await second_repository.get_completed() == (_completed(),)
         finally:
             await second_database.close()
+
+
+@pytest.mark.parametrize(
+    ("reason", "provenance"),
+    (
+        (ClosedPositionReason.MANUAL_CLOSE, ClosedPositionProvenance.MANUAL_ORDER),
+        (ClosedPositionReason.UNKNOWN_CLOSE, ClosedPositionProvenance.ACCOUNT_ORDER),
+    ),
+)
+@pytest.mark.asyncio
+async def test_legacy_and_unknown_exit_classification_round_trip(
+    reason: ClosedPositionReason,
+    provenance: ClosedPositionProvenance,
+    tmp_path: Path,
+) -> None:
+    """Keep legacy labels readable while persisting uncertain account closes."""
+    database = SQLiteDatabase(database_path=tmp_path / "exit-reason.db")
+    await database.connect()
+    try:
+        await SQLiteMigrationManager(database=database).initialize()
+        repository = SQLiteClosedPositionLifecycleRepository(database=database)
+        pending = replace(_pending(), close_reason=reason, provenance=provenance)
+        await repository.stage(lifecycle=pending)
+        completed = replace(_completed(), ownership=pending)
+        await repository.complete(lifecycle=completed)
+
+        assert await repository.get_completed() == (completed,)
+    finally:
+        await database.close()

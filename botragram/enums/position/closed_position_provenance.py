@@ -15,6 +15,7 @@ class ClosedPositionProvenance(BaseEnum):
 
     PROTECTION_ORDER = "protection_order"
     MANUAL_ORDER = "manual_order"
+    ACCOUNT_ORDER = "account_order"
     RECOVERY_EMERGENCY_ORDER = "recovery_emergency_order"
     OPERATOR_EXIT_ORDER = "operator_exit_order"
     LIQUIDATION_ORDER = "liquidation_order"

@@ -215,6 +215,11 @@ Botragram menyediakan 4 kebijakan eksekusi:
    - **Testnet**: Memerlukan `TRADE_MODE=LIVE` dan `AUTONOMOUS_LIVE_ENTRY_ENABLED=true`.
    - **Mainnet**: Memerlukan izin eksplisit tambahan `AUTONOMOUS_MAINNET_ENTRY_ENABLED=true` serta validasi kesiapan akun & simbol (*isolated margin, auto-add disabled, leverage limit*).
 
+Setup stalking aktif tetap menerima pembaruan candle agar dapat kedaluwarsa atau
+diinvalidasi. Ketika menghasilkan sinyal entry, discovery memeriksa kembali
+likuiditas dan volatilitas menggunakan candle tertutup terbaru. Sinyal yang gagal
+filter atau batas confidence ditolak dan setup terpicu diinvalidasi.
+
 ---
 
 ## Persistent Runtime Settings & Crash Recovery
@@ -225,6 +230,13 @@ Botragram dilengkapi arsitektur **Persistent Runtime Settings**:
   1. Strategi runtime PIER dipulihkan secara otomatis; pilihan strategi lama dalam riwayat tidak diaktifkan kembali.
   2. Posisi yang sedang terbuka (*legacy positions*) tetap diproteksi dengan SL/TP aslinya tanpa dipaksa tutup.
   3. Siklus pencarian entry baru akan langsung menggunakan strategi pilihan terbaru Anda.
+
+Rekonsiliasi exit memeriksa identitas SL/TP yang tersimpan serta riwayat proteksi
+sebelum menggunakan riwayat fill akun. Penutupan yang terbukti oleh order dan fill,
+tetapi asal pemicunya tidak terbukti, dicatat sebagai `unknown_close` dengan
+provenance `account_order`; `reduce_only` saja tidak membuktikan penutupan manual.
+Label `manual_close` lama tetap dapat dibaca. Log penyelesaian lifecycle mencatat
+harga rata-rata fill entry/exit, quantity, gross PnL, biaya, dan net PnL.
 
 ---
 
